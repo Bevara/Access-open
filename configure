@@ -73,6 +73,7 @@ has_xvid="no"
 has_mad="no"
 has_faad="no"
 has_ffmpeg="no"
+has_llvm="no"
 has_amr_nb_fixed="no"
 has_amr_nb="no"
 has_amr_wb="no"
@@ -186,6 +187,8 @@ OSS_LDFLAGS=""
 INSTFLAGS=""
 is_64="no"
 ffmpeg_extra_ldflags=""
+llvm_extra_ldflags=""
+
 
 logs="config.log"
 echo "Logs for GPAC configure $GPAC_CONFIGURATION" > $logs
@@ -221,6 +224,7 @@ GPAC configuration options:
   --xulsdk-path=XUL_PATH   specify Mozilla XUL (Gecko) SDK include path [$xulsdk_path]
   --mozdir=MOZ_PATH        specify mozilla main directory path for system install
   --extra-ff-ldflags=ELDFLAGS add ELDFLAGS to FFMPEG LDFLAGS [$ffmpeg_extra_ldflags]
+  --extra-llvm-ldflags=ELDFLAGS add ELDFLAGS to LLVM LDFLAGS [$llvm_extra_ldflags]
 
   --enable-debug           produce debug version
   --enable-gprof           enable profiling
@@ -311,6 +315,7 @@ Extra libraries configuration. You can turn a libray off or force using the loca
   --use-mad=OPT            force MAD OPT=[no,local]
   --use-xvid=OPT           force XVID OPT=[no,local]
   --use-ffmpeg=OPT         force FFMPEG OPT=[no,local]
+  --use-llvm=OPT           force LLVM OPT=[no,local]
   --use-ogg=OPT            force OGG OPT=[no,system,local]
   --use-vorbis=OPT         force vorbis OPT=[no,system,local]
   --use-theora=OPT         force theora OPT=[no,system,local]
@@ -347,6 +352,8 @@ for opt do
         --extra-ldflags=*) LDFLAGS="$LDFLAGS ${opt#--extra-ldflags=}"
             ;;
         --extra-ff-ldflags=*) ffmpeg_extra_ldflags=`echo $opt | cut -d '=' -f 2`
+            ;;
+        --extra-llvm-ldflags=*) llvm_extra_ldflags=`echo $opt | cut -d '=' -f 2`
             ;;
         --extra-libs=*) extralibs=${opt#--extra-libs=}
             ;;
@@ -1527,6 +1534,41 @@ fi
 
 fi
 
+#look for llvm support
+if [ -f "/usr/bin/llvm-config-3.6" ];
+then
+  	CFG_LLVM_ROOT="/usr"
+  	has_llvm="system"
+elif [ -f "/usr/local/bin/llvm-config-3.6" ];
+then
+   CFG_LLVM_ROOT="/usr/local"
+    has_llvm="system"
+else
+	has_llvm="no"
+fi
+
+if test "$has_llvm" = "system" ; then
+LLVM_CONFIG="$CFG_LLVM_ROOT/bin/llvm-config-3.6"
+LLVM_VERSION=$($LLVM_CONFIG --version)
+
+case $LLVM_VERSION in
+        (3.[2-6]*)
+            ;;
+        (*)
+            has_llvm="no, need >=3.6, detected : $LLVM_VERSION, "
+            ;;
+esac
+
+
+llvm_cflags=`$LLVM_CONFIG --cflags`
+llvm_cxxflags=`$LLVM_CONFIG --cxxflags`
+llvm_ldflags=`$LLVM_CONFIG --ldflags`
+llvm_cppflags=`$LLVM_CONFIG --cppflags`
+llvm_libs=`$LLVM_CONFIG --libs`
+llvm_libdir=`$LLVM_CONFIG --libdir`
+fi
+
+
 
 #look for vorbis support
 cat > $TMPC << EOF
@@ -1903,6 +1945,8 @@ for opt do
         --use-jpeg=*) has_jpeg=${opt#--use-jpeg=}
             ;;
         --use-ffmpeg=*) has_ffmpeg=${opt#--use-ffmpeg=}
+            ;;
+        --use-llvm=*) has_llvm=${opt#--use-llvm=}
             ;;
         --use-freenect=*) has_freenect=${opt#--use-freenect=}
             ;;
@@ -2434,6 +2478,7 @@ if test "$static_mp4box" = "yes"; then
     has_faad="no"
     has_xvid="no"
     has_ffmpeg="no"
+    has_llvm="no"
     has_ogg="no"
     has_theora="no"
     has_vorbis="no"
@@ -2809,6 +2854,7 @@ echo "MAD: $has_mad"
 echo "FAAD: $has_faad"
 echo "XVID: $has_xvid"
 echo "FFMPEG: $has_ffmpeg"
+echo "LLVM: $has_llvm"
 echo "Xiph OGG: $has_ogg"
 echo "Platinum UPnP: $has_platinum"
 echo "AVCap: $has_avcap"
@@ -3038,6 +3084,7 @@ echo "CONFIG_OGG=$has_ogg" >> config.mak
 echo "CONFIG_VORBIS=$has_vorbis" >> config.mak
 echo "CONFIG_THEORA=$has_theora" >> config.mak
 echo "CONFIG_FFMPEG=$has_ffmpeg" >> config.mak
+echo "CONFIG_LLVM=$has_llvm" >> config.mak
 if test "$has_ffmpeg" = "no"; then
 echo "DISABLE_DASHCAST=yes" >> config.mak
 else
@@ -3046,6 +3093,15 @@ else
     echo "CONFIG_LIBAV=$is_libav" >> config.mak
     echo "CONFIG_LIBAVRESAMPLE=$has_libavresample" >> config.mak
 fi
+if test "$has_llvm" = "system"; then
+	echo llvm_cflags=`$LLVM_CONFIG --cflags`  >> config.mak
+	echo llvm_cxxflags=`$LLVM_CONFIG --cxxflags`  >> config.mak
+	echo llvm_ldflags=`$LLVM_CONFIG --ldflags`  >> config.mak
+	echo llvm_cppflags=`$LLVM_CONFIG --cppflags` >> config.mak
+	echo llvm_libs=`$LLVM_CONFIG --libs` >> config.mak
+	echo llvm_libdir=`$LLVM_CONFIG --libdir` >> config.mak
+fi
+
 echo "CONFIG_FFMPEG_OLD=$old_ffmpeg_inc" >> config.mak
 
 echo "CONFIG_OSS_AUDIO=$has_oss_audio" >> config.mak
