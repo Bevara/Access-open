@@ -53,6 +53,10 @@ else
 PLUGDIRS+=freenect
 endif
 
+ifeq ($(CONFIG_LLVM), system)
+PLUGDIRS+=accessor_dec
+endif
+
 ifeq ($(CONFIG_OSS_AUDIO), no)
 else
 PLUGDIRS+=oss_audio
