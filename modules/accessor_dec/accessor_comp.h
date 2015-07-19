@@ -10,7 +10,7 @@
 
 typedef struct Acc_Comp_s Acc_Comp;
 
-int compile(Acc_Comp** comp, const char* llvm_code, unsigned int length, const char* cachedir);
-
+int compile(struct Acc_Comp_s** comp, const char* llvm_code, unsigned int length, const char* cachedir);
+void* getFn(struct Acc_Comp_s* comp, const char * name);
 
 #endif /* ACCESSOR_COMP_H_ */
