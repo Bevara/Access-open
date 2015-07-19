@@ -9,7 +9,7 @@ typedef struct
 {
 	u16 ES_ID;
 
-	Acc_Comp* comp;
+	struct Acc_Comp_s* comp;
 
 	GF_Err (*init)(char* data, unsigned int dataLength);
 	GF_Err (*entry)(char *inBuffer, u32 inBufferLength, char *outBuffer, u32 *outBufferLength, u8 PaddingBits, u32 mmlevel);
@@ -56,15 +56,15 @@ static GF_Err BV_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 	if (err) goto error;
 	printf("[Accessor decoder] Compilation succeed! Start parsing useful metadata... \n");
 
-	//ctx->entry = getMDFn(ctx->comp, "ENTRY");
+	ctx->entry = getFn(ctx->comp, "ENTRY");
 	if (!ctx->entry){
 		err = GF_CORRUPTED_DATA;
 		goto error;
 	}
-	//ctx->init = getMDFn(ctx->comp, "INIT");
-	//ctx->shutdown = getMDFn(ctx->comp, "CLOSE");
-	//ctx->caps = getMDFn(ctx->comp, "CAPABILITIES");
-	//ctx->set_caps = getMDFn(ctx->comp, "SET_CAPABILITIES");
+	ctx->init = getFn(ctx->comp, "INIT");
+	ctx->shutdown = getFn(ctx->comp, "CLOSE");
+	ctx->caps = getFn(ctx->comp, "CAPABILITIES");
+	ctx->set_caps = getFn(ctx->comp, "SET_CAPABILITIES");
 
 	if (esd->decoderConfig->decoderSpecificInfo){
 		data = esd->decoderConfig->decoderSpecificInfo->data;
@@ -95,6 +95,7 @@ error:
 	fprintf(stderr,"[Accessor decoder] Unrecoverable error! Accessor can't be used for the following reason : %s", gf_error_to_string(err));
 	return err;
 }
+
 static GF_Err BV_DetachStream(GF_BaseDecoder *ifcg, u16 ES_ID)
 {
 	Acc_dec *ctx = (Acc_dec*) ifcg->privateStack;
@@ -123,12 +124,12 @@ int bookmark = 0;
 
 static GF_Err BV_ProcessData(GF_MediaDecoder *ifcg, 
 		char *inBuffer, u32 inBufferLength,
-		u16 ES_ID,
+		u16 ES_ID, u32 *CTS,
 		char *outBuffer, u32 *outBufferLength,
 		u8 PaddingBits, u32 mmlevel)
 {
 	Acc_dec *ctx = (Acc_dec*) ifcg->privateStack;
-	return ctx->entry(inBuffer, inBufferLength, outBuffer, outBufferLength,0,0);
+	return ctx->entry(inBuffer, inBufferLength, outBuffer, outBufferLength, PaddingBits, mmlevel);
 }
 
 static u32 BV_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, u8 PL)
@@ -139,7 +140,7 @@ static u32 BV_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, 
 
 static const char *BV_GetCodecName(GF_BaseDecoder *dec)
 {
-	return "Bevara Decoder";
+	return "Accessor Decoder";
 }
 
 

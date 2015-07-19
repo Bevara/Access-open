@@ -28,7 +28,7 @@
 using namespace llvm;
 using namespace std;
 
-struct Acc_Comp_s
+typedef struct Acc_Comp_s
 {
 	Module* Mod;
 	ExecutionEngine *EE;
@@ -122,6 +122,27 @@ MDString* getFirstMDString(Module* mod, const char* attribute){
 	}
 
 	return NULL;
+}
+
+Function* getFirstMDFunction(Module* mod, const char* attribute){
+	NamedMDNode* ND = mod->getNamedMetadata(attribute);
+	if (ND) {
+		MDNode* node = ND->getOperand(0);
+		if (node)
+			return cast<Function>(node->getOperand(0));
+	}
+
+	return NULL;
+}
+
+void* getFn(Acc_Comp_s* comp, const char * name){
+	Function* fn = NULL;
+
+	if (!comp || !comp->EE)
+		fn = getFirstMDFunction(comp->Mod, name);
+
+	if (!fn) return NULL;
+	return comp->EE->getPointerToFunction(fn);
 }
 
 int compile(Acc_Comp_s** comp, const char* llvm_code, unsigned int length, const char* cachedir){
