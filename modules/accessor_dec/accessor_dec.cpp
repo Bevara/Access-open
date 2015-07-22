@@ -3,6 +3,10 @@
 #include <gpac/avparse.h>
 #include <gpac/constants.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "accessor_comp.h"
 
 typedef struct
@@ -52,19 +56,24 @@ static GF_Err BV_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 	cachedir = gf_modules_get_option((GF_BaseInterface *)ifcg, "General", "CacheDirectory");
 
 	// Init LLVM compilation
-	err = compile(&ctx->comp, llvm_code, llvm_length, cachedir);
+	err = (GF_Err)compile(&ctx->comp, llvm_code, llvm_length, cachedir);
 	if (err) goto error;
 	printf("[Accessor decoder] Compilation succeed! Start parsing useful metadata... \n");
 
-	ctx->entry = getFn(ctx->comp, "ENTRY");
+	ctx->entry = (GF_Err (*)(char *, u32, char *, u32*, u8, u32))
+		    		  getFn(ctx->comp, "ENTRY");
 	if (!ctx->entry){
 		err = GF_CORRUPTED_DATA;
 		goto error;
 	}
-	ctx->init = getFn(ctx->comp, "INIT");
-	ctx->shutdown = getFn(ctx->comp, "CLOSE");
-	ctx->caps = getFn(ctx->comp, "CAPABILITIES");
-	ctx->set_caps = getFn(ctx->comp, "SET_CAPABILITIES");
+	ctx->init = (GF_Err (*)(char *, unsigned int))
+			getFn(ctx->comp, "INIT");
+	ctx->shutdown = (GF_Err (*)())
+			getFn(ctx->comp, "CLOSE");
+	ctx->caps = (GF_Err (*)(GF_CodecCapability *))
+			getFn(ctx->comp, "CAPABILITIES");
+	ctx->set_caps = (GF_Err (*)(GF_CodecCapability))
+			getFn(ctx->comp, "SET_CAPABILITIES");
 
 	if (esd->decoderConfig->decoderSpecificInfo){
 		data = esd->decoderConfig->decoderSpecificInfo->data;
@@ -206,3 +215,7 @@ void ShutdownInterface(GF_BaseInterface *ifce)
 
 
 GPAC_MODULE_STATIC_DECLARATION( Acc_dec )
+
+#ifdef __cplusplus
+}
+#endif

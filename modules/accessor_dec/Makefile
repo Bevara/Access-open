@@ -20,8 +20,8 @@ endif
 EXTRALIBS+=-L../../bin/gcc -lgpac $(llvm_libs)
 
 #common obj
-OBJS_C= accessor_dec.o
-OBJS_CPP= accessor_comp.o
+#OBJS_C= 
+OBJS_CPP= accessor_dec.o accessor_comp.o
 
 SRCS_C := $(OBJS_C:.o=.c) 
 SRCS_CPP := $(OBJS_CPP:.o=.cpp)
@@ -32,8 +32,8 @@ LIB=gm_accessor_dec$(DYN_LIB_SUFFIX)
 all: $(LIB)
 
 
-$(LIB): $(OBJS_C) $(OBJS_CPP)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_C) $(OBJS_CPP) $(EXTRALIBS)
+$(LIB): $(OBJS_CPP)
+	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_CPP) $(EXTRALIBS)
 
 
 clean: 

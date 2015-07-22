@@ -1535,11 +1535,18 @@ fi
 fi
 
 #look for llvm support
-if [ -f "/usr/bin/llvm-config-3.6" ];
+cat > $TMPC << EOF
+#include "llvm/IR/Module.h"
+int main( void ) { return 0; }
+EOF
+
+llvm_bin="llvm-config-3.6"
+
+if [ -f "/usr/bin/$llvm_bin" ];
 then
   	CFG_LLVM_ROOT="/usr"
   	has_llvm="system"
-elif [ -f "/usr/local/bin/llvm-config-3.6" ];
+elif [ -f "/usr/local/bin/$llvm_bin" ];
 then
    CFG_LLVM_ROOT="/usr/local"
     has_llvm="system"
@@ -1547,8 +1554,20 @@ else
 	has_llvm="no"
 fi
 
+if test "$cross_prefix" = "" ; then
+    if test "$has_llvm" = "no" ; then
+        if test "$alt_macosx_dir" != "" ; then
+            llvm_bin="llvm-config-mp-3.6"
+            if [ -f "$alt_macosx_dir/bin/$llvm_bin" ]; then
+                has_llvm="system"
+                CFG_LLVM_ROOT="$alt_macosx_dir"
+            fi
+        fi
+    fi
+fi
+
 if test "$has_llvm" = "system" ; then
-LLVM_CONFIG="$CFG_LLVM_ROOT/bin/llvm-config-3.6"
+LLVM_CONFIG="$CFG_LLVM_ROOT/bin/$llvm_bin"
 LLVM_VERSION=$($LLVM_CONFIG --version)
 
 case $LLVM_VERSION in
