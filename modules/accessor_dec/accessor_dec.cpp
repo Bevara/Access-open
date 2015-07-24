@@ -3,11 +3,13 @@
 #include <gpac/avparse.h>
 #include <gpac/constants.h>
 
+
+
+#include "accessor_comp.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include "accessor_comp.h"
 
 typedef struct
 {
