@@ -19,6 +19,11 @@ endif
 
 EXTRALIBS+=-L../../bin/gcc -lgpac $(llvm_libs)
 
+#darwin needs bz2
+ifeq ($(CONFIG_DARWIN),yes)
+EXTRALIBS+=-lstdc++ -lz -lffi -lcurses
+endif
+
 #common obj
 #OBJS_C= 
 OBJS_CPP= accessor_dec.o accessor_comp.o
@@ -33,7 +38,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS_CPP)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_CPP) $(EXTRALIBS) -lstdc++ -lz -lffi -lcurses
+	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_CPP) $(EXTRALIBS)
 
 
 clean: 
