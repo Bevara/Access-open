@@ -33,7 +33,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS_CPP)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_CPP) $(EXTRALIBS)
+	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_CPP) $(EXTRALIBS) -lstdc++ -lz -lffi -lcurses
 
 
 clean: 
@@ -43,7 +43,7 @@ dep: depend
 
 depend:
 	rm -f .depend	
-	$(CC) -MM $(CFLAGS) $(SRCS) 1>.depend
+	$(CXX) -MM $(CFLAGS) $(SRCS) 1>.depend
 
 distclean: clean
 	rm -f Makefile.bak .depend
