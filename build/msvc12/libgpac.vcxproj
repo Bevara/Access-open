@@ -114,6 +114,7 @@
     <ClInclude Include="..\..\include\gpac\user.h" />
     <ClInclude Include="..\..\include\gpac\utf.h" />
     <ClInclude Include="..\..\include\gpac\version.h" />
+    <ClInclude Include="..\..\include\gpac\webvtt.h" />
     <ClInclude Include="..\..\include\gpac\xml.h" />
     <ClInclude Include="..\..\include\win32\inttypes.h" />
     <ClInclude Include="..\..\include\win32\stdint.h" />
@@ -234,6 +235,7 @@
     <ClCompile Include="..\..\src\isomedia\box_funcs.c" />
     <ClCompile Include="..\..\src\isomedia\data_map.c" />
     <ClCompile Include="..\..\src\isomedia\drm_sample.c" />
+    <ClCompile Include="..\..\src\isomedia\ttml.c" />
     <ClCompile Include="..\..\src\isomedia\hinting.c" />
     <ClCompile Include="..\..\src\isomedia\hint_track.c" />
     <ClCompile Include="..\..\src\isomedia\isom_intern.c" />
@@ -248,7 +250,6 @@
     <ClCompile Include="..\..\src\isomedia\stbl_read.c" />
     <ClCompile Include="..\..\src\isomedia\stbl_write.c" />
     <ClCompile Include="..\..\src\isomedia\track.c" />
-    <ClCompile Include="..\..\src\isomedia\ttml.c" />
     <ClCompile Include="..\..\src\isomedia\tx3g.c" />
     <ClCompile Include="..\..\src\laser\lsr_dec.c" />
     <ClCompile Include="..\..\src\laser\lsr_enc.c" />
@@ -452,6 +453,8 @@
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">libgpac_static</TargetName>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">libgpac_static</TargetName>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">libgpac_static</TargetName>
+    <IncludePath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VCInstallDir)include;$(VCInstallDir)atlmfc\include;$(WindowsSdkDir)include;$(FrameworkSDKDir)\include;</IncludePath>
+    <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VCInstallDir)lib\amd64;$(VCInstallDir)atlmfc\lib\amd64;$(WindowsSdkDir)lib\x64;</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <PreBuildEvent>
@@ -572,8 +575,8 @@
     </PreBuildEvent>
     <ClCompile>
       <AdditionalOptions>/MP %(AdditionalOptions)</AdditionalOptions>
-      <Optimization>MinSpace</Optimization>
-      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <Optimization>Full</Optimization>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <AdditionalIncludeDirectories>../../include;../../extra_lib/include/zlib;../../extra_lib/include/js;../../extra_lib/include/jpeg;../../extra_lib/include/png;../../extra_lib/include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRT_SECURE_NO_DEPRECATE;_CRT_NONSTDC_NO_DEPRECATE;_SCL_SECURE_NO_DEPRECATE;WIN32;_WIN64;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
