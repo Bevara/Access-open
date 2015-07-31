@@ -1,0 +1,336 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|Win32">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|Win32">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGUID>{8DBC2B5B-9C2F-4C7E-986B-AB47DDCDE32A}</ProjectGUID>
+    <Keyword>Win32Proj</Keyword>
+    <Platform>Win32</Platform>
+    <ProjectName>intrinsics_gen</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v120</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v120</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v120</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v120</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+    <PropertyGroup>
+      <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+      <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+      <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+      <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+      <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Midl>
+      <AdditionalIncludeDirectories>D:\projet\llvm-3.6.1.msvc\include\llvm\IR;D:\projet\llvm-3.6.1.src\include\llvm\IR;D:\projet\llvm-3.6.1.msvc\include;D:\projet\llvm-3.6.1.src\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Midl>
+      <AdditionalIncludeDirectories>D:\projet\llvm-3.6.1.msvc\include\llvm\IR;D:\projet\llvm-3.6.1.src\include\llvm\IR;D:\projet\llvm-3.6.1.msvc\include;D:\projet\llvm-3.6.1.src\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">
+    <Midl>
+      <AdditionalIncludeDirectories>D:\projet\llvm-3.6.1.msvc\include\llvm\IR;D:\projet\llvm-3.6.1.src\include\llvm\IR;D:\projet\llvm-3.6.1.msvc\include;D:\projet\llvm-3.6.1.src\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">
+    <Midl>
+      <AdditionalIncludeDirectories>D:\projet\llvm-3.6.1.msvc\include\llvm\IR;D:\projet\llvm-3.6.1.src\include\llvm\IR;D:\projet\llvm-3.6.1.msvc\include;D:\projet\llvm-3.6.1.src\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt">
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Building Custom Rule D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -HD:/projet/llvm-3.6.1.src -BD:/projet/llvm-3.6.1.msvc --check-stamp-file D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Building Custom Rule D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -HD:/projet/llvm-3.6.1.src -BD:/projet/llvm-3.6.1.msvc --check-stamp-file D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">Building Custom Rule D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -HD:/projet/llvm-3.6.1.src -BD:/projet/llvm-3.6.1.msvc --check-stamp-file D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">Building Custom Rule D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -HD:/projet/llvm-3.6.1.src -BD:/projet/llvm-3.6.1.msvc --check-stamp-file D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:/projet/llvm-3.6.1.src/include/llvm/IR/CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;D:\projet\llvm-3.6.1.src\include\llvm\IR\CMakeLists.txt;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\projet\llvm-3.6.1.msvc\CMakeFiles\a687e82124d2f659114d35cdee1d2426\Intrinsics.gen.tmp.rule">
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Building Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">setlocal
+..\..\..\Debug\bin\llvm-tblgen.exe -gen-intrinsic -I D:/projet/llvm-3.6.1.src/include/llvm/IR -I D:/projet/llvm-3.6.1.src/lib/Target -I D:/projet/llvm-3.6.1.src/include D:/projet/llvm-3.6.1.src/include/llvm/IR/Intrinsics.td -o D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.tmp.rule;D:\projet\llvm-3.6.1.msvc\Debug\bin\llvm-tblgen.exe;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\Option\OptParser.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetItinerary.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetCallingConv.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSelectionDAG.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSchedule.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\Target.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\CodeGen\ValueTypes.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Building Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">setlocal
+..\..\..\Release\bin\llvm-tblgen.exe -gen-intrinsic -I D:/projet/llvm-3.6.1.src/include/llvm/IR -I D:/projet/llvm-3.6.1.src/lib/Target -I D:/projet/llvm-3.6.1.src/include D:/projet/llvm-3.6.1.src/include/llvm/IR/Intrinsics.td -o D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.tmp.rule;D:\projet\llvm-3.6.1.msvc\Release\bin\llvm-tblgen.exe;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\Option\OptParser.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetItinerary.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetCallingConv.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSelectionDAG.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSchedule.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\Target.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\CodeGen\ValueTypes.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">Building Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">setlocal
+..\..\..\MinSizeRel\bin\llvm-tblgen.exe -gen-intrinsic -I D:/projet/llvm-3.6.1.src/include/llvm/IR -I D:/projet/llvm-3.6.1.src/lib/Target -I D:/projet/llvm-3.6.1.src/include D:/projet/llvm-3.6.1.src/include/llvm/IR/Intrinsics.td -o D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.tmp.rule;D:\projet\llvm-3.6.1.msvc\MinSizeRel\bin\llvm-tblgen.exe;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\Option\OptParser.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetItinerary.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetCallingConv.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSelectionDAG.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSchedule.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\Target.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\CodeGen\ValueTypes.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">Building Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">setlocal
+..\..\..\RelWithDebInfo\bin\llvm-tblgen.exe -gen-intrinsic -I D:/projet/llvm-3.6.1.src/include/llvm/IR -I D:/projet/llvm-3.6.1.src/lib/Target -I D:/projet/llvm-3.6.1.src/include D:/projet/llvm-3.6.1.src/include/llvm/IR/Intrinsics.td -o D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.tmp.rule;D:\projet\llvm-3.6.1.msvc\RelWithDebInfo\bin\llvm-tblgen.exe;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\Option\OptParser.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetItinerary.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetCallingConv.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSelectionDAG.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\TargetSchedule.td;D:\projet\llvm-3.6.1.src\include\llvm\Target\Target.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsAArch64.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsMips.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsR600.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsHexagon.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsNVVM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsX86.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsPowerPC.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsARM.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\IntrinsicsXCore.td;D:\projet\llvm-3.6.1.src\include\llvm\CodeGen\ValueTypes.td;D:\projet\llvm-3.6.1.src\include\llvm\IR\Intrinsics.td;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\projet\llvm-3.6.1.msvc\CMakeFiles\a687e82124d2f659114d35cdee1d2426\Intrinsics.gen.rule">
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Updating Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -E copy_if_different D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Updating Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -E copy_if_different D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">Updating Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -E copy_if_different D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">Updating Intrinsics.gen...</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">setlocal
+D:\apps\CMake\bin\cmake.exe -E copy_if_different D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen.tmp D:/projet/llvm-3.6.1.msvc/include/llvm/IR/Intrinsics.gen
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a687e82124d2f659114d35cdee1d2426/Intrinsics.gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen.tmp;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\projet\llvm-3.6.1.msvc\CMakeFiles\a96a7a1674a46b654725b572c07fa7e0\intrinsics_gen.rule">
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'"></Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">setlocal
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a96a7a1674a46b654725b572c07fa7e0/intrinsics_gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\intrinsics_gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'"></Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">setlocal
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a96a7a1674a46b654725b572c07fa7e0/intrinsics_gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\intrinsics_gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'"></Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">setlocal
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a96a7a1674a46b654725b572c07fa7e0/intrinsics_gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\intrinsics_gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|Win32'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'"></Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">setlocal
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:/projet/llvm-3.6.1.msvc/CMakeFiles/a96a7a1674a46b654725b572c07fa7e0/intrinsics_gen.rule;D:\projet\llvm-3.6.1.msvc\include\llvm\IR\Intrinsics.gen;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\intrinsics_gen</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|Win32'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="D:\projet\llvm-3.6.1.msvc\include\llvm\IR\CMakeFiles\intrinsics_gen" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="D:/projet/llvm-3.6.1.msvc/ZERO_CHECK.vcxproj">
+      <Project>2DD1CE91-DA75-47BD-B03A-A59A037FA48A</Project>
+    </ProjectReference>
+    <ProjectReference Include="D:/projet/llvm-3.6.1.msvc/utils/TableGen/llvm-tblgen.vcxproj">
+      <Project>888C053E-4E2E-495A-A309-C7474B471FC8</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
