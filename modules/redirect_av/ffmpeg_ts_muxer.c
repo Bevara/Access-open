@@ -181,7 +181,7 @@ GF_AbstractTSMuxer * ts_amux_new(GF_AVRedirect * avr, u32 videoBitrateInBitsPerS
 		ts->oc->oformat = GUESS_FORMAT("mpegts", NULL, NULL);
 	assert( ts->oc->oformat);
 #if REDIRECT_AV_AUDIO_ENABLED
-	ts->audio_st = av_new_stream(ts->oc, avr->audioCodec->id);
+	ts->audio_st = avformat_new_stream(ts->oc, ts->audio_st->codec);
 	{
 		AVCodecContext * c = ts->audio_st->codec;
 		c->codec_id = avr->audioCodec->id;
@@ -199,7 +199,7 @@ GF_AbstractTSMuxer * ts_amux_new(GF_AVRedirect * avr, u32 videoBitrateInBitsPerS
 	}
 #endif
 
-	ts->video_st = av_new_stream(ts->oc, avr->videoCodec->id);
+	ts->video_st = avformat_new_stream(ts->oc, ts->video_st->codec);
 	{
 		AVCodecContext * c = ts->video_st->codec;
 		c->codec_id = avr->videoCodec->id;
