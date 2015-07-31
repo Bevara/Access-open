@@ -8,6 +8,10 @@
 #include "MainFrm.h"
 #include "OpenUrl.h"
 #include "resource.h"
+#include "HtmlHelp.h"
+
+#include "Media.h"
+#include "BevaraContainer.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -26,15 +30,19 @@ BEGIN_MESSAGE_MAP(Osmo4, CWinApp)
 	ON_COMMAND(ID_FILE_RELOAD, OnFileReload)
 	ON_COMMAND(ID_CONFIG_RELOAD, OnConfigReload)
 	ON_COMMAND(ID_FILE_PLAY, OnFilePlay)
-	ON_UPDATE_COMMAND_UI(ID_FILE_PLAY, OnUpdateFilePlay)
 	ON_UPDATE_COMMAND_UI(ID_FILE_STEP, OnUpdateFileStep)
 	ON_COMMAND(ID_FILE_STOP, OnFileStop)
 	ON_UPDATE_COMMAND_UI(ID_FILE_STOP, OnUpdateFileStop)
+	ON_COMMAND(ID_EXTRACT_DATA, OnFileExtract)
+	ON_UPDATE_COMMAND_UI(ID_EXTRACT_DATA, OnUpdateFileExtract)
 	ON_COMMAND(ID_SWITCH_RENDER, OnSwitchRender)
 	ON_UPDATE_COMMAND_UI(ID_FILE_RELOAD, OnUpdateFileStop)
-	ON_COMMAND(ID_H_ABOUT, OnAbout)
+	ON_COMMAND(ID_HELP_ABOUT, OnAbout)
+	ON_COMMAND(ID_HELP_BETATESTFEEDBACK, OnBeta)
+	ON_COMMAND(ID_HELP_CONTACT, OnHelpContact)
 	ON_COMMAND(ID_FILE_MIGRATE, OnFileMigrate)
 	//}}AFX_MSG_MAP
+	ON_COMMAND(ID_HELP_FINDER, &OnHelpFinder)
 END_MESSAGE_MAP()
 
 /////////////////////////////////////////////////////////////////////////////
@@ -42,6 +50,8 @@ END_MESSAGE_MAP()
 
 Osmo4::Osmo4()
 {
+	EnableHtmlHelp();
+	media = NULL;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -57,7 +67,7 @@ class UserPassDialog : public CDialog
 public:
 	UserPassDialog(CWnd* pParent = NULL);   // standard constructor
 
-	Bool GetPassword(const char *site_url, char *user, char *password);
+	Bool GetPassword(const wchar_t *site_url, const wchar_t *user, char *password);
 
 // Dialog Data
 	//{{AFX_DATA(UserPassDialog)
@@ -73,14 +83,14 @@ public:
 // Overrides
 	// ClassWizard generated virtual function overrides
 	//{{AFX_VIRTUAL(UserPassDialog)
-protected:
+	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 	//}}AFX_VIRTUAL
 
 // Implementation
 protected:
-	const char *m_site_url;
-	char *m_user, *m_password;
+	const wchar_t *m_site_url;
+	wchar_t *m_user, *m_password;
 
 	// Generated message map functions
 	//{{AFX_MSG(UserPassDialog)
@@ -106,12 +116,12 @@ void UserPassDialog::DoDataExchange(CDataExchange* pDX)
 	//}}AFX_DATA_MAP
 }
 
-BOOL UserPassDialog::OnInitDialog()
+BOOL UserPassDialog::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
 	m_SiteURL.SetWindowText(m_site_url);
 	m_User.SetWindowText(m_user);
-	m_Pass.SetWindowText("");
+	m_Pass.SetWindowText(_T(""));
 	return TRUE;
 }
 
@@ -121,10 +131,10 @@ void UserPassDialog::OnClose()
 	m_Pass.GetWindowText(m_password, 50);
 }
 
-Bool UserPassDialog::GetPassword(const char *site_url, char *user, char *password)
+Bool UserPassDialog::GetPassword(const wchar_t *site_url, const wchar_t *user, char *password)
 {
 	m_site_url = site_url;
-	m_user = user;
+	m_user = (wchar_t *)user;
 	if (DoModal() != IDOK) return GF_FALSE;
 	return GF_TRUE;
 }
@@ -138,7 +148,7 @@ static void Osmo4_progress_cbk(const void *usr, const char *title, u64 done, u64
 	if (pFrame->m_last_prog < prog) {
 		pFrame->console_err = GF_OK;
 		pFrame->m_last_prog = prog;
-		pFrame->console_message.Format("%s %02d %%", title, prog);
+		pFrame->console_message.Format(_T("%s %02d %%"), title, prog);
 		pFrame->PostMessage(WM_CONSOLEMSG, 0, 0);
 		if (done==total) pFrame->m_last_prog = -1;
 	}
@@ -146,9 +156,9 @@ static void Osmo4_progress_cbk(const void *usr, const char *title, u64 done, u64
 
 #define W32_MIN_WIDTH 120
 
-static void log_msg(char *msg)
+static void log_msg(wchar_t *msg)
 {
-	::MessageBox(NULL, msg, "GPAC", MB_OK);
+	::MessageBox(NULL, msg, _T("GPAC"), MB_OK);
 }
 Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 {
@@ -157,6 +167,7 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 	CMainFrame *pFrame = (CMainFrame *) gpac->m_pMainWnd;
 	/*shutdown*/
 	if (!pFrame) return GF_FALSE;
+	CT2A url_ch(pFrame->m_pPlayList->GetURL());
 
 	switch (evt->type) {
 	case GF_EVENT_DURATION:
@@ -175,7 +186,7 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 		break;
 
 	case GF_EVENT_MESSAGE:
-		if (!evt->message.service || !strcmp(evt->message.service, (LPCSTR) pFrame->m_pPlayList->GetURL() )) {
+			if (!evt->message.service || !strcmp(evt->message.service, (LPCSTR)url_ch)) {
 			pFrame->console_service = "main service";
 		} else {
 			pFrame->console_service = evt->message.service;
@@ -214,14 +225,14 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 		if (evt->size.width && evt->size.height) {
 			gpac->orig_width = evt->size.width;
 			gpac->orig_height = evt->size.height;
-			if (gpac->m_term && !pFrame->m_bFullScreen)
+			if (gpac->m_term && !pFrame->m_bFullScreen) 
 				pFrame->PostMessage(WM_SETSIZE, evt->size.width, evt->size.height);
 		}
 		break;
-		/*don't resize on win32 msg notif*/
+	/*don't resize on win32 msg notif*/
 #if 0
 	case GF_EVENT_SIZE:
-		if (/*gpac->m_term && !pFrame->m_bFullScreen && */gpac->orig_width && (evt->size.width < W32_MIN_WIDTH) )
+		if (/*gpac->m_term && !pFrame->m_bFullScreen && */gpac->orig_width && (evt->size.width < W32_MIN_WIDTH) ) 
 			pFrame->PostMessage(WM_SETSIZE, W32_MIN_WIDTH, (W32_MIN_WIDTH*gpac->orig_height) / gpac->orig_width);
 		else
 			pFrame->PostMessage(WM_SETSIZE, evt->size.width, evt->size.height);
@@ -230,19 +241,21 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 
 	case GF_EVENT_CONNECT:
 //		if (pFrame->m_bStartupFile) return 0;
-
-		pFrame->BuildStreamList(GF_TRUE);
+		// Maja commented out buildstream list since menu item discarded
+		//pFrame->BuildStreamList(GF_TRUE);
 		if (evt->connect.is_connected) {
-			pFrame->BuildChapterList(GF_FALSE);
+			//pFrame->BuildChapterList(GF_FALSE);
 			gpac->m_isopen = GF_TRUE;
 			//resetting sliders when opening a new file creates a deadlock on the window thread which is disconnecting
-			pFrame->m_wndToolBar.SetButtonInfo(5, ID_FILE_PLAY, TBBS_BUTTON, gpac->m_isopen ? 4 : 3);
+			// Maja changed: must change when change toolbar
+			//pFrame->m_wndToolBar.SetButtonInfo(5, ID_FILE_PLAY, TBBS_BUTTON, gpac->m_isopen ? 4 : 3);
+			//pFrame->m_wndToolBar.SetButtonInfo(2, ID_FILE_PLAY, TBBS_BUTTON, gpac->m_isopen ? 4 : 3);
 			pFrame->m_Sliders.m_PosSlider.SetPos(0);
 			pFrame->SetProgTimer(GF_TRUE);
 		} else {
 			gpac->max_duration = 0;
 			gpac->m_isopen = GF_FALSE;
-			pFrame->BuildChapterList(GF_TRUE);
+			//pFrame->BuildChapterList(GF_TRUE);
 		}
 		if (!pFrame->m_bFullScreen) {
 			pFrame->SetFocus();
@@ -256,7 +269,7 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 	case GF_EVENT_MIGRATE:
 	{
 	}
-	break;
+		break;
 	case GF_EVENT_KEYDOWN:
 		gf_term_process_shortcut(gpac->m_term, evt);
 		/*update volume control*/
@@ -320,10 +333,10 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 		pFrame->BuildViewList();
 		return GF_FALSE;
 	case GF_EVENT_STREAMLIST:
-		pFrame->BuildStreamList(GF_FALSE);
+		//pFrame->BuildStreamList(GF_FALSE);
 		return GF_FALSE;
 	case GF_EVENT_SET_CAPTION:
-		pFrame->SetWindowText(evt->caption.caption);
+		pFrame->SetWindowText(CString(evt->caption.caption));
 		break;
 	case GF_EVENT_DBLCLICK:
 		pFrame->PostMessage(WM_COMMAND, ID_VIEW_FULLSCREEN);
@@ -331,7 +344,7 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 	case GF_EVENT_AUTHORIZATION:
 	{
 		UserPassDialog passdlg;
-		return passdlg.GetPassword(evt->auth.site_url, evt->auth.user, evt->auth.password);
+		return passdlg.GetPassword(CString(evt->auth.site_url), CString(evt->auth.user), evt->auth.password);
 	}
 	}
 	return GF_FALSE;
@@ -340,11 +353,11 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 
 /*here's the trick: use a storage section shared among all processes for the wnd handle and for the command line
 NOTE: this has to be static memory of course, don't try to alloc anything there...*/
-#pragma comment(linker, "/SECTION:.shr,RWS")
-#pragma data_seg(".shr")
-HWND static_gpac_hwnd = NULL;
+#pragma comment(linker, "/SECTION:.shr,RWS") 
+#pragma data_seg(".shr") 
+HWND static_gpac_hwnd = NULL; 
 char static_szCmdLine[MAX_PATH] = "";
-#pragma data_seg()
+#pragma data_seg() 
 
 const char *static_gpac_get_url()
 {
@@ -354,7 +367,7 @@ const char *static_gpac_get_url()
 static void osmo4_do_log(void *cbk, u32 level, u32 tool, const char *fmt, va_list list)
 {
 	FILE *logs = (FILE *) cbk;
-	vfprintf(logs, fmt, list);
+    vfprintf(logs, fmt, list);
 	fflush(logs);
 }
 
@@ -362,7 +375,7 @@ BOOL Osmo4::InitInstance()
 {
 	CCommandLineInfo cmdInfo;
 
-	afxAmbientActCtx = FALSE;
+	//afxAmbientActCtx = FALSE; 
 
 	m_logs = NULL;
 
@@ -371,9 +384,9 @@ BOOL Osmo4::InitInstance()
 	memset(&m_user, 0, sizeof(GF_User));
 
 	/*get Osmo4.exe path*/
-	strcpy((char *) szApplicationPath, AfxGetApp()->m_pszHelpFilePath);
-	while (szApplicationPath[strlen((char *) szApplicationPath)-1] != '\\') szApplicationPath[strlen((char *) szApplicationPath)-1] = 0;
-	if (szApplicationPath[strlen((char *) szApplicationPath)-1] != '\\') strcat(szApplicationPath, "\\");
+	wcscpy(szApplicationPath, AfxGetApp()->m_pszHelpFilePath);
+	while (szApplicationPath[wcslen((wchar_t *)szApplicationPath) - 1] != '\\') szApplicationPath[wcslen((wchar_t *)szApplicationPath) - 1] = 0;
+	if (szApplicationPath[wcslen((wchar_t *)szApplicationPath) - 1] != '\\') wcscat(szApplicationPath,_T("\\"));
 
 	gf_sys_init(GF_FALSE);
 
@@ -384,7 +397,7 @@ BOOL Osmo4::InitInstance()
 	/*init config and modules*/
 	m_user.config = gf_cfg_init(NULL, &first_launch);
 	if (!m_user.config) {
-		MessageBox(NULL, "GPAC Configuration file not found", "Fatal Error", MB_OK);
+		MessageBox(NULL, _T("Configuration file not found"), _T("Fatal Error"), MB_OK);
 		m_pMainWnd->PostMessage(WM_CLOSE);
 	}
 
@@ -400,23 +413,23 @@ BOOL Osmo4::InitInstance()
 
 	m_hMutex = NULL;
 	if (m_SingleInstance) {
-		m_hMutex = CreateMutex(NULL, FALSE, "Osmo4_GPAC_INSTANCE");
+		m_hMutex = CreateMutex(NULL, FALSE, _T("Osmo4_GPAC_INSTANCE"));
 		if ( GetLastError() == ERROR_ALREADY_EXISTS ) {
-			char szDIR[1024];
+			wchar_t szDIR[1024];
 			if (m_hMutex) CloseHandle(m_hMutex);
 			m_hMutex = NULL;
 
 			if (!static_gpac_hwnd || !IsWindow(static_gpac_hwnd) ) {
-				::MessageBox(NULL, "Osmo4 ghost process detected", "Error at last shutdown" , MB_OK);
+				::MessageBox(NULL, _T("Osmo4 ghost process detected"), _T("Error at last shutdown") , MB_OK);
 			} else {
 				::SetForegroundWindow(static_gpac_hwnd);
 
-				if (m_lpCmdLine && strlen(m_lpCmdLine)) {
+				if (m_lpCmdLine && wcslen(m_lpCmdLine)) {
 					DWORD_PTR res;
 					size_t len;
 					char *the_url, *cmd;
 					GetCurrentDirectory(1024, szDIR);
-					if (szDIR[strlen(szDIR)-1] != '\\') strcat(szDIR, "\\");
+					if (szDIR[wcslen(szDIR) - 1] != '\\') wcscat(szDIR, _T("\\"));
 					cmd = (char *)(const char *) m_lpCmdLine;
 					strcpy(static_szCmdLine, "");
 					if (cmd[0]=='"') cmd+=1;
@@ -425,7 +438,8 @@ BOOL Osmo4::InitInstance()
 						strcat(static_szCmdLine, "-queue ");
 						cmd += 7;
 					}
-					the_url = gf_url_concatenate(szDIR, cmd);
+					CT2A szDIR_ch(szDIR);
+					the_url = gf_url_concatenate(szDIR_ch, cmd);
 					if (!the_url) {
 						strcat(static_szCmdLine, cmd);
 					} else {
@@ -440,7 +454,7 @@ BOOL Osmo4::InitInstance()
 					::SendMessageTimeout(static_gpac_hwnd, WM_NEWINSTANCE, 0, 0, 0, 1000, &res);
 				}
 			}
-
+			
 			return FALSE;
 		}
 	}
@@ -467,7 +481,7 @@ BOOL Osmo4::InitInstance()
 
 	m_user.modules = gf_modules_new(NULL, m_user.config);
 	if (!m_user.modules || ! gf_modules_get_count(m_user.modules) ) {
-		MessageBox(NULL, "No modules available - system cannot work", "Fatal Error", MB_OK);
+		MessageBox(NULL, _T("No modules currently available. Contact support@bevaratechnologies.com for assistance."), _T("Fatal Error"), MB_OK);
 		m_pMainWnd->PostMessage(WM_CLOSE);
 	}
 	else if (first_launch) {
@@ -492,7 +506,7 @@ BOOL Osmo4::InitInstance()
 	/*check log file*/
 	const char *str = gf_cfg_get_key(m_user.config, "General", "LogFile");
 	if (str) {
-		m_logs = gf_fopen(str, "wt");
+		m_logs = gf_f64_open(str, "wt");
 		gf_log_set_callback(m_logs, osmo4_do_log);
 	}
 	else m_logs = NULL;
@@ -513,7 +527,7 @@ BOOL Osmo4::InitInstance()
 
 	m_term = gf_term_new(&m_user);
 	if (! m_term) {
-		MessageBox(NULL, "Cannot load GPAC Terminal", "Fatal Error", MB_OK);
+		MessageBox(NULL, _T("Cannot load Bevara Access. Contact support@bevaratechnologies.com for assistance."), _T("Fatal Error"), MB_OK);
 		m_pMainWnd->PostMessage(WM_CLOSE);
 		return TRUE;
 	}
@@ -521,7 +535,7 @@ BOOL Osmo4::InitInstance()
 	UpdateRenderSwitch();
 
 	pFrame->SendMessage(WM_SETSIZE, orig_width, orig_height);
-	pFrame->m_Address.ReloadURLs();
+	//pFrame->m_Address.ReloadURLs();
 
 	pFrame->m_Sliders.SetVolume();
 
@@ -533,7 +547,9 @@ BOOL Osmo4::InitInstance()
 	start_mode = 0;
 
 	if (! cmdInfo.m_strFileName.IsEmpty()) {
-		pFrame->m_pPlayList->QueueURL(cmdInfo.m_strFileName);
+		CT2A filename_ch(cmdInfo.m_strFileName);
+		this->media = Media::get_from_file(filename_ch);
+		pFrame->m_pPlayList->QueueURL(cmdInfo.m_strFileName, this->media);
 		pFrame->m_pPlayList->RefreshList();
 		pFrame->m_pPlayList->PlayNext();
 	} else {
@@ -568,7 +584,7 @@ BOOL Osmo4::InitInstance()
 	return TRUE;
 }
 
-int Osmo4::ExitInstance()
+int Osmo4::ExitInstance() 
 {
 	if (m_term) gf_term_del(m_term);
 	if (m_user.modules) gf_modules_del(m_user.modules);
@@ -579,11 +595,15 @@ int Osmo4::ExitInstance()
 		CloseHandle(m_hMutex);
 		static_gpac_hwnd = NULL;
 	}
-	if (m_logs) gf_fclose(m_logs);
+	if (m_logs) fclose(m_logs);
 	return CWinApp::ExitInstance();
 }
 
+/////////////////////////////////////////////////////////////////////////////
+// Osmo4 layout handlers
+void UpdateLayout(Media* media){
 
+}
 
 /////////////////////////////////////////////////////////////////////////////
 // Osmo4 message handlers
@@ -593,7 +613,7 @@ int Osmo4::ExitInstance()
 
 
 /////////////////////////////////////////////////////////////////////////////
-// CAboutDlg dialog used for App About
+// CDlg dialog used for App About
 
 class CAboutDlg : public CDialog
 {
@@ -607,7 +627,7 @@ public:
 
 	// ClassWizard generated virtual function overrides
 	//{{AFX_VIRTUAL(CAboutDlg)
-protected:
+	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 	//}}AFX_VIRTUAL
 
@@ -618,6 +638,11 @@ protected:
 	afx_msg void OnGogpac();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
+public:
+	//afx_msg void OnBnClickedOk();
+	afx_msg void OnBnClickedAboutClose();
+	afx_msg void OnHelpContact();
+	afx_msg void OnEnChangeEdit1();
 };
 
 CAboutDlg::CAboutDlg() : CDialog(CAboutDlg::IDD)
@@ -629,6 +654,9 @@ CAboutDlg::CAboutDlg() : CDialog(CAboutDlg::IDD)
 void CAboutDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialog::DoDataExchange(pDX);
+		
+	CString autoCpyrightTxt = "This application is based, in part, on portions of the GPAC framework which may be obtained at http://gpac.wp.mines-telecom.fr/  \r\nPortions of the underlying Accessors may be also derived from open-source or licensed code. For those works distributed under the Gnu General Public License source code may be obtained by contacting Bevara at support@bevaratechnologies.com. Specific contributors to the original source code are listed below; not all contributions may be used in the underlying Accessors.  Complete copyright information can be found with the source code and/or documentation. \r\n\r\nAAC:  M. Bakker, Alexander Kurpiers, Volker Fischer, Gian-Carlo Pascutto \r\n\r\nAC-3:  Aaron Holtzman,  Michel Lespinasse, Gildas Bazin, Billy Biggs, Eduard Hasenleithner, Håkan Hjort, Charles M. Hannum, Chris Hodges, Michael Holzt, Angelos Keromytis, David I. Lehn, Don Mahuri, Jim Miller, Takefumi Sayo, Shoji Tokunaga \r\n\r\nGIF: see http://www.netsurf-browser.org/projects/libnsgif/ \r\n\r\nMP3 (libmad): Robert Leslie, Niek Albers, Christian Biere, David Blythe, Simon Burge, Brian Cameron, Joshua Haberman, Timothy King, Felix von Leitner, Andre McCurdy, Haruhiko Ogasawara, Brett Paterson, Sean Perry, Bertrand Petit, Nicolas Pitre \r\n\r\nMPEG-1/2 (libmpeg):  Aaron Holtzman, Michel Lespinasse, Sam Hocevar, Christophe Massiot, Koji Agawa, Bruno Barreyra, Gildas Bazin, Diego Biurrun, Alexander W. Chin, Stephen Crowley, Didier Gautheron, Ryan C. Gordon, Peter Gubanov, Håkan Hjort, Petri Hintukainen, Nicolas Joly, Gerd Knorr, David I. Lehn, Olie Lho,  David S. Miller, Rick Niles, Real Ouellet, Bajusz Peter, Franck Sicard, Brion Vibber, Martin Vogt, Fredrik Vraalsen \r\n\r\nNanoJPEG:  Martin J. Fiedler \r\n\r\nOpenJPEG: see http://www.openjpeg.org/ \r\n\r\nPNG:  Glenn Randers-Pehrson, Cosmin Truta, Andreas Dilger, Dave Martindale, Guy Eric Schalnat, Paul Schmidt, Tim Wegner \r\n\r\nPNM (netpbm): http://netpbm.sourceforge.net/  \r\n\r\nTIFF: see http://www.remotesensing.org/libtiff/ \n ";
+	DDX_Text(pDX, IDC_EDIT1, autoCpyrightTxt); 
 	//{{AFX_DATA_MAP(CAboutDlg)
 	//}}AFX_DATA_MAP
 }
@@ -637,25 +665,104 @@ BEGIN_MESSAGE_MAP(CAboutDlg, CDialog)
 	//{{AFX_MSG_MAP(CAboutDlg)
 	ON_BN_CLICKED(IDC_GOGPAC, OnGogpac)
 	//}}AFX_MSG_MAP
+	//ON_BN_CLICKED(IDOK, &CAboutDlg::OnBnClickedOk)
+	ON_BN_CLICKED(IDC_ABOUT_CLOSE, &CAboutDlg::OnBnClickedAboutClose)
+	ON_COMMAND(ID_HELP_CONTACT, &Osmo4::OnHelpContact)
+    ON_EN_CHANGE(IDC_EDIT1, &CAboutDlg::OnEnChangeEdit1)
 END_MESSAGE_MAP()
 
-void Osmo4::OnAbout()
+void Osmo4::OnAbout() 
 {
 	CAboutDlg aboutDlg;
 	aboutDlg.DoModal();
 }
 
-BOOL CAboutDlg::OnInitDialog()
+
+/////////////////////////////////////////////////////////////////////////////
+// CDlg dialog used for App Beta Test Feedback
+
+class CBetaDlg : public CDialog
 {
-	CDialog::OnInitDialog();
-	CString str = "GPAC/Osmo4 - version " GPAC_FULL_VERSION;
-	SetWindowText(str);
-	return TRUE;
+public:
+	CBetaDlg();
+
+// Dialog Data
+	//{{AFX_DATA(CAboutDlg)
+	enum { IDD = IDD_BETATESTDIALOG };
+	//}}AFX_DATA
+
+	// ClassWizard generated virtual function overrides
+	//{{AFX_VIRTUAL(CAboutDlg)
+	protected:
+	//virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
+	//}}AFX_VIRTUAL
+
+// Implementation
+protected:
+	//{{AFX_MSG(CAboutDlg)
+	virtual BOOL OnInitDialog();
+	afx_msg void OnBetaTest();
+	//}}AFX_MSG
+	DECLARE_MESSAGE_MAP()
+public:
+	//afx_msg void OnBnClickedOk();
+	afx_msg void OnBnClickedBetaClose();
+};
+
+CBetaDlg::CBetaDlg() : CDialog(CBetaDlg::IDD)
+{
+	//{{AFX_DATA_INIT(CAboutDlg)
+	//}}AFX_DATA_INIT
 }
 
-void CAboutDlg::OnGogpac()
+//void CAboutDlg::DoDataExchange(CDataExchange* pDX)
+//{
+//	CDialog::DoDataExchange(pDX);
+		
+////	CString autoCpyrightTxt = "This application is based, in part, on portions of the GPAC framework which may be obtained at http://gpac.wp.mines-telecom.fr/  \r\nPortions of the underlying Accessors may be also derived from open-source or licensed code. For those works distributed under the Gnu General Public License source code may be obtained by contacting Bevara at support@bevaratechnologies.com. Specific contributors to the original source code are listed below; not all contributions may be used in the underlying Accessors.  Complete copyright information can be found with the source code and/or documentation. \r\n\r\nAAC:  M. Bakker, Alexander Kurpiers, Volker Fischer, Gian-Carlo Pascutto \r\n\r\nAC-3:  Aaron Holtzman,  Michel Lespinasse, Gildas Bazin, Billy Biggs, Eduard Hasenleithner, Håkan Hjort, Charles M. Hannum, Chris Hodges, Michael Holzt, Angelos Keromytis, David I. Lehn, Don Mahuri, Jim Miller, Takefumi Sayo, Shoji Tokunaga \r\n\r\nGIF: see http://www.netsurf-browser.org/projects/libnsgif/ \r\n\r\nMP3 (libmad): Robert Leslie, Niek Albers, Christian Biere, David Blythe, Simon Burge, Brian Cameron, Joshua Haberman, Timothy King, Felix von Leitner, Andre McCurdy, Haruhiko Ogasawara, Brett Paterson, Sean Perry, Bertrand Petit, Nicolas Pitre \r\n\r\nMPEG-1/2 (libmpeg):  Aaron Holtzman, Michel Lespinasse, Sam Hocevar, Christophe Massiot, Koji Agawa, Bruno Barreyra, Gildas Bazin, Diego Biurrun, Alexander W. Chin, Stephen Crowley, Didier Gautheron, Ryan C. Gordon, Peter Gubanov, Håkan Hjort, Petri Hintukainen, Nicolas Joly, Gerd Knorr, David I. Lehn, Olie Lho,  David S. Miller, Rick Niles, Real Ouellet, Bajusz Peter, Franck Sicard, Brion Vibber, Martin Vogt, Fredrik Vraalsen \r\n\r\nNanoJPEG:  Martin J. Fiedler \r\n\r\nOpenJPEG: see http://www.openjpeg.org/ \r\n\r\nPNG:  Glenn Randers-Pehrson, Cosmin Truta, Andreas Dilger, Dave Martindale, Guy Eric Schalnat, Paul Schmidt, Tim Wegner \r\n\r\nPNM (netpbm): http://netpbm.sourceforge.net/  \r\n\r\nTIFF: see http://www.remotesensing.org/libtiff/ \n ";
+//	DDX_Text(pDX, IDC_EDIT1, autoCpyrightTxt); 
+	//{{AFX_DATA_MAP(CAboutDlg)
+	//}}AFX_DATA_MAP
+//}
+
+BEGIN_MESSAGE_MAP(CBetaDlg, CDialog)
+	//{{AFX_MSG_MAP(CAboutDlg)
+	ON_BN_CLICKED(ID_ACCESSBETATESTLINK, OnBetaTest)
+	//}}AFX_MSG_MAP
+	//ON_BN_CLICKED(IDOK, &CAboutDlg::OnBnClickedOk)
+	ON_BN_CLICKED(IDC_BETA_CLOSE, &CBetaDlg::OnBnClickedBetaClose)
+	
+END_MESSAGE_MAP()
+void Osmo4::OnBeta() 
 {
-	ShellExecute(NULL, "open", "http://gpac.sourceforge.net", NULL, NULL, SW_SHOWNORMAL);
+	ShellExecute(NULL, _T("open"), _T("http://www.bevara.com/help_access"), NULL, NULL, SW_SHOWNORMAL);
+}
+
+BOOL CBetaDlg::OnInitDialog() 
+{
+	CDialog::OnInitDialog();
+	CString str = "Bevara Access ";
+	SetWindowText(str);
+	return TRUE;  
+}
+
+BOOL CAboutDlg::OnInitDialog() 
+{
+	CDialog::OnInitDialog();
+	CString str = "Bevara Access ";
+	SetWindowText(str);
+	return TRUE;  
+}
+
+void CAboutDlg::OnGogpac() 
+{
+	ShellExecute(NULL, _T("open"), _T("http://gpac.sourceforge.net"), NULL, NULL, SW_SHOWNORMAL);
+}
+
+
+void CBetaDlg::OnBetaTest() 
+{
+	ShellExecute(NULL, _T("open"), _T("https://www.surveymonkey.com/s/BevaraAccess"), NULL, NULL, SW_SHOWNORMAL);
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -677,7 +784,7 @@ void Osmo4::SetOptions()
 }
 
 
-void Osmo4::OnOpenUrl()
+void Osmo4::OnOpenUrl() 
 {
 	COpenUrl url;
 	if (url.DoModal() != IDOK) return;
@@ -698,7 +805,7 @@ CString Osmo4::GetFileFilter()
 	CString supportedFiles;
 
 	/*force MP4 and 3GP files at beginning to make sure they are selected (Win32 bug with too large filters)*/
-	supportedFiles = "All Known Files|*.m3u;*.pls;*.mp4;*.3gp;*.3g2";
+	supportedFiles = "All Known Files|*.bvr; *.m3u;*.pls;*.mp4;*.3gp;*.3g2;*.avi;*.ogg;*.mpg;*.mpeg;*.vob;*.vcd;*.svcd;*.ts;*.m2t;*.mp2;*.mp3;*.m1a;*.m2a;*.jpeg;*.jpg;*.j2k;*.jp2;*.pdf";
 
 	sExts = "";
 	sFiles = "";
@@ -706,24 +813,24 @@ CString Osmo4::GetFileFilter()
 	for (i=0; i<keyCount; i++) {
 		const char *sMime;
 		Bool first;
-		char *sKey;
+		wchar_t *sKey;
 		const char *opt;
-		char szKeyList[1000], sDesc[1000];
+		wchar_t szKeyList[1000], sDesc[1000];
 		sMime = gf_cfg_get_key_name(m_user.config, "MimeTypes", i);
 		if (!sMime) continue;
 		CString sOpt;
 		opt = gf_cfg_get_key(m_user.config, "MimeTypes", sMime);
 		/*remove module name*/
-		strcpy(szKeyList, opt+1);
-		sKey = strrchr(szKeyList, '\"');
+		wcscpy(szKeyList, CString(opt + 1));
+		sKey = wcsrchr(szKeyList, '\"');
 		if (!sKey) continue;
 		sKey[0] = 0;
 		/*get description*/
-		sKey = strrchr(szKeyList, '\"');
+		sKey = wcsrchr(szKeyList, '\"');
 		if (!sKey) continue;
-		strcpy(sDesc, sKey+1);
+		wcscpy(sDesc, sKey + 1);
 		sKey[0] = 0;
-		sKey = strrchr(szKeyList, '\"');
+		sKey = wcsrchr(szKeyList, '\"');
 		if (!sKey) continue;
 		sKey[0] = 0;
 
@@ -741,11 +848,11 @@ CString Osmo4::GetFileFilter()
 
 		sOpt = CString(szKeyList);
 		while (1) {
-
+			
 			int pos = sOpt.Find(' ');
 			CString ext = (pos==-1) ? sOpt : sOpt.Left(pos);
 			/*WATCHOUT: we do have some "double" ext , eg .wrl.gz - these are NOT supported by windows*/
-			if (ext.Find(".")<0) {
+			if (ext.Find(_T("."))<0) {
 				if (!first) {
 					sFiles += ";";
 				} else {
@@ -764,8 +871,8 @@ CString Osmo4::GetFileFilter()
 
 			if (sOpt==ext) break;
 			CString rem;
-			rem.Format("%s ", (LPCTSTR) ext);
-			sOpt.Replace((LPCTSTR) rem, "");
+			rem.Format(_T("%s "), (LPCTSTR) ext);
+			sOpt.Replace((LPCTSTR) rem, _T(""));
 		}
 		sFiles += "|";
 	}
@@ -775,15 +882,14 @@ CString Osmo4::GetFileFilter()
 	return supportedFiles;
 }
 
-void Osmo4::OnOpenFile()
+void Osmo4::OnOpenFile() 
 {
 	CString sFiles = GetFileFilter();
-	u32 nb_items;
-
+	
 	/*looks like there's a bug here, main filter isn't used correctly while the others are*/
-	CFileDialog fd(TRUE,NULL,NULL, OFN_ALLOWMULTISELECT | OFN_HIDEREADONLY | OFN_FILEMUSTEXIST , sFiles);
+	CFileDialog fd(TRUE,NULL,NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST , sFiles);
 	fd.m_ofn.nMaxFile = 25000;
-	fd.m_ofn.lpstrFile = (char *) gf_malloc(sizeof(char) * fd.m_ofn.nMaxFile);
+	fd.m_ofn.lpstrFile = (wchar_t *) gf_malloc(sizeof(wchar_t) * fd.m_ofn.nMaxFile);
 	fd.m_ofn.lpstrFile[0] = 0;
 
 	if (fd.DoModal()!=IDOK) {
@@ -793,22 +899,15 @@ void Osmo4::OnOpenFile()
 
 	CMainFrame *pFrame = (CMainFrame *) m_pMainWnd;
 
-	nb_items = 0;
+	/*if several items, act as playlist (replace playlist), otherwise as browser (lost all "next" context)*/
+	pFrame->m_pPlayList->Clear();
+
 	POSITION pos = fd.GetStartPosition();
 	while (pos) {
 		CString file = fd.GetNextPathName(pos);
-		nb_items++;
-	}
-	/*if several items, act as playlist (replace playlist), otherwise as browser (lost all "next" context)*/
-	if (nb_items==1)
-		pFrame->m_pPlayList->Truncate();
-	else
-		pFrame->m_pPlayList->Clear();
-
-	pos = fd.GetStartPosition();
-	while (pos) {
-		CString file = fd.GetNextPathName(pos);
-		pFrame->m_pPlayList->QueueURL(file);
+		CT2A file_ch(file);
+		this->media = Media::get_from_file(file_ch);
+		pFrame->m_pPlayList->QueueURL(file, this->media);
 	}
 	gf_free(fd.m_ofn.lpstrFile);
 	pFrame->m_pPlayList->RefreshList();
@@ -822,19 +921,19 @@ void Osmo4::Pause()
 	gf_term_set_option(m_term, GF_OPT_PLAY_STATE, (gf_term_get_option(m_term, GF_OPT_PLAY_STATE)==GF_STATE_PLAYING) ? GF_STATE_PAUSED : GF_STATE_PLAYING);
 }
 
-void Osmo4::OnMainPause()
+void Osmo4::OnMainPause() 
 {
-	Pause();
+	Pause();	
 }
 
-void Osmo4::OnFileStep()
+void Osmo4::OnFileStep() 
 {
 	gf_term_set_option(m_term, GF_OPT_PLAY_STATE, GF_STATE_STEP_PAUSE);
-	((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(5, ID_FILE_PLAY, TBBS_BUTTON, 3);
+	//((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(5, ID_FILE_PLAY, TBBS_BUTTON, 3);
 }
-void Osmo4::OnUpdateFileStep(CCmdUI* pCmdUI)
+void Osmo4::OnUpdateFileStep(CCmdUI* pCmdUI) 
 {
-	pCmdUI->Enable(m_isopen && !m_reset);
+	pCmdUI->Enable(m_isopen && !m_reset);	
 }
 
 void Osmo4::PlayFromTime(u32 time)
@@ -848,31 +947,26 @@ void Osmo4::PlayFromTime(u32 time)
 }
 
 
-void Osmo4::OnFileReload()
+void Osmo4::OnFileReload() 
 {
 	gf_term_disconnect(m_term);
 	m_pMainWnd->PostMessage(WM_OPENURL);
 }
 
-void Osmo4::OnFileMigrate()
+void Osmo4::OnFileMigrate() 
 {
 }
 
-void Osmo4::OnConfigReload()
+void Osmo4::OnConfigReload() 
 {
-	gf_term_set_option(m_term, GF_OPT_RELOAD_CONFIG, 1);
+	gf_term_set_option(m_term, GF_OPT_RELOAD_CONFIG, 1); 
 }
 
-void Osmo4::UpdatePlayButton(Bool force_play)
-{
-	if (!force_play && gf_term_get_option(m_term, GF_OPT_PLAY_STATE)==GF_STATE_PLAYING) {
-		((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(5, ID_FILE_PLAY, TBBS_BUTTON, 4);
-	} else {
-		((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(5, ID_FILE_PLAY, TBBS_BUTTON, 3);
-	}
+bool Osmo4::isPlaying(){
+	return (gf_term_get_option(m_term, GF_OPT_PLAY_STATE)==GF_STATE_PLAYING);
 }
 
-void Osmo4::OnFilePlay()
+void Osmo4::OnFilePlay() 
 {
 	if (m_isopen) {
 		if (m_reset) {
@@ -882,32 +976,12 @@ void Osmo4::OnFilePlay()
 		} else {
 			Pause();
 		}
-		UpdatePlayButton();
 	} else {
 		((CMainFrame *) m_pMainWnd)->m_pPlayList->Play();
 	}
 }
 
-void Osmo4::OnUpdateFilePlay(CCmdUI* pCmdUI)
-{
-	if (m_isopen) {
-		pCmdUI->Enable(TRUE);
-		if (pCmdUI->m_nID==ID_FILE_PLAY) {
-			if (!m_isopen) {
-				pCmdUI->SetText("Play/Pause\tCtrl+P");
-			} else if (gf_term_get_option(m_term, GF_OPT_PLAY_STATE)==GF_STATE_PLAYING) {
-				pCmdUI->SetText("Pause\tCtrl+P");
-			} else {
-				pCmdUI->SetText("Resume\tCtrl+P");
-			}
-		}
-	} else {
-		pCmdUI->Enable(((CMainFrame *)m_pMainWnd)->m_pPlayList->HasValidEntries() );
-		pCmdUI->SetText("Play\tCtrl+P");
-	}
-}
-
-void Osmo4::OnFileStop()
+void Osmo4::OnFileStop() 
 {
 	CMainFrame *pFrame = (CMainFrame *) m_pMainWnd;
 	if (m_reset) return;
@@ -915,31 +989,82 @@ void Osmo4::OnFileStop()
 	m_reset = GF_TRUE;
 	pFrame->m_Sliders.m_PosSlider.SetPos(0);
 	pFrame->SetProgTimer(GF_FALSE);
-	pFrame->m_wndToolBar.SetButtonInfo(5, ID_FILE_PLAY, TBBS_BUTTON, 3);
+	//pFrame->m_wndToolBar.SetButtonInfo(2, ID_FILE_PLAY, TBBS_BUTTON, 3);
 	start_mode = 2;
 }
 
-void Osmo4::OnUpdateFileStop(CCmdUI* pCmdUI)
+void Osmo4::OnUpdateFileStop(CCmdUI* pCmdUI) 
 {
-//	pCmdUI->Enable(m_isopen);
+//	pCmdUI->Enable(m_isopen);	
 }
 
-void Osmo4::OnSwitchRender()
+void Osmo4::OnFileExtract() 
 {
-	const char *opt = gf_cfg_get_key(m_user.config, "Compositor", "OpenGLMode");
-	Bool use_gl = (opt && !stricmp(opt, "always")) ? GF_TRUE : GF_FALSE;
-	gf_cfg_set_key(m_user.config, "Compositor", "OpenGLMode", use_gl ? "disable" : "always");
+	CMainFrame *pFrame = (CMainFrame *) m_pMainWnd;
+	pFrame->FileExtract();
+}
+
+void Osmo4::OnUpdateFileExtract(CCmdUI* pCmdUI) 
+{
+	pCmdUI->Enable(true);
+}
+
+void Osmo4::OnSwitchRender() 
+{
+	const char *opt = gf_cfg_get_key(m_user.config, "Compositor", "ForceOpenGL");
+	Bool use_gl = (opt && !stricmp(opt, "yes")) ? GF_TRUE : GF_FALSE;
+	gf_cfg_set_key(m_user.config, "Compositor", "ForceOpenGL", use_gl ? "no" : "yes");
 
 	gf_term_set_option(m_term, GF_OPT_USE_OPENGL, !use_gl);
 
 	UpdateRenderSwitch();
 }
 
+
+
+
 void Osmo4::UpdateRenderSwitch()
 {
-	const char *opt = gf_cfg_get_key(m_user.config, "Compositor", "OpenGLMode");
-	if (opt && !stricmp(opt, "disable"))
-		((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(12, ID_SWITCH_RENDER, TBBS_BUTTON, 10);
+	const char *opt = gf_cfg_get_key(m_user.config, "Compositor", "ForceOpenGL");
+	// Maja changed hardcoded button locations
+	/*
+	if (opt && !stricmp(opt, "no"))
+		((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(8, ID_SWITCH_RENDER, TBBS_BUTTON, 7);
 	else
-		((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(12, ID_SWITCH_RENDER, TBBS_BUTTON, 9);
+		((CMainFrame *) m_pMainWnd)->m_wndToolBar.SetButtonInfo(8, ID_SWITCH_RENDER, TBBS_BUTTON, 7);
+		*/
+		
+		}
+
+
+void CAboutDlg::OnBnClickedAboutClose()
+{
+	// TODO: Add your control notification handler code here
+	EndDialog(1); // return 1 for success
+}
+
+void CBetaDlg::OnBnClickedBetaClose()
+{
+	// TODO: Add your control notification handler code here
+	EndDialog(1); // return 1 for success
+}
+
+void Osmo4::OnHelpContact()
+{
+	// TODO: Add your command handler code here
+	CAboutDlg contactDlg;
+	contactDlg.DoModal();
+
+}
+
+
+
+void CAboutDlg::OnEnChangeEdit1()
+{
+	// TODO:  If this is a RICHEDIT control, the control will not
+	// send this notification unless you override the CDialog::OnInitDialog()
+	// function and call CRichEditCtrl().SetEventMask()
+	// with the ENM_CHANGE flag ORed into the mask.
+	
+	// TODO:  Add your control notification handler code here
 }
