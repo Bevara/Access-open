@@ -50,10 +50,10 @@ BEGIN_MESSAGE_MAP(COptions, CDialog)
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
 
-BOOL COptions::OnInitDialog()
+BOOL COptions::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
-
+	
 	m_general.Create(IDD_OPT_GEN, this);
 	m_systems.Create(IDD_OPT_SYSTEMS, this);
 	m_render.Create(IDD_OPT_RENDER, this);
@@ -69,20 +69,20 @@ BOOL COptions::OnInitDialog()
 	m_files.Create(IDD_OPT_FILETYPES, this);
 	m_logs.Create(IDD_OPT_LOGS, this);
 
-	m_Selector.AddString("General");
-	m_Selector.AddString("MPEG-4 Systems");
-	m_Selector.AddString("Media Decoders");
-	m_Selector.AddString("Compositor");
-	m_Selector.AddString("2D Drawing");
-	m_Selector.AddString("3D Drawing");
-	m_Selector.AddString("Video Output");
-	m_Selector.AddString("Audio Output");
-	m_Selector.AddString("Text Engine");
-	m_Selector.AddString("File Download");
-	m_Selector.AddString("Real-Time Streaming");
-	m_Selector.AddString("Streaming Cache");
-	m_Selector.AddString("File Types");
-	m_Selector.AddString("Log System");
+	m_Selector.AddString(_T("General"));
+	m_Selector.AddString(_T("MPEG-4 Systems"));
+	m_Selector.AddString(_T("Media Decoders"));
+	m_Selector.AddString(_T("Compositor"));
+	m_Selector.AddString(_T("2D Drawing"));
+	m_Selector.AddString(_T("3D Drawing"));
+	m_Selector.AddString(_T("Video Output"));
+	m_Selector.AddString(_T("Audio Output"));
+	m_Selector.AddString(_T("Text Engine"));
+	m_Selector.AddString(_T("File Download"));
+	m_Selector.AddString(_T("Real-Time Streaming"));
+	m_Selector.AddString(_T("Streaming Cache"));
+	m_Selector.AddString(_T("File Types"));
+	m_Selector.AddString(_T("Log System"));
 
 	HideAll();
 
@@ -91,10 +91,10 @@ BOOL COptions::OnInitDialog()
 	if (sel>13) sel=13;
 	m_Selector.SetCurSel(sel);
 	m_general.ShowWindow(SW_SHOW);
-
+	
 	OnSelchangeSelect();
 
-	return TRUE;
+	return TRUE;  
 }
 
 
@@ -120,56 +120,28 @@ void COptions::HideAll()
 	m_logs.ShowWindow(SW_HIDE);
 }
 
-void COptions::OnSelchangeSelect()
+void COptions::OnSelchangeSelect() 
 {
 	HideAll();
 	switch (m_Selector.GetCurSel()) {
-	case 0:
-		m_general.ShowWindow(SW_SHOW);
-		break;
-	case 1:
-		m_systems.ShowWindow(SW_SHOW);
-		break;
-	case 2:
-		m_decoder.ShowWindow(SW_SHOW);
-		break;
-	case 3:
-		m_render.ShowWindow(SW_SHOW);
-		break;
-	case 4:
-		m_render2d.ShowWindow(SW_SHOW);
-		break;
-	case 5:
-		m_render3d.ShowWindow(SW_SHOW);
-		break;
-	case 6:
-		m_video.ShowWindow(SW_SHOW);
-		break;
-	case 7:
-		m_audio.ShowWindow(SW_SHOW);
-		break;
-	case 8:
-		m_font.ShowWindow(SW_SHOW);
-		break;
-	case 9:
-		m_http.ShowWindow(SW_SHOW);
-		break;
-	case 10:
-		m_stream.ShowWindow(SW_SHOW);
-		break;
-	case 11:
-		m_cache.ShowWindow(SW_SHOW);
-		break;
-	case 12:
-		m_files.ShowWindow(SW_SHOW);
-		break;
-	case 13:
-		m_logs.ShowWindow(SW_SHOW);
-		break;
+	case 0: m_general.ShowWindow(SW_SHOW); break;
+	case 1: m_systems.ShowWindow(SW_SHOW); break;
+	case 2: m_decoder.ShowWindow(SW_SHOW); break;
+	case 3: m_render.ShowWindow(SW_SHOW); break;
+	case 4: m_render2d.ShowWindow(SW_SHOW); break;
+	case 5: m_render3d.ShowWindow(SW_SHOW); break;
+	case 6: m_video.ShowWindow(SW_SHOW); break;
+	case 7: m_audio.ShowWindow(SW_SHOW); break;
+	case 8: m_font.ShowWindow(SW_SHOW); break;
+	case 9: m_http.ShowWindow(SW_SHOW); break;
+	case 10: m_stream.ShowWindow(SW_SHOW); break;
+	case 11: m_cache.ShowWindow(SW_SHOW); break;
+	case 12: m_files.ShowWindow(SW_SHOW); break;
+	case 13: m_logs.ShowWindow(SW_SHOW); break;
 	}
 }
 
-void COptions::OnSaveopt()
+void COptions::OnSaveopt() 
 {
 	m_general.SaveOptions();
 	m_systems.SaveOptions();
@@ -190,7 +162,7 @@ void COptions::OnSaveopt()
 	m_render2d.SetYUV();
 }
 
-void COptions::OnClose()
+void COptions::OnClose() 
 {
 	char str[20];
 	sprintf(str, "%d", m_Selector.GetCurSel());
@@ -199,7 +171,7 @@ void COptions::OnClose()
 	DestroyWindow();
 }
 
-void COptions::OnDestroy()
+void COptions::OnDestroy() 
 {
 	CDialog::OnDestroy();
 	delete this;
@@ -238,13 +210,13 @@ END_MESSAGE_MAP()
 
 
 
-BOOL COptGen::OnInitDialog()
+BOOL COptGen::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
 
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
-
+	
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "General", "Loop");
 	m_Loop.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "General", "LookForSubtitles");
@@ -255,7 +227,7 @@ BOOL COptGen::OnInitDialog()
 	m_ViewXMT.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "General", "SingleInstance");
 	m_SingleInstance.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
-	return TRUE;
+	return TRUE; 
 }
 
 void COptGen::SaveOptions()
@@ -278,7 +250,7 @@ COptSystems::COptSystems(CWnd* pParent /*=NULL*/)
 	: CDialog(COptSystems::IDD, pParent)
 {
 	//{{AFX_DATA_INIT(COptSystems)
-	// NOTE: the ClassWizard will add member initialization here
+		// NOTE: the ClassWizard will add member initialization here
 	//}}AFX_DATA_INIT
 }
 
@@ -307,10 +279,10 @@ END_MESSAGE_MAP()
 
 
 
-BOOL COptSystems::OnInitDialog()
+BOOL COptSystems::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
 
@@ -318,26 +290,26 @@ BOOL COptSystems::OnInitDialog()
 	if (!sOpt) sOpt = "eng";
 	s32 select = 0;
 	while (m_Lang.GetCount()) m_Lang.DeleteString(0);
-	u32 i, count = gf_lang_get_count();
-	for (i=0; i<count; i++) {
-		const char *n2c = gf_lang_get_2cc(i);
-		const char *n3c = gf_lang_get_3cc(i);
-
-		m_Lang.AddString(gf_lang_get_name(i) );
-		if (sOpt && n3c && !stricmp(sOpt, n3c))
-			select = m_Lang.GetCount() - 1;
+	s32 i = 0;
+	while (GF_ISO639_Lang[i]) {
+		/*only use common languages (having both 2- and 3-char code names)*/
+		if (GF_ISO639_Lang[i+2][0]) {
+			m_Lang.AddString(CString(GF_ISO639_Lang[i]));
+			if (sOpt && !stricmp(sOpt, GF_ISO639_Lang[i+1])) select = m_Lang.GetCount() - 1;
+		}
+		i += 3;
 	}
 	m_Lang.SetCurSel(select);
 
-
+	
 	/*system config*/
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Systems", "ThreadingPolicy");
 	select = 0;
 	while (m_Threading.GetCount()) m_Threading.DeleteString(0);
-	m_Threading.AddString("Single Thread");
-	m_Threading.AddString("Mutli Thread");
+	m_Threading.AddString(_T("Single Thread"));
+	m_Threading.AddString(_T("Mutli Thread"));
 	if (sOpt && !stricmp(sOpt, "Multi")) select = 1;
-	m_Threading.AddString("Free");
+	m_Threading.AddString(_T("Free"));
 	if (sOpt && !stricmp(sOpt, "Free")) select = 2;
 	m_Threading.SetCurSel(select);
 
@@ -355,8 +327,8 @@ BOOL COptSystems::OnInitDialog()
 		m_LateFramesAlwaysDrawn.SetCheck(0);
 	}
 
-
-	return TRUE;
+	
+	return TRUE; 
 }
 
 
@@ -366,10 +338,17 @@ void COptSystems::SaveOptions()
 
 	s32 sel = m_Lang.GetCurSel();
 	u32 i=0;
-
-	gf_cfg_set_key(gpac->m_user.config, "Systems", "LanguageName", gf_lang_get_name(i) );
-	gf_cfg_set_key(gpac->m_user.config, "Systems", "Language3CC", gf_lang_get_3cc(i) );
-	gf_cfg_set_key(gpac->m_user.config, "Systems", "Language2CC", gf_lang_get_2cc(i) );
+	while (GF_ISO639_Lang[i]) {
+		/*only use common languages (having both 2- and 3-char code names)*/
+		if (GF_ISO639_Lang[i+2][0]) {
+			if (!sel) break;
+			sel--;
+		}
+		i+=3;
+	}
+	gf_cfg_set_key(gpac->m_user.config, "Systems", "LanguageName", GF_ISO639_Lang[i]);
+	gf_cfg_set_key(gpac->m_user.config, "Systems", "Language3CC", GF_ISO639_Lang[i+1]);
+	gf_cfg_set_key(gpac->m_user.config, "Systems", "Language2CC", GF_ISO639_Lang[i+2]);
 
 	sel = m_Threading.GetCurSel();
 	gf_cfg_set_key(gpac->m_user.config, "Systems", "ThreadingPolicy", (sel==0) ? "Single" : ( (sel==1) ? "Multi" : "Free"));
@@ -382,7 +361,7 @@ OptDecoder::OptDecoder(CWnd* pParent /*=NULL*/)
 	: CDialog(OptDecoder::IDD, pParent)
 {
 	//{{AFX_DATA_INIT(OptDecoder)
-	// NOTE: the ClassWizard will add member initialization here
+		// NOTE: the ClassWizard will add member initialization here
 	//}}AFX_DATA_INIT
 }
 
@@ -407,14 +386,14 @@ END_MESSAGE_MAP()
 
 
 
-BOOL OptDecoder::OnInitDialog()
+BOOL OptDecoder::OnInitDialog() 
 {
 	u32 i;
 	const char *sOpt;
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
-
+	
 	/*audio dec enum*/
 	while (m_Audio.GetCount()) m_Audio.DeleteString(0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Systems", "DefAudioDec");
@@ -428,7 +407,7 @@ BOOL OptDecoder::OnInitDialog()
 
 		if (ifce->CanHandleStream(ifce, GF_STREAM_AUDIO, NULL, 0)) {
 			if (sOpt && !stricmp(ifce->module_name, sOpt)) select = to_sel;
-			m_Audio.AddString(ifce->module_name);
+			m_Audio.AddString(CString(ifce->module_name));
 			to_sel++;
 		}
 		gf_modules_close_interface((GF_BaseInterface *)ifce);
@@ -447,23 +426,25 @@ BOOL OptDecoder::OnInitDialog()
 
 		if (ifce->CanHandleStream(ifce, GF_STREAM_VISUAL, NULL, 0)) {
 			if (sOpt && !stricmp(ifce->module_name, sOpt)) select = to_sel;
-			m_Video.AddString(ifce->module_name);
+			m_Video.AddString(CString(ifce->module_name));
 			to_sel++;
 		}
 		gf_modules_close_interface((GF_BaseInterface *)ifce);
 	}
 	m_Video.SetCurSel(select);
-	return TRUE;
+	return TRUE;  
 }
 
 void OptDecoder::SaveOptions()
 {
 	Osmo4 *gpac = GetApp();
-	char str[100];
+	wchar_t str[100];
 	m_Audio.GetWindowText(str, 100);
-	gf_cfg_set_key(gpac->m_user.config, "Systems", "DefAudioDec", str);
+	CT2A str1_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "Systems", "DefAudioDec", str1_ch);
 	m_Video.GetWindowText(str, 100);
-	gf_cfg_set_key(gpac->m_user.config, "Systems", "DefVideoDec", str);
+	CT2A str2_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "Systems", "DefVideoDec", str2_ch);
 
 }
 
@@ -501,7 +482,7 @@ END_MESSAGE_MAP()
 
 
 #define NUM_RATES 11
-static char *BIFSRates[11] =
+static char *BIFSRates[11] = 
 {
 	"5.0",
 	"7.5",
@@ -518,16 +499,16 @@ static char *BIFSRates[11] =
 
 
 
-BOOL COptRender::OnInitDialog()
+BOOL COptRender::OnInitDialog() 
 {
 	s32 i;
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
-
-	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "OpenGLMode");
-	m_Use3DRender.SetCheck( (sOpt && !strcmp(sOpt, "always")) ? 1 : 0);
+	
+	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "ForceOpenGL");
+	m_Use3DRender.SetCheck( (sOpt && !strcmp(sOpt, "yes")) ? 1 : 0);
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "ForceSceneSize");
 	m_ForceSize.SetCheck( (sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
@@ -537,20 +518,20 @@ BOOL COptRender::OnInitDialog()
 	s32 select = 0;
 	while (m_BIFSRate.GetCount()) m_BIFSRate.DeleteString(0);
 	for (i = 0; i<NUM_RATES; i++) {
-		m_BIFSRate.AddString(BIFSRates[i]);
+		m_BIFSRate.AddString(CString(BIFSRates[i]));
 		if (sOpt && !stricmp(sOpt, BIFSRates[i]) ) select = i;
 	}
 	m_BIFSRate.SetCurSel(select);
-
+	
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "HighSpeed");
 	m_HighSpeed.SetCheck( (sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
-
+	
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "AntiAlias");
 	while (m_AntiAlias.GetCount()) m_AntiAlias.DeleteString(0);
 
-	m_AntiAlias.AddString("None");
-	m_AntiAlias.AddString("Text only");
-	m_AntiAlias.AddString("Complete");
+	m_AntiAlias.AddString(_T("None"));
+	m_AntiAlias.AddString(_T("Text only"));
+	m_AntiAlias.AddString(_T("Complete"));
 	select = 2;
 	if (sOpt && !stricmp(sOpt, "Text")) select = 1;
 	else if (sOpt && !stricmp(sOpt, "None")) select = 0;
@@ -567,28 +548,29 @@ BOOL COptRender::OnInitDialog()
 		ifce = gf_modules_load_interface(gpac->m_user.modules, i, GF_RASTER_2D_INTERFACE);
 		if (!ifce) continue;
 		if (sOpt && !stricmp(ifce->module_name, sOpt)) select = to_sel;
-		m_Graphics.AddString(ifce->module_name);
+		m_Graphics.AddString(CString(ifce->module_name));
 		gf_modules_close_interface(ifce);
 		to_sel++;
 	}
 	m_Graphics.SetCurSel(select);
 
 
-	m_DrawBounds.AddString("None");
-	m_DrawBounds.AddString("Box/Rect");
-	m_DrawBounds.AddString("AABB Tree");
+	m_DrawBounds.AddString(_T("None"));
+	m_DrawBounds.AddString(_T("Box/Rect"));
+	m_DrawBounds.AddString(_T("AABB Tree"));
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "BoundingVolume");
 	if (sOpt && !stricmp(sOpt, "Box")) m_DrawBounds.SetCurSel(1);
 	else if (sOpt && !stricmp(sOpt, "AABB")) m_DrawBounds.SetCurSel(2);
 	else m_DrawBounds.SetCurSel(0);
 
-	return TRUE;
+	return TRUE;  
 }
 
 
 Bool COptRender::SaveOptions()
 {
-	char str[50];
+	wchar_t str[50];
+	char str_char[50];
 	Osmo4 *gpac = GetApp();
 
 	gf_cfg_set_key(gpac->m_user.config, "Compositor", "HighSpeed", m_HighSpeed.GetCheck() ? "yes" : "no");
@@ -604,9 +586,10 @@ Bool COptRender::SaveOptions()
 	gf_cfg_set_key(gpac->m_user.config, "Compositor", "BoundingVolume", (sel==2) ? "AABB" : (sel==1) ? "Box" : "None");
 
 	m_Graphics.GetWindowText(str, 50);
-	gf_cfg_set_key(gpac->m_user.config, "Compositor", "Raster2D", str);
+	wcstombs(str_char, str, 50);
+	gf_cfg_set_key(gpac->m_user.config, "Compositor", "Raster2D", str_char);
 
-	gf_cfg_set_key(gpac->m_user.config, "Compositor", "OpenGLMode", m_Use3DRender.GetCheck() ? "always" : "disable");
+	gf_cfg_set_key(gpac->m_user.config, "Compositor", "ForceOpenGL", m_Use3DRender.GetCheck() ? "yes" : "no");
 	return GF_FALSE;
 }
 
@@ -615,7 +598,7 @@ COptRender2D::COptRender2D(CWnd* pParent /*=NULL*/)
 	: CDialog(COptRender2D::IDD, pParent)
 {
 	//{{AFX_DATA_INIT(COptRender2D)
-	// NOTE: the ClassWizard will add member initialization here
+		// NOTE: the ClassWizard will add member initialization here
 	//}}AFX_DATA_INIT
 }
 
@@ -640,10 +623,10 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // COptRender2D message handlers
 
-BOOL COptRender2D::OnInitDialog()
+BOOL COptRender2D::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
 
@@ -659,18 +642,18 @@ BOOL COptRender2D::OnInitDialog()
 	} else {
 		m_Scalable.SetCheck(1);
 	}
-
+	
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "DisableYUV");
 	if (sOpt && !stricmp(sOpt, "yes")) {
 		m_NoYUV.SetCheck(1);
 	} else {
 		m_NoYUV.SetCheck(0);
 	}
-
+	
 	SetYUV();
 
 	return TRUE;  // return TRUE unless you set the focus to a control
-	// EXCEPTION: OCX Property Pages should return FALSE
+	              // EXCEPTION: OCX Property Pages should return FALSE
 }
 
 void COptRender2D::SetYUV()
@@ -678,11 +661,11 @@ void COptRender2D::SetYUV()
 	Osmo4 *gpac = GetApp();
 	u32 yuv_format = gf_term_get_option(gpac->m_term, GF_OPT_YUV_FORMAT);
 	if (!yuv_format) {
-		m_YUVFormat.SetWindowText("(No YUV used)");
+		m_YUVFormat.SetWindowText(_T("(No YUV used)"));
 	} else {
 		char str[100];
 		sprintf(str, "(%s used)", gf_4cc_to_str(yuv_format));
-		m_YUVFormat.SetWindowText(str);
+		m_YUVFormat.SetWindowText(CString(str));
 	}
 }
 
@@ -729,38 +712,38 @@ END_MESSAGE_MAP()
 // COptRender3D message handlers
 
 
-BOOL COptRender3D::OnInitDialog()
+BOOL COptRender3D::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
-
+	
 
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
 
-	m_DrawNormals.AddString("Never");
-	m_DrawNormals.AddString("Per Face");
-	m_DrawNormals.AddString("Per Vertex");
+	m_DrawNormals.AddString(_T("Never"));
+	m_DrawNormals.AddString(_T("Per Face"));
+	m_DrawNormals.AddString(_T("Per Vertex"));
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "DrawNormals");
 	if (sOpt && !stricmp(sOpt, "PerFace")) m_DrawNormals.SetCurSel(1);
 	else if (sOpt && !stricmp(sOpt, "PerVertex")) m_DrawNormals.SetCurSel(2);
 	else m_DrawNormals.SetCurSel(0);
 
-	m_BackCull.AddString("Off");
-	m_BackCull.AddString("On");
-	m_BackCull.AddString("Alpha");
+	m_BackCull.AddString(_T("Off"));
+	m_BackCull.AddString(_T("On"));
+	m_BackCull.AddString(_T("Alpha"));
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "BackFaceCulling");
 	if (sOpt && !stricmp(sOpt, "Off")) m_BackCull.SetCurSel(0);
 	else if (sOpt && !stricmp(sOpt, "Alpha")) m_BackCull.SetCurSel(2);
 	else m_BackCull.SetCurSel(1);
 
-	m_Wireframe.AddString("Solid");
-	m_Wireframe.AddString("Wireframe");
-	m_Wireframe.AddString("Both");
+	m_Wireframe.AddString(_T("Solid"));
+	m_Wireframe.AddString(_T("Wireframe"));
+	m_Wireframe.AddString(_T("Both"));
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "Wireframe");
 	if (sOpt && !stricmp(sOpt, "WireOnly")) m_Wireframe.SetCurSel(1);
 	else if (sOpt && !stricmp(sOpt, "WireOnSolid")) m_Wireframe.SetCurSel(2);
 	else m_Wireframe.SetCurSel(0);
-
+	
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "RasterOutlines");
 	m_RasterOutlines.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
@@ -771,11 +754,11 @@ BOOL COptRender3D::OnInitDialog()
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "BitmapCopyPixels");
 	m_BitmapPixels.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
-
+	
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "DisableRectExt");
 	m_DisableTXRect.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
 	return TRUE;  // return TRUE unless you set the focus to a control
-	// EXCEPTION: OCX Property Pages should return FALSE
+	              // EXCEPTION: OCX Property Pages should return FALSE
 }
 
 void COptRender3D::SaveOptions()
@@ -824,23 +807,24 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // COptVideo message handlers
 
-BOOL COptVideo::OnInitDialog()
+BOOL COptVideo::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
 
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
-
+	
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Video", "SwitchResolution");
 	m_SwitchRes.SetCheck(sOpt && !stricmp(sOpt, "yes") ? 1 : 0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Video", "HardwareMemory");
 	m_UseHWMemory.SetCheck(sOpt && !stricmp(sOpt, "Always") ? 1 : 0);
-
-
+	
+	
 	u32 count = gf_modules_get_count(gpac->m_user.modules);
 	GF_BaseInterface *ifce;
 	s32 to_sel = 0;
 	s32 select = 0;
+
 	/*video drivers enum*/
 	while (m_Videos.GetCount()) m_Videos.DeleteString(0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Video", "DriverName");
@@ -849,25 +833,27 @@ BOOL COptVideo::OnInitDialog()
 		ifce = gf_modules_load_interface(gpac->m_user.modules, i, GF_VIDEO_OUTPUT_INTERFACE);
 		if (!ifce) continue;
 		if (sOpt && !stricmp(ifce->module_name, sOpt)) select = to_sel;
-		m_Videos.AddString(ifce->module_name);
+		m_Videos.AddString(CString(ifce->module_name));
 		gf_modules_close_interface(ifce);
 		to_sel++;
 	}
 	m_Videos.SetCurSel(select);
 
 	return TRUE;
-
+	            
 }
 
 void COptVideo::SaveOptions()
 {
 	Osmo4 *gpac = GetApp();
-	char str[50];
+	wchar_t str[50];
+	char str_ch[50];
 
 	gf_cfg_set_key(gpac->m_user.config, "Video", "SwitchResolution", m_SwitchRes.GetCheck() ? "yes" : "no");
 	gf_cfg_set_key(gpac->m_user.config, "Video", "HardwareMemory", m_UseHWMemory.GetCheck() ? "Always" : "Auto");
 	m_Videos.GetWindowText(str, 50);
-	gf_cfg_set_key(gpac->m_user.config, "Video", "DriverName", str);
+	wcstombs(str_ch, str, 50);
+	gf_cfg_set_key(gpac->m_user.config, "Video", "DriverName", str_ch);
 }
 
 
@@ -906,7 +892,7 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // COptAudio message handlers
 
-BOOL COptAudio::OnInitDialog()
+BOOL COptAudio::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
 
@@ -925,15 +911,15 @@ BOOL COptAudio::OnInitDialog()
 	}
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Audio", "NumBuffers");
 	if (sOpt) {
-		m_AudioEdit.SetWindowText(sOpt);
+		m_AudioEdit.SetWindowText(CString(sOpt));
 	} else {
-		m_AudioEdit.SetWindowText("2");
+		m_AudioEdit.SetWindowText(_T("2"));
 	}
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Audio", "TotalDuration");
 	if (sOpt) {
-		m_AudioDur.SetWindowText(sOpt);
+		m_AudioDur.SetWindowText(CString(sOpt));
 	} else {
-		m_AudioDur.SetWindowText("120");
+		m_AudioDur.SetWindowText(_T("120"));
 	}
 
 	OnForceAudio();
@@ -942,7 +928,7 @@ BOOL COptAudio::OnInitDialog()
 	m_AudioResync.SetCheck( (sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Audio", "DisableMultiChannel");
 	m_AudioMultiCH.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
-
+	
 	/*driver enum*/
 	while (m_DriverList.GetCount()) m_DriverList.DeleteString(0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Audio", "DriverName");
@@ -954,7 +940,7 @@ BOOL COptAudio::OnInitDialog()
 		ifce = gf_modules_load_interface(gpac->m_user.modules, i, GF_AUDIO_OUTPUT_INTERFACE);
 		if (!ifce) continue;
 		if (sOpt && !stricmp(ifce->module_name, sOpt)) select = to_sel;
-		m_DriverList.AddString(ifce->module_name);
+		m_DriverList.AddString(CString(ifce->module_name));
 		gf_modules_close_interface(ifce);
 		to_sel++;
 	}
@@ -964,39 +950,42 @@ BOOL COptAudio::OnInitDialog()
 	if (sOpt && strstr(sOpt, "DirectSound")) m_Notifs.ShowWindow(SW_SHOW);
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Audio", "DisableNotification");
-	if (sOpt && !stricmp(sOpt, "yes"))
+	if (sOpt && !stricmp(sOpt, "yes")) 
 		m_Notifs.SetCheck(1);
 	else
 		m_Notifs.SetCheck(0);
 
-	return TRUE;
+	return TRUE;  
 }
 
 
 void COptAudio::SaveOptions()
 {
 	Osmo4 *gpac = GetApp();
-	char str[50];
+	wchar_t str[50];
 
 	gf_cfg_set_key(gpac->m_user.config, "Audio", "ForceConfig", m_ForceConfig.GetCheck() ? "yes" : "no");
 	gf_cfg_set_key(gpac->m_user.config, "Audio", "NoResync", m_AudioResync.GetCheck() ? "yes" : "no");
 	gf_cfg_set_key(gpac->m_user.config, "Audio", "DisableMultiChannel", m_AudioMultiCH.GetCheck() ? "yes" : "no");
 
 	m_AudioEdit.GetWindowText(str, 20);
-	gf_cfg_set_key(gpac->m_user.config, "Audio", "NumBuffers", str);
+	CT2A str1_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "Audio", "NumBuffers", str1_ch);
 	m_AudioDur.GetWindowText(str, 20);
-	gf_cfg_set_key(gpac->m_user.config, "Audio", "TotalDuration", str);
+	CT2A str2_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "Audio", "TotalDuration", str2_ch);
 
 	m_DriverList.GetWindowText(str, 50);
-	gf_cfg_set_key(gpac->m_user.config, "Audio", "DriverName", str);
+	CT2A str3_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "Audio", "DriverName", str3_ch);
 
-	if (strstr(str, "DirectSound")) {
+	if (wcsstr(str, _T("DirectSound"))) {
 		gf_cfg_set_key(gpac->m_user.config, "Audio", "DisableNotification", m_Notifs.GetCheck() ? "yes" : "no");
 	}
 
 }
 
-void COptAudio::OnForceAudio()
+void COptAudio::OnForceAudio() 
 {
 	BOOL en = m_ForceConfig.GetCheck();
 
@@ -1006,11 +995,11 @@ void COptAudio::OnForceAudio()
 	m_AudioDur.EnableWindow(en);
 }
 
-void COptAudio::OnSelchangeDriverList()
+void COptAudio::OnSelchangeDriverList() 
 {
-	char str[50];
+	wchar_t str[50];
 	m_DriverList.GetWindowText(str, 50);
-	if (strstr(str, "DirectSound")) {
+	if (wcsstr(str, _T("DirectSound"))) {
 		m_Notifs.ShowWindow(SW_SHOW);
 	} else {
 		m_Notifs.ShowWindow(SW_HIDE);
@@ -1048,13 +1037,13 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // COptFont message handlers
 
-BOOL COptFont::OnInitDialog()
+BOOL COptFont::OnInitDialog() 
 {
 	u32 i;
 	GF_BaseInterface *ifce;
-
+	
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
 
@@ -1068,49 +1057,49 @@ BOOL COptFont::OnInitDialog()
 		ifce = gf_modules_load_interface(gpac->m_user.modules, i, GF_FONT_READER_INTERFACE);
 		if (!ifce) continue;
 		if (sOpt && !stricmp(ifce->module_name, sOpt)) select = to_sel;
-		m_Fonts.AddString(ifce->module_name);
+		m_Fonts.AddString(CString(ifce->module_name));
 		gf_modules_close_interface(ifce);
 		to_sel++;
 	}
 	m_Fonts.SetCurSel(select);
-
+	
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "FontEngine", "FontDirectory");
-	if (sOpt) m_BrowseFont.SetWindowText(sOpt);
+	if (sOpt) m_BrowseFont.SetWindowText(CString(sOpt));
 
 	/*text texturing modes*/
 	while (m_TextureModes.GetCount()) m_TextureModes.DeleteString(0);
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Compositor", "TextureTextMode");
-	m_TextureModes.AddString("Default");
-	m_TextureModes.AddString("Never");
-	m_TextureModes.AddString("Always");
+	m_TextureModes.AddString(_T("Default"));
+	m_TextureModes.AddString(_T("Never"));
+	m_TextureModes.AddString(_T("Always"));
 	if (sOpt && !stricmp(sOpt, "3D")) m_TextureModes.SetCurSel(1);
 	else if (sOpt && !stricmp(sOpt, "Always")) m_TextureModes.SetCurSel(2);
 	else m_TextureModes.SetCurSel(0);
 
-	return TRUE;
+	return TRUE;  
 }
 
 
 
-static char szCacheDir[MAX_PATH];
+static wchar_t szCacheDir[MAX_PATH];
 
-static int CALLBACK LocCbck(HWND hwnd, UINT uMsg, LPARAM lp, LPARAM pData)
+static int CALLBACK LocCbck(HWND hwnd, UINT uMsg, LPARAM lp, LPARAM pData) 
 {
-	char dir[MAX_PATH];
+	wchar_t dir[MAX_PATH];
 	if (uMsg == BFFM_INITIALIZED) {
-		strcpy(dir, szCacheDir);
+		wcscpy(dir, szCacheDir);
 		SendMessage(hwnd, BFFM_SETSELECTION, TRUE,(LPARAM) dir);
 	}
 	return 0;
 }
 
-void COptFont::OnBrowseFont()
+void COptFont::OnBrowseFont() 
 {
 	BROWSEINFO brw;
 	LPMALLOC pMalloc;
 	LPITEMIDLIST ret;
-	char dir[MAX_PATH];
+	wchar_t dir[MAX_PATH];
 
 	if (NOERROR == ::SHGetMalloc(&pMalloc) ) {
 
@@ -1119,7 +1108,7 @@ void COptFont::OnBrowseFont()
 		memset(&brw, 0, sizeof(BROWSEINFO));
 		brw.hwndOwner = this->GetSafeHwnd();
 		brw.pszDisplayName = dir;
-		brw.lpszTitle = "Select Font Directory...";
+		brw.lpszTitle = _T("Select Font Directory...");
 		brw.ulFlags = 0L;
 		brw.lpfn = LocCbck;
 
@@ -1138,22 +1127,18 @@ void COptFont::OnBrowseFont()
 void COptFont::SaveOptions()
 {
 	Osmo4 *gpac = GetApp();
-	char str[MAX_PATH];
-
+	wchar_t str[MAX_PATH];
+		
 	m_Fonts.GetWindowText(str, 50);
-	gf_cfg_set_key(gpac->m_user.config, "FontEngine", "FontReader", str);
+	CT2A str1_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "FontEngine", "FontReader", str1_ch);
 	m_BrowseFont.GetWindowText(str, 50);
-	gf_cfg_set_key(gpac->m_user.config, "FontEngine", "FontDirectory", str);
+	CT2A str2_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "FontEngine", "FontDirectory", str2_ch);
 	switch (m_TextureModes.GetCurSel()) {
-	case 2:
-		gf_cfg_set_key(gpac->m_user.config, "Compositor", "TextureTextMode", "Always");
-		break;
-	case 1:
-		gf_cfg_set_key(gpac->m_user.config, "Compositor", "TextureTextMode", "Never");
-		break;
-	default:
-		gf_cfg_set_key(gpac->m_user.config, "Compositor", "TextureTextMode", "Default");
-		break;
+	case 2: gf_cfg_set_key(gpac->m_user.config, "Compositor", "TextureTextMode", "Always"); break;
+	case 1: gf_cfg_set_key(gpac->m_user.config, "Compositor", "TextureTextMode", "Never"); break;
+	default: gf_cfg_set_key(gpac->m_user.config, "Compositor", "TextureTextMode", "Default"); break;
 	}
 }
 
@@ -1194,12 +1179,12 @@ END_MESSAGE_MAP()
 // COptHTTP message handlers
 
 
-void COptHTTP::OnBrowseCache()
+void COptHTTP::OnBrowseCache() 
 {
 	BROWSEINFO brw;
 	LPMALLOC pMalloc;
 	LPITEMIDLIST ret;
-	char dir[MAX_PATH];
+	wchar_t dir[MAX_PATH];
 
 	if (NOERROR == ::SHGetMalloc(&pMalloc) ) {
 
@@ -1208,7 +1193,7 @@ void COptHTTP::OnBrowseCache()
 		memset(&brw, 0, sizeof(BROWSEINFO));
 		brw.hwndOwner = this->GetSafeHwnd();
 		brw.pszDisplayName = dir;
-		brw.lpszTitle = "Select HTTP Cache Directory...";
+		brw.lpszTitle = _T("Select HTTP Cache Directory...");
 		brw.ulFlags = 0L;
 		brw.lpfn = LocCbck;
 
@@ -1223,16 +1208,16 @@ void COptHTTP::OnBrowseCache()
 	}
 }
 
-BOOL COptHTTP::OnInitDialog()
+BOOL COptHTTP::OnInitDialog() 
 {
 	char proxy[GF_MAX_PATH];
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "General", "CacheDirectory");
-	if (sOpt) m_CacheDir.SetWindowText(sOpt);
+	if (sOpt) m_CacheDir.SetWindowText(CString(sOpt));
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Downloader", "CleanCache");
 	m_CleanCache.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 1 : 0);
@@ -1246,9 +1231,9 @@ BOOL COptHTTP::OnInitDialog()
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "SAXLoader", "MaxDuration");
 	if (sOpt) {
-		m_SAXDuration.SetWindowText(sOpt);
+		m_SAXDuration.SetWindowText(CString(sOpt));
 	} else {
-		m_SAXDuration.SetWindowText("0");
+		m_SAXDuration.SetWindowText(_T("0"));
 	}
 	//if (m_Progressive.GetCheck()) m_SAXDuration.EnableWindow(1);
 
@@ -1265,11 +1250,11 @@ BOOL COptHTTP::OnInitDialog()
 			strcat(proxy, sOpt);
 		}
 	}
-	m_ProxyName.SetWindowText(proxy);
-	return TRUE;
+	m_ProxyName.SetWindowText(CString(proxy));
+	return TRUE; 
 }
 
-void COptHTTP::OnSaxProgressive()
+void COptHTTP::OnSaxProgressive() 
 {
 	if (m_Progressive.GetCheck()) {
 		m_SAXDuration.EnableWindow(1);
@@ -1279,7 +1264,7 @@ void COptHTTP::OnSaxProgressive()
 }
 
 
-void COptHTTP::OnUseProxy()
+void COptHTTP::OnUseProxy() 
 {
 	if (m_useProxy.GetCheck()) {
 		m_ProxyName.EnableWindow(1);
@@ -1291,28 +1276,29 @@ void COptHTTP::OnUseProxy()
 void COptHTTP::SaveOptions()
 {
 	Osmo4 *gpac = GetApp();
-
+	CT2A szCacheDir_ch(szCacheDir);
 	gf_cfg_set_key(gpac->m_user.config, "Downloader", "CleanCache", m_CleanCache.GetCheck() ? "yes" : "no");
 	gf_cfg_set_key(gpac->m_user.config, "Downloader", "DisableCache", m_DisableCache.GetCheck() ? "yes" : "no");
 	gf_cfg_set_key(gpac->m_user.config, "SAXLoader", "Progressive", m_Progressive.GetCheck() ? "yes" : "no");
 
 	m_SAXDuration.GetWindowText(szCacheDir, MAX_PATH);
-	gf_cfg_set_key(gpac->m_user.config, "SAXLoader", "MaxDuration", szCacheDir);
+	gf_cfg_set_key(gpac->m_user.config, "SAXLoader", "MaxDuration", szCacheDir_ch);
 
 	gf_cfg_set_key(gpac->m_user.config, "HTTPProxy", "Enabled", m_useProxy.GetCheck() ? "yes" : "no");
 	m_ProxyName.GetWindowText(szCacheDir, MAX_PATH);
-	char *sep = strrchr(szCacheDir, ':');
+	char *sep = strrchr(szCacheDir_ch, ':');
 	if (sep) {
 		sep[0] = 0;
-		gf_cfg_set_key(gpac->m_user.config, "HTTPProxy", "Name", szCacheDir);
+		gf_cfg_set_key(gpac->m_user.config, "HTTPProxy", "Name", szCacheDir_ch);
 		sep[0] = ':';
 		gf_cfg_set_key(gpac->m_user.config, "HTTPProxy", "Port", sep+1);
 	} else {
-		gf_cfg_set_key(gpac->m_user.config, "HTTPProxy", "Name", szCacheDir);
+		gf_cfg_set_key(gpac->m_user.config, "HTTPProxy", "Name", szCacheDir_ch);
 		gf_cfg_set_key(gpac->m_user.config, "HTTPProxy", "Port", NULL);
 	}
 	m_CacheDir.GetWindowText(szCacheDir, MAX_PATH);
-	gf_cfg_set_key(gpac->m_user.config, "General", "CacheDirectory", szCacheDir);
+	CT2A szCacheDir_ch2 (szCacheDir);
+	gf_cfg_set_key(gpac->m_user.config, "General", "CacheDirectory", szCacheDir_ch2);
 }
 
 
@@ -1352,7 +1338,7 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // COptStream message handlers
 
-BOOL COptStream::OnInitDialog()
+BOOL COptStream::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
 
@@ -1360,10 +1346,10 @@ BOOL COptStream::OnInitDialog()
 	const char *sOpt;
 
 	while (m_Port.GetCount()) m_Port.DeleteString(0);
-	m_Port.AddString("554 (RTSP standard)");
-	m_Port.AddString("7070 (RTSP ext)");
-	m_Port.AddString("80 (RTSP / HTTP tunnel)");
-	m_Port.AddString("8080 (RTSP / HTTP tunnel)");
+	m_Port.AddString(_T("554 (RTSP standard)"));
+	m_Port.AddString(_T("7070 (RTSP ext)"));
+	m_Port.AddString(_T("80 (RTSP / HTTP tunnel)"));
+	m_Port.AddString(_T("8080 (RTSP / HTTP tunnel)"));
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Streaming", "DefaultPort");
 	u32 port = 554;
@@ -1409,36 +1395,36 @@ BOOL COptStream::OnInitDialog()
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Streaming", "RTSPTimeout");
 	if (sOpt) {
-		m_Timeout.SetWindowText(sOpt);
+		m_Timeout.SetWindowText(CString(sOpt));
 	} else {
-		m_Timeout.SetWindowText("30000");
+		m_Timeout.SetWindowText(_T("30000"));
 	}
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Network", "BufferLength");
 	if (sOpt) {
-		m_Buffer.SetWindowText(sOpt);
+		m_Buffer.SetWindowText(CString(sOpt));
 	} else {
-		m_Buffer.SetWindowText("3000");
+		m_Buffer.SetWindowText(_T("3000"));
 	}
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "Network", "RebufferLength");
 	u32 buf_len = 0;
 	if (sOpt) buf_len = atoi(sOpt);
 	if (buf_len) {
-		m_RebufferLen.SetWindowText(sOpt);
+		m_RebufferLen.SetWindowText(CString(sOpt));
 		m_Rebuffer.SetCheck(1);
 		m_RebufferLen.EnableWindow(1);
 	} else {
-		m_RebufferLen.SetWindowText("0");
+		m_RebufferLen.SetWindowText(_T("0"));
 		m_Rebuffer.SetCheck(0);
 		m_RebufferLen.EnableWindow(0);
 	}
 
-	return TRUE;
+	return TRUE;  
 }
 
 
-void COptStream::OnSelchangePort()
+void COptStream::OnSelchangePort() 
 {
 	s32 sel = m_Port.GetCurSel();
 	switch (sel) {
@@ -1459,7 +1445,7 @@ void COptStream::OnSelchangePort()
 	}
 }
 
-void COptStream::OnRtsp()
+void COptStream::OnRtsp() 
 {
 	if (m_UseRTSP.GetCheck()) {
 		m_Reorder.SetCheck(0);
@@ -1468,25 +1454,25 @@ void COptStream::OnRtsp()
 		m_Reorder.SetCheck(1);
 		m_Reorder.EnableWindow(1);
 	}
-
+	
 }
 
 void COptStream::CheckRebuffer()
 {
-	char str[50];
+	wchar_t str[50];
 	s32 buf, rebuf;
 	m_Buffer.GetWindowText(str, 50);
-	buf = atoi(str);
+	buf = _wtoi(str);
 	m_RebufferLen.GetWindowText(str, 50);
-	rebuf = atoi(str);
+	rebuf = _wtoi(str);
 	if (rebuf*2 > buf) {
 		rebuf = buf/2;
-		sprintf(str, "%d", rebuf);
+		wsprintf(str, _T("%d"), rebuf);
 		m_RebufferLen.SetWindowText(str);
 	}
 }
 
-void COptStream::OnRebuffer()
+void COptStream::OnRebuffer() 
 {
 	if (!m_Rebuffer.GetCheck()) {
 		m_RebufferLen.EnableWindow(0);
@@ -1496,14 +1482,14 @@ void COptStream::OnRebuffer()
 	}
 }
 
-void COptStream::OnUpdateRebufferLen()
+void COptStream::OnUpdateRebufferLen() 
 {
 	CheckRebuffer();
 }
 
-void COptStream::OnUpdateBuffer()
+void COptStream::OnUpdateBuffer() 
 {
-	CheckRebuffer();
+	CheckRebuffer();	
 }
 
 void COptStream::SaveOptions()
@@ -1535,16 +1521,19 @@ void COptStream::SaveOptions()
 		if (!m_UseRTSP.GetCheck()) gf_cfg_set_key(gpac->m_user.config, "Streaming", "ReorderSize", m_Reorder.GetCheck() ? "30" : "0");
 	}
 
-	char str[50];
+	wchar_t str[50];
 
 	m_Timeout.GetWindowText(str, 50);
-	gf_cfg_set_key(gpac->m_user.config, "Streaming", "RTSPTimeout", str);
+	CT2A str1_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "Streaming", "RTSPTimeout", str1_ch);
 
 	m_Buffer.GetWindowText(str, 50);
-	gf_cfg_set_key(gpac->m_user.config, "Network", "BufferLength", str);
+	CT2A str2_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "Network", "BufferLength", str2_ch);
 	if (m_Rebuffer.GetCheck()) {
 		m_RebufferLen.GetWindowText(str, 50);
-		gf_cfg_set_key(gpac->m_user.config, "Network", "RebufferLength", str);
+		CT2A str3_ch(str);
+		gf_cfg_set_key(gpac->m_user.config, "Network", "RebufferLength", str3_ch);
 	} else {
 		gf_cfg_set_key(gpac->m_user.config, "Network", "RebufferLength", "0");
 	}
@@ -1557,7 +1546,7 @@ COptMCache::COptMCache(CWnd* pParent /*=NULL*/)
 	: CDialog(COptMCache::IDD, pParent)
 {
 	//{{AFX_DATA_INIT(COptMCache)
-	// NOTE: the ClassWizard will add member initialization here
+		// NOTE: the ClassWizard will add member initialization here
 	//}}AFX_DATA_INIT
 }
 
@@ -1584,12 +1573,12 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // COptMCache message handlers
 
-void COptMCache::OnBrowseMcache()
+void COptMCache::OnBrowseMcache() 
 {
 	BROWSEINFO brw;
 	LPMALLOC pMalloc;
 	LPITEMIDLIST ret;
-	char dir[MAX_PATH];
+	wchar_t dir[MAX_PATH];
 
 	if (NOERROR == ::SHGetMalloc(&pMalloc) ) {
 
@@ -1598,7 +1587,7 @@ void COptMCache::OnBrowseMcache()
 		memset(&brw, 0, sizeof(BROWSEINFO));
 		brw.hwndOwner = this->GetSafeHwnd();
 		brw.pszDisplayName = dir;
-		brw.lpszTitle = "Select HTTP Cache Directory...";
+		brw.lpszTitle = _T("Select HTTP Cache Directory...");
 		brw.ulFlags = 0L;
 		brw.lpfn = LocCbck;
 
@@ -1613,16 +1602,16 @@ void COptMCache::OnBrowseMcache()
 	}
 }
 
-BOOL COptMCache::OnInitDialog()
+BOOL COptMCache::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
 	const char *sOpt;
-
+	
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "StreamingCache", "RecordDirectory");
 	if (!sOpt) sOpt = gf_cfg_get_key(gpac->m_user.config, "General", "CacheDirectory");
-	if (sOpt) m_RecDir.SetWindowText(sOpt);
+	if (sOpt) m_RecDir.SetWindowText(CString(sOpt));
 
 	sOpt = gf_cfg_get_key(gpac->m_user.config, "StreamingCache", "KeepExistingFiles");
 	m_Overwrite.SetCheck((sOpt && !stricmp(sOpt, "yes")) ? 0 : 1);
@@ -1631,23 +1620,23 @@ BOOL COptMCache::OnInitDialog()
 	if (sOpt) {
 		m_UseBase.SetCheck(1);
 		m_BaseName.EnableWindow(TRUE);
-		m_BaseName.SetWindowText(sOpt);
+		m_BaseName.SetWindowText(CString(sOpt));
 	} else {
 		m_UseBase.SetCheck(0);
 		m_BaseName.EnableWindow(FALSE);
-		m_BaseName.SetWindowText("uses service URL");
+		m_BaseName.SetWindowText(_T("uses service URL"));
 	}
 	return TRUE;
 }
 
-void COptMCache::OnMcacheUsename()
+void COptMCache::OnMcacheUsename() 
 {
 	if (m_UseBase.GetCheck()) {
 		m_BaseName.EnableWindow(TRUE);
-		m_BaseName.SetWindowText("record");
+		m_BaseName.SetWindowText(_T("record"));
 	} else {
 		m_BaseName.EnableWindow(FALSE);
-		m_BaseName.SetWindowText("uses service URL");
+		m_BaseName.SetWindowText(_T("uses service URL"));
 	}
 }
 
@@ -1658,12 +1647,14 @@ void COptMCache::SaveOptions()
 	gf_cfg_set_key(gpac->m_user.config, "StreamingCache", "KeepExistingFiles", m_Overwrite.GetCheck() ? "no" : "yes");
 	if (m_UseBase.GetCheck()) {
 		m_BaseName.GetWindowText(szCacheDir, MAX_PATH);
-		gf_cfg_set_key(gpac->m_user.config, "StreamingCache", "BaseFileName", szCacheDir);
+		CT2A szCacheDir_ch(szCacheDir);
+		gf_cfg_set_key(gpac->m_user.config, "StreamingCache", "BaseFileName", szCacheDir_ch);
 	} else {
 		gf_cfg_set_key(gpac->m_user.config, "StreamingCache", "BaseFileName", NULL);
 	}
 	m_RecDir.GetWindowText(szCacheDir, MAX_PATH);
-	gf_cfg_set_key(gpac->m_user.config, "StreamingCache", "RecordDirectory", szCacheDir);
+	CT2A szCacheDir2_ch(szCacheDir);
+	gf_cfg_set_key(gpac->m_user.config, "StreamingCache", "RecordDirectory", szCacheDir2_ch);
 }
 
 
@@ -1671,7 +1662,7 @@ OptFiles::OptFiles(CWnd* pParent /*=NULL*/)
 	: CDialog(OptFiles::IDD, pParent)
 {
 	//{{AFX_DATA_INIT(OptFiles)
-	// NOTE: the ClassWizard will add member initialization here
+		// NOTE: the ClassWizard will add member initialization here
 	//}}AFX_DATA_INIT
 }
 
@@ -1699,10 +1690,10 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // OptFiles message handlers
 
-BOOL OptFiles::OnInitDialog()
+BOOL OptFiles::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
-
+	
 	Osmo4 *gpac = GetApp();
 	u32 count, i;
 
@@ -1721,14 +1712,14 @@ BOOL OptFiles::OnInitDialog()
 		sKey = strchr(sDesc, '\"');
 		if (!sKey) continue;
 		sKey[0] = 0;
-		m_FileDescs.AddString(sDesc);
+		m_FileDescs.AddString(CString(sDesc));
 	}
 	m_FileDescs.SetCurSel(0);
 	SetSelection(0);
 	return TRUE;
 }
 
-void OptFiles::OnSelchangeFilelist()
+void OptFiles::OnSelchangeFilelist() 
 {
 	SetSelection(m_FileDescs.GetCurSel());
 }
@@ -1739,7 +1730,7 @@ void OptFiles::SetSelection(u32 sel)
 	char *sMime, *sKey, sDesc[200], sText[200];
 	sMime = (char *) gf_cfg_get_key_name(gpac->m_user.config, "MimeTypes", sel);
 	sprintf(sText, "Mime Type: %s", sMime);
-	m_mimes.SetWindowText(sText);
+	m_mimes.SetWindowText(CString(sText));
 	strcpy(cur_mime, sMime);
 	sMime = (char *) gf_cfg_get_key(gpac->m_user.config, "MimeTypes", sMime);
 	strcpy(sDesc, sMime+1);
@@ -1747,10 +1738,10 @@ void OptFiles::SetSelection(u32 sel)
 	sKey[0] = 0;
 	sprintf(sText, "Extensions: %s", sDesc);
 	strcpy(cur_ext, sDesc);
-	m_extensions.SetWindowText(sText);
+	m_extensions.SetWindowText(CString(sText));
 	sKey = strrchr(sMime, '\"');
 	sprintf(sText, "Module: %s", sKey+2);
-	m_PlugName.SetWindowText(sText);
+	m_PlugName.SetWindowText(CString(sText));
 
 	Bool has_asso, need_asso, go = GF_TRUE;
 	sKey = cur_ext;
@@ -1762,24 +1753,16 @@ void OptFiles::SetSelection(u32 sel)
 		Bool ok;
 		char szExt[50], szReg[60], c;
 		char *tmp = strchr(sKey, ' ');
-		if (!tmp) {
-			go = GF_FALSE;
-		}
-		else {
-			c = tmp[0];
-			tmp[0] = 0;
-		}
+		if (!tmp) { go = GF_FALSE;}
+		else { c = tmp[0]; tmp[0] = 0; }
 		sprintf(szExt, ".%s", sKey);
 		sprintf(szReg, "GPAC\\%s", sKey);
-		if (tmp) {
-			tmp[0] = c;
-			tmp += 1;
-		}
+		if (tmp) { tmp[0] = c; tmp += 1; }
 
-		if (RegOpenKeyEx(HKEY_CLASSES_ROOT, szExt, 0, KEY_READ, &hKey ) == ERROR_SUCCESS) {
+		if (RegOpenKeyEx(HKEY_CLASSES_ROOT, CString(szExt), 0, KEY_READ, &hKey ) == ERROR_SUCCESS) {
 			dwSize = 200;
 			ok = GF_TRUE;
-			if (RegQueryValueEx(hKey, "", NULL, NULL,(unsigned char*) sDesc, &dwSize) != ERROR_SUCCESS) ok = GF_FALSE;
+			if (RegQueryValueEx(hKey,_T(""), NULL, NULL,(unsigned char*) sDesc, &dwSize) != ERROR_SUCCESS) ok = GF_FALSE;
 			RegCloseKey(hKey);
 			if (ok && !stricmp((char *)sDesc, szReg)) has_asso = GF_TRUE;
 			else need_asso = GF_TRUE;
@@ -1793,16 +1776,16 @@ void OptFiles::SetSelection(u32 sel)
 }
 
 
-void OptFiles::OnAssociate()
+void OptFiles::OnAssociate() 
 {
 	char *sKey, sDesc[200];
-	unsigned char szApp[MAX_PATH];
-	unsigned char szIco[MAX_PATH];
+	wchar_t szApp[MAX_PATH];
+	wchar_t szIco[MAX_PATH];
 
-	strcpy((char *) szApp, GetApp()->szApplicationPath);
-	strcpy((char *) szIco, (const char *) szApp);
-	strcat((char *) szIco, "Osmo4.ico");
-	strcat((char *) szApp, "Osmo4.exe \"%L\"");
+	wcscpy(szApp, GetApp()->szApplicationPath);
+	wcscpy(szIco, szApp);
+	wcscat(szIco, _T("BevaraAccess.ico"));
+	wcscat(szApp, _T("BevaraAccess.exe \"%L\""));
 
 	if (m_DoAssociate.GetCheck()) {
 		Bool go = GF_TRUE;
@@ -1814,50 +1797,39 @@ void OptFiles::OnAssociate()
 			Bool ok;
 			char szExt[50], szReg[60], szOld[80], szPath[1024], c;
 			char *tmp = strchr(sKey, ' ');
-			if (!tmp) {
-				go = GF_FALSE;
-			}
-			else {
-				c = tmp[0];
-				tmp[0] = 0;
-			}
+			if (!tmp) { go = GF_FALSE;}
+			else { c = tmp[0]; tmp[0] = 0; }
 			sprintf(szExt, ".%s", sKey);
 			sprintf(szReg, "GPAC\\%s", sKey);
-			if (tmp) {
-				tmp[0] = c;
-				tmp += 1;
-			}
+			if (tmp) { tmp[0] = c; tmp += 1; }
 
-			RegOpenKeyEx(HKEY_CLASSES_ROOT, szExt, 0, 0, &hKey );
+			RegOpenKeyEx(HKEY_CLASSES_ROOT, CString(szExt), 0, 0, &hKey );
 			dwSize = 200;
 			ok = GF_TRUE;
-			if (RegQueryValueEx(hKey, "", NULL, NULL,(unsigned char*) sDesc, &dwSize) != ERROR_SUCCESS) ok = GF_FALSE;
+			if (RegQueryValueEx(hKey, _T(""), NULL, NULL,(unsigned char*) sDesc, &dwSize) != ERROR_SUCCESS) ok = GF_FALSE;
 			RegCloseKey(hKey);
 			strcpy(szOld, "");
 			if (ok && stricmp((char *)sDesc, szReg)) strcpy(szOld, sDesc);
 
-			strcpy(szPath, szReg);
-			strcat(szPath, "\\DefaultIcon");
-			RegCreateKeyEx(HKEY_CLASSES_ROOT, szPath, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
-			RegSetValueEx(hKey, "", 0, REG_SZ, szIco, (DWORD) strlen((const char *) szIco)+1);
+			strcpy(szPath, szReg); strcat(szPath, "\\DefaultIcon");
+			RegCreateKeyEx(HKEY_CLASSES_ROOT, CString(szPath), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
+			RegSetValueEx(hKey, _T(""), 0, REG_SZ, (const BYTE*)szIco, (DWORD) strlen((const char *) szIco)+1);
 			RegCloseKey(hKey);
 
-			strcpy(szPath, szReg);
-			strcat(szPath, "\\Shell\\open\\command");
-			RegCreateKeyEx(HKEY_CLASSES_ROOT, szPath, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
-			RegSetValueEx(hKey, "", 0, REG_SZ, szApp, (DWORD) strlen((const char *) szApp)+1);
+			strcpy(szPath, szReg); strcat(szPath, "\\Shell\\open\\command");
+			RegCreateKeyEx(HKEY_CLASSES_ROOT, CString(szPath), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
+			RegSetValueEx(hKey, _T(""), 0, REG_SZ, (const BYTE*)szApp, (DWORD) strlen((const char *) szApp)+1);
 			RegCloseKey(hKey);
 
 			if (strlen(szOld)) {
-				strcpy(szPath, szReg);
-				strcat(szPath, "\\Backup");
-				RegCreateKeyEx(HKEY_CLASSES_ROOT, szPath, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
-				RegSetValueEx(hKey, "", 0, REG_SZ, (unsigned char *) szOld, (DWORD) strlen((const char *) szIco)+1);
+				strcpy(szPath, szReg); strcat(szPath, "\\Backup");
+				RegCreateKeyEx(HKEY_CLASSES_ROOT, CString(szPath), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
+				RegSetValueEx(hKey, _T(""), 0, REG_SZ, (unsigned char *) szOld, (DWORD) strlen((const char *) szIco)+1);
 				RegCloseKey(hKey);
 			}
 
-			RegCreateKeyEx(HKEY_CLASSES_ROOT, szExt, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
-			RegSetValueEx(hKey, "", 0, REG_SZ, (const unsigned char *) szReg, (DWORD) strlen(szReg)+1);
+			RegCreateKeyEx(HKEY_CLASSES_ROOT, CString(szExt), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
+			RegSetValueEx(hKey, _T(""), 0, REG_SZ, (const unsigned char *) szReg, (DWORD) strlen(szReg)+1);
 			RegCloseKey(hKey);
 
 			sKey = tmp;
@@ -1872,52 +1844,43 @@ void OptFiles::OnAssociate()
 			Bool ok;
 			char szExt[50], szReg[60], szPath[1024], c;
 			char *tmp = strchr(sKey, ' ');
-			if (!tmp) {
-				go = GF_FALSE;
-			}
-			else {
-				c = tmp[0];
-				tmp[0] = 0;
-			}
+			if (!tmp) { go = GF_FALSE;}
+			else { c = tmp[0]; tmp[0] = 0; }
 			sprintf(szExt, ".%s", sKey);
 			sprintf(szReg, "GPAC\\%s", sKey);
-			if (tmp) {
-				tmp[0] = c;
-				tmp += 1;
-			}
+			if (tmp) { tmp[0] = c; tmp += 1; }
 
-			strcpy(szPath, szReg);
-			strcat(szPath, "\\Backup");
-			RegOpenKeyEx(HKEY_CLASSES_ROOT, szPath, 0, 0, &hKey );
+			strcpy(szPath, szReg); strcat(szPath, "\\Backup");
+			RegOpenKeyEx(HKEY_CLASSES_ROOT, CString(szPath), 0, 0, &hKey );
 			dwSize = 200;
 			ok = GF_TRUE;
-			if (RegQueryValueEx(hKey, "", NULL, NULL,(unsigned char*) sDesc, &dwSize) != ERROR_SUCCESS) ok = GF_FALSE;
+			if (RegQueryValueEx(hKey, _T(""), NULL, NULL,(unsigned char*) sDesc, &dwSize) != ERROR_SUCCESS) ok = GF_FALSE;
 			RegCloseKey(hKey);
 			if (ok && strlen((char *)sDesc)) {
-				RegCreateKeyEx(HKEY_CLASSES_ROOT, szExt, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
-				RegSetValueEx(hKey, "", 0, REG_SZ, (unsigned char*) sDesc, (DWORD) strlen((const char *) sDesc)+1);
+				RegCreateKeyEx(HKEY_CLASSES_ROOT, CString(szExt), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwSize);
+				RegSetValueEx(hKey, _T(""), 0, REG_SZ, (unsigned char*) sDesc, (DWORD) strlen((const char *) sDesc)+1);
 				RegCloseKey(hKey);
 			}
 
-			RegOpenKeyEx(HKEY_CLASSES_ROOT, szReg, 0, 0, &hKey );
-			RegDeleteKey(hKey, "Backup");
-			RegDeleteKey(hKey, "DefaultIcon");
-			RegDeleteKey(hKey, "Shell\\open\\command");
-			RegDeleteKey(hKey, "Shell\\open");
-			RegDeleteKey(hKey, "Shell");
+			RegOpenKeyEx(HKEY_CLASSES_ROOT, CString(szReg), 0, 0, &hKey );
+			RegDeleteKey(hKey, _T("Backup"));
+			RegDeleteKey(hKey, _T("DefaultIcon"));
+			RegDeleteKey(hKey, _T("Shell\\open\\command"));
+			RegDeleteKey(hKey, _T("Shell\\open"));
+			RegDeleteKey(hKey, _T("Shell"));
 			RegCloseKey(hKey);
-			RegDeleteKey(HKEY_CLASSES_ROOT, szReg);
+			RegDeleteKey(HKEY_CLASSES_ROOT, CString(szReg));
 
 			sKey = tmp;
 		}
-	}
+	}	
 }
 
 COptLogs::COptLogs(CWnd* pParent /*=NULL*/)
 	: CDialog(COptLogs::IDD, pParent)
 {
 	//{{AFX_DATA_INIT(COptLogs)
-	// NOTE: the ClassWizard will add member initialization here
+		// NOTE: the ClassWizard will add member initialization here
 	//}}AFX_DATA_INIT
 }
 
@@ -1954,28 +1917,18 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // COptLogs message handlers
 
-BOOL COptLogs::OnInitDialog()
+BOOL COptLogs::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
 
 #if 0
 	Osmo4 *gpac = GetApp();
 	switch (gpac->m_log_level) {
-	case GF_LOG_ERROR:
-		m_Level.SetCurSel(1);
-		break;
-	case GF_LOG_WARNING:
-		m_Level.SetCurSel(2);
-		break;
-	case GF_LOG_INFO:
-		m_Level.SetCurSel(3);
-		break;
-	case GF_LOG_DEBUG:
-		m_Level.SetCurSel(4);
-		break;
-	default:
-		m_Level.SetCurSel(0);
-		break;
+	case GF_LOG_ERROR: m_Level.SetCurSel(1); break;
+	case GF_LOG_WARNING: m_Level.SetCurSel(2); break;
+	case GF_LOG_INFO: m_Level.SetCurSel(3); break;
+	case GF_LOG_DEBUG: m_Level.SetCurSel(4); break;
+	default: m_Level.SetCurSel(0); break;
 	}
 
 	m_sync.SetCheck(gpac->m_log_tools & GF_LOG_SYNC);
@@ -2006,73 +1959,45 @@ void COptLogs::SaveOptions()
 	u32 flags = 0;
 
 	switch (m_Level.GetCurSel()) {
-	case 1:
+	case 1: 
 		level = "error";
 		break;
-	case 2:
+	case 2: 
 		level = "warning";
 		break;
-	case 3:
+	case 3: 
 		level = "info";
 		break;
-	case 4:
+	case 4: 
 		level = "debug";
 		break;
-	default:
+	default: 
 		level = "none";
 		break;
 	}
 
-	if (m_sync.GetCheck()) {
-		str +="sync:";
-	}
-	if (m_script.GetCheck()) {
-		str +="script:";
-	}
-	if (m_scene.GetCheck()) {
-		str +="scene:";
-	}
-	if (m_rtp.GetCheck()) {
-		str +="rtp:";
-	}
-	if (m_render.GetCheck()) {
-		str +="compose:";
-	}
-	if (m_parser.GetCheck()) {
-		str +="parser:";
-	}
-	if (m_net.GetCheck()) {
-		str +="network:";
-	}
-	if (m_mmio.GetCheck()) {
-		str +="mmio:";
-	}
-	if (m_media.GetCheck()) {
-		str +="media:";
-	}
-	if (m_core.GetCheck()) {
-		str +="core:";
-	}
-	if (m_container.GetCheck()) {
-		str +="container:";
-	}
-	if (m_compose.GetCheck()) {
-		str +="interact:";
-	}
-	if (m_coding.GetCheck()) {
-		str +="coding:";
-	}
-	if (m_codec.GetCheck()) {
-		str +="codec:";
-	}
-	if (m_author.GetCheck()) {
-		str +="author:";
-	}
+	if (m_sync.GetCheck()) { str +="sync:"; }
+	if (m_script.GetCheck()) { str +="script:"; }
+	if (m_scene.GetCheck()) { str +="scene:"; }
+	if (m_rtp.GetCheck()) { str +="rtp:"; }
+	if (m_render.GetCheck()) { str +="compose:"; }
+	if (m_parser.GetCheck()) { str +="parser:"; }
+	if (m_net.GetCheck()) { str +="network:"; }
+	if (m_mmio.GetCheck()) { str +="mmio:"; }
+	if (m_media.GetCheck()) { str +="media:"; }
+	if (m_core.GetCheck()) { str +="core:"; }
+	if (m_container.GetCheck()) { str +="container:"; }
+	if (m_compose.GetCheck()) { str +="interact:"; }
+	if (m_coding.GetCheck()) { str +="coding:"; }
+	if (m_codec.GetCheck()) { str +="codec:"; }
+	if (m_author.GetCheck()) { str +="author:"; }
 
-	gf_cfg_set_key(gpac->m_user.config, "General", "Logs", str);
+	CT2A str_ch(str);
+	gf_cfg_set_key(gpac->m_user.config, "General", "Logs", str_ch);
 	str += "@";
 	str += level;
-	gf_log_set_tools_levels(str);
+	CT2A str1_ch(str.GetBuffer());
+	gf_log_set_tools_levels(str1_ch);
 }
 
 void COptHTTP::OnBnClickedRestartCache()
