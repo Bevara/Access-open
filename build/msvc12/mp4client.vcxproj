@@ -21,6 +21,7 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A35D99BF-D72D-4F56-99A1-97249B22BCE2}</ProjectGuid>
     <RootNamespace>mp4client</RootNamespace>
+    <ProjectName>decoder_unit</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
@@ -260,6 +261,7 @@
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="..\..\test\decoder_unit\img_unit.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\..\applications\mp4client\mp4client.rc" />
