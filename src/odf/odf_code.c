@@ -1114,6 +1114,10 @@ GF_Err gf_odf_del_dcd(GF_DecoderConfig *dcd)
 		e = gf_odf_delete_descriptor((GF_Descriptor *) dcd->rvc_config);
 		if (e) return e;
 	}
+	if (dcd->bvr_config) {
+		e = gf_odf_delete_descriptor((GF_Descriptor *)dcd->bvr_config);
+		if (e) return e;
+	}
 	e = gf_odf_delete_descriptor_list(dcd->profileLevelIndicationIndexDescriptor);
 	if (e) return e;
 	gf_free(dcd);

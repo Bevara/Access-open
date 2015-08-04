@@ -294,6 +294,8 @@ GF_Err gf_box_dump_ex(void *ptr, FILE * trace, u32 box_4cc)
 		return subs_dump(a, trace);
 	case GF_ISOM_BOX_TYPE_RVCC:
 		return rvcc_dump(a, trace);
+	case GF_ISOM_BOX_TYPE_BVRC:
+		return bvrc_dump(a, trace);
 
 	case GF_ISOM_BOX_TYPE_VOID:
 		return void_dump(a, trace);
@@ -1103,6 +1105,7 @@ GF_Err mp4v_dump(GF_Box *a, FILE * trace)
 	}
 	if (p->pasp) gf_box_dump(p->pasp, trace);
 	if (p->rvcc) gf_box_dump(p->rvcc, trace);
+	if (p->bvrc) gf_box_dump(p->bvrc, trace);
 
 	gf_box_dump_done(NULL, a, trace);
 	fprintf(trace, "</%s>\n", name);
@@ -4266,6 +4269,21 @@ GF_Err rvcc_dump(GF_Box *a, FILE * trace)
 	gf_box_dump_done("RVCConfigurationBox", a, trace);
 	return GF_OK;
 }
+
+
+GF_Err bvrc_dump(GF_Box *a, FILE * trace)
+{
+	GF_BVRConfigurationBox *ptr = (GF_BVRConfigurationBox*)a;
+	if (!a) return GF_BAD_PARAM;
+
+	fprintf(trace, "<BVRConfigurationBox predefined=\"%d\"", ptr->predefined_bvr_config);
+	if (!ptr->predefined_bvr_config) fprintf(trace, " bvr_meta_idx=\"%d\"", ptr->bvr_meta_idx);
+	fprintf(trace, ">\n");
+	DumpBox(a, trace);
+	gf_box_dump_done("BVRConfigurationBox", a, trace);
+	return GF_OK;
+}
+
 
 GF_Err sbgp_dump(GF_Box *a, FILE * trace)
 {

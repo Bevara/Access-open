@@ -747,6 +747,9 @@ GF_Err gf_isom_get_pixel_aspect_ratio(GF_ISOFile *the_file, u32 trackNumber, u32
 /*gets RVC config of given sample description*/
 GF_Err gf_isom_get_rvc_config(GF_ISOFile *movie, u32 track, u32 sampleDescriptionIndex, u16 *rvc_predefined, char **data, u32 *size, const char **mime);
 
+/*gets BVR config of given sample description*/
+GF_Err gf_isom_get_bvr_config(GF_ISOFile *movie, u32 track, u32 sampleDescriptionIndex, u16 *rvc_predefined, char **data, u32 *size, const char **mime);
+
 /*
 	User Data Manipulation (cf write API too)
 */

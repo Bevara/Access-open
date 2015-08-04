@@ -376,6 +376,7 @@ enum
 	GF_ISOM_BOX_TYPE_SUBS	= GF_4CC( 's', 'u', 'b', 's' ),
 
 	GF_ISOM_BOX_TYPE_RVCC	= GF_4CC( 'r', 'v', 'c', 'c' ),
+	GF_ISOM_BOX_TYPE_BVRC	= GF_4CC('b', 'v', 'r', 'c'),
 
 	GF_ISOM_BOX_TYPE_VTTC	= GF_4CC( 'v', 't', 't', 'C' ),
 	GF_ISOM_BOX_TYPE_VTCU	= GF_4CC( 'v', 't', 't', 'c' ),
@@ -867,6 +868,13 @@ typedef struct
 	u32 rvc_meta_idx;
 } GF_RVCConfigurationBox;
 
+typedef struct
+{
+	GF_ISOM_BOX
+	u16 predefined_bvr_config;
+	u32 bvr_meta_idx;
+} GF_BVRConfigurationBox;
+
 #define GF_ISOM_VISUAL_SAMPLE_ENTRY		\
 	GF_ISOM_SAMPLE_ENTRY_FIELDS			\
 	u16 version;						\
@@ -883,7 +891,9 @@ typedef struct
 	s16 color_table_index;				\
 	GF_PixelAspectRatioBox *pasp;		\
 	GF_RVCConfigurationBox *rvcc;		\
- 
+	GF_BVRConfigurationBox *bvrc;		\
+
+
 typedef struct
 {
 	GF_ISOM_VISUAL_SAMPLE_ENTRY
@@ -4058,6 +4068,12 @@ GF_Err tfdt_Size(GF_Box *s);
 GF_Err tfdt_Read(GF_Box *s, GF_BitStream *bs);
 GF_Err tfdt_dump(GF_Box *a, FILE * trace);
 #endif
+
+GF_Box *bvrc_New();
+void bvrc_del(GF_Box *);
+GF_Err bvrc_dump(GF_Box *a, FILE * trace);
+GF_Err bvrc_Read(GF_Box *s, GF_BitStream *bs);
+
 
 GF_Box *rvcc_New();
 void rvcc_del(GF_Box *);

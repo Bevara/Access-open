@@ -1025,6 +1025,24 @@ GF_Err gf_hinter_track_finalize(GF_RTPHinter *tkHint, Bool AddSystemInfo)
 		}
 		gf_isom_sdp_add_track_line(tkHint->file, tkHint->HintTrack, sdpLine);
 	}
+
+	if (esd && esd->decoderConfig && (esd->decoderConfig->bvr_config || esd->decoderConfig->predefined_bvr_config)) {
+		if (esd->decoderConfig->predefined_bvr_config) {
+			sprintf(sdpLine, "a=bvr-config-predef:%d", esd->decoderConfig->predefined_bvr_config);
+		}
+		else {
+			/*TODO : fix temporary ...*/
+			if ((esd->decoderConfig->objectTypeIndication == GPAC_OTI_VIDEO_AVC) || (esd->decoderConfig->objectTypeIndication == GPAC_OTI_VIDEO_SVC)) {
+				sprintf(sdpLine, "a=bvr-config:%s", "http://download.tsi.telecom-paristech.fr/gpac/RVC/rvc_config_avc.xml");
+			}
+			else {
+				sprintf(sdpLine, "a=bvr-config:%s", "http://download.tsi.telecom-paristech.fr/gpac/RVC/rvc_config_sp.xml");
+			}
+		}
+		gf_isom_sdp_add_track_line(tkHint->file, tkHint->HintTrack, sdpLine);
+	}
+
+
 	if (esd) gf_odf_desc_del((GF_Descriptor *)esd);
 
 	gf_isom_set_track_enabled(tkHint->file, tkHint->HintTrack, 1);

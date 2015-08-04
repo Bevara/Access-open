@@ -952,6 +952,11 @@ typedef struct
 	char *rvc_config;
 	u32 rvc_config_size;
 
+	/*bvr config of the stream if carried in SDP*/
+	u16 bvr_predef;
+	char *bvr_config;
+	u32 bvr_config_size;
+
 	/*2 - optional options*/
 
 	/*size of AUs if constant*/

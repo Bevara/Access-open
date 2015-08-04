@@ -3263,6 +3263,30 @@ GF_Err gf_isom_get_rvc_config(GF_ISOFile *movie, u32 track, u32 sampleDescriptio
 	return GF_OK;
 }
 
+
+GF_Err gf_isom_get_bvr_config(GF_ISOFile *movie, u32 track, u32 sampleDescriptionIndex, u16 *bvr_predefined, char **data, u32 *size, const char **mime)
+{
+	GF_MPEGVisualSampleEntryBox *entry;
+	GF_TrackBox *trak;
+
+	if (!bvr_predefined || !data || !size) return GF_BAD_PARAM;
+	*bvr_predefined = 0;
+
+	trak = gf_isom_get_track_from_file(movie, track);
+	if (!trak) return GF_BAD_PARAM;
+
+
+	entry = (GF_MPEGVisualSampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, sampleDescriptionIndex - 1);
+	if (!entry || !entry->bvrc) return GF_BAD_PARAM;
+
+	*bvr_predefined = entry->bvrc->predefined_bvr_config;
+	if (entry->bvrc->bvr_meta_idx) {
+		if (!data || !size) return GF_OK;
+		return gf_isom_extract_meta_item_mem(movie, GF_FALSE, track, entry->bvrc->bvr_meta_idx, data, size, mime);
+	}
+	return GF_OK;
+}
+
 GF_EXPORT
 Bool gf_isom_moov_first(GF_ISOFile *movie)
 {

@@ -129,7 +129,8 @@ Function* getFirstMDFunction(Module* mod, const char* attribute){
 	if (ND) {
 		MDNode* node = ND->getOperand(0);
 		if (node)
-			return cast<Function>(node->getOperand(0));
+			//return cast<Function>(node->getOperand(0));
+			return NULL;
 	}
 
 	return NULL;
