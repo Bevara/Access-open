@@ -129,9 +129,8 @@ Function* getFirstMDFunction(Module* mod, const char* attribute){
 	if (ND) {
 		MDNode* node = ND->getOperand(0);
 		if (node){
-			LLVMContext &Context = getGlobalContext();
-			auto* V = MetadataAsValue::get(Context, node->getOperand(0));
-			if (isa<Function>(V)) return cast<Function>(V);
+			Value* metavalue = cast<ValueAsMetadata>(node->getOperand(0))->getValue();
+			if (isa<Function>(metavalue)) return cast<Function>(metavalue);
 		}
 	}
 
