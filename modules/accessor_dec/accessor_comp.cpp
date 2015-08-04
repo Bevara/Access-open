@@ -128,9 +128,11 @@ Function* getFirstMDFunction(Module* mod, const char* attribute){
 	NamedMDNode* ND = mod->getNamedMetadata(attribute);
 	if (ND) {
 		MDNode* node = ND->getOperand(0);
-		if (node)
-			//return cast<Function>(node->getOperand(0));
-			return NULL;
+		if (node){
+			LLVMContext &Context = getGlobalContext();
+			auto* V = MetadataAsValue::get(Context, node->getOperand(0));
+			if (isa<Function>(V)) return cast<Function>(V);
+		}
 	}
 
 	return NULL;
@@ -139,7 +141,7 @@ Function* getFirstMDFunction(Module* mod, const char* attribute){
 void* getFn(Acc_Comp_s* comp, const char * name){
 	Function* fn = NULL;
 
-	if (!comp || !comp->EE)
+	if (comp && comp->EE)
 		fn = getFirstMDFunction(comp->Mod, name);
 
 	if (!fn) return NULL;
