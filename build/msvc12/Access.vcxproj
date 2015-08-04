@@ -253,6 +253,7 @@
       <ProgramDatabaseFile>$(IntDir)$(ProjectName).pdb</ProgramDatabaseFile>
       <SubSystem>Windows</SubSystem>
       <AdditionalDependencies>libgpac.lib;htmlhelp.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>../../bin/$(Platform)/$(Configuration);../../extra_lib/lib/$(Platform)/$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <Bscmake>
       <SuppressStartupBanner>true</SuppressStartupBanner>

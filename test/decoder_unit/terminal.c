@@ -1107,7 +1107,7 @@ void set_cfg_option(char *opt_string)
 
 static void progress_quiet(const void *cbck, const char *title, u64 done, u64 total) { }
 
-int terminal(char *file)
+int terminal(const char *file)
 {
 	char c;
 	const char *str;
@@ -1125,7 +1125,7 @@ int terminal(char *file)
 	//TODO : clean up
 	int argc = 2;
 	char *argv[2];
-	argv[1] = file;
+	argv[1] = (char*)file;
 
 	Double play_from = 0;
 #ifdef GPAC_MEMORY_TRACKING
