@@ -42,7 +42,7 @@ static GF_Err BV_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 		err = GF_NOT_SUPPORTED;
 		goto error;
 	}
-	llvm_length = esd->decoderConfig->rvc_config->dataLength;
+	llvm_length = esd->decoderConfig->bvr_config->dataLength;
 	if (!llvm_length){
 		err = GF_NOT_SUPPORTED;
 		goto error;
@@ -51,7 +51,7 @@ static GF_Err BV_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 	printf("[Accessor decoder] Bevara decoder can be used! Starting decoder compilation... \n");
 
 	ctx->ES_ID = esd->ESID;
-	llvm_code = esd->decoderConfig->rvc_config->data;
+	llvm_code = esd->decoderConfig->bvr_config->data;
 	llvm_code[llvm_length] = '\0'; //Todo : Copy data and then add the code end
 
 
@@ -96,8 +96,8 @@ static GF_Err BV_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 	}
 
 	//gf_free(llvm_code);
-	esd->decoderConfig->rvc_config->data = NULL;
-	esd->decoderConfig->rvc_config->dataLength = 0;
+	esd->decoderConfig->bvr_config->data = NULL;
+	esd->decoderConfig->bvr_config->dataLength = 0;
 
 	printf("[Accessor decoder] Accessor is ready to be used!\n");
 	return err;
@@ -145,7 +145,7 @@ static GF_Err BV_ProcessData(GF_MediaDecoder *ifcg,
 
 static u32 BV_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, u8 PL)
 {
-	if (esd && esd->decoderConfig && esd->decoderConfig->rvc_config) return GF_CODEC_SUPPORTED;
+	if (esd && esd->decoderConfig && esd->decoderConfig->bvr_config) return GF_CODEC_SUPPORTED;
 	return GF_CODEC_NOT_SUPPORTED;
 }
 
@@ -169,7 +169,7 @@ GF_BaseDecoder *New_BV_Decoder()
 	
 	GF_SAFEALLOC(ifcd, GF_MediaDecoder);
 	GF_SAFEALLOC(dec, Acc_dec);
-	GF_REGISTER_MODULE_INTERFACE(ifcd, GF_MEDIA_DECODER_INTERFACE, "Bevara Decoder", "Bevara Technologies")
+	GF_REGISTER_MODULE_INTERFACE(ifcd, GF_MEDIA_DECODER_INTERFACE, "Accessor Decoder", "Bevara Technologies")
 
 	ifcd->privateStack = dec;
 

@@ -261,6 +261,10 @@ typedef struct
 	u16 predefined_rvc_config;
 	GF_DefaultDescriptor *rvc_config;
 
+	/*placeholder for Bevara decoder config if any*/
+	u16 predefined_bvr_config;
+	GF_DefaultDescriptor *bvr_config;
+
 	GF_List *profileLevelIndicationIndexDescriptor;
 	/*pass through data for some modules*/
 	void *udta;

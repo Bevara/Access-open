@@ -150,6 +150,16 @@ GF_Err gf_codec_add_channel(GF_Codec *codec, GF_Channel *ch)
 			gf_odf_desc_del((GF_Descriptor *)ch->esd->decoderConfig->rvc_config);
 			ch->esd->decoderConfig->rvc_config = NULL;
 		}
+		
+		if (ch->esd->decoderConfig && ch->esd->decoderConfig->bvr_config) {
+			gf_odf_desc_del((GF_Descriptor *)ch->esd->decoderConfig->bvr_config);
+			ch->esd->decoderConfig->bvr_config = NULL;
+		}
+
+		if (ch->esd->decoderConfig && ch->esd->decoderConfig->bvr_config) {
+			gf_odf_desc_del((GF_Descriptor *)ch->esd->decoderConfig->bvr_config);
+			ch->esd->decoderConfig->bvr_config = NULL;
+		}
 
 		if (e) {
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[Codec] Attach Stream failed %s\n", gf_error_to_string(e) ));

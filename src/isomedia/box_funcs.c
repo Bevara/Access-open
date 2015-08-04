@@ -815,7 +815,8 @@ GF_Box *gf_isom_box_new(u32 boxType)
 #endif
 	case GF_ISOM_BOX_TYPE_RVCC:
 		return rvcc_New();
-
+	case GF_ISOM_BOX_TYPE_BVRC:
+		return bvrc_New();
 	case GF_ISOM_BOX_TYPE_PRFT:
 		return prft_New();
 
@@ -1489,6 +1490,9 @@ void gf_isom_box_del(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_RVCC:
 		rvcc_del(a);
 		return;
+	case GF_ISOM_BOX_TYPE_BVRC:
+		bvrc_del(a);
+		return;
 
 	case GF_ISOM_BOX_TYPE_PRFT:
 		prft_del(a);
@@ -1993,6 +1997,8 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 		return subs_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_RVCC:
 		return rvcc_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_BVRC:
+		return bvrc_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_PCRB:
 		return pcrb_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_PRFT:

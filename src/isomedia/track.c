@@ -211,6 +211,31 @@ default_sync:
 		}
 	}
 
+	{
+		u16 bvr_predefined;
+		char *bvr_cfg_data;
+		const char *mime_type;
+		u32 bvr_cfg_size;
+		e = gf_isom_get_bvr_config(moov->mov, track_num, 1, &bvr_predefined, &bvr_cfg_data, &bvr_cfg_size, &mime_type);
+		if (e == GF_OK) {
+			if (bvr_predefined) {
+				esd->decoderConfig->predefined_bvr_config = bvr_predefined;
+			}
+			else {
+				esd->decoderConfig->bvr_config = (GF_DefaultDescriptor *)gf_odf_desc_new(GF_ODF_DSI_TAG);
+				if (mime_type && !strcmp(mime_type, "application/bvr-config+xml+gz")) {
+#if !defined(GPAC_DISABLE_CORE_TOOLS) && !defined(GPAC_DISABLE_ZLIB)
+					gf_gz_decompress_payload(bvr_cfg_data, bvr_cfg_size, &esd->decoderConfig->bvr_config->data, &esd->decoderConfig->bvr_config->dataLength);
+					gf_free(bvr_cfg_data);
+#endif
+				}
+				else {
+					esd->decoderConfig->bvr_config->data = bvr_cfg_data;
+					esd->decoderConfig->bvr_config->dataLength = bvr_cfg_size;
+				}
+			}
+		}
+	}
 
 	/*normally all files shall be stored with predefined=SLPredef_MP4, but of course some are broken (philips)
 	so we just check the ESD_URL. If set, use the given cfg, otherwise always rewrite it*/

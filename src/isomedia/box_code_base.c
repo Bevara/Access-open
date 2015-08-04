@@ -3707,6 +3707,7 @@ void mp4v_del(GF_Box *s)
 
 	if (ptr->pasp) gf_isom_box_del((GF_Box *)ptr->pasp);
 	if (ptr->rvcc) gf_isom_box_del((GF_Box *)ptr->rvcc);
+	if (ptr->bvrc) gf_isom_box_del((GF_Box *)ptr->bvrc);
 
 	gf_free(ptr);
 }
@@ -3753,6 +3754,10 @@ GF_Err mp4v_AddBox(GF_Box *s, GF_Box *a)
 	case GF_ISOM_BOX_TYPE_RVCC:
 		if (ptr->rvcc) ERROR_ON_DUPLICATED_BOX(a, ptr)
 			ptr->rvcc = (GF_RVCConfigurationBox *)a;
+		break;
+	case GF_ISOM_BOX_TYPE_BVRC:
+		if (ptr->bvrc) ERROR_ON_DUPLICATED_BOX(a, ptr)
+			ptr->bvrc = (GF_BVRConfigurationBox *)a;
 		break;
 	default:
 		return gf_isom_box_add_default(s, a);
@@ -3839,6 +3844,11 @@ GF_Err mp4v_Write(GF_Box *s, GF_BitStream *bs)
 		e = gf_isom_box_write((GF_Box *)ptr->rvcc, bs);
 		if (e) return e;
 	}
+
+	if (ptr->bvrc) {
+		e = gf_isom_box_write((GF_Box *)ptr->bvrc, bs);
+		if (e) return e;
+	}
 	return gf_isom_box_array_write(s, ptr->protections, bs);
 }
 
@@ -3900,10 +3910,10 @@ GF_Err mp4v_Size(GF_Box *s)
 		if (e) return e;
 		ptr->size += ptr->pasp->size;
 	}
-	if (ptr->rvcc) {
-		e = gf_isom_box_size((GF_Box *)ptr->rvcc);
+	if (ptr->bvrc) {
+		e = gf_isom_box_size((GF_Box *)ptr->bvrc);
 		if (e) return e;
-		ptr->size += ptr->rvcc->size;
+		ptr->size += ptr->bvrc->size;
 	}
 	return gf_isom_box_array_size(s, ptr->protections);
 }
@@ -8594,6 +8604,29 @@ GF_Err rvcc_Read(GF_Box *s,GF_BitStream *bs)
 	ptr->size -= 2;
 	if (!ptr->predefined_rvc_config) {
 		ptr->rvc_meta_idx = gf_bs_read_u16(bs);
+		ptr->size -= 2;
+	}
+	return GF_OK;
+}
+
+GF_Box *bvrc_New()
+{
+	ISOM_DECL_BOX_ALLOC(GF_BVRConfigurationBox, GF_ISOM_BOX_TYPE_BVRC);
+	return (GF_Box *)tmp;
+}
+
+void bvrc_del(GF_Box *s)
+{
+	gf_free(s);
+}
+
+GF_Err bvrc_Read(GF_Box *s, GF_BitStream *bs)
+{
+	GF_BVRConfigurationBox *ptr = (GF_BVRConfigurationBox*)s;
+	ptr->predefined_bvr_config = gf_bs_read_u16(bs);
+	ptr->size -= 2;
+	if (!ptr->predefined_bvr_config) {
+		ptr->bvr_meta_idx = gf_bs_read_u16(bs);
 		ptr->size -= 2;
 	}
 	return GF_OK;
