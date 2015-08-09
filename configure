@@ -74,6 +74,7 @@ has_mad="no"
 has_faad="no"
 has_ffmpeg="no"
 has_llvm="no"
+has_gtest="no"
 has_amr_nb_fixed="no"
 has_amr_nb="no"
 has_amr_wb="no"
@@ -321,6 +322,7 @@ Extra libraries configuration. You can turn a libray off or force using the loca
   --use-theora=OPT         force theora OPT=[no,system,local]
   --use-openjpeg=OPT       force openjpeg OPT=[no,system,local]
   --use-a52=OPT            force a52 (ac3) OPT=[no,system,local]
+  --use-gtest=OPT          force google test OPT=[no,system,local]
 
 NOTE: The object files are build at the place where configure is launched
 EOF
@@ -678,6 +680,11 @@ docc() {
 
 docxx() {
  $cc -o $TMPO $TMPC $@ 0>/dev/null 2>$TMPL
+ dolog $@
+}
+
+docpp() {
+ $cxx -o $TMPO $TMPC $@ 0>/dev/null 2>$TMPL
  dolog $@
 }
 
@@ -1308,7 +1315,29 @@ if test "$has_a52" = "no" ; then
     fi
 fi
 
+#look for google test support
+cat > $TMPC << EOF
+#include "gtest/gtest.h"
+EOF
+ 
+if docpp -I$prefix/include -L$prefix/lib $LDFLAGS -lgtest_main -lgtest -lpthread ; then
+    has_gtest="system"
+fi
 
+if test "$cross_prefix" = "" ; then
+    if test "$has_gtest" = "no" ; then
+        if test "$alt_macosx_dir" != "" ; then
+            if docpp -I$alt_macosx_dir/include -L$alt_macosx_dir/lib $LDFLAGS -lgtest_main -lgtest -lpthread 2>>$logs ; then
+                has_gtest="system"
+            fi
+        fi
+    fi
+fi
+if test "$has_gtest" = "no" ; then
+    if docpp -I$local_inc/gtest -L$local_lib -lgtest_main -lgtest -lpthread; then
+        has_gtest="local"
+    fi
+fi
 
 #look for XVID support
 cat > $TMPC << EOF
@@ -1958,6 +1987,8 @@ for opt do
         --use-mad=*) has_mad=${opt#--use-mad=}
             ;;
         --use-a52=*) has_a52=${opt#--use-a52=}
+            ;;
+        --use-gtest=*) has_gtest=${opt#--use-gtest=}
             ;;
         --use-xvid=*) has_xvid=${opt#--use-xvid=}
             ;;
@@ -2860,7 +2891,7 @@ if test "$has_wx" = "yes" ; then
 else
     echo "wxWidgets support: no"
 fi
-
+echo "Google Test: $has_gtest"
 
 echo ""
 echo "** Extra Libraries used **"
@@ -3127,6 +3158,7 @@ echo "CONFIG_OSS_AUDIO=$has_oss_audio" >> config.mak
 echo "CONFIG_ALSA=$has_alsa" >> config.mak
 echo "CONFIG_JACK=$has_jack" >> config.mak
 echo "CONFIG_A52=$has_a52" >> config.mak
+echo "CONFIG_GTEST=$has_gtest" >> config.mak
 echo "CONFIG_PULSEAUDIO=$has_pulseaudio" >> config.mak
 echo "CONFIG_FREENECT=$has_freenect" >> config.mak
 if test "$has_freenect" != "no"
