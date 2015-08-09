@@ -8,6 +8,7 @@ vpath %.c $(SRC_PATH)
 all:	version
 	$(MAKE) -C src all
 	$(MAKE) -C applications all
+	$(MAKE) -C test all
 ifneq ($(MP4BOX_STATIC),yes)
 	$(MAKE) -C modules all
 endif
@@ -39,6 +40,9 @@ sggen:
 mods:
 	$(MAKE) -C modules all
 
+test:
+	$(MAKE) -C test all
+	
 instmoz:
 	$(MAKE) -C applications/osmozilla install
 	
