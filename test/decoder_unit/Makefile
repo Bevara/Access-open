@@ -1,6 +1,6 @@
 include ../../config.mak
 
-vpath %.c $(SRC_PATH)/applications/mp4client
+vpath %.c $(SRC_PATH)/test/decoder_unit
 
 CFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
 
@@ -21,36 +21,39 @@ CFLAGS+=-DGPAC_READ_ONLY
 endif
 
 #common obj
-OBJS= main.o extract.o
+OBJS_C= terminal.o extract.o
+OBJS_CPP= main.o
+
+
 
 ifeq ($(CONFIG_WIN32),yes)
 EXE=.exe
-PROG=MP4Client$(EXE)
+PROG=decoder_unit$(EXE)
 else
 EXT=
-PROG=MP4Client
+PROG=decoder_unit
 endif
 
 ifeq ($(CONFIG_DARWIN),yes)
-OBJS+= carbon_events.o
+OBJS_C+= carbon_events.o
 LDFLAGS += -framework Carbon
 endif
 
-SRCS := $(OBJS:.o=.c) 
+SRCS := $(OBJS_C:.o=.c) $(OBJS_CPP:.o=.cpp) 
 
 all: $(PROG)
 
-MP4Client$(EXE): $(OBJS)
-	$(CC) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(LINKLIBS)
+decoder_unit$(EXE): $(OBJS_C) $(OBJS_CPP)
+	$(CXX) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_C) $(OBJS_CPP) -L../../bin/gcc -lgpac -lgtest_main -lgtest -lpthread $(LINKLIBS)
 
 clean: 
-	rm -f $(OBJS) ../../bin/gcc/$(PROG)
+	rm -f $(OBJS_C) $(OBJS_CPP) ../../bin/gcc/$(PROG)
 
 install: clean
-	install -m 755 $(INSTFLAGS) ../../bin/gcc/MP4Client "$(DESTDIR)$(prefix)/bin"
+	install -m 755 $(INSTFLAGS) ../../bin/gcc/decoder_unit "$(DESTDIR)$(prefix)/bin"
 
 uninstall:
-	rm -rf $(DESTDIR)$(prefix)/bin/MP4Client
+	rm -rf $(DESTDIR)$(prefix)/bin/decoder_unit
 
 dep: depend
 
