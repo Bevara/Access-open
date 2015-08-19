@@ -2,22 +2,24 @@ include ../../config.mak
 
 vpath %.c $(SRC_PATH)/test/decoder_unit
 
-CFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
+CXXFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
 
 LINKLIBS=$(GPAC_SH_FLAGS)
 
 ifeq ($(DEBUGBUILD), yes)
+CXXFLAGS+=-g
 CFLAGS+=-g
 LDFLAGS+=-g
 endif
 
 ifeq ($(GPROFBUILD), yes)
+CXXFLAGS+=-pg
 CFLAGS+=-pg
 LDFLAGS+=-pg
 endif
 
 ifeq ($(GPACREADONLY), yes)
-CFLAGS+=-DGPAC_READ_ONLY
+CXXFLAGS+=-DGPAC_READ_ONLY
 endif
 
 #common obj
@@ -59,7 +61,7 @@ dep: depend
 
 depend:
 	rm -f .depend	
-	$(CC) -MM $(CFLAGS) $(SRCS) 1>.depend
+	$(CC) -MM $(CXXFLAGS) $(SRCS) 1>.depend
 
 distclean: clean
 	rm -f Makefile.bak .depend
