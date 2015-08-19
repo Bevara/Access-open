@@ -380,9 +380,9 @@ static u32 OSVC_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd
 				}
 			}
 			gf_odf_avc_cfg_del(cfg);
-			return is_svc ? GF_CODEC_SUPPORTED : GF_CODEC_MAYBE_SUPPORTED;
+			return is_svc && !esd->decoderConfig->bvr_config? GF_CODEC_SUPPORTED : GF_CODEC_MAYBE_SUPPORTED;
 		}
-		return esd->has_ref_base ? GF_CODEC_SUPPORTED : GF_CODEC_MAYBE_SUPPORTED;
+		return esd->has_ref_base  && !esd->decoderConfig->bvr_config ? GF_CODEC_SUPPORTED : GF_CODEC_MAYBE_SUPPORTED;
 	}
 	return GF_CODEC_NOT_SUPPORTED;
 }

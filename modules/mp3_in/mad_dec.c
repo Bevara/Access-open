@@ -318,7 +318,7 @@ static u32 MAD_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd,
 	case GPAC_OTI_AUDIO_MPEG2_PART3:
 	/*MPEG2 audio*/
 	case GPAC_OTI_AUDIO_MPEG1:
-		return GF_CODEC_SUPPORTED;
+		return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 	}
 	return GF_CODEC_NOT_SUPPORTED;
 }

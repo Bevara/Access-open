@@ -445,7 +445,7 @@ static u32 FAAD_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd
 	case GF_M4A_AAC_SSR:
 	case GF_M4A_AAC_LTP:
 	case GF_M4A_AAC_SBR:
-		return GF_CODEC_SUPPORTED;
+		return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 	case GF_M4A_ER_AAC_LC:
 	case GF_M4A_ER_AAC_LTP:
 	case GF_M4A_ER_AAC_SCALABLE:
@@ -457,7 +457,7 @@ static u32 FAAD_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd
 	}
 #endif
 
-	return GF_CODEC_SUPPORTED;
+	return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 }
 
 GF_BaseDecoder *NewFAADDec()

@@ -1308,7 +1308,7 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 				Bool is_svc = GF_FALSE;
 				u32 i, count;
 				GF_AVCConfig *cfg = gf_odf_avc_cfg_read(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength);
-				if (!cfg) return GF_CODEC_SUPPORTED;
+				if (!cfg) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 
 				if (esd->has_ref_base)
 					is_svc = GF_TRUE;
@@ -1376,13 +1376,13 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 	}
 	/*NeroDigital DVD subtitles*/
 	else if ((StreamType==GF_STREAM_ND_SUBPIC) && (ffd->oti==0xe0))
-		return GF_CODEC_SUPPORTED;
+		return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 
 	if (!codec_id) return GF_CODEC_NOT_SUPPORTED;
 
 	if (check_4cc && (ffmpeg_get_codec(codec_id) != NULL)) {
 		if (esd->decoderConfig->rvc_config || esd->decoderConfig->predefined_rvc_config || esd->decoderConfig->bvr_config || esd->decoderConfig->predefined_bvr_config) return GF_CODEC_MAYBE_SUPPORTED;
-		return GF_CODEC_SUPPORTED;
+		return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 	}
 
 	if (avcodec_find_decoder(codec_id) != NULL) {
@@ -1394,7 +1394,7 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 			return GF_CODEC_MAYBE_SUPPORTED;
 #endif
 
-		return GF_CODEC_SUPPORTED;
+		return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 	}
 
 	return GF_CODEC_NOT_SUPPORTED;

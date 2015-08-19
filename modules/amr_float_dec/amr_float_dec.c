@@ -263,10 +263,10 @@ static u32 AMR_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd,
 	if (esd->decoderConfig->decoderSpecificInfo->dataLength < 4) return GF_CODEC_NOT_SUPPORTED;
 
 #ifdef GPAC_HAS_AMR_FT
-	if (!strnicmp(dsi, "samr", 4) || !strnicmp(dsi, "amr ", 4)) return GF_CODEC_SUPPORTED;
+	if (!strnicmp(dsi, "samr", 4) || !strnicmp(dsi, "amr ", 4)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 #endif
 #ifdef GPAC_HAS_AMR_FT_WB
-	if (!strnicmp(dsi, "sawb", 4)) return GF_CODEC_SUPPORTED;
+	if (!strnicmp(dsi, "sawb", 4)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 #endif
 	return GF_CODEC_NOT_SUPPORTED;
 }
