@@ -775,12 +775,19 @@ typedef struct
 	GF_StsfEntry *r_currentEntry;
 } GF_SampleFragmentBox;
 
+typedef struct
+{
+	GF_ISOM_BOX
+	u16 predefined_bvr_config;
+	u32 bvr_meta_idx;
+} GF_BVRConfigurationBox;
 
 #define GF_ISOM_SAMPLE_ENTRY_FIELDS		\
 	GF_ISOM_UUID_BOX					\
 	u16 dataReferenceIndex;				\
 	char reserved[ 6 ];					\
-	GF_List *protections;
+	GF_List *protections;				\
+	GF_BVRConfigurationBox *bvrc;
 
 /*base sample entry box (never used but for typecasting)*/
 typedef struct
@@ -868,13 +875,6 @@ typedef struct
 	u32 rvc_meta_idx;
 } GF_RVCConfigurationBox;
 
-typedef struct
-{
-	GF_ISOM_BOX
-	u16 predefined_bvr_config;
-	u32 bvr_meta_idx;
-} GF_BVRConfigurationBox;
-
 #define GF_ISOM_VISUAL_SAMPLE_ENTRY		\
 	GF_ISOM_SAMPLE_ENTRY_FIELDS			\
 	u16 version;						\
@@ -891,7 +891,6 @@ typedef struct
 	s16 color_table_index;				\
 	GF_PixelAspectRatioBox *pasp;		\
 	GF_RVCConfigurationBox *rvcc;		\
-	GF_BVRConfigurationBox *bvrc;		\
 
 
 typedef struct

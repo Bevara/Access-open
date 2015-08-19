@@ -1137,6 +1137,7 @@ GF_Err mp4a_dump(GF_Box *a, FILE * trace)
 	if (a->type == GF_ISOM_BOX_TYPE_ENCA) {
 		gf_box_array_dump(p->protections, trace);
 	}
+	if (p->bvrc) gf_box_dump(p->bvrc, trace);
 	gf_box_dump_done("MPEGAudioSampleDescriptionBox", a, trace);
 	return GF_OK;
 }
