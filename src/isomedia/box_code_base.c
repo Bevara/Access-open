@@ -3482,6 +3482,7 @@ void mp4a_del(GF_Box *s)
 
 	if (ptr->esd) gf_isom_box_del((GF_Box *)ptr->esd);
 	if (ptr->slc) gf_odf_desc_del((GF_Descriptor *)ptr->slc);
+	if (ptr->bvrc) gf_isom_box_del((GF_Box *)ptr->bvrc);
 	gf_free(ptr);
 }
 
@@ -3517,6 +3518,10 @@ GF_Err mp4a_AddBox(GF_Box *s, GF_Box *a)
 			}
 			gf_isom_box_del(a);
 		}
+		break;
+	case GF_ISOM_BOX_TYPE_BVRC:
+		if (ptr->bvrc) ERROR_ON_DUPLICATED_BOX(a, ptr)
+			ptr->bvrc = (GF_BVRConfigurationBox *)a;
 		break;
 	default:
 		return gf_isom_box_add_default(s, a);
@@ -3583,6 +3588,11 @@ GF_Err mp4a_Write(GF_Box *s, GF_BitStream *bs)
 	e = gf_isom_box_write((GF_Box *)ptr->esd, bs);
 	if (e) return e;
 
+	if (ptr->bvrc) {
+		e = gf_isom_box_write((GF_Box *)ptr->bvrc, bs);
+		if (e) return e;
+	}
+
 	return gf_isom_box_array_write(s, ptr->protections, bs);
 }
 
@@ -3598,6 +3608,13 @@ GF_Err mp4a_Size(GF_Box *s)
 	e = gf_isom_box_size((GF_Box *)ptr->esd);
 	if (e) return e;
 	ptr->size += ptr->esd->size;
+
+	if (ptr->bvrc) {
+		e = gf_isom_box_size((GF_Box *)ptr->bvrc);
+		if (e) return e;
+		ptr->size += ptr->bvrc->size;
+	}
+
 	return gf_isom_box_array_size(s, ptr->protections);
 }
 

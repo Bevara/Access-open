@@ -3299,7 +3299,7 @@ GF_Err gf_isom_get_rvc_config(GF_ISOFile *movie, u32 track, u32 sampleDescriptio
 
 GF_Err gf_isom_get_bvr_config(GF_ISOFile *movie, u32 track, u32 sampleDescriptionIndex, u16 *bvr_predefined, char **data, u32 *size, const char **mime)
 {
-	GF_MPEGVisualSampleEntryBox *entry;
+	GF_SampleEntryBox *entry;
 	GF_TrackBox *trak;
 
 	if (!bvr_predefined || !data || !size) return GF_BAD_PARAM;
@@ -3309,7 +3309,7 @@ GF_Err gf_isom_get_bvr_config(GF_ISOFile *movie, u32 track, u32 sampleDescriptio
 	if (!trak) return GF_BAD_PARAM;
 
 
-	entry = (GF_MPEGVisualSampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, sampleDescriptionIndex - 1);
+	entry = (GF_SampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, sampleDescriptionIndex - 1);
 	if (!entry || !entry->bvrc) return GF_BAD_PARAM;
 
 	*bvr_predefined = entry->bvrc->predefined_bvr_config;
