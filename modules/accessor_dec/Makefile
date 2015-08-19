@@ -25,11 +25,9 @@ EXTRALIBS+=-lstdc++ -lz -lffi -lcurses
 endif
 
 #common obj
-#OBJS_C= 
-OBJS_CPP= accessor_dec.o accessor_comp.o
-
-SRCS_C := $(OBJS_C:.o=.c) 
-SRCS_CPP := $(OBJS_CPP:.o=.cpp)
+OBJS= accessor_dec.o accessor_comp.o
+ 
+SRCS := $(OBJS:.o=.cpp)
 
 LIB=gm_accessor_dec$(DYN_LIB_SUFFIX)
 
@@ -37,12 +35,12 @@ LIB=gm_accessor_dec$(DYN_LIB_SUFFIX)
 all: $(LIB)
 
 
-$(LIB): $(OBJS_CPP)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS_CPP) $(EXTRALIBS)
+$(LIB): $(OBJS)
+	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS)
 
 
 clean: 
-	rm -f $(OBJS_C) $(OBJS_CPP) '$(OUT_PATH)'/$(LIB)
+	rm -f $(OBJS) '$(OUT_PATH)'/$(LIB)
 
 dep: depend
 
