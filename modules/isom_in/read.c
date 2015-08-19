@@ -65,8 +65,8 @@ static GFINLINE Bool isor_is_local(const char *url)
 static const char * ISOR_MIME_TYPES[] = {
 	/* First one is specific because we probe */
 	"application/x-isomedia", "*", "IsoMedia Files",
-	"video/mp4", "mp4 mpg4", "MPEG-4 Movies",
-	"audio/mp4", "m4a mp4 mpg4", "MPEG-4 Music",
+	"video/mp4", "mp4 mpg4 bvr", "MPEG-4 Movies",
+	"audio/mp4", "m4a mp4 mpg4 bvr", "MPEG-4 Music",
 	"application/mp4", "m4i mp4 mpg4", "MPEG-4 Applications",
 	"video/3gpp", "3gp 3gpp", "3GPP/MMS Movies",
 	"audio/3gpp", "3gp 3gpp", "3GPP/MMS Music",

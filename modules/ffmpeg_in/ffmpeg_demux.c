@@ -270,7 +270,7 @@ static Bool FFD_CanHandleURL(GF_InputService *plug, const char *url)
 		        || !strcmp(szExt, "bt") || !strcmp(szExt, "wrl") || !strcmp(szExt, "x3dv")
 		        || !strcmp(szExt, "xmt") || !strcmp(szExt, "xmta") || !strcmp(szExt, "x3d")
 
-		        || !strcmp(szExt, "jpg") || !strcmp(szExt, "jpeg") || !strcmp(szExt, "png")
+		        || !strcmp(szExt, "jpg") || !strcmp(szExt, "jpeg") || !strcmp(szExt, "png") || !strcmp(szExt, "bvr")
 		   ) return GF_FALSE;
 
 		/*check any default stuff that should work with ffmpeg*/
