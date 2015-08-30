@@ -22,6 +22,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/Support/Host.h"
 
 #include "accessor_comp.h"
 
@@ -193,12 +194,12 @@ int compile(Acc_Comp_s** comp, const char* llvm_code, unsigned int length, const
 	builder.setErrorStr(&ErrorMsg);
 	builder.setOptLevel(CodeGenOpt::Aggressive);
 
+	string TargetTriple = sys::getProcessTriple();
 #ifdef WIN32
-	std::string TargetTriple = Mod->getTargetTriple();
 	TargetTriple.append("-elf");
 	// Temporary LLVM fix for windows
-	Mod->setTargetTriple(Triple::normalize(TargetTriple));
 #endif
+	Mod->setTargetTriple(Triple::normalize(TargetTriple));
 
 	// Enable MCJIT if desired.
 	RTDyldMemoryManager *RTDyldMM = nullptr;
