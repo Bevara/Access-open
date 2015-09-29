@@ -86,6 +86,10 @@ public:
 	virtual void AssertValid() const;
 	virtual void Dump(CDumpContext& dc) const;
 #endif
+public :
+	void SetNoLayout();
+	void SetPlayLayout();
+	void SetPageLayout();
 
 public:  
 	CStatusBar  m_wndStatusBar;

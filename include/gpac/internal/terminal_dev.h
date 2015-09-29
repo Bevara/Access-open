@@ -1030,6 +1030,8 @@ struct _od_manager
 	/*full object timeshift depth in ms, 0 if no timeshift, (u32) -1  is infinity */
 	u32 timeshift_depth;
 
+	u32 page_number;
+
 	u32 action_type;
 
 	Fixed set_speed;

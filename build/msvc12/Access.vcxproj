@@ -356,6 +356,7 @@
   <ItemGroup>
     <ClInclude Include="..\..\Bevara_apps\Access\FileProps.h" />
     <ClInclude Include="..\..\Bevara_apps\Access\MainFrm.h" />
+    <ClInclude Include="..\..\Bevara_apps\Access\Media.h" />
     <ClInclude Include="..\..\Bevara_apps\Access\OpenUrl.h" />
     <ClInclude Include="..\..\Bevara_apps\Access\Options.h" />
     <ClInclude Include="..\..\Bevara_apps\Access\Osmo4.h" />

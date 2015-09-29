@@ -10,8 +10,7 @@
 #include "resource.h"
 #include "HtmlHelp.h"
 
-//#include "Media.h"
-//#include "BevaraContainer.h"
+
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -30,6 +29,7 @@ BEGIN_MESSAGE_MAP(Osmo4, CWinApp)
 	ON_COMMAND(ID_FILE_RELOAD, OnFileReload)
 	ON_COMMAND(ID_CONFIG_RELOAD, OnConfigReload)
 	ON_COMMAND(ID_FILE_PLAY, OnFilePlay)
+	ON_UPDATE_COMMAND_UI(ID_FILE_PLAY, OnUpdateFilePlay)
 	ON_UPDATE_COMMAND_UI(ID_FILE_STEP, OnUpdateFileStep)
 	ON_COMMAND(ID_FILE_STOP, OnFileStop)
 	ON_UPDATE_COMMAND_UI(ID_FILE_STOP, OnUpdateFileStop)
@@ -171,7 +171,11 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 
 	switch (evt->type) {
 	case GF_EVENT_DURATION:
+		
 		dur = (u32) (1000 * evt->duration.duration);
+		if (dur){
+			pFrame->SetPlayLayout();
+		}
 		//if (dur<1100) dur = 0;
 		pFrame->m_pPlayList->SetDuration((u32) evt->duration.duration );
 		gpac->max_duration = dur;
@@ -183,6 +187,7 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 			pFrame->m_Sliders.m_PosSlider.SetRangeMin(0);
 			pFrame->m_Sliders.m_PosSlider.SetRangeMax(dur);
 		}
+
 		break;
 
 	case GF_EVENT_MESSAGE:
@@ -232,7 +237,7 @@ Bool Osmo4_EventProc(void *priv, GF_Event *evt)
 	/*don't resize on win32 msg notif*/
 #if 0
 	case GF_EVENT_SIZE:
-		if (/*gpac->m_term && !pFrame->m_bFullScreen && */gpac->orig_width && (evt->size.width < W32_MIN_WIDTH) ) 
+		if (/*gpac->m_term && !pFrame->m_bFullScreen && */gpac->orig_width && (evt->size.width < W32_MIN_WIDTH) )
 			pFrame->PostMessage(WM_SETSIZE, W32_MIN_WIDTH, (W32_MIN_WIDTH*gpac->orig_height) / gpac->orig_width);
 		else
 			pFrame->PostMessage(WM_SETSIZE, evt->size.width, evt->size.height);
@@ -595,7 +600,7 @@ int Osmo4::ExitInstance()
 		CloseHandle(m_hMutex);
 		static_gpac_hwnd = NULL;
 	}
-	if (m_logs) fclose(m_logs);
+	if (m_logs) gf_fclose(m_logs);
 	return CWinApp::ExitInstance();
 }
 
@@ -981,6 +986,25 @@ void Osmo4::OnFilePlay()
 	}
 }
 
+void Osmo4::OnUpdateFilePlay(CCmdUI* pCmdUI)
+{
+	if (m_isopen) {
+		pCmdUI->Enable(TRUE);
+		if (pCmdUI->m_nID==ID_FILE_PLAY) {
+			if (!m_isopen) {
+				pCmdUI->SetText(_T("Play/Pause\tCtrl+P"));
+			} else if (gf_term_get_option(m_term, GF_OPT_PLAY_STATE)==GF_STATE_PLAYING) {
+				pCmdUI->SetText(_T("Pause\tCtrl+P"));
+			} else {
+				pCmdUI->SetText(_T("Resume\tCtrl+P"));
+			}
+		}
+	} else {
+		pCmdUI->Enable(((CMainFrame *)m_pMainWnd)->m_pPlayList->HasValidEntries() );
+		pCmdUI->SetText(_T("Play\tCtrl+P"));
+	}
+}
+
 void Osmo4::OnFileStop() 
 {
 	CMainFrame *pFrame = (CMainFrame *) m_pMainWnd;
@@ -1009,11 +1033,11 @@ void Osmo4::OnUpdateFileExtract(CCmdUI* pCmdUI)
 	pCmdUI->Enable(true);
 }
 
-void Osmo4::OnSwitchRender() 
+void Osmo4::OnSwitchRender()
 {
-	const char *opt = gf_cfg_get_key(m_user.config, "Compositor", "ForceOpenGL");
-	Bool use_gl = (opt && !stricmp(opt, "yes")) ? GF_TRUE : GF_FALSE;
-	gf_cfg_set_key(m_user.config, "Compositor", "ForceOpenGL", use_gl ? "no" : "yes");
+	const char *opt = gf_cfg_get_key(m_user.config, "Compositor", "OpenGLMode");
+	Bool use_gl = (opt && !stricmp(opt, "always")) ? GF_TRUE : GF_FALSE;
+	gf_cfg_set_key(m_user.config, "Compositor", "OpenGLMode", use_gl ? "disable" : "always");
 
 	gf_term_set_option(m_term, GF_OPT_USE_OPENGL, !use_gl);
 
