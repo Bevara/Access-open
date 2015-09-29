@@ -9,9 +9,7 @@
 
 #include <gpac/network.h>
 #include <gpac/media_tools.h>
-//#include "Media.h"
-//#include "MediaDocument.h"
-//#include "BevaraContainer.h"
+
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -69,13 +67,11 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_WM_INITMENUPOPUP()
 	ON_WM_SIZE()
 	ON_WM_MOVE()
-	ON_WM_ERASEBKGND()
 	ON_MESSAGE(WM_SETSIZE,OnSetSize)
 	ON_MESSAGE(WM_NAVIGATE,OnNavigate)
 	ON_MESSAGE(WM_OPENURL, Open)
-	ON_MESSAGE(WM_NORESIZE, SetNoResize)
 	ON_MESSAGE(WM_NEWINSTANCE, NewInstanceOpened)
-	
+
 	ON_WM_LBUTTONDOWN()
 	ON_WM_LBUTTONDBLCLK()
 	ON_WM_LBUTTONUP()
@@ -110,7 +106,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(IDD_CONFIGURE, OnConfigure)
 	ON_COMMAND(ID_FILE_PROP, OnFileProp)
 	ON_COMMAND(ID_VIEW_PL, OnViewPlaylist)
-	//ON_UPDATE_COMMAND_UI(ID_FILE_PROP, OnUpdateFileProp)
+	ON_UPDATE_COMMAND_UI(ID_FILE_PROP, OnUpdateFileProp)
 	ON_UPDATE_COMMAND_UI(ID_NAVIGATE_NONE, OnUpdateNavigate)
 	ON_COMMAND(ID_REC_ENABLE, OnCacheEnable)
 	ON_UPDATE_COMMAND_UI(ID_REC_ENABLE, OnUpdateCacheEnable)
@@ -154,7 +150,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_FILE_COPY, OnUpdateFileCopy)
 	ON_COMMAND(ID_FILE_PASTE, OnFilePaste)
 	ON_UPDATE_COMMAND_UI(ID_FILE_PASTE, OnUpdateFilePaste)
-	
+
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
 
@@ -166,7 +162,7 @@ CMainFrame::CMainFrame()
 {
 	m_icoerror = AfxGetApp()->LoadIcon(IDI_ERR);
 	m_icomessage = AfxGetApp()->LoadIcon(IDI_MESSAGE);
-	m_bFullScreen = GF_FALSE;	
+	m_bFullScreen = GF_FALSE;
 	m_RestoreFS = 0;
 	m_aspect_ratio = GF_ASPECT_RATIO_KEEP;
 	m_pProps = NULL;
@@ -181,7 +177,6 @@ CMainFrame::CMainFrame()
 	m_timer_on = 0;
 	m_show_rti = GF_FALSE;
 	nb_viewpoints = 0;
-	m_noresize = GF_FALSE;
 }
 
 CMainFrame::~CMainFrame()
@@ -233,6 +228,7 @@ static UINT status_indics[] =
 	ID_TIMER,
 	ID_SEPARATOR,           // status line indicator
 };
+
 
 
 void CMainFrame::FileExtract(){
@@ -456,6 +452,22 @@ void CMainFrame::OnSetFocus(CWnd* pOldWnd)
 	}
 }
 
+void CMainFrame::SetNoLayout(){
+	m_AutoPlay = GF_FALSE;
+	m_Sliders.setLayout(Sliders::NONE);
+}
+
+void CMainFrame::SetPlayLayout(){
+	m_AutoPlay = GF_TRUE;
+	m_Sliders.setLayout(Sliders::PLAY);
+}
+
+void CMainFrame::SetPageLayout(){
+	m_AutoPlay = GF_FALSE;
+	m_Sliders.setLayout(Sliders::NAVIGATION);
+}
+
+
 void CMainFrame::UpdateLayout(Media* media){
 	if (!media){
 		//UpdatePlayButton();
@@ -537,28 +549,12 @@ void CMainFrame::OnSize(UINT nType, int cx, int cy)
 	gf_term_set_size(GetApp()->m_term, cx, cy);
 }
 
-afx_msg LRESULT CMainFrame::SetNoResize(WPARAM wParam, LPARAM lParam){
-	m_noresize = GF_TRUE;
-	//orig_width = wParam;
-	//orig_height = lParam;
-	return 0;
-}
 
 LRESULT CMainFrame::OnSetSize(WPARAM wParam, LPARAM lParam)
 {
 	UINT width, height;
 	width = (UINT) wParam;
 	height = (UINT) lParam;
-
-	if (m_noresize){
-		m_noresize = GF_FALSE;
-		width = orig_width;
-		height = orig_height;
-	}else{
-		orig_width = width;
-		orig_height = height;
-	}
-
 	if (m_bInitShow) {
 		m_wndToolBar.UpdateWindow();
 		m_wndToolBar.ShowWindow(SW_SHOW);
@@ -599,7 +595,7 @@ LRESULT CMainFrame::OnSetSize(WPARAM wParam, LPARAM lParam)
 		SetWindowPos(NULL, 0, 0, winRect.right, winRect.bottom, SWP_NOZORDER | SWP_NOMOVE | SWP_SHOWWINDOW);
 	} else {
 		/*just resize term*/
-		gf_term_set_size(GetApp()->m_term, width, height);
+		//gf_term_set_size(GetApp()->m_term, width, height);
 		SetWindowPos(NULL, 0, 0, winRect.right, winRect.bottom, SWP_NOZORDER | SWP_NOMOVE | SWP_SHOWWINDOW);
 	}
 	return 0;
@@ -642,7 +638,7 @@ void CALLBACK EXPORT ProgressTimer(HWND , UINT , UINT_PTR nID , DWORD )
 		if (now >= app->max_duration + 100) {
 			if (gf_term_get_option(app->m_term, GF_OPT_IS_FINISHED)) {
 				pFrame->m_pPlayList->PlayNext();
-		}
+			}
 			/*if no IsOver go on forever*/
 		} else {
 			if (!app->m_reset)
@@ -651,14 +647,13 @@ void CALLBACK EXPORT ProgressTimer(HWND , UINT , UINT_PTR nID , DWORD )
 	}
 }
 
-void CMainFrame::SetProgTimer(Bool bOn) 
+void CMainFrame::SetProgTimer(Bool bOn)
 {
-	if (bOn) 
-		SetTimer(PROGRESS_TIMER, PROGRESS_REFRESH_MS, ProgressTimer); 
+	if (bOn)
+		SetTimer(PROGRESS_TIMER, PROGRESS_REFRESH_MS, ProgressTimer);
 	else
 		KillTimer(PROGRESS_TIMER);
 }
-
 
 LRESULT CMainFrame::Open(WPARAM wParam, LPARAM lParam)
 {
@@ -669,17 +664,7 @@ LRESULT CMainFrame::Open(WPARAM wParam, LPARAM lParam)
 	m_bStartupFile = GF_FALSE;
 	txt = "Bevara Access ";
 	//txt += m_pPlayList->GetDisplayName();
-	
-
-	CRect rc;
-	GetWindowRect(rc);
-	
-	u32 orig_height= rc.right;
-	u32 orig_width = rc.bottom;
-	AdjustWindowRectEx(&rc, GetStyle(), TRUE, GetExStyle());
-	orig_height -= rc.top;
-	orig_width -= rc.left;
-
+	SetNoLayout();
 	url = m_pPlayList->GetURL();
 	frag = wcsrchr(url, '#');
 
@@ -696,15 +681,13 @@ LRESULT CMainFrame::Open(WPARAM wParam, LPARAM lParam)
 	SetWindowText(txt);
 	if (app->start_mode==1) do_pause = GF_TRUE;
 	else if (app->start_mode==2) do_pause = GF_FALSE;
-	else do_pause = (Bool)!m_AutoPlay;
-	gf_term_connect_from_time(app->m_term, url_media_ch, app->m_reconnect_time, do_pause);
-	CMainFrame *pFrame = (CMainFrame *) app->m_pMainWnd;
-	pFrame->PostMessage(WM_NORESIZE, orig_width, orig_height); // FIX : Force no resizing windows
+	else do_pause = /*!app->m_AutoPlay*/GF_FALSE;
+	gf_term_connect_from_time(app->m_term, (LPCSTR)url_media_ch, app->m_reconnect_time, do_pause);
 	app->m_reconnect_time = 0;
 	app->start_mode = 0;
-	
+	//app->UpdatePlayButton();
 	nb_viewpoints = 0;
-	return 1;	
+	return 1;
 }
 
 LRESULT CMainFrame::NewInstanceOpened(WPARAM wParam, LPARAM lParam)
@@ -727,14 +710,30 @@ void CMainFrame::ForwardMessage()
 	const MSG *msg = GetCurrentMessage();
 	m_pWndView->SendMessage(msg->message, msg->wParam, msg->lParam);
 }
-void CMainFrame::OnSysKeyUp(UINT , UINT , UINT ) { ForwardMessage(); }
-void CMainFrame::OnSysKeyDown(UINT , UINT , UINT ) { ForwardMessage(); }
-void CMainFrame::OnChar(UINT , UINT , UINT ) { ForwardMessage(); }
-void CMainFrame::OnKeyDown(UINT , UINT , UINT ) { ForwardMessage(); }
-void CMainFrame::OnKeyUp(UINT , UINT , UINT ) { ForwardMessage(); }
-void CMainFrame::OnLButtonDown(UINT , CPoint ) { ForwardMessage(); }
-void CMainFrame::OnLButtonDblClk(UINT , CPoint ) { ForwardMessage(); }
-void CMainFrame::OnLButtonUp(UINT , CPoint ) { ForwardMessage(); }
+void CMainFrame::OnSysKeyUp(UINT , UINT , UINT ) {
+	ForwardMessage();
+}
+void CMainFrame::OnSysKeyDown(UINT , UINT , UINT ) {
+	ForwardMessage();
+}
+void CMainFrame::OnChar(UINT , UINT , UINT ) {
+	ForwardMessage();
+}
+void CMainFrame::OnKeyDown(UINT , UINT , UINT ) {
+	ForwardMessage();
+}
+void CMainFrame::OnKeyUp(UINT , UINT , UINT ) {
+	ForwardMessage();
+}
+void CMainFrame::OnLButtonDown(UINT , CPoint ) {
+	ForwardMessage();
+}
+void CMainFrame::OnLButtonDblClk(UINT , CPoint ) {
+	ForwardMessage();
+}
+void CMainFrame::OnLButtonUp(UINT , CPoint ) {
+	ForwardMessage();
+}
 
 void CMainFrame::OnDropFiles(HDROP hDropInfo) 
 {

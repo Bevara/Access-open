@@ -26,7 +26,7 @@ class Media;
 /*GPAC terminal info (OD browsing)*/
 #include <gpac/term_info.h>
 
-class Media;
+#include "Media.h"
 
 enum {
 	WM_SCENE_DONE = WM_USER + 1, 
@@ -90,6 +90,7 @@ public:
 	//{{AFX_MSG(Osmo4)
 	afx_msg void OnOpenFile();
 	afx_msg void OnMainPause();
+	afx_msg void OnUpdateFilePlay(CCmdUI* pCmdUI);
 	afx_msg void OnFileStep();
 	afx_msg void OnOpenUrl();
 	afx_msg void OnFileReload();

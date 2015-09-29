@@ -12,6 +12,17 @@ TEST(File, JPG) {
 	terminal(file.c_str());
 }
 
+
+TEST(File, PDF) {
+	string file_page1, file_page2;
+	string file = folder;
+	file.append("TEST.pdf.bvr");
+	file_page1 = file + "#page=1";
+	file_page2 = file + "#page=2";
+	terminal(file_page1.c_str());
+	terminal(file_page2.c_str());
+}
+
 int main(int argc, char **argv) {
 	::testing::InitGoogleTest(&argc, argv);
 

@@ -1456,6 +1456,10 @@ void gf_odm_start(GF_ObjectManager *odm, u32 media_queue_state)
 
 	/*only if not open & ready (not waiting for ACK on channel setup)*/
 	if (!odm->pending_channels && odm->OD) {
+		char *url, *frag;
+
+		url = (odm->mo && odm->mo->URLs.count) ? odm->mo->URLs.vals[0].url : odm->net_service->url;
+		frag = strrchr(url, '#');
 		/*object is not started - issue channel setup requests*/
 		if (!odm->state) {
 			GF_Channel *ch;
@@ -1464,11 +1468,7 @@ void gf_odm_start(GF_ObjectManager *odm, u32 media_queue_state)
 
 			/*look for a given segment name to play*/
 			if (odm->subscene) {
-				char *url, *frag;
-				assert(odm->subscene->root_od==odm);
-
-				url = (odm->mo && odm->mo->URLs.count) ? odm->mo->URLs.vals[0].url : odm->net_service->url;
-				frag = strrchr(url, '#');
+				assert(odm->subscene->root_od == odm);
 				if (frag) {
 					GF_Segment *seg = gf_odm_find_segment(odm, frag+1);
 					if (seg) {

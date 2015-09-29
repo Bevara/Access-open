@@ -1413,6 +1413,16 @@ int terminal(const char *file)
 		//gf_log_set_tool_level(GF_LOG_ALL, GF_LOG_ERROR);
 	}
 
+	//Page parsing
+	char *ext;
+	
+	strcpy(the_url, url_arg);
+	ext = strrchr(the_url, '#');
+	if (ext && (!strnicmp(ext, "#page=", 6))) {
+		int test = 0;
+		test++;
+	}
+
 	if (rti_file) init_rti_logs(rti_file, url_arg, use_rtix);
 
 	{
