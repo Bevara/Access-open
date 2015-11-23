@@ -500,6 +500,9 @@
 		92D535711A5C0D1400F2442A /* carbon_events.c in Sources */ = {isa = PBXBuildFile; fileRef = 92D5356F1A5C0CF700F2442A /* carbon_events.c */; };
 		92F930821A5ADB870072A85C /* os_divers.c in Sources */ = {isa = PBXBuildFile; fileRef = 92F930801A5ADB870072A85C /* os_divers.c */; };
 		92F930831A5ADB870072A85C /* os_file.c in Sources */ = {isa = PBXBuildFile; fileRef = 92F930811A5ADB870072A85C /* os_file.c */; };
+		D798BB111B9771E30013DF8D /* accessor_comp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D798BB0F1B9771E30013DF8D /* accessor_comp.cpp */; };
+		D798BB121B9771E30013DF8D /* accessor_comp.h in Headers */ = {isa = PBXBuildFile; fileRef = D798BB101B9771E30013DF8D /* accessor_comp.h */; };
+		D798BB141B9771ED0013DF8D /* accessor_dec.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D798BB131B9771ED0013DF8D /* accessor_dec.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXBuildRule section */
@@ -1389,6 +1392,9 @@
 		92D5356F1A5C0CF700F2442A /* carbon_events.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = carbon_events.c; path = ../../applications/mp4client/carbon_events.c; sourceTree = "<group>"; };
 		92F930801A5ADB870072A85C /* os_divers.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = os_divers.c; sourceTree = "<group>"; };
 		92F930811A5ADB870072A85C /* os_file.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = os_file.c; sourceTree = "<group>"; };
+		D798BB0F1B9771E30013DF8D /* accessor_comp.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = accessor_comp.cpp; path = ../../modules/accessor_dec/accessor_comp.cpp; sourceTree = "<group>"; };
+		D798BB101B9771E30013DF8D /* accessor_comp.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = accessor_comp.h; path = ../../modules/accessor_dec/accessor_comp.h; sourceTree = "<group>"; };
+		D798BB131B9771ED0013DF8D /* accessor_dec.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = accessor_dec.cpp; path = ../../modules/accessor_dec/accessor_dec.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -2806,6 +2812,7 @@
 		92BE50AD18D6376A00AA59D8 /* modules */ = {
 			isa = PBXGroup;
 			children = (
+				D798BB0E1B9771A90013DF8D /* accessor_dec */,
 				9225732918D7267D00D6FD98 /* ogg_in */,
 				92AAF17D18D6F8DB00E2FF12 /* aac_in */,
 				92AAF18C18D6FA1A00E2FF12 /* ac3_in */,
@@ -2867,6 +2874,16 @@
 				92BE511018D6DA6300AA59D8 /* surface.c */,
 			);
 			name = soft_raster;
+			sourceTree = "<group>";
+		};
+		D798BB0E1B9771A90013DF8D /* accessor_dec */ = {
+			isa = PBXGroup;
+			children = (
+				D798BB131B9771ED0013DF8D /* accessor_dec.cpp */,
+				D798BB0F1B9771E30013DF8D /* accessor_comp.cpp */,
+				D798BB101B9771E30013DF8D /* accessor_comp.h */,
+			);
+			name = accessor_dec;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -2945,6 +2962,7 @@
 				92BBFCC31A7122AD006A7735 /* bifs_dev.h in Headers */,
 				92BBFCF81A7122AD006A7735 /* rtp_streamer.h in Headers */,
 				920100FE18D5A444003D1ACA /* visual_manager.h in Headers */,
+				D798BB121B9771E30013DF8D /* accessor_comp.h in Headers */,
 				92BBFCD71A7122AD006A7735 /* terminal_dev.h in Headers */,
 				92BBFD071A7122AD006A7735 /* user.h in Headers */,
 				92BBFCFA1A7122AD006A7735 /* scene_manager.h in Headers */,
@@ -3395,6 +3413,7 @@
 				920101B718D5A445003D1ACA /* os_module.c in Sources */,
 				920100B018D5A444003D1ACA /* arith_decoder.c in Sources */,
 				920100B118D5A444003D1ACA /* bifs_codec.c in Sources */,
+				D798BB141B9771ED0013DF8D /* accessor_dec.cpp in Sources */,
 				920100B218D5A444003D1ACA /* bifs_node_tables.c in Sources */,
 				920100B318D5A444003D1ACA /* com_dec.c in Sources */,
 				920100B418D5A444003D1ACA /* com_enc.c in Sources */,
@@ -3409,6 +3428,7 @@
 				920100BF18D5A444003D1ACA /* unquantize.c in Sources */,
 				920100C018D5A444003D1ACA /* audio_input.c in Sources */,
 				920100C118D5A444003D1ACA /* audio_mixer.c in Sources */,
+				D798BB111B9771E30013DF8D /* accessor_comp.cpp in Sources */,
 				920100C218D5A444003D1ACA /* audio_render.c in Sources */,
 				920100C318D5A444003D1ACA /* bindable.c in Sources */,
 				920100C418D5A444003D1ACA /* camera.c in Sources */,
@@ -4089,7 +4109,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				EXECUTABLE_PREFIX = lib;
-				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_C_LANGUAGE_STANDARD = c99;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
@@ -4102,7 +4122,7 @@
 					"DEBUG=1",
 				);
 				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
-				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
+				GCC_VERSION = "";
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_MISSING_PROTOTYPES = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
@@ -4112,10 +4132,12 @@
 					/opt/local/include/mozjs185,
 					/opt/local/include/nspr,
 					../../include,
+					"/opt/local/libexec/llvm-3.6/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					/opt/local/lib,
 					/opt/local/lib/nspr,
+					"/opt/local/libexec/llvm-3.6/lib",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.6;
 				OBJROOT = build;
@@ -4130,6 +4152,112 @@
 					"-lplds4",
 					"-lplc4",
 					"-lnspr4",
+					"-lLLVMLTO",
+					"-lLLVMObjCARCOpts",
+					"-lLLVMLinker",
+					"-lLLVMBitWriter",
+					"-lLLVMIRReader",
+					"-lLLVMAsmParser",
+					"-lLLVMR600CodeGen",
+					"-lLLVMipo",
+					"-lLLVMVectorize",
+					"-lLLVMR600AsmParser",
+					"-lLLVMR600Desc",
+					"-lLLVMR600Info",
+					"-lLLVMR600AsmPrinter",
+					"-lLLVMSystemZDisassembler",
+					"-lLLVMSystemZCodeGen",
+					"-lLLVMSystemZAsmParser",
+					"-lLLVMSystemZDesc",
+					"-lLLVMSystemZInfo",
+					"-lLLVMSystemZAsmPrinter",
+					"-lLLVMHexagonDisassembler",
+					"-lLLVMHexagonCodeGen",
+					"-lLLVMHexagonDesc",
+					"-lLLVMHexagonInfo",
+					"-lLLVMNVPTXCodeGen",
+					"-lLLVMNVPTXDesc",
+					"-lLLVMNVPTXInfo",
+					"-lLLVMNVPTXAsmPrinter",
+					"-lLLVMCppBackendCodeGen",
+					"-lLLVMCppBackendInfo",
+					"-lLLVMMSP430CodeGen",
+					"-lLLVMMSP430Desc",
+					"-lLLVMMSP430Info",
+					"-lLLVMMSP430AsmPrinter",
+					"-lLLVMXCoreDisassembler",
+					"-lLLVMXCoreCodeGen",
+					"-lLLVMXCoreDesc",
+					"-lLLVMXCoreInfo",
+					"-lLLVMXCoreAsmPrinter",
+					"-lLLVMMipsDisassembler",
+					"-lLLVMMipsCodeGen",
+					"-lLLVMMipsAsmParser",
+					"-lLLVMMipsDesc",
+					"-lLLVMMipsInfo",
+					"-lLLVMMipsAsmPrinter",
+					"-lLLVMAArch64Disassembler",
+					"-lLLVMAArch64CodeGen",
+					"-lLLVMAArch64AsmParser",
+					"-lLLVMAArch64Desc",
+					"-lLLVMAArch64Info",
+					"-lLLVMAArch64AsmPrinter",
+					"-lLLVMAArch64Utils",
+					"-lLLVMARMDisassembler",
+					"-lLLVMARMCodeGen",
+					"-lLLVMARMAsmParser",
+					"-lLLVMARMDesc",
+					"-lLLVMARMInfo",
+					"-lLLVMARMAsmPrinter",
+					"-lLLVMPowerPCDisassembler",
+					"-lLLVMPowerPCCodeGen",
+					"-lLLVMPowerPCAsmParser",
+					"-lLLVMPowerPCDesc",
+					"-lLLVMPowerPCInfo",
+					"-lLLVMPowerPCAsmPrinter",
+					"-lLLVMSparcDisassembler",
+					"-lLLVMSparcCodeGen",
+					"-lLLVMSparcAsmParser",
+					"-lLLVMSparcDesc",
+					"-lLLVMSparcInfo",
+					"-lLLVMSparcAsmPrinter",
+					"-lLLVMTableGen",
+					"-lLLVMDebugInfo",
+					"-lLLVMOption",
+					"-lLLVMX86Disassembler",
+					"-lLLVMX86AsmParser",
+					"-lLLVMX86CodeGen",
+					"-lLLVMSelectionDAG",
+					"-lLLVMAsmPrinter",
+					"-lLLVMX86Desc",
+					"-lLLVMMCDisassembler",
+					"-lLLVMX86Info",
+					"-lLLVMX86AsmPrinter",
+					"-lLLVMX86Utils",
+					"-lLLVMMCJIT",
+					"-lLLVMLineEditor",
+					"-lLLVMInstrumentation",
+					"-lLLVMInterpreter",
+					"-lLLVMExecutionEngine",
+					"-lLLVMRuntimeDyld",
+					"-lLLVMCodeGen",
+					"-lLLVMScalarOpts",
+					"-lLLVMProfileData",
+					"-lLLVMObject",
+					"-lLLVMMCParser",
+					"-lLLVMBitReader",
+					"-lLLVMInstCombine",
+					"-lLLVMTransformUtils",
+					"-lLLVMipa",
+					"-lLLVMAnalysis",
+					"-lLLVMTarget",
+					"-lLLVMMC",
+					"-lLLVMCore",
+					"-lLLVMSupport",
+					"-lstdc++",
+					"-lz",
+					"-lffi",
+					"-lcurses",
 				);
 				PRODUCT_NAME = gpac;
 				SDKROOT = macosx;
@@ -4145,7 +4273,7 @@
 				COPY_PHASE_STRIP = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				EXECUTABLE_PREFIX = lib;
-				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_C_LANGUAGE_STANDARD = c99;
 				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					GPAC_STATIC_MODULES,
@@ -4154,7 +4282,7 @@
 					NO_JS_RUNTIMETHREAD,
 					SPIDERMONKEY_NEW_API,
 				);
-				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
+				GCC_VERSION = "";
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_MISSING_PROTOTYPES = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
@@ -4164,10 +4292,12 @@
 					/opt/local/include/mozjs185,
 					/opt/local/include/nspr,
 					../../include,
+					"/opt/local/libexec/llvm-3.6/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					/opt/local/lib,
 					/opt/local/lib/nspr,
+					"/opt/local/libexec/llvm-3.6/lib",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.6;
 				OBJROOT = build;
@@ -4181,6 +4311,112 @@
 					"-lplds4",
 					"-lplc4",
 					"-lnspr4",
+					"-lLLVMLTO",
+					"-lLLVMObjCARCOpts",
+					"-lLLVMLinker",
+					"-lLLVMBitWriter",
+					"-lLLVMIRReader",
+					"-lLLVMAsmParser",
+					"-lLLVMR600CodeGen",
+					"-lLLVMipo",
+					"-lLLVMVectorize",
+					"-lLLVMR600AsmParser",
+					"-lLLVMR600Desc",
+					"-lLLVMR600Info",
+					"-lLLVMR600AsmPrinter",
+					"-lLLVMSystemZDisassembler",
+					"-lLLVMSystemZCodeGen",
+					"-lLLVMSystemZAsmParser",
+					"-lLLVMSystemZDesc",
+					"-lLLVMSystemZInfo",
+					"-lLLVMSystemZAsmPrinter",
+					"-lLLVMHexagonDisassembler",
+					"-lLLVMHexagonCodeGen",
+					"-lLLVMHexagonDesc",
+					"-lLLVMHexagonInfo",
+					"-lLLVMNVPTXCodeGen",
+					"-lLLVMNVPTXDesc",
+					"-lLLVMNVPTXInfo",
+					"-lLLVMNVPTXAsmPrinter",
+					"-lLLVMCppBackendCodeGen",
+					"-lLLVMCppBackendInfo",
+					"-lLLVMMSP430CodeGen",
+					"-lLLVMMSP430Desc",
+					"-lLLVMMSP430Info",
+					"-lLLVMMSP430AsmPrinter",
+					"-lLLVMXCoreDisassembler",
+					"-lLLVMXCoreCodeGen",
+					"-lLLVMXCoreDesc",
+					"-lLLVMXCoreInfo",
+					"-lLLVMXCoreAsmPrinter",
+					"-lLLVMMipsDisassembler",
+					"-lLLVMMipsCodeGen",
+					"-lLLVMMipsAsmParser",
+					"-lLLVMMipsDesc",
+					"-lLLVMMipsInfo",
+					"-lLLVMMipsAsmPrinter",
+					"-lLLVMAArch64Disassembler",
+					"-lLLVMAArch64CodeGen",
+					"-lLLVMAArch64AsmParser",
+					"-lLLVMAArch64Desc",
+					"-lLLVMAArch64Info",
+					"-lLLVMAArch64AsmPrinter",
+					"-lLLVMAArch64Utils",
+					"-lLLVMARMDisassembler",
+					"-lLLVMARMCodeGen",
+					"-lLLVMARMAsmParser",
+					"-lLLVMARMDesc",
+					"-lLLVMARMInfo",
+					"-lLLVMARMAsmPrinter",
+					"-lLLVMPowerPCDisassembler",
+					"-lLLVMPowerPCCodeGen",
+					"-lLLVMPowerPCAsmParser",
+					"-lLLVMPowerPCDesc",
+					"-lLLVMPowerPCInfo",
+					"-lLLVMPowerPCAsmPrinter",
+					"-lLLVMSparcDisassembler",
+					"-lLLVMSparcCodeGen",
+					"-lLLVMSparcAsmParser",
+					"-lLLVMSparcDesc",
+					"-lLLVMSparcInfo",
+					"-lLLVMSparcAsmPrinter",
+					"-lLLVMTableGen",
+					"-lLLVMDebugInfo",
+					"-lLLVMOption",
+					"-lLLVMX86Disassembler",
+					"-lLLVMX86AsmParser",
+					"-lLLVMX86CodeGen",
+					"-lLLVMSelectionDAG",
+					"-lLLVMAsmPrinter",
+					"-lLLVMX86Desc",
+					"-lLLVMMCDisassembler",
+					"-lLLVMX86Info",
+					"-lLLVMX86AsmPrinter",
+					"-lLLVMX86Utils",
+					"-lLLVMMCJIT",
+					"-lLLVMLineEditor",
+					"-lLLVMInstrumentation",
+					"-lLLVMInterpreter",
+					"-lLLVMExecutionEngine",
+					"-lLLVMRuntimeDyld",
+					"-lLLVMCodeGen",
+					"-lLLVMScalarOpts",
+					"-lLLVMProfileData",
+					"-lLLVMObject",
+					"-lLLVMMCParser",
+					"-lLLVMBitReader",
+					"-lLLVMInstCombine",
+					"-lLLVMTransformUtils",
+					"-lLLVMipa",
+					"-lLLVMAnalysis",
+					"-lLLVMTarget",
+					"-lLLVMMC",
+					"-lLLVMCore",
+					"-lLLVMSupport",
+					"-lstdc++",
+					"-lz",
+					"-lffi",
+					"-lcurses",
 				);
 				PRODUCT_NAME = gpac;
 				SDKROOT = macosx;
