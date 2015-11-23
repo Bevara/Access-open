@@ -3,6 +3,7 @@ include ../../config.mak
 vpath %.c $(SRC_PATH)/test/decoder_unit
 
 CXXFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
+CFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
 
 LINKLIBS=$(GPAC_SH_FLAGS)
 
@@ -24,7 +25,7 @@ endif
 
 #common obj
 OBJS_C= terminal.o extract.o
-OBJS_CPP= main.o
+OBJS_CPP= main.o 
 
 
 
