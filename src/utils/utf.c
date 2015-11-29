@@ -155,7 +155,7 @@ static const UTF8 firstByteMark[7] = { 0x00, 0x00, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC 
 
 /* --------------------------------------------------------------------- */
 
-ConversionResult ConvertUTF16toUTF8 (
+ConversionResult _ConvertUTF16toUTF8 (
     const UTF16** sourceStart, const UTF16* sourceEnd,
     UTF8** targetStart, UTF8* targetEnd, ConversionFlags flags) {
 	ConversionResult result = conversionOK;
@@ -289,7 +289,7 @@ static Boolean isLegalUTF8(const UTF8 *source, int length) {
 
 /* --------------------------------------------------------------------- */
 
-ConversionResult ConvertUTF8toUTF16 (
+ConversionResult _ConvertUTF8toUTF16 (
     const UTF8** sourceStart, const UTF8* sourceEnd,
     UTF16** targetStart, UTF16* targetEnd, ConversionFlags flags) {
 	ConversionResult result = conversionOK;
@@ -394,7 +394,7 @@ size_t gf_utf8_wcstombs(char* dest, size_t len, const unsigned short** srcp)
 	UTF8* targetEnd = (UTF8*) dest + len;
 	ConversionFlags flags = strictConversion;
 
-	ConversionResult res = ConvertUTF16toUTF8(sourceStart, sourceEnd, &targetStart, targetEnd, flags);
+	ConversionResult res = _ConvertUTF16toUTF8(sourceStart, sourceEnd, &targetStart, targetEnd, flags);
 	if (res != conversionOK) return (size_t)-1;
 	*targetStart = 0;
 	*srcp=NULL;
@@ -409,7 +409,7 @@ size_t gf_utf8_mbstowcs(unsigned short* dest, size_t len, const char** srcp)
 	UTF16* targetStart = (UTF16* ) dest;
 	UTF16* targetEnd = (UTF16* ) (dest + len);
 	ConversionFlags flags = strictConversion;
-	ConversionResult res = ConvertUTF8toUTF16(sourceStart, sourceEnd, &targetStart, targetEnd, flags);
+	ConversionResult res = _ConvertUTF8toUTF16(sourceStart, sourceEnd, &targetStart, targetEnd, flags);
 	if (res != conversionOK) return (size_t)-1;
 	*targetStart = 0;
 	*srcp=NULL;
