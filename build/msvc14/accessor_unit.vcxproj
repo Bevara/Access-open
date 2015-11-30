@@ -108,7 +108,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>gtest.lib;gtest_main.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
+      <AdditionalDependencies>gtest.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>../../bin/$(Platform)\$(Configuration);../../test/gtest-1.7.0/lib/$(Configuration);../../extra_lib/lib/$(Platform)\$(Configuration);../../bin/$(Platform)\$(Configuration)</AdditionalLibraryDirectories>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>

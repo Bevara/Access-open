@@ -255,13 +255,12 @@ void loadAccessor(const char* url){
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
 }
 
-//TEST(File, JPG) {
-void test_jpg() {
+TEST(File, JPG) {
+//void test_jpg() {
 	string file = signals_fld;
 	file.append("Freedom.jpg.bvr");
 	loadAccessor(file.c_str());
 }
-//}
 
 int main(int argc, char **argv) {
 	::testing::InitGoogleTest(&argc, argv);
@@ -282,6 +281,6 @@ int main(int argc, char **argv) {
 	config = gf_cfg_init(NULL, NULL);
 	modules = gf_modules_new(NULL, config);
 
-	test_jpg();
+	//test_jpg();
 	return RUN_ALL_TESTS();
 }
