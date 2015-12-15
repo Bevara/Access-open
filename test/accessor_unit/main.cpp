@@ -13,6 +13,9 @@ string modules_fld;
 GF_ModuleManager *modules;
 GF_Config *config;
 GF_MediaDecoder* ifce_acc;
+GF_Channel *ch;
+GF_NetworkCommand com;
+
 
 static void term_on_connect(GF_ClientService *service, LPNETCHANNEL netch, GF_Err err)
 {
@@ -48,6 +51,12 @@ static void term_on_media_add(GF_ClientService *service, GF_Descriptor *media_de
 
 		odm = (GF_ObjectDescriptor *)media_desc;
 		esd = (GF_ESD *)gf_list_get(odm->ESDescriptors, 0);
+		ch = gf_es_new(esd);
+		com.base.on_channel = ch;
+
+		service->ifce->ConnectChannel(service->ifce, ch, "ES_ID=1", (Bool)esd->decoderConfig->upstream);
+		service->ifce->ServiceCommand(service->ifce, &com);
+
 		ASSERT_EQ(ifce_acc->CanHandleStream((GF_BaseDecoder*)ifce_acc, 0, esd, 0), GF_CODEC_SUPPORTED);
 		ifce_acc->AttachStream((GF_BaseDecoder*)ifce_acc, esd);
 	}
@@ -57,7 +66,11 @@ static void term_on_media_add(GF_ClientService *service, GF_Descriptor *media_de
 void loadAccessor(const char* url){
 	GF_ClientService* net_service;
 	GF_Descriptor *desc;
-	GF_Err e;
+	GF_Err e, state;
+	GF_SLHeader slh;
+	u32 dataLength;
+	Bool comp, is_new_data;
+	char *data;
 
 	u32 od_type = 0;
 	char *ext, *redirect_url;
@@ -78,8 +91,12 @@ void loadAccessor(const char* url){
 	e = ifce_isom->ConnectService(ifce_isom, net_service, url);
 	
 	/* Decoding */
-	ifce_isom->ChannelGetSLP(ifce_isom, 0, 0, 0, 0, 0, 0, 0);
-	e = ifce_acc->ProcessData(ifce_acc, NULL, 0, 0, 0, 0, 0, 0, 0);
+	
+	//ifce_acc->
+	memset(&slh, 0, sizeof(GF_SLHeader));
+	//ch->is_playing = GF_TRUE;
+	ifce_isom->ChannelGetSLP(ifce_isom, ch, (char **)&data, &dataLength, &slh, &comp, &state, &is_new_data);
+	e = ifce_acc->ProcessData(ifce_acc, data, dataLength, 0 , 0, 0, 0, 0, 0);
 
 	gf_modules_close_interface((GF_BaseInterface *)ifce_acc);
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
