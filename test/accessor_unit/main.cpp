@@ -9,39 +9,35 @@ using namespace std;
 
 string signals_fld;
 string modules_fld;
+string preserved_fld;
 
 GF_ModuleManager *modules;
 GF_Config *config;
 GF_MediaDecoder* ifce_acc;
 GF_Channel *ch;
 GF_NetworkCommand com;
+GF_ClientService net_service;
 
-
-static void term_on_connect(GF_ClientService *service, LPNETCHANNEL netch, GF_Err err)
+static void img_on_connect(GF_ClientService *service, LPNETCHANNEL netch, GF_Err err)
 {
 	service->ifce->GetServiceDescriptor(service->ifce, 1, "");
 }
 
-static void term_on_disconnect(GF_ClientService *service, LPNETCHANNEL netch, GF_Err response)
+static void img_on_disconnect(GF_ClientService *service, LPNETCHANNEL netch, GF_Err response)
+{
+	gf_es_del(ch);
+}
+
+static void img_on_command(GF_ClientService *service, GF_NetworkCommand *com, GF_Err response)
 {
 
 }
 
-static void term_on_command(GF_ClientService *service, GF_NetworkCommand *com, GF_Err response)
-{
+static void img_on_data_packet(GF_ClientService *service, LPNETCHANNEL netch, char *data, u32 data_size, GF_SLHeader *hdr, GF_Err reception_status){
 
 }
 
-static void term_on_data_packet(GF_ClientService *service, LPNETCHANNEL netch, char *data, u32 data_size, GF_SLHeader *hdr, GF_Err reception_status){
-
-}
-
-static Bool is_same_od(GF_ObjectDescriptor *od1, GF_ObjectDescriptor *od2)
-{
-	return GF_TRUE;
-}
-
-static void term_on_media_add(GF_ClientService *service, GF_Descriptor *media_desc, Bool no_scene_check)
+static void img_on_media_add(GF_ClientService *service, GF_Descriptor *media_desc, Bool no_scene_check)
 {
 
 	if (media_desc) {
@@ -54,59 +50,82 @@ static void term_on_media_add(GF_ClientService *service, GF_Descriptor *media_de
 		ch = gf_es_new(esd);
 		com.base.on_channel = ch;
 
-		service->ifce->ConnectChannel(service->ifce, ch, "ES_ID=1", (Bool)esd->decoderConfig->upstream);
-		service->ifce->ServiceCommand(service->ifce, &com);
+		ASSERT_EQ(service->ifce->ConnectChannel(service->ifce, ch, "ES_ID=1", (Bool)esd->decoderConfig->upstream), GF_OK);
+		ASSERT_EQ(service->ifce->ServiceCommand(service->ifce, &com), GF_OK);
 
-		ASSERT_EQ(ifce_acc->CanHandleStream((GF_BaseDecoder*)ifce_acc, 0, esd, 0), GF_CODEC_SUPPORTED);
-		ifce_acc->AttachStream((GF_BaseDecoder*)ifce_acc, esd);
+		ASSERT_EQ(ifce_acc->CanHandleStream((GF_BaseDecoder*)ifce_acc, GF_STREAM_VISUAL, esd, 0), GF_CODEC_SUPPORTED);
+		ASSERT_EQ(ifce_acc->AttachStream((GF_BaseDecoder*)ifce_acc, esd), GF_OK);
 	}
 
 }
 
-void loadAccessor(const char* url){
-	GF_ClientService* net_service;
+void getImgOutput(const char* url, char* service, char* decoder, char** dataOut, u32* outDataLength){
 	GF_Descriptor *desc;
 	GF_Err e, state;
 	GF_SLHeader slh;
-	u32 dataLength;
+	u32 inDataLength = 0;
 	Bool comp, is_new_data;
-	char *data;
+	char *dataIn = NULL;
 
 	u32 od_type = 0;
 	char *ext, *redirect_url;
 	char *sub_url=NULL;
 
-	ifce_acc = (GF_MediaDecoder*)gf_modules_load_interface_by_name(modules, "Accessor dec", GF_MEDIA_DECODER_INTERFACE);
-	GF_InputService* ifce_isom = (GF_InputService*)gf_modules_load_interface_by_name(modules, "GPAC IsoMedia Reader", GF_NET_CLIENT_INTERFACE);
-	
-	GF_SAFEALLOC(net_service, GF_ClientService);
-	net_service->fn_connect_ack = term_on_connect;
-	net_service->fn_disconnect_ack = term_on_disconnect;
-	net_service->fn_command = term_on_command;
-	net_service->fn_data_packet = term_on_data_packet;
-	net_service->fn_add_media = term_on_media_add;
-	net_service->ifce = ifce_isom;
+	*outDataLength = 0;
+	*dataOut = 0;
+
+	ifce_acc = (GF_MediaDecoder*)gf_modules_load_interface_by_name(modules, decoder, GF_MEDIA_DECODER_INTERFACE);
+	ASSERT_TRUE(ifce_acc);
+	GF_InputService* ifce_isom = (GF_InputService*)gf_modules_load_interface_by_name(modules, service, GF_NET_CLIENT_INTERFACE);
+	ASSERT_TRUE(ifce_acc);
+
+
+	net_service.fn_connect_ack = img_on_connect;
+	net_service.fn_disconnect_ack = img_on_disconnect;
+	net_service.fn_command = img_on_command;
+	net_service.fn_data_packet = img_on_data_packet;
+	net_service.fn_add_media = img_on_media_add;
+	net_service.ifce = ifce_isom;
 
 	/* Connecting */
-	e = ifce_isom->ConnectService(ifce_isom, net_service, url);
+	ASSERT_EQ(ifce_isom->ConnectService(ifce_isom, &net_service, url), GF_OK);
 	
 	/* Decoding */
-	
-	//ifce_acc->
 	memset(&slh, 0, sizeof(GF_SLHeader));
-	//ch->is_playing = GF_TRUE;
-	ifce_isom->ChannelGetSLP(ifce_isom, ch, (char **)&data, &dataLength, &slh, &comp, &state, &is_new_data);
-	e = ifce_acc->ProcessData(ifce_acc, data, dataLength, 0 , 0, 0, 0, 0, 0);
+	ASSERT_EQ(ifce_isom->ChannelGetSLP(ifce_isom, ch, (char **)&dataIn, &inDataLength, &slh, &comp, &state, &is_new_data), GF_OK);
+	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_BUFFER_TOO_SMALL);
+
+	/* Decoding */
+	*dataOut = (char*)malloc(*outDataLength);
+	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_OK);
 
 	gf_modules_close_interface((GF_BaseInterface *)ifce_acc);
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
 }
 
 TEST(File, JPG) {
-//void test_jpg() {
-	string file = signals_fld;
-	file.append("Freedom.jpg.bvr");
-	loadAccessor(file.c_str());
+	char *accData = NULL;
+	char *jpegData = NULL;
+	u32 accDataLength = 0;
+	u32 jpegDataLength = 0;
+	string inFile = signals_fld;
+	string preservedFile = preserved_fld;
+	int comp;
+
+	/* Set file in*/
+	inFile.append("Freedom.jpg");
+
+	/* Set preserved file */
+	preservedFile.append("Freedom.jpg.bvr");
+
+	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
+	getImgOutput(preservedFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength);
+
+	/* Compare result */
+	ASSERT_EQ(jpegDataLength, accDataLength);
+	comp = memcmp(jpegData, accData, accDataLength);
+	printf("Value of decoder comparison is %d", comp);
+
 }
 
 int main(int argc, char **argv) {
@@ -117,6 +136,10 @@ int main(int argc, char **argv) {
 			if (strcmp("-signals", argv[i]) == 0) {
 				signals_fld = argv[++i];
 				std::cout << "Test signal folder set to " << signals_fld << endl;
+			}
+			if (strcmp("-preserved", argv[i]) == 0) {
+				signals_fld = argv[++i];
+				std::cout << "Preserved signal folder set to " << preserved_fld << endl;
 			}
 			else if (strcmp("-modules", argv[i]) == 0) {
 				modules_fld = argv[++i];
