@@ -37,7 +37,7 @@ PROG=accessor_unit
 endif
 
 ifeq ($(CONFIG_DARWIN),yes)
-OBJS_C+= carbon_events.o
+OBJS+= carbon_events.o
 LDFLAGS += -framework Carbon
 endif
 

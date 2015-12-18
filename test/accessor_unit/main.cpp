@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
 				std::cout << "Test signal folder set to " << signals_fld << endl;
 			}
 			if (strcmp("-preserved", argv[i]) == 0) {
-				signals_fld = argv[++i];
+				preserved_fld = argv[++i];
 				std::cout << "Preserved signal folder set to " << preserved_fld << endl;
 			}
 			else if (strcmp("-modules", argv[i]) == 0) {
