@@ -103,6 +103,30 @@ void getImgOutput(const char* url, char* service, char* decoder, char** dataOut,
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
 }
 
+TEST(File, JPG_PROGRESSIVE) {
+	char *accData = NULL;
+	char *jpegData = NULL;
+	u32 accDataLength = 0;
+	u32 jpegDataLength = 0;
+	string inFile = signals_fld;
+	string preservedFile = preserved_fld;
+	int comp;
+
+	/* Set file in*/
+	inFile.append("Freedom_progressive.jpg");
+
+	/* Set preserved file */
+	preservedFile.append("Freedom_progressive.jpg.bvr");
+
+	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
+	getImgOutput(preservedFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength);
+
+	/* Compare result */
+	ASSERT_EQ(jpegDataLength, accDataLength);
+	comp = memcmp(jpegData, accData, accDataLength);
+	printf("Value of decoder comparison is %d", comp);
+}
+
 TEST(File, JPG) {
 	char *accData = NULL;
 	char *jpegData = NULL;
@@ -125,7 +149,6 @@ TEST(File, JPG) {
 	ASSERT_EQ(jpegDataLength, accDataLength);
 	comp = memcmp(jpegData, accData, accDataLength);
 	printf("Value of decoder comparison is %d", comp);
-
 }
 
 int main(int argc, char **argv) {
