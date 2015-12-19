@@ -36,11 +36,6 @@ EXT=
 PROG=accessor_unit
 endif
 
-ifeq ($(CONFIG_DARWIN),yes)
-OBJS+= carbon_events.o
-LDFLAGS += -framework Carbon
-endif
-
 SRCS := $(OBJS:.o=.cpp) 
 
 all: $(PROG)
