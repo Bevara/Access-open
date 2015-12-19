@@ -4,7 +4,7 @@ include ../config.mak
 TESTDIRS=
 
 ifneq ($(CONFIG_GTEST), no)
-TESTDIRS+=decoder_unit
+TESTDIRS+=accessor_unit
 endif
 
 

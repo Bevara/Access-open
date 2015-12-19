@@ -747,8 +747,10 @@ struct _es_channel
 };
 
 /*creates a new channel for this stream*/
+GF_EXPORT
 GF_Channel *gf_es_new(GF_ESD *esd);
 /*destroys channel*/
+GF_EXPORT
 void gf_es_del(GF_Channel *ch);
 /*(un)locks channel*/
 void gf_es_lock(GF_Channel *ch, u32 LockIt);
