@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
-VisualStudioVersion = 14.0.23107.0
+VisualStudioVersion = 14.0.24720.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mp4client", "mp4client.vcxproj", "{A35D99BF-D72D-4F56-99A1-97249B22BCE2}"
 EndProject
@@ -109,6 +109,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Accessor_unit", "accessor_u
 	ProjectSection(ProjectDependencies) = postProject
 		{D3540754-E0CF-4604-AC11-82DE9BD4D814} = {D3540754-E0CF-4604-AC11-82DE9BD4D814}
 	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libraw_in", "libraw_in.vcxproj", "{F07CCF05-39B0-4C09-B465-2640C5CB87C2}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -711,6 +713,22 @@ Global
 		{69236CB2-024E-4E1A-89CE-C90F571D452D}.Release|Win32.Build.0 = Release|Win32
 		{69236CB2-024E-4E1A-89CE-C90F571D452D}.Release|x64.ActiveCfg = Release|x64
 		{69236CB2-024E-4E1A-89CE-C90F571D452D}.Release|x64.Build.0 = Release|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug - MP4Box_only|Win32.ActiveCfg = Debug|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug - MP4Box_only|Win32.Build.0 = Debug|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug - MP4Box_only|x64.ActiveCfg = Debug|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug - MP4Box_only|x64.Build.0 = Debug|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug|Win32.ActiveCfg = Debug|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug|Win32.Build.0 = Debug|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug|x64.ActiveCfg = Debug|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Debug|x64.Build.0 = Debug|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release - MP4Box_only|Win32.ActiveCfg = Release|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release - MP4Box_only|Win32.Build.0 = Release|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release - MP4Box_only|x64.ActiveCfg = Release|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release - MP4Box_only|x64.Build.0 = Release|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release|Win32.ActiveCfg = Release|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release|Win32.Build.0 = Release|Win32
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release|x64.ActiveCfg = Release|x64
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -763,5 +781,6 @@ Global
 		{C79C2D73-06E9-4622-92CE-F166B1B51792} = {B7FFDE3D-6BF0-4EE1-B6FD-BD15A503DBBA}
 		{9B73D8EF-92B0-4A7F-865A-B7C415CBD4F2} = {6274F5D2-A9CB-4DF9-BF9E-818416ACD347}
 		{69236CB2-024E-4E1A-89CE-C90F571D452D} = {CADB00E1-2FF7-46CF-A037-8221B6D79FFA}
+		{F07CCF05-39B0-4C09-B465-2640C5CB87C2} = {6274F5D2-A9CB-4DF9-BF9E-818416ACD347}
 	EndGlobalSection
 EndGlobal
