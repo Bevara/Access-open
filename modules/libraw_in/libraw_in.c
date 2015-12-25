@@ -34,6 +34,7 @@ enum
 	LIBRAW_PNGD,
 	LIBRAW_PNGDS,
 	LIBRAW_PNGS,
+	LIBRAW_DNG
 };
 
 typedef struct
@@ -105,13 +106,7 @@ GF_ESD *LIBRAW_GetESD(LIBRAWLoader *read)
 }
 
 const char * LIBRAW_MIME_TYPES[] = {
-	"image/jpeg", "jpeg jpg", "JPEG Images",
-	"image/jp2", "jp2", "JPEG2000 Images",
-	"image/png", "png", "PNG Images",
-	"image/bmp", "bmp", "MS Bitmap Images",
-	"image/x-png+depth", "pngd", "PNG+Depth Images",
-	"image/x-png+depth+mask", "pngds", "PNG+Depth+Mask Images",
-	"image/x-png+stereo", "pngs", "Stereo PNG Images",
+	"image/raw", "dng", "RAW Images",
 	NULL
 };
 
@@ -218,7 +213,7 @@ static GF_Err LIBRAW_ConnectService(GF_InputService *plug, GF_ClientService *ser
 	if (!url)
 		return GF_BAD_PARAM;
 	sExt = strrchr(url, '.');
-	if (!stricmp(sExt, ".jpeg") || !stricmp(sExt, ".jpg")) read->LIBRAW_type = LIBRAW_JPEG;
+	if (!stricmp(sExt, ".dng")) read->LIBRAW_type = LIBRAW_DNG;
 	else if (!stricmp(sExt, ".png")) read->LIBRAW_type = LIBRAW_PNG;
 	else if (!stricmp(sExt, ".pngd")) read->LIBRAW_type = LIBRAW_PNGD;
 	else if (!stricmp(sExt, ".pngds")) read->LIBRAW_type = LIBRAW_PNGDS;
@@ -414,7 +409,7 @@ void *NewLoaderInterface()
 	LIBRAWLoader *priv;
 	GF_InputService *plug;
 	GF_SAFEALLOC(plug, GF_InputService);
-	GF_REGISTER_MODULE_INTERFACE(plug, GF_NET_CLIENT_INTERFACE, "GPAC Image Reader", "gpac distribution")
+	GF_REGISTER_MODULE_INTERFACE(plug, GF_NET_CLIENT_INTERFACE, "GPAC RAW Image Reader", "Bevara distribution")
 
 	plug->RegisterMimeTypes = LIBRAW_RegisterMimeTypes;
 	plug->CanHandleURL = LIBRAW_CanHandleURL;
