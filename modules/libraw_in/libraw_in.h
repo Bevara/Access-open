@@ -32,6 +32,8 @@
 #include <gpac/modules/service.h>
 #include <gpac/constants.h>
 
+#include <libraw/libraw_in.h>
+
 enum
 {
 	DEC_RESERVED = 0,
@@ -45,6 +47,7 @@ typedef struct
 {
 	u32 type;
 	void *opaque;
+	LibRaw RawProcessor;
 } LIBRAWDec;
 
 /*all constructors shall setup the wraper type and handle
