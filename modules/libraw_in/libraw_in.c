@@ -23,18 +23,21 @@
  *
  */
 
-#include "libraw_in.h"
-#include <gpac/avparse.h>
+/*all codecs are regular */
+#include <gpac/modules/codec.h>
+#include <gpac/modules/service.h>
+#include <gpac/constants.h>
+
+#include "libraw/libraw.h"
 
 enum
 {
-	LIBRAW_JPEG = 1,
-	LIBRAW_PNG,
-	LIBRAW_BMP,
-	LIBRAW_PNGD,
-	LIBRAW_PNGDS,
-	LIBRAW_PNGS,
-	LIBRAW_DNG
+	IMG_JPEG = 1,
+	IMG_PNG,
+	IMG_BMP,
+	IMG_PNGD,
+	IMG_PNGDS,
+	IMG_PNGS,
 };
 
 typedef struct
@@ -44,7 +47,7 @@ typedef struct
 	u32 srv_type;
 
 	FILE *stream;
-	u32 LIBRAW_type;
+	u32 img_type;
 
 	u32 pad_bytes;
 	Bool done;
@@ -67,36 +70,33 @@ GF_ESD *LIBRAW_GetESD(LIBRAWLoader *read)
 	esd->slConfig->timestampResolution = 1000;
 	esd->decoderConfig->streamType = GF_STREAM_VISUAL;
 	esd->ESID = 1;
-
-	if (read->LIBRAW_type == LIBRAW_BMP)
-		esd->decoderConfig->objectTypeIndication = GPAC_BMP_OTI;
-	else {
-		u8 OTI=0;
+	{
+		u8 OTI = 0;
 		GF_BitStream *bs = gf_bs_from_file(read->stream, GF_BITSTREAM_READ);
 /*#ifndef GPAC_DISABLE_AV_PARSERS
 		u32 mtype, w, h;
-		gf_LIBRAW_parse(bs, &OTI, &mtype, &w, &h, &esd->decoderConfig->decoderSpecificInfo->data, &esd->decoderConfig->decoderSpecificInfo->dataLength);
+		gf_img_parse(bs, &OTI, &mtype, &w, &h, &esd->decoderConfig->decoderSpecificInfo->data, &esd->decoderConfig->decoderSpecificInfo->dataLength);
 #endif*/
 		gf_bs_del(bs);
 
 		if (!OTI) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[LIBRAW_IN] Unable to guess format image - assigning from extension\n"));
-			if (read->LIBRAW_type==LIBRAW_JPEG) OTI = GPAC_OTI_IMAGE_JPEG;
-			else if (read->LIBRAW_type==LIBRAW_PNG) OTI = GPAC_OTI_IMAGE_PNG;
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[IMG_IN] Unable to guess format image - assigning from extension\n"));
+			if (read->img_type == IMG_JPEG) OTI = GPAC_OTI_IMAGE_JPEG;
+			else if (read->img_type == IMG_PNG) OTI = GPAC_OTI_IMAGE_PNG;
 		}
 		esd->decoderConfig->objectTypeIndication = OTI;
 
-		if (read->LIBRAW_type == LIBRAW_PNGD) {
+		if (read->img_type == IMG_PNGD) {
 			GF_Descriptor *d = gf_odf_desc_new(GF_ODF_AUX_VIDEO_DATA);
 			((GF_AuxVideoDescriptor*)d)->aux_video_type = 1;
 			gf_list_add(esd->extensionDescriptors, d);
 		}
-		else if (read->LIBRAW_type == LIBRAW_PNGDS) {
+		else if (read->img_type == IMG_PNGDS) {
 			GF_Descriptor *d = gf_odf_desc_new(GF_ODF_AUX_VIDEO_DATA);
 			((GF_AuxVideoDescriptor*)d)->aux_video_type = 2;
 			gf_list_add(esd->extensionDescriptors, d);
 		}
-		else if (read->LIBRAW_type == LIBRAW_PNGS) {
+		else if (read->img_type == IMG_PNGS) {
 			GF_Descriptor *d = gf_odf_desc_new(GF_ODF_AUX_VIDEO_DATA);
 			((GF_AuxVideoDescriptor*)d)->aux_video_type = 3;
 			gf_list_add(esd->extensionDescriptors, d);
@@ -213,13 +213,7 @@ static GF_Err LIBRAW_ConnectService(GF_InputService *plug, GF_ClientService *ser
 	if (!url)
 		return GF_BAD_PARAM;
 	sExt = strrchr(url, '.');
-	if (!stricmp(sExt, ".dng")) read->LIBRAW_type = LIBRAW_DNG;
-	else if (!stricmp(sExt, ".png")) read->LIBRAW_type = LIBRAW_PNG;
-	else if (!stricmp(sExt, ".pngd")) read->LIBRAW_type = LIBRAW_PNGD;
-	else if (!stricmp(sExt, ".pngds")) read->LIBRAW_type = LIBRAW_PNGDS;
-	else if (!stricmp(sExt, ".pngs")) read->LIBRAW_type = LIBRAW_PNGS;
-	else if (!stricmp(sExt, ".bmp")) read->LIBRAW_type = LIBRAW_BMP;
-
+	if (!stricmp(sExt, ".dng")) read->img_type = 1;
 	if (read->dnload) gf_service_download_del(read->dnload);
 	read->dnload = NULL;
 

@@ -23,18 +23,46 @@
  *
  */
 
+ /*all codecs are regular */
+#include <gpac/modules/codec.h>
+#include <gpac/modules/service.h>
+#include <gpac/constants.h>
 
-#include "libraw_in.h"
+#include "libraw/libraw.h"
+
+#define RAWCTX()	LIBRAWDec *ctx = (LIBRAWDec *) ifcg->privateStack
+
+enum
+{
+	IMG_JPEG = 1,
+	IMG_PNG,
+	IMG_BMP,
+	IMG_PNGD,
+	IMG_PNGDS,
+	IMG_PNGS,
+};
+
+typedef struct
+{
+	u32 type;
+	u32 bpp, nb_comp, width, height, out_size, pixel_format, dsi_size;
+	void *opaque;
+	libraw_data_t *iprc;
+} LIBRAWDec;
 
 
-static u32 DEC_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, u8 PL)
+static u32 LIBRAW_CanHandleStream(GF_BaseDecoder *ifcg, u32 StreamType, GF_ESD *esd, u8 PL)
 {
 	if (StreamType != GF_STREAM_VISUAL) return GF_CODEC_NOT_SUPPORTED;
 	/*media type query*/
 	if (!esd) return GF_CODEC_STREAM_TYPE_SUPPORTED;
+	RAWCTX();
 
-	switch (esd->decoderConfig->objectTypeIndication) {
-/*#ifdef GPAC_HAS_PNG
+	ctx->iprc = libraw_init(0);
+
+
+/*	switch (esd->decoderConfig->objectTypeIndication) {
+#ifdef GPAC_HAS_PNG
 	case GPAC_OTI_IMAGE_PNG:
 		if (NewPNGDec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
@@ -61,12 +89,86 @@ static u32 DEC_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd,
 			if (NewJP2Dec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 	}
-#endif*/
+#endif
 	return GF_CODEC_NOT_SUPPORTED;
-	}
+	}*/
 	return GF_CODEC_NOT_SUPPORTED;
 }
 
+
+static GF_Err LIBRAW_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
+{
+
+	return GF_OK;
+}
+static GF_Err LIBRAW_DetachStream(GF_BaseDecoder *ifcg, u16 ES_ID)
+{
+	return GF_OK;
+}
+static GF_Err LIBRAW_GetCapabilities(GF_BaseDecoder *ifcg, GF_CodecCapability *capability)
+{
+	RAWCTX();
+	switch (capability->CapCode) {
+	case GF_CODEC_WIDTH:
+		capability->cap.valueInt = ctx->width;
+		break;
+	case GF_CODEC_HEIGHT:
+		capability->cap.valueInt = ctx->height;
+		break;
+	case GF_CODEC_STRIDE:
+		if (ctx->pixel_format == GF_PIXEL_YV12) {
+			capability->cap.valueInt = ctx->width;
+		}
+		else {
+			capability->cap.valueInt = ctx->width * ctx->nb_comp;
+		}
+		break;
+	case GF_CODEC_FPS:
+		capability->cap.valueFloat = 0;
+		break;
+	case GF_CODEC_PIXEL_FORMAT:
+		capability->cap.valueInt = ctx->pixel_format;
+		break;
+	case GF_CODEC_OUTPUT_SIZE:
+		capability->cap.valueInt = ctx->out_size;
+		break;
+	case GF_CODEC_BUFFER_MIN:
+		capability->cap.valueInt = 0;
+		break;
+	case GF_CODEC_BUFFER_MAX:
+		capability->cap.valueInt = (ctx->pixel_format == GF_PIXEL_YV12) ? 4 : 1;
+		break;
+	case GF_CODEC_PADDING_BYTES:
+		capability->cap.valueInt = 4;
+		break;
+	case GF_CODEC_PAR:
+		capability->cap.valueInt = 0;
+		break;
+	default:
+		capability->cap.valueInt = 0;
+		return GF_NOT_SUPPORTED;
+	}
+	return GF_OK;
+}
+static GF_Err LIBRAW_SetCapabilities(GF_BaseDecoder *ifcg, GF_CodecCapability capability)
+{
+	/*return unsupported to avoid confusion by the player (like color space changing ...) */
+	return GF_NOT_SUPPORTED;
+}
+
+static const char *LIBRAW_GetCodecName(GF_BaseDecoder *dec)
+{
+	return "LibRaw";
+}
+
+static GF_Err LIBRAW_ProcessData(GF_MediaDecoder *ifcg,
+	char *inBuffer, u32 inBufferLength,
+	u16 ES_ID, u32 *CTS,
+	char *outBuffer, u32 *outBufferLength,
+	u8 PaddingBits, u32 mmlevel)
+{
+
+}
 
 GF_BaseDecoder *NewBaseDecoder()
 {
@@ -80,9 +182,15 @@ GF_BaseDecoder *NewBaseDecoder()
 		return NULL;
 	}
 	ifce->privateStack = wrap;
-	ifce->CanHandleStream = DEC_CanHandleStream;
+	ifce->CanHandleStream = LIBRAW_CanHandleStream;
+	ifce->AttachStream = LIBRAW_AttachStream;
+	ifce->DetachStream = LIBRAW_DetachStream;
+	ifce->GetCapabilities = LIBRAW_GetCapabilities;
+	ifce->SetCapabilities = LIBRAW_SetCapabilities;
+	ifce->GetName = LIBRAW_GetCodecName;
+	ifce->ProcessData = LIBRAW_ProcessData;
 
-	GF_REGISTER_MODULE_INTERFACE(ifce, GF_MEDIA_DECODER_INTERFACE, "GPAC Image Decoder", "gpac distribution")
+	GF_REGISTER_MODULE_INTERFACE(ifce, GF_MEDIA_DECODER_INTERFACE, "GPAC Raw Image Decoder", "Bevara distribution")
 
 	/*other interfaces will be setup at run time*/
 	return (GF_BaseDecoder *)ifce;
@@ -156,4 +264,4 @@ void ShutdownInterface(GF_BaseInterface *ifce)
 	}
 }
 
-GPAC_MODULE_STATIC_DECLARATION( img_in )
+GPAC_MODULE_STATIC_DECLARATION( libraw_in )

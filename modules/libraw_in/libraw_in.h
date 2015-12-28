@@ -27,28 +27,9 @@
 #ifndef _IMG_IN_H
 #define _IMG_IN_H
 
-/*all codecs are regular */
-#include <gpac/modules/codec.h>
-#include <gpac/modules/service.h>
-#include <gpac/constants.h>
 
-#include <libraw/libraw_in.h>
 
-enum
-{
-	DEC_RESERVED = 0,
-	DEC_PNG,
-	DEC_JPEG,
-	DEC_JP2,
-	DEC_BMP,
-};
 
-typedef struct
-{
-	u32 type;
-	void *opaque;
-	LibRaw RawProcessor;
-} LIBRAWDec;
 
 /*all constructors shall setup the wraper type and handle
 	return 1 for success, 0 otherwise
