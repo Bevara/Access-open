@@ -3,7 +3,7 @@
 
 #include "libraw/libraw.h"
 
-#define RAWCTX()	LIBRAWDec *ctx = (LIBRAWDec *) ifcg->privateStack
+#define RAWCTX()	LIBRAWDec *ctx = (LIBRAWDec *) ((IMGDec *)ifcg->privateStack)->opaque
 
 typedef struct
 {
@@ -21,16 +21,16 @@ static GF_Err LIBRAW_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 	if (ctx->ES_ID && ctx->ES_ID != esd->ESID) return GF_NOT_SUPPORTED;
 	ctx->ES_ID = esd->ESID;
 	ctx->BPP = 3;
-
+	ctx->image= NULL;
 	ctx->iprc = libraw_init(0);
-	return ctx->iprc ? GF_OK: GF_NOT_SUPPORTED;
+	return GF_OK;
 }
 static GF_Err LIBRAW_DetachStream(GF_BaseDecoder *ifcg, u16 ES_ID)
 {
 	RAWCTX();
 	if (ctx->ES_ID != ES_ID) return GF_BAD_PARAM;
 	ctx->ES_ID = ES_ID;
-
+	if (ctx->image) libraw_dcraw_clear_mem(ctx->image);
 	libraw_close(ctx->iprc);
 	return GF_OK;
 }
@@ -145,6 +145,5 @@ Bool NewRAWDec(GF_BaseDecoder *ifcd)
 void DeleteRAWDec(GF_BaseDecoder *ifcg)
 {
 	RAWCTX();
-	libraw_close(ctx->iprc);
 	gf_free(ctx);
 }
