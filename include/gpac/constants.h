@@ -332,6 +332,8 @@ enum
 	GPAC_OTI_IMAGE_PNG = 0x6D,
 	/*!OTI for JPEG-2000 streams*/
 	GPAC_OTI_IMAGE_JPEG_2000 = 0x6E,
+	/*!OTI for RAW streams*/
+	GPAC_OTI_IMAGE_DNG = 0x6F,
 
 	/*!
 	 * \brief Extra ObjectTypeIndication

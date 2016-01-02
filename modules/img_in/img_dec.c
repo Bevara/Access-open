@@ -49,6 +49,11 @@ static u32 DEC_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd,
 		if (NewJP2Dec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 #endif
+#ifdef GPAC_HAS_DNG
+	case GPAC_OTI_IMAGE_DNG:
+		if (NewJP2Dec(dec)) return esd->decoderConfig->bvr_config ? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
+		return GF_CODEC_NOT_SUPPORTED;
+#endif
 	case GPAC_BMP_OTI:
 		if (NewBMPDec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;

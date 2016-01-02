@@ -39,6 +39,7 @@ enum
 	DEC_JPEG,
 	DEC_JP2,
 	DEC_BMP,
+	DEC_DNG,
 };
 
 typedef struct
@@ -61,6 +62,9 @@ void DeleteJPEGDec(GF_BaseDecoder *dec);
 Bool NewJP2Dec(GF_BaseDecoder *dec);
 void DeleteJP2Dec(GF_BaseDecoder *dec);
 #endif
+
+Bool NewRAWDec(GF_BaseDecoder *dec);
+void DeleteRAWDec(GF_BaseDecoder *dec);
 
 
 #if defined(WIN32) || defined(_WIN32_WCE)

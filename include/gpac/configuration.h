@@ -42,6 +42,7 @@
 #define GPAC_HAS_SPIDERMONKEY
 #define GPAC_HAS_JPEG
 #define GPAC_HAS_PNG
+#define GPAC_HAS_DNG
 
 /*IPv6 enabled - for win32, this is evaluated at compile time, !! do not uncomment !!*/
 

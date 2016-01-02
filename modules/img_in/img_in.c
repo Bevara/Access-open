@@ -34,6 +34,7 @@ enum
 	IMG_PNGD,
 	IMG_PNGDS,
 	IMG_PNGS,
+	IMG_DNG,
 };
 
 typedef struct
@@ -69,7 +70,9 @@ GF_ESD *IMG_GetESD(IMGLoader *read)
 
 	if (read->img_type == IMG_BMP)
 		esd->decoderConfig->objectTypeIndication = GPAC_BMP_OTI;
-	else {
+	else if (read->img_type == IMG_DNG) {
+		esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_DNG;
+	}else {
 		u8 OTI=0;
 		GF_BitStream *bs = gf_bs_from_file(read->stream, GF_BITSTREAM_READ);
 #ifndef GPAC_DISABLE_AV_PARSERS
@@ -112,6 +115,7 @@ const char * IMG_MIME_TYPES[] = {
 	"image/x-png+depth", "pngd", "PNG+Depth Images",
 	"image/x-png+depth+mask", "pngds", "PNG+Depth+Mask Images",
 	"image/x-png+stereo", "pngs", "Stereo PNG Images",
+	"image/dng", "dng", "RAW Images",
 	NULL
 };
 
@@ -224,6 +228,7 @@ static GF_Err IMG_ConnectService(GF_InputService *plug, GF_ClientService *serv, 
 	else if (!stricmp(sExt, ".pngds")) read->img_type = IMG_PNGDS;
 	else if (!stricmp(sExt, ".pngs")) read->img_type = IMG_PNGS;
 	else if (!stricmp(sExt, ".bmp")) read->img_type = IMG_BMP;
+	else if (!stricmp(sExt, ".dng")) read->img_type = IMG_DNG;
 
 	if (read->dnload) gf_service_download_del(read->dnload);
 	read->dnload = NULL;
