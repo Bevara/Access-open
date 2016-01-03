@@ -4,11 +4,13 @@
 #include "libraw/libraw.h"
 
 #define RAWCTX()	LIBRAWDec *ctx = (LIBRAWDec *) ((IMGDec *)ifcg->privateStack)->opaque
+#define HANDLE_ERRORS() if (ret) fprintf(stderr, "libraw  %s\n", libraw_strerror(ret))
 
 typedef struct
 {
 	u16 ES_ID;
 	u32 BPP, width, height, out_size, pixel_format;
+	u32 state;
 	libraw_data_t *iprc;
 	libraw_processed_image_t *image;
 } LIBRAWDec;
@@ -21,7 +23,6 @@ static GF_Err LIBRAW_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 	if (ctx->ES_ID && ctx->ES_ID != esd->ESID) return GF_NOT_SUPPORTED;
 	ctx->ES_ID = esd->ESID;
 	ctx->BPP = 3;
-	ctx->image= NULL;
 	ctx->iprc = libraw_init(0);
 	return GF_OK;
 }
@@ -97,23 +98,27 @@ static GF_Err LIBRAW_ProcessData(GF_MediaDecoder *ifcg,
 	RAWCTX();
 
 	if (!ctx->image){
+		libraw_processed_image_t * out;
+
 		int ret = libraw_open_buffer(ctx->iprc, inBuffer, inBufferLength);
-		if (ret) fprintf(stderr, "libraw  %s\n", libraw_strerror(ret));
+		HANDLE_ERRORS();
 
 		ret = libraw_unpack(ctx->iprc);
-		if (ret) fprintf(stderr, "libraw  %s\n", libraw_strerror(ret));
+		HANDLE_ERRORS();
 
 		ret = libraw_dcraw_process(ctx->iprc);
-		if (ret) fprintf(stderr, "libraw  %s\n", libraw_strerror(ret));
+		HANDLE_ERRORS();
 
-		libraw_processed_image_t *image = libraw_dcraw_make_mem_image(ctx->iprc, &ret);
+		out = libraw_dcraw_make_mem_image(ctx->iprc, &ret);
+		HANDLE_ERRORS();
 
-		ctx->image = image;
-		ctx->width = image->width;
-		ctx->height = image->height;
-		ctx->BPP = image->colors;
+		ctx->image = out;
+		ctx->width = out->width;
+		ctx->height = out->height;
+		ctx->BPP = out->colors;
 		ctx->pixel_format = GF_PIXEL_RGB_24;
 	}
+	
 
 	if (*outBufferLength < ctx->image->data_size) {
 		*outBufferLength = ctx->image->data_size;
