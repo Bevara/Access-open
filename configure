@@ -68,6 +68,7 @@ has_js="no"
 has_platinum="no"
 has_ft="no"
 has_jpeg="no"
+has_libraw="no"
 has_png="no"
 has_xvid="no"
 has_mad="no"
@@ -312,6 +313,7 @@ Extra libraries configuration. You can turn a libray off or force using the loca
   --use-zlib=OPT           force ZLIB OPT=[no,system,local]
   --use-jpeg=OPT           force JPEG OPT=[no,local]
   --use-png=OPT            force PNG OPT=[no,local]
+  --use-raw=OPT            force LIBRAW OPT=[no,local]
   --use-faad=OPT           force FAAD OPT=[no,local]
   --use-mad=OPT            force MAD OPT=[no,local]
   --use-xvid=OPT           force XVID OPT=[no,local]
@@ -1259,6 +1261,33 @@ if test "$has_png" = "no" ; then
     fi
 fi
 
+#look for RAW support
+cat > $TMPC << EOF
+#include "libraw/libraw.h"
+int main( void ) { return 0; }
+EOF
+
+raw_cflags="-I$prefix/include"
+raw_lflags="-L$prefix/lib -lraw"
+if docc $raw_cflags $raw_lflags $LDFLAGS ; then
+    has_libraw="system"
+elif docc $LDFLAGS -lraw ; then
+    has_libraw="system"
+fi
+if test "$cross_prefix" = "" ; then
+    if test "$has_libraw" = "no" ; then
+        if test "$alt_macosx_dir" != "" ; then
+            if docc -I$alt_macosx_dir/include -L$alt_macosx_dir/lib $LDFLAGS -lraw 2>>$logs ; then
+                has_libraw="system"
+            fi
+        fi
+    fi
+fi
+if test "$has_libraw" = "no" ; then
+    if docc -I$local_inc/raw -L$local_lib -lraw ; then
+        has_libraw="local"
+    fi
+fi
 
 
 #look for MAD support
@@ -1988,6 +2017,8 @@ for opt do
             ;;
         --use-a52=*) has_a52=${opt#--use-a52=}
             ;;
+        --use-raw=*) has_libraw=${opt#--use-raw=}
+            ;;
         --use-gtest=*) has_gtest=${opt#--use-gtest=}
             ;;
         --use-xvid=*) has_xvid=${opt#--use-xvid=}
@@ -2521,6 +2552,7 @@ if test "$static_mp4box" = "yes"; then
     has_js="no"
     has_jpeg="no"
     has_png="no"
+    has_libraw="no"
     has_mad="no"
     has_ft="no"
     has_openjpeg="no"
@@ -2900,6 +2932,7 @@ echo "FreeType: $has_ft"
 echo "JPEG: $has_jpeg"
 echo "OpenJPEG: $has_openjpeg"
 echo "PNG: $has_png"
+echo "RAW: $has_libraw"
 echo "MAD: $has_mad"
 echo "FAAD: $has_faad"
 echo "XVID: $has_xvid"
@@ -3124,6 +3157,11 @@ fi
 echo "CONFIG_PNG=$has_png" >> config.mak
 if test "$has_png" != "no" ; then
     echo "#define GPAC_HAS_PNG" >> $TMPH
+fi
+
+echo "CONFIG_RAW=$has_libraw" >> config.mak
+if test "$has_libraw" != "no" ; then
+    echo "#define GPAC_HAS_RAW" >> $TMPH
 fi
 
 echo "CONFIG_JP2=$has_openjpeg" >> config.mak
