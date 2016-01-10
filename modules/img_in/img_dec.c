@@ -49,7 +49,7 @@ static u32 DEC_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd,
 		if (NewJP2Dec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 #endif
-#ifdef GPAC_HAS_DNG
+#ifdef GPAC_HAS_RAW
 	case GPAC_OTI_IMAGE_DNG:
 		if (NewRAWDec(dec)) return esd->decoderConfig->bvr_config ? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
@@ -108,9 +108,11 @@ void DeleteBaseDecoder(GF_BaseDecoder *ifcd)
 	case DEC_JPEG:
 		DeleteJPEGDec(ifcd);
 		break;
+#ifdef GPAC_HAS_RAW
 	case DEC_DNG:
 		DeleteRAWDec(ifcd);
 		break;
+#endif
 #ifdef GPAC_HAS_JP2
 	case DEC_JP2:
 		DeleteJP2Dec(ifcd);
