@@ -148,7 +148,7 @@ void* getFn(Acc_Comp_s* comp, const char * name){
 	return comp->EE->getPointerToFunction(fn);
 }
 
-int compile(Acc_Comp_s** comp, const char* llvm_code, unsigned int length, const char* cachedir){
+int compile(Acc_Comp_s** comp, const char* file, char* llvm_code, unsigned int length, const char* cachedir){
 	bool enableCacheManager = false;
 	LLVMContext &Context = getGlobalContext();
 	InitializeNativeTarget();
@@ -158,11 +158,22 @@ int compile(Acc_Comp_s** comp, const char* llvm_code, unsigned int length, const
 	// Create compiler
 	Acc_Comp_s* tmp_comp;
 	Module* Mod;
+	unique_ptr<MemoryBuffer> Buf;
+	unique_ptr<Module> Owner;
 
 	// Parse code
 	SMDiagnostic Err;
-	unique_ptr<MemoryBuffer> Buf = MemoryBuffer::getMemBuffer(StringRef(llvm_code, length));
-	unique_ptr<Module> Owner = parseIR(Buf.get()->getMemBufferRef(), Err, Context);
+	
+	if (file) {
+		Owner = parseIRFile(file, Err, Context);
+	} else if (llvm_code) {
+		llvm_code[length] = '\0'; //Todo : Copy data and then add the code end
+		Buf = MemoryBuffer::getMemBuffer(StringRef(llvm_code, length));
+		Owner = parseIR(Buf.get()->getMemBufferRef(), Err, Context);
+	}
+	else {
+		return 1;
+	}
 
 	if (!Owner.get()) {
 		Err.print("Bevara module : ", errs());

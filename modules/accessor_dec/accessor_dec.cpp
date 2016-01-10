@@ -24,50 +24,62 @@ typedef struct
 	GF_Err (*caps)(GF_CodecCapability *capability);
 } Acc_dec;
 
+static u32 BV_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, u8 PL)
+{
+	GF_Err err = GF_OK;
+	char *llvm_code = NULL;
+	Acc_dec *ctx = NULL;
+	const char* cachedir = NULL;
+	const char* fileAccessor = NULL;
+	printf("[Accessor decoder] Trying to use specific bevara decoder... \n");
+	ctx = (Acc_dec*)dec->privateStack;
+
+	/*not supported for a first version (and may be never be)*/
+	if (esd->dependsOnESID) {
+		return GF_CODEC_NOT_SUPPORTED;
+	}
+
+	fileAccessor = gf_modules_get_option((GF_BaseInterface *)dec, "Accessor", "File");
+	cachedir = gf_modules_get_option((GF_BaseInterface *)dec, "General", "CacheDirectory");
+	
+	if (fileAccessor) {
+		err = (GF_Err)compile(&ctx->comp, fileAccessor, NULL, 0, cachedir);
+	}
+	else if (esd->decoderConfig->bvr_config){
+		err = (GF_Err)compile(&ctx->comp, NULL, esd->decoderConfig->bvr_config->data, esd->decoderConfig->bvr_config->dataLength, cachedir);
+	}
+	else {
+		return GF_CODEC_NOT_SUPPORTED;
+	}
+	
+	if (err) {
+		fprintf(stderr, "[Accessor decoder] Unrecoverable error! Accessor can't be used for the following reason : %s", gf_error_to_string(err));
+		return GF_CODEC_NOT_SUPPORTED;
+	}
+
+	// Init LLVM compilation
+	printf("[Accessor decoder] Compilation succeed! Start parsing useful metadata... \n");
+
+	ctx->entry = (GF_Err(*)(char *, u32, char *, u32*, u8, u32))
+		getFn(ctx->comp, "ENTRY");
+	if (!ctx->entry) {
+		return GF_CODEC_NOT_SUPPORTED;
+	}
+	
+	printf("[Accessor decoder] Decoder can be used! \n");
+	return GF_CODEC_SUPPORTED;
+}
 static GF_Err BV_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 {
 	GF_Err err = GF_OK;
-	char *llvm_code = NULL; 
-	u32 llvm_length;
+	Acc_dec *ctx = NULL;
 	char* data = NULL;
 	u32 dataLength = 0;
-	Acc_dec *ctx = NULL;
-	const char* cachedir = NULL;
 
-	printf("[Accessor decoder] Trying to use specific bevara decoder... \n");
-	ctx = (Acc_dec*) ifcg->privateStack;
-
-	/*not supported for a first version (and may be never be)*/
-	if (esd->dependsOnESID){
-		err = GF_NOT_SUPPORTED;
-		goto error;
-	}
-	llvm_length = esd->decoderConfig->bvr_config->dataLength;
-	if (!llvm_length){
-		err = GF_NOT_SUPPORTED;
-		goto error;
-	}
-	
-	printf("[Accessor decoder] Bevara decoder can be used! Starting decoder compilation... \n");
+	ctx = (Acc_dec*)ifcg->privateStack;
 
 	ctx->ES_ID = esd->ESID;
-	llvm_code = esd->decoderConfig->bvr_config->data;
-	llvm_code[llvm_length] = '\0'; //Todo : Copy data and then add the code end
 
-
-	cachedir = gf_modules_get_option((GF_BaseInterface *)ifcg, "General", "CacheDirectory");
-
-	// Init LLVM compilation
-	err = (GF_Err)compile(&ctx->comp, llvm_code, llvm_length, cachedir);
-	if (err) goto error;
-	printf("[Accessor decoder] Compilation succeed! Start parsing useful metadata... \n");
-
-	ctx->entry = (GF_Err (*)(char *, u32, char *, u32*, u8, u32))
-		    		  getFn(ctx->comp, "ENTRY");
-	if (!ctx->entry){
-		err = GF_CORRUPTED_DATA;
-		goto error;
-	}
 	ctx->init = (GF_Err (*)(char *, unsigned int))
 			getFn(ctx->comp, "INIT");
 	ctx->shutdown = (GF_Err (*)())
@@ -141,12 +153,6 @@ static GF_Err BV_ProcessData(GF_MediaDecoder *ifcg,
 {
 	Acc_dec *ctx = (Acc_dec*) ifcg->privateStack;
 	return ctx->entry(inBuffer, inBufferLength, outBuffer, outBufferLength, PaddingBits, mmlevel);
-}
-
-static u32 BV_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, u8 PL)
-{
-	if (esd && esd->decoderConfig && esd->decoderConfig->bvr_config) return GF_CODEC_SUPPORTED;
-	return GF_CODEC_NOT_SUPPORTED;
 }
 
 static const char *BV_GetCodecName(GF_BaseDecoder *dec)
