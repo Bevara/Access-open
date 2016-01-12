@@ -28,8 +28,7 @@ IDR_MAINFRAME MENUEX
 BEGIN
     POPUP "&File",                          65535,MFT_STRING,MFS_ENABLED
     BEGIN
-        MENUITEM "&Open File\tCtrl+O",          ID_OPEN_FILE,MFT_STRING,MFS_ENABLED
-        MENUITEM "Open &URL\tCtrl+U",           ID_OPEN_URL,MFT_STRING,MFS_ENABLED
+        MENUITEM "&Open File or URL \tCtrl+O",  ID_OPEN_FILE,MFT_STRING,MFS_ENABLED
         MENUITEM MFT_SEPARATOR
         MENUITEM "File Propert&ies\tCtrl+I",    ID_FILE_PROP,MFT_STRING,MFS_ENABLED
         MENUITEM MFT_SEPARATOR
@@ -202,8 +201,11 @@ END
 //
 
 IDR_MAINTOOLS           BITMAP                  "res\\maintool.bmp"
+
 IDB_VOLUME              BITMAP                  "res\\IDB_VOLUME.bmp"
+
 IDB_VOLUME_MUTED        BITMAP                  "res\\IDB_VOLUME_MUTED.bmp"
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -337,13 +339,19 @@ LANGUAGE LANG_FRENCH, SUBLANG_FRENCH
 // Dialog
 //
 
-IDD_OPENFILE DIALOG 0, 0, 301, 23
+IDD_OPENFILE DIALOGEX 0, 0, 357, 110
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Select Location"
-FONT 8, "MS Sans Serif"
+CAPTION "Select File or URL"
+FONT 8, "MS Sans Serif", 0, 0, 0x0
 BEGIN
-    COMBOBOX        IDC_COMBOURL,3,5,273,67,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
-    DEFPUSHBUTTON   "OK",IDC_BUTGO,279,5,19,13
+    COMBOBOX        IDC_COMBOURL,8,22,241,67,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK",IDC_BUTGO,313,89,19,13
+    PUSHBUTTON      "Open...",IDC_OPEN_FILE,259,22,50,14
+    LTEXT           "Enter a URL, a file location or click on Open :",IDC_STATIC_FILE,17,9,144,8
+    COMBOBOX        IDC_COMBOURL2,9,54,241,67,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "(Optionaly) Select an Accessor",IDC_STATIC_FILE2,17,43,98,8
+    PUSHBUTTON      "Open...",IDC_OPEN_ACC,259,53,50,14
+    DEFPUSHBUTTON   "Cancel",IDC_BUTGO2,268,89,34,13
 END
 
 IDD_OPTIONS DIALOG 0, 0, 174, 106
@@ -531,7 +539,7 @@ BEGIN
     PUSHBUTTON      "",IDC_NAV_NEXT,164,1,24,14,BS_BITMAP
     PUSHBUTTON      "",IDC_NAV_PREV,6,2,24,14,BS_BITMAP
     EDITTEXT        IDC_CUR_PAGE,68,3,27,14,ES_CENTER | ES_AUTOHSCROLL | ES_NUMBER
-    CONTROL         " / 1",IDC_PAGE_COUNT,"Static",SS_SIMPLE | SS_CENTERIMAGE  | WS_GROUP,100,2,22,15
+    CONTROL         " / 1",IDC_PAGE_COUNT,"Static",SS_SIMPLE | SS_CENTERIMAGE | WS_GROUP,100,2,22,15
 END
 
 IDD_PLAYLIST DIALOGEX 0, 0, 186, 54
@@ -600,9 +608,15 @@ GUIDELINES DESIGNINFO
 BEGIN
     IDD_OPENFILE, DIALOG
     BEGIN
+        RIGHTMARGIN, 349
+        BOTTOMMARGIN, 102
     END
 
     IDD_OPTIONS, DIALOG
+    BEGIN
+    END
+
+    IDD_OPT_GEN, DIALOG
     BEGIN
     END
 
@@ -656,6 +670,10 @@ BEGIN
         RIGHTMARGIN, 168
     END
 
+    IDD_OPT_RENDER2D, DIALOG
+    BEGIN
+    END
+
     IDD_OPT_RENDER3D, DIALOG
     BEGIN
         RIGHTMARGIN, 168
@@ -668,6 +686,10 @@ BEGIN
     END
 
     IDD_PLAYLIST, DIALOG
+    BEGIN
+    END
+
+    IDD_OPT_MCACHE, DIALOG
     BEGIN
     END
 
@@ -707,10 +729,15 @@ END
 //
 
 IDR_PLAYLIST            BITMAP                  "res\\playlist.bmp"
+
 IDB_PLAY                BITMAP                  "res\\IDB_PLAY.bmp"
+
 IDB_PAUSE               BITMAP                  "res\\IDB_PAUSE.bmp"
+
 IDB_LEFT_ARROW          BITMAP                  "res\\IDB_LEFT_ARROW_large.bmp"
+
 IDB_RIGHT_ARROW         BITMAP                  "res\\IDB_RIGHT_ARROW_large.bmp"
+
 
 #ifdef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
@@ -758,11 +785,19 @@ END
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
 IDR_MAINFRAME           ICON                    "res\\BevaraAccess.ico"
+
 IDI_PLAY                ICON                    "res\\play.ico"
+
 IDI_STOP                ICON                    "res\\stop.ico"
+
 IDI_PAUSE               ICON                    "res\\pause.ico"
+
 IDI_MESSAGE             ICON                    "res\\message.ico"
+
 IDI_ERR                 ICON                    "res\\error.ico"
+
+IDI_ICON1               ICON                    "res\\icon1.ico"
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -845,6 +880,17 @@ BEGIN
     "^O",           ID_OPEN_FILE,           ASCII,  NOINVERT
     "^U",           ID_OPEN_URL,            ASCII,  NOINVERT
     VK_F3,          ID_VIEW_PL,             VIRTKEY, NOINVERT
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// AFX_DIALOG_LAYOUT
+//
+
+IDD_OPENFILE AFX_DIALOG_LAYOUT
+BEGIN
+    0
 END
 
 #endif    // Français (France) resources

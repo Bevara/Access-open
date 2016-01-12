@@ -1,6 +1,6 @@
 //{{NO_DEPENDENCIES}}
-// Microsoft Visual C++ generated include file.
-// Used by Osmo4.rc
+// fichier Include Microsoft Visual C++.
+// Utilisé par Osmo4.rc
 //
 #define IDD_ABOUTBOX                    100
 #define ID_EXTRACT_DATA                 101
@@ -45,6 +45,8 @@
 #define IDB_BITMAP2                     207
 #define IDB_LEFT_ARROW                  208
 #define IDB_RIGHT_ARROW                 209
+#define IDR_ACCELERATOR1                210
+#define IDI_ICON1                       211
 #define IDC_FILES_MIMES                 1000
 #define IDC_FILES_PLUG                  1001
 #define ID_AUDIO_VOL                    1002
@@ -57,7 +59,9 @@
 #define IDC_BROWSE                      1009
 #define IDC_BUTGO                       1010
 #define IDC_SPIN_OPT                    1011
+#define IDC_COMBOURL2                   1011
 #define IDC_OPT_SET_NAME                1012
+#define IDC_BUTGO2                      1012
 #define IDC_LANG                        1013
 #define IDC_LOOP                        1014
 #define IDC_AUTOSTART                   1015
@@ -168,9 +172,11 @@
 #define IDC_ABOUT_CLOSE                 1133
 #define IDC_Save                        1133
 #define IDSAVE                          1133
+#define IDC_OPEN_FILE                   1133
 #define ID_FILE_PLAY                    1134
 #define IDC_EDIT1                       1134
 #define ID_ACCESSBETATESTLINK           1134
+#define IDC_OPEN_ACC                    1134
 #define ID_NAVIGATE_NONE                1135
 #define ID_BETA_CANCEL                  1135
 #define ID_BETA_CLOSE                   1135
@@ -185,7 +191,9 @@
 #define IDC_PAGE_COUNT                  1140
 #define ID_NAVIGATE_GAME                1141
 #define ID_AR_FILL                      1142
+#define IDC_STATIC_FILE                 1142
 #define ID_AR_43                        1143
+#define IDC_STATIC_FILE2                1143
 #define ID_AR_169                       1144
 #define ID_FILE_MIGRATE                 1145
 #define ID_NAV_RESET                    1151
@@ -344,9 +352,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
-#define _APS_NEXT_RESOURCE_VALUE        210
-#define _APS_NEXT_COMMAND_VALUE         32986
-#define _APS_NEXT_CONTROL_VALUE         1141
-#define _APS_NEXT_SYMED_VALUE           102
+#define _APS_NEXT_RESOURCE_VALUE        216
+#define _APS_NEXT_COMMAND_VALUE         32987
+#define _APS_NEXT_CONTROL_VALUE         1143
+#define _APS_NEXT_SYMED_VALUE           103
 #endif
 #endif

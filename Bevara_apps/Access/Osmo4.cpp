@@ -11,7 +11,6 @@
 #include "HtmlHelp.h"
 
 
-
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #undef THIS_FILE
@@ -23,9 +22,8 @@ static char THIS_FILE[] = __FILE__;
 
 BEGIN_MESSAGE_MAP(Osmo4, CWinApp)
 	//{{AFX_MSG_MAP(Osmo4)
-	ON_COMMAND(ID_OPEN_FILE, OnOpenFile)
+	ON_COMMAND(ID_OPEN_FILE, OnOpenUrl)
 	ON_COMMAND(ID_FILE_STEP, OnFileStep)
-	ON_COMMAND(ID_OPEN_URL, OnOpenUrl)
 	ON_COMMAND(ID_FILE_RELOAD, OnFileReload)
 	ON_COMMAND(ID_CONFIG_RELOAD, OnConfigReload)
 	ON_COMMAND(ID_FILE_PLAY, OnFilePlay)
@@ -893,6 +891,7 @@ void Osmo4::OnOpenFile()
 	
 	/*looks like there's a bug here, main filter isn't used correctly while the others are*/
 	CFileDialog fd(TRUE,NULL,NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST , sFiles);
+
 	fd.m_ofn.nMaxFile = 25000;
 	fd.m_ofn.lpstrFile = (wchar_t *) gf_malloc(sizeof(wchar_t) * fd.m_ofn.nMaxFile);
 	fd.m_ofn.lpstrFile[0] = 0;
