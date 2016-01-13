@@ -427,7 +427,6 @@ makehm /h /a afxhh.h IDW_,HIDW_,0x50000 "%(FullPath)" &gt;&gt; "hlp\HTMLDefines.
     <None Include="..\..\Bevara_apps\Access\res\stop.ico" />
     <None Include="..\..\Bevara_apps\Access\res\volume.bmp" />
     <None Include="..\..\doc\osmo4.ico" />
-    <None Include="ClassDiagram.cd" />
     <None Include="res\IDB_LEFT_ARROW_large.bmp" />
     <None Include="res\IDB_PAUSE.bmp" />
     <None Include="res\IDB_PLAY.bmp" />
@@ -435,9 +434,6 @@ makehm /h /a afxhh.h IDW_,HIDW_,0x50000 "%(FullPath)" &gt;&gt; "hlp\HTMLDefines.
     <None Include="res\IDB_VOLUME.bmp" />
     <None Include="res\IDB_VOLUME_MUTED.bmp" />
     <None Include="res\maintool_png_version.png" />
-  </ItemGroup>
-  <ItemGroup>
-    <Image Include="..\..\Bevara_apps\Access\res\icon1.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

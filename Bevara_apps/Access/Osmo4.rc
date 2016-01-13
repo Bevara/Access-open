@@ -24,27 +24,31 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 // Menu
 //
 
-IDR_MAINFRAME MENUEX
+IDR_MAINFRAME MENU
 BEGIN
-    POPUP "&File",                          65535,MFT_STRING,MFS_ENABLED
+    POPUP "&File"
     BEGIN
-        MENUITEM "&Open File or URL \tCtrl+O",  ID_OPEN_FILE,MFT_STRING,MFS_ENABLED
-        MENUITEM MFT_SEPARATOR
-        MENUITEM "File Propert&ies\tCtrl+I",    ID_FILE_PROP,MFT_STRING,MFS_ENABLED
-        MENUITEM MFT_SEPARATOR
-        MENUITEM "Exit",                        ID_FILE_EXIT,MFT_STRING,MFS_ENABLED
+        POPUP "&Open"
+        BEGIN
+            MENUITEM "Open &File\tCtrl+O",          ID_OPEN_FILE
+            MENUITEM "Open &Advanced\tCtrl+A",      ID_OPEN_URL
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "File Propert&ies\tCtrl+I",    ID_FILE_PROP
+        MENUITEM SEPARATOR
+        MENUITEM "Exit",                        ID_FILE_EXIT
     END
-    POPUP "View",                           65535,MFT_STRING,MFS_ENABLED
+    POPUP "View"
     BEGIN
-        MENUITEM "&Fullscreen",                 ID_VIEW_FULLSCREEN,MFT_STRING,MFS_ENABLED
-        MENUITEM "Original &Aspect",            ID_VIEW_ORIGINAL,MFT_STRING,MFS_ENABLED
+        MENUITEM "&Fullscreen",                 ID_VIEW_FULLSCREEN
+        MENUITEM "Original &Aspect",            ID_VIEW_ORIGINAL
     END
-    POPUP "Help",                           65535,MFT_STRING,MFS_ENABLED
+    POPUP "Help"
     BEGIN
-        MENUITEM "Online Help",                 ID_HELP_BETATESTFEEDBACK,MFT_STRING,MFS_ENABLED
-        MENUITEM "Quick Help",                  ID_HELP_FINDER,MFT_STRING | MFT_RIGHTJUSTIFY,MFS_ENABLED
-        MENUITEM MFT_SEPARATOR
-        MENUITEM "About",                       ID_HELP_ABOUT,MFT_STRING,MFS_ENABLED
+        MENUITEM "Online Help",                 ID_HELP_BETATESTFEEDBACK
+        MENUITEM "Quick Help",                  ID_HELP_FINDER
+        MENUITEM SEPARATOR
+        MENUITEM "About",                       ID_HELP_ABOUT
     END
 END
 
@@ -153,6 +157,10 @@ BEGIN
     IDD_ABOUTBOX, DIALOG
     BEGIN
         BOTTOMMARGIN, 184
+    END
+
+    IDD_PASSWD, DIALOG
+    BEGIN
     END
 
     IDD_HELP_CONTACT, DIALOG
@@ -281,7 +289,7 @@ BEGIN
     ID_FILE_STEP            "Step one frame"
     IDD_CONFIGURE           "Configure Accessor"
     ID_VIEW_SCALABLE        "Uses vectorial zooming when resizing the window"
-    ID_OPEN_URL             "Open remote data file"
+    ID_OPEN_URL             "Open with options"
     ID_FILE_RELOAD          "Reload current file"
     ID_FILE_PLAY            "Play/Pause"
     ID_NAVIGATE_NONE        "Disable navigation"
@@ -339,19 +347,20 @@ LANGUAGE LANG_FRENCH, SUBLANG_FRENCH
 // Dialog
 //
 
-IDD_OPENFILE DIALOGEX 0, 0, 357, 110
+IDD_OPENFILE DIALOGEX 0, 0, 341, 107
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Select File or URL"
+CAPTION "Open Advanced..."
 FONT 8, "MS Sans Serif", 0, 0, 0x0
 BEGIN
-    COMBOBOX        IDC_COMBOURL,8,22,241,67,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
-    DEFPUSHBUTTON   "OK",IDC_BUTGO,313,89,19,13
-    PUSHBUTTON      "Open...",IDC_OPEN_FILE,259,22,50,14
-    LTEXT           "Enter a URL, a file location or click on Open :",IDC_STATIC_FILE,17,9,144,8
-    COMBOBOX        IDC_COMBOURL2,9,54,241,67,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "(Optionaly) Select an Accessor",IDC_STATIC_FILE2,17,43,98,8
-    PUSHBUTTON      "Open...",IDC_OPEN_ACC,259,53,50,14
-    DEFPUSHBUTTON   "Cancel",IDC_BUTGO2,268,89,34,13
+    COMBOBOX        IDC_COMBOURL,3,19,273,67,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK",IDC_BUTGO,302,88,31,13
+    DEFPUSHBUTTON   "Cancel",IDC_CANCEL,254,88,37,13
+    LTEXT           "Enter URL or File Location :",IDC_STATIC,6,6,88,8
+    CONTROL         "Force Accessor",IDC_FORCE_ACC,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,6,37,65,10
+    COMBOBOX        IDC_ACC_LOC,5,65,273,67,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | NOT WS_VISIBLE | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Enter Accessor Location :",IDC_STATIC_ACC,8,52,82,8,NOT WS_VISIBLE
+    PUSHBUTTON      "Location...",IDC_LOCATION_FILE,283,19,50,14
+    PUSHBUTTON      "Location...",IDC_SELECT_ACC,283,64,50,14,NOT WS_VISIBLE
 END
 
 IDD_OPTIONS DIALOG 0, 0, 174, 106
@@ -608,8 +617,8 @@ GUIDELINES DESIGNINFO
 BEGIN
     IDD_OPENFILE, DIALOG
     BEGIN
-        RIGHTMARGIN, 349
-        BOTTOMMARGIN, 102
+        RIGHTMARGIN, 333
+        BOTTOMMARGIN, 101
     END
 
     IDD_OPTIONS, DIALOG
@@ -795,8 +804,6 @@ IDI_PAUSE               ICON                    "res\\pause.ico"
 IDI_MESSAGE             ICON                    "res\\message.ico"
 
 IDI_ERR                 ICON                    "res\\error.ico"
-
-IDI_ICON1               ICON                    "res\\icon1.ico"
 
 
 /////////////////////////////////////////////////////////////////////////////

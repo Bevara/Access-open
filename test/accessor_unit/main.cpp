@@ -151,28 +151,6 @@ TEST(File, JPG) {
 	printf("Value of decoder comparison is %d", comp);
 }
 
-TEST(File, DNG) {
-	char *accData = NULL;
-	char *jpegData = NULL;
-	u32 accDataLength = 0;
-	u32 jpegDataLength = 0;
-	string inFile = signals_fld;
-	string preservedFile = preserved_fld;
-	int comp;
-
-	/* Set file in*/
-	inFile.append("ATK_SFS_almost_no_knead_bread-32.dng");
-
-
-	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
-	//getImgOutput(inFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength);
-
-	/* Compare result */
-	//ASSERT_EQ(jpegDataLength, accDataLength);
-	//comp = memcmp(jpegData, accData, accDataLength);
-	//printf("Value of decoder comparison is %d", comp);
-}
-
 int main(int argc, char **argv) {
 	::testing::InitGoogleTest(&argc, argv);
 

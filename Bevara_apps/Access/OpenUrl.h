@@ -21,6 +21,10 @@ public:
 	//{{AFX_DATA(COpenUrl)
 	enum { IDD = IDD_OPENFILE };
 	CComboBox	m_URLs;
+	CButton	m_UseAcc;
+	CComboBox	m_AccLoc;
+	CButton	m_SelectAcc;
+	CStatic m_AccTxt;
 	//}}AFX_DATA
 
 
@@ -41,6 +45,10 @@ protected:
 	virtual BOOL OnInitDialog();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
+public:
+	afx_msg void OnBnClickedForceAcc();
+	afx_msg void OnBnClickedLocationFile();
+	afx_msg void OnBnClickedSelectAcc();
 };
 
 //{{AFX_INSERT_LOCATION}}

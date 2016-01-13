@@ -29,6 +29,10 @@ void COpenUrl::DoDataExchange(CDataExchange* pDX)
 	CDialog::DoDataExchange(pDX);
 	//{{AFX_DATA_MAP(COpenUrl)
 	DDX_Control(pDX, IDC_COMBOURL, m_URLs);
+	DDX_Control(pDX, IDC_FORCE_ACC, m_UseAcc);
+	DDX_Control(pDX, IDC_ACC_LOC, m_AccLoc);
+	DDX_Control(pDX, IDC_SELECT_ACC, m_SelectAcc);
+	DDX_Control(pDX, IDC_STATIC_ACC, m_AccTxt);
 	//}}AFX_DATA_MAP
 }
 
@@ -37,6 +41,9 @@ BEGIN_MESSAGE_MAP(COpenUrl, CDialog)
 	//{{AFX_MSG_MAP(COpenUrl)
 	ON_BN_CLICKED(IDC_BUTGO, OnButgo)
 	//}}AFX_MSG_MAP
+	ON_BN_CLICKED(IDC_FORCE_ACC, &COpenUrl::OnBnClickedForceAcc)
+	ON_BN_CLICKED(IDC_LOCATION_FILE, &COpenUrl::OnBnClickedLocationFile)
+	ON_BN_CLICKED(IDC_SELECT_ACC, &COpenUrl::OnBnClickedSelectAcc)
 END_MESSAGE_MAP()
 
 
@@ -96,4 +103,27 @@ BOOL COpenUrl::OnInitDialog()
 		i++;
 	}
 	return TRUE;
+}
+
+
+void COpenUrl::OnBnClickedForceAcc()
+{
+	int show = m_UseAcc.GetCheck() ? SW_SHOW : SW_HIDE;
+	
+	m_AccTxt.ShowWindow(show);
+	m_AccLoc.ShowWindow(show);
+	m_SelectAcc.ShowWindow(show);
+	m_AccTxt.ShowWindow(show);
+}
+
+
+void COpenUrl::OnBnClickedLocationFile()
+{
+	// TODO: ajoutez ici le code de votre gestionnaire de notification de contrôle
+}
+
+
+void COpenUrl::OnBnClickedSelectAcc()
+{
+	// TODO: ajoutez ici le code de votre gestionnaire de notification de contrôle
 }
