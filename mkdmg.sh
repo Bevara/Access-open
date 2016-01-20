@@ -111,20 +111,20 @@ rm -rf ./tmpdmg
 
 #add SLA
 echo "Adding licence"
-hdiutil convert -format UDCO -o gpac_sla.dmg gpac.dmg
+hdiutil convert -format UDCO -o open-access_sla.dmg gpac.dmg
 rm gpac.dmg
-hdiutil unflatten gpac_sla.dmg
-#Rez /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/*.r $source_path/build/osxdmg/SLA.r -a -o gpac_sla.dmg
-hdiutil flatten gpac_sla.dmg
-hdiutil internet-enable -yes gpac_sla.dmg
+hdiutil unflatten open-access_sla.dmg
+#Rez /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/*.r $source_path/build/osxdmg/SLA.r -a -o open-access_sla.dmg
+hdiutil flatten open-access_sla.dmg
+hdiutil internet-enable -yes open-access_sla.dmg
 
-pck_name="gpac-$full_version.dmg"
+pck_name="open-access-v$version.dmg"
 if [ "$1" = "snow-leopard" ]; then
-pck_name="gpac-$full_version-$1.dmg"
+pck_name="open-access-v$version-$1.dmg"
 fi
 
 echo "$pck_name ready"
-chmod o+rx gpac_sla.dmg
-chmod g+rx gpac_sla.dmg
-mv gpac_sla.dmg $pck_name
+chmod o+rx open-access_sla.dmg
+chmod g+rx open-access_sla.dmg
+mv open-access_sla.dmg $pck_name
 
