@@ -904,6 +904,8 @@ void Osmo4::OnOpenFile()
 
 	CMainFrame *pFrame = (CMainFrame *) m_pMainWnd;
 
+	gf_cfg_set_key(this->m_user.config, "Accessor", "File", "");
+
 	/*if several items, act as playlist (replace playlist), otherwise as browser (lost all "next" context)*/
 	pFrame->m_pPlayList->Clear();
 

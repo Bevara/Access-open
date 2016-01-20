@@ -49,6 +49,7 @@ public:
 	afx_msg void OnBnClickedForceAcc();
 	afx_msg void OnBnClickedLocationFile();
 	afx_msg void OnBnClickedSelectAcc();
+	afx_msg void OnBnClickedCancel();
 };
 
 //{{AFX_INSERT_LOCATION}}

@@ -42,7 +42,7 @@ static u32 BV_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, 
 	fileAccessor = gf_modules_get_option((GF_BaseInterface *)dec, "Accessor", "File");
 	cachedir = gf_modules_get_option((GF_BaseInterface *)dec, "General", "CacheDirectory");
 	
-	if (fileAccessor) {
+	if (fileAccessor && strcmp(fileAccessor, "")) {
 		err = (GF_Err)compile(&ctx->comp, fileAccessor, NULL, 0, cachedir);
 	}
 	else if (esd->decoderConfig->bvr_config){

@@ -44,6 +44,7 @@ BEGIN_MESSAGE_MAP(COpenUrl, CDialog)
 	ON_BN_CLICKED(IDC_FORCE_ACC, &COpenUrl::OnBnClickedForceAcc)
 	ON_BN_CLICKED(IDC_LOCATION_FILE, &COpenUrl::OnBnClickedLocationFile)
 	ON_BN_CLICKED(IDC_SELECT_ACC, &COpenUrl::OnBnClickedSelectAcc)
+	ON_BN_CLICKED(IDC_CANCEL, &COpenUrl::OnBnClickedCancel)
 END_MESSAGE_MAP()
 
 
@@ -82,11 +83,39 @@ void COpenUrl::OnButgo()
 
 	Osmo4 *gpac = GetApp();
 
+	gf_cfg_set_key(gpac->m_user.config, "Accessor", "File", "");
+
 	m_url = URL;
 	CT2A URL_ch(URL);
 	UpdateLastFiles(gpac->m_user.config, (const char *)URL_ch);
+
+	if (m_UseAcc.GetCheck()) {
+		EndDialog(IDOK);
+		return;
+	}
+
+	sel = m_AccLoc.GetCurSel();
+	if (sel == CB_ERR) {
+		m_AccLoc.GetWindowText(URL);
+	}
+	else {
+		m_AccLoc.GetLBText(sel, URL);
+	}
+	if (!URL.GetLength()) {
+		EndDialog(IDOK);
+		return;
+	}
+	CT2A ACC_ch(URL);
+	gf_cfg_set_key(gpac->m_user.config, "Accessor", "File", ACC_ch);
 	EndDialog(IDOK);
 }
+
+void COpenUrl::OnBnClickedCancel()
+{
+	EndDialog(IDCANCEL);
+	return;
+}
+
 
 BOOL COpenUrl::OnInitDialog() 
 {
@@ -119,11 +148,39 @@ void COpenUrl::OnBnClickedForceAcc()
 
 void COpenUrl::OnBnClickedLocationFile()
 {
-	// TODO: ajoutez ici le code de votre gestionnaire de notification de contrôle
+	Osmo4 *gpac = GetApp();
+
+	CString sFiles = gpac->GetFileFilter();
+
+	/*looks like there's a bug here, main filter isn't used correctly while the others are*/
+	CFileDialog fd(TRUE, NULL, NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST, sFiles);
+	fd.m_ofn.nMaxFile = 25000;
+	fd.m_ofn.lpstrFile = (wchar_t *)gf_malloc(sizeof(wchar_t) * fd.m_ofn.nMaxFile);
+	fd.m_ofn.lpstrFile[0] = 0;
+
+	if (fd.DoModal() != IDOK) {
+		gf_free(fd.m_ofn.lpstrFile);
+		return;
+	}
+	CString file = fd.GetPathName();
+	m_URLs.SetWindowTextW(file);
 }
 
 
 void COpenUrl::OnBnClickedSelectAcc()
 {
-	// TODO: ajoutez ici le code de votre gestionnaire de notification de contrôle
+	Osmo4 *gpac = GetApp();
+
+	/*looks like there's a bug here, main filter isn't used correctly while the others are*/
+	CFileDialog fd(TRUE, NULL, NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST, _T("*.bc"));
+	fd.m_ofn.nMaxFile = 25000;
+	fd.m_ofn.lpstrFile = (wchar_t *)gf_malloc(sizeof(wchar_t) * fd.m_ofn.nMaxFile);
+	fd.m_ofn.lpstrFile[0] = 0;
+
+	if (fd.DoModal() != IDOK) {
+		gf_free(fd.m_ofn.lpstrFile);
+		return;
+	}
+	CString file = fd.GetPathName();
+	m_AccLoc.SetWindowTextW(file);
 }

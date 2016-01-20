@@ -97,6 +97,9 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vtt_in", "vtt_in.vcxproj", "{E578716F-6663-4D83-AC79-57EA00D2F406}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Access", "Access.vcxproj", "{C79C2D73-06E9-4622-92CE-F166B1B51792}"
+	ProjectSection(ProjectDependencies) = postProject
+		{D3540754-E0CF-4604-AC11-82DE9BD4D814} = {D3540754-E0CF-4604-AC11-82DE9BD4D814}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "accessor_dec", "accessor_dec.vcxproj", "{9B73D8EF-92B0-4A7F-865A-B7C415CBD4F2}"
 	ProjectSection(ProjectDependencies) = postProject
