@@ -114,7 +114,7 @@ echo "Adding licence"
 hdiutil convert -format UDCO -o gpac_sla.dmg gpac.dmg
 rm gpac.dmg
 hdiutil unflatten gpac_sla.dmg
-Rez /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/*.r $source_path/build/osxdmg/SLA.r -a -o gpac_sla.dmg
+#Rez /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/*.r $source_path/build/osxdmg/SLA.r -a -o gpac_sla.dmg
 hdiutil flatten gpac_sla.dmg
 hdiutil internet-enable -yes gpac_sla.dmg
 
