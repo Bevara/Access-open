@@ -89,7 +89,7 @@ void COpenUrl::OnButgo()
 	CT2A URL_ch(URL);
 	UpdateLastFiles(gpac->m_user.config, (const char *)URL_ch);
 
-	if (m_UseAcc.GetCheck()) {
+	if (!m_UseAcc.GetCheck()) {
 		EndDialog(IDOK);
 		return;
 	}
@@ -172,7 +172,7 @@ void COpenUrl::OnBnClickedSelectAcc()
 	Osmo4 *gpac = GetApp();
 
 	/*looks like there's a bug here, main filter isn't used correctly while the others are*/
-	CFileDialog fd(TRUE, NULL, NULL, OFN_HIDEREADONLY | OFN_FILEMUSTEXIST, _T("*.bc"));
+	CFileDialog fd(TRUE, _T("bc"), _T("*.bc"), OFN_HIDEREADONLY | OFN_FILEMUSTEXIST, _T("Bitcode Files (*.bc)|*.bc|Text Files (*.ll)|*.ll|All Files (*.*)|*.*||"));
 	fd.m_ofn.nMaxFile = 25000;
 	fd.m_ofn.lpstrFile = (wchar_t *)gf_malloc(sizeof(wchar_t) * fd.m_ofn.nMaxFile);
 	fd.m_ofn.lpstrFile[0] = 0;

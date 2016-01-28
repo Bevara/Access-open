@@ -108,8 +108,8 @@ static GF_Err BV_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 	}
 
 	//gf_free(llvm_code);
-	esd->decoderConfig->bvr_config->data = NULL;
-	esd->decoderConfig->bvr_config->dataLength = 0;
+	//esd->decoderConfig->bvr_config->data = NULL;
+	//esd->decoderConfig->bvr_config->dataLength = 0;
 
 	printf("[Accessor decoder] Accessor is ready to be used!\n");
 	return err;
