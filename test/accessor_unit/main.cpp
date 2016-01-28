@@ -10,6 +10,7 @@ using namespace std;
 string signals_fld;
 string modules_fld;
 string preserved_fld;
+string accessors_fld;
 
 GF_ModuleManager *modules;
 GF_Config *config;
@@ -103,6 +104,52 @@ void getImgOutput(const char* url, char* service, char* decoder, char** dataOut,
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
 }
 
+void getAccImgOutput(const char* file_url, const char* accessor_url, char** dataOut, u32* outDataLength) {
+	GF_Descriptor *desc;
+	GF_Err e, state;
+	GF_SLHeader slh;
+	u32 inDataLength = 0;
+	Bool comp, is_new_data;
+	char *dataIn = NULL;
+	char* service = "GPAC Image Reader";
+	char* decoder = "Accessor dec";
+	u32 od_type = 0;
+	char *ext, *redirect_url;
+	char *sub_url = NULL;
+
+	*outDataLength = 0;
+	*dataOut = 0;
+
+	ifce_acc = (GF_MediaDecoder*)gf_modules_load_interface_by_name(modules, decoder, GF_MEDIA_DECODER_INTERFACE);
+	ASSERT_TRUE(ifce_acc);
+	GF_InputService* ifce_isom = (GF_InputService*)gf_modules_load_interface_by_name(modules, service, GF_NET_CLIENT_INTERFACE);
+	ASSERT_TRUE(ifce_acc);
+
+
+	net_service.fn_connect_ack = img_on_connect;
+	net_service.fn_disconnect_ack = img_on_disconnect;
+	net_service.fn_command = img_on_command;
+	net_service.fn_data_packet = img_on_data_packet;
+	net_service.fn_add_media = img_on_media_add;
+	net_service.ifce = ifce_isom;
+
+	/* Connecting */
+	ASSERT_EQ(ifce_isom->ConnectService(ifce_isom, &net_service, file_url), GF_OK);
+
+	/* Decoding */
+	memset(&slh, 0, sizeof(GF_SLHeader));
+	ASSERT_EQ(ifce_isom->ChannelGetSLP(ifce_isom, ch, (char **)&dataIn, &inDataLength, &slh, &comp, &state, &is_new_data), GF_OK);
+	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_BUFFER_TOO_SMALL);
+
+	/* Decoding */
+	gf_cfg_set_key(config, "Accessor", "File", accessor_url);
+	*dataOut = (char*)malloc(*outDataLength);
+	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_OK);
+
+	gf_modules_close_interface((GF_BaseInterface *)ifce_acc);
+	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
+}
+
 TEST(File, JPG_PROGRESSIVE) {
 	char *accData = NULL;
 	char *jpegData = NULL;
@@ -119,7 +166,29 @@ TEST(File, JPG_PROGRESSIVE) {
 	preservedFile.append("Freedom_progressive.jpg.bvr");
 
 	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
-	getImgOutput(preservedFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength);
+	getImgOutput(inFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength);
+
+	/* Compare result */
+	ASSERT_EQ(jpegDataLength, accDataLength);
+	comp = memcmp(jpegData, accData, accDataLength);
+	printf("Value of decoder comparison is %d", comp);
+}
+
+TEST(File, DNG) {
+	char *accData = NULL;
+	char *jpegData = NULL;
+	u32 accDataLength = 0;
+	u32 jpegDataLength = 0;
+	string inFile = signals_fld;
+	string accessorFile = accessors_fld;
+	int comp;
+	
+	/* Set file in*/
+	inFile.append("ATK_SFS_almost_no_knead_bread-32.dng");
+	accessorFile.append("dng_entry_0.1.bc");
+
+	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
+	getAccImgOutput(inFile.c_str(), accessorFile.c_str(), &accData, &accDataLength);
 
 	/* Compare result */
 	ASSERT_EQ(jpegDataLength, accDataLength);
@@ -167,6 +236,10 @@ int main(int argc, char **argv) {
 			else if (strcmp("-modules", argv[i]) == 0) {
 				modules_fld = argv[++i];
 				std::cout << "Test modules folder set to " << modules_fld << endl;
+			}
+			else if (strcmp("-modules", argv[i]) == 0) {
+				accessors_fld = argv[++i];
+				std::cout << "Accessors folder set to " << accessors_fld << endl;
 			}
 		}
 	}
