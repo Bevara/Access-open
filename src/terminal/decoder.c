@@ -1752,6 +1752,27 @@ static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
 	dec_confidence = 0;
 	ifce = NULL;
 
+
+	// Check if bevara module would be sufficient FIXME: introduce leaks in the system
+	ifce = (GF_BaseDecoder *)gf_modules_load_interface_by_name(term->user->modules, "Accessor Decoder", ifce_type);
+	if (ifce) {
+		if (ifce->CanHandleStream) {
+			dec_confidence = ifce->CanHandleStream(ifce, esd->decoderConfig->streamType, esd, PL);
+			if (dec_confidence == GF_CODEC_SUPPORTED) {
+				codec->decio = ifce;
+				return GF_OK;
+			}
+			if (dec_confidence == GF_CODEC_NOT_SUPPORTED) {
+				gf_modules_close_interface((GF_BaseInterface *)ifce);
+				ifce = NULL;
+			}
+		}
+		else {
+			gf_modules_close_interface((GF_BaseInterface *)ifce);
+		}
+	}
+	
+	// Check if previously used decoder could worked
 	if (sOpt) {
 		ifce = (GF_BaseDecoder *) gf_modules_load_interface_by_name(term->user->modules, sOpt, ifce_type);
 		if (ifce) {

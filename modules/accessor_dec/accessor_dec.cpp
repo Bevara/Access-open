@@ -213,11 +213,9 @@ GPAC_MODULE_EXPORT
 void ShutdownInterface(GF_BaseInterface *ifce)
 {
 	switch (ifce->InterfaceType) {
-#ifndef GPAC_DISABLE_AV_PARSERS
 	case GF_MEDIA_DECODER_INTERFACE: 
 		Delete_Acc_dec((GF_BaseDecoder*)ifce);
 		break;
-#endif
 	}
 }
 
