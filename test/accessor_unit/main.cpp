@@ -119,12 +119,13 @@ void getAccImgOutput(const char* file_url, const char* accessor_url, char** data
 
 	*outDataLength = 0;
 	*dataOut = 0;
+	gf_cfg_set_key(config, "Accessor", "File", accessor_url);
 
 	ifce_acc = (GF_MediaDecoder*)gf_modules_load_interface_by_name(modules, decoder, GF_MEDIA_DECODER_INTERFACE);
 	ASSERT_TRUE(ifce_acc);
 	GF_InputService* ifce_isom = (GF_InputService*)gf_modules_load_interface_by_name(modules, service, GF_NET_CLIENT_INTERFACE);
 	ASSERT_TRUE(ifce_acc);
-
+	
 
 	net_service.fn_connect_ack = img_on_connect;
 	net_service.fn_disconnect_ack = img_on_disconnect;
@@ -142,7 +143,6 @@ void getAccImgOutput(const char* file_url, const char* accessor_url, char** data
 	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_BUFFER_TOO_SMALL);
 
 	/* Decoding */
-	gf_cfg_set_key(config, "Accessor", "File", accessor_url);
 	*dataOut = (char*)malloc(*outDataLength);
 	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_OK);
 
@@ -150,7 +150,7 @@ void getAccImgOutput(const char* file_url, const char* accessor_url, char** data
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
 }
 
-TEST(File, JPG_PROGRESSIVE) {
+TEST(File, DISABLED_JPG_PROGRESSIVE) {
 	char *accData = NULL;
 	char *jpegData = NULL;
 	u32 accDataLength = 0;
@@ -196,7 +196,7 @@ TEST(File, DNG) {
 	printf("Value of decoder comparison is %d", comp);
 }
 
-TEST(File, JPG) {
+TEST(File, DISABLED_JPG) {
 	char *accData = NULL;
 	char *jpegData = NULL;
 	u32 accDataLength = 0;
@@ -225,20 +225,24 @@ int main(int argc, char **argv) {
 
 	for (int i = 1; i < argc; i++) {
 		if (i + 1 != argc){
-			if (strcmp("-signals", argv[i]) == 0) {
+			if (strcmp("--signals", argv[i]) == 0) {
 				signals_fld = argv[++i];
+				signals_fld.append("\\");
 				std::cout << "Test signal folder set to " << signals_fld << endl;
 			}
-			if (strcmp("-preserved", argv[i]) == 0) {
+			if (strcmp("--preserved", argv[i]) == 0) {
 				preserved_fld = argv[++i];
+				preserved_fld.append("\\");
 				std::cout << "Preserved signal folder set to " << preserved_fld << endl;
 			}
-			else if (strcmp("-modules", argv[i]) == 0) {
+			else if (strcmp("--modules", argv[i]) == 0) {
 				modules_fld = argv[++i];
+				modules_fld.append("\\");
 				std::cout << "Test modules folder set to " << modules_fld << endl;
 			}
-			else if (strcmp("-modules", argv[i]) == 0) {
+			else if (strcmp("--accessors", argv[i]) == 0) {
 				accessors_fld = argv[++i];
+				accessors_fld.append("\\");
 				std::cout << "Accessors folder set to " << accessors_fld << endl;
 			}
 		}
