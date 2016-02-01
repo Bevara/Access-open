@@ -148,7 +148,7 @@ void* getFn(Acc_Comp_s* comp, const char * name){
 	return comp->EE->getPointerToFunction(fn);
 }
 
-int compile(Acc_Comp_s** comp, const char* file, char* llvm_code, unsigned int length, const char* cachedir){
+int compile(Acc_Comp_s** comp, const char* file, char* llvm_code, unsigned int length, const char* cachedir, bool enable_cache){
 	bool enableCacheManager = false;
 	LLVMContext &Context = getGlobalContext();
 	InitializeNativeTarget();
@@ -188,7 +188,7 @@ int compile(Acc_Comp_s** comp, const char* file, char* llvm_code, unsigned int l
 	//Prepare cache name
 	string CacheName("file:");
 	MDString* libname = getFirstMDString(Mod, "LIBNAME");
-	if (libname && cachedir){
+	if (enable_cache && libname && cachedir){
 		MDString* libversion = getFirstMDString(Mod, "LIBVERSION");
 		enableCacheManager = true;
 		CacheName.append(libname->getString());

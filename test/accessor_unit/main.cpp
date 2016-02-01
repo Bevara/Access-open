@@ -250,6 +250,9 @@ int main(int argc, char **argv) {
 	gf_sys_init(GF_FALSE);
 	config = gf_cfg_init(NULL, NULL);
 	modules = gf_modules_new(NULL, config);
+	
+	//Deactivate cache
+	gf_cfg_set_key(config, "Accessor", "Enable_cache", "no");
 
 	//test_jpg();
 	return RUN_ALL_TESTS();
