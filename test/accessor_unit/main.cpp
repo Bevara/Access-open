@@ -19,6 +19,8 @@ GF_Channel *ch;
 GF_NetworkCommand com;
 GF_ClientService net_service;
 
+#define CAP_CODES 29
+
 static void img_on_connect(GF_ClientService *service, LPNETCHANNEL netch, GF_Err err)
 {
 	service->ifce->GetServiceDescriptor(service->ifce, 1, "");
@@ -60,7 +62,7 @@ static void img_on_media_add(GF_ClientService *service, GF_Descriptor *media_des
 
 }
 
-void getImgOutput(const char* url, char* service, char* decoder, char** dataOut, u32* outDataLength){
+void getImgOutput(const char* url, char* service, char* decoder, char** dataOut, u32* outDataLength, int* capcodes){
 	GF_Descriptor *desc;
 	GF_Err e, state;
 	GF_SLHeader slh;
@@ -100,11 +102,20 @@ void getImgOutput(const char* url, char* service, char* decoder, char** dataOut,
 	*dataOut = (char*)malloc(*outDataLength);
 	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_OK);
 
+
+	/* Get caps codes*/
+	GF_CodecCapability caps;
+	memset(&caps, 0, sizeof(GF_CodecCapability));
+	for (caps.CapCode = 1; caps.CapCode  < CAP_CODES; caps.CapCode++, capcodes++) {
+		ifce_acc->GetCapabilities((GF_BaseDecoder*)ifce_acc, &caps);
+		*capcodes = caps.cap.valueInt;
+	}
+
 	gf_modules_close_interface((GF_BaseInterface *)ifce_acc);
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
 }
 
-void getAccImgOutput(const char* file_url, const char* accessor_url, char** dataOut, u32* outDataLength) {
+void getAccImgOutput(const char* file_url, const char* accessor_url, char** dataOut, u32* outDataLength, int* capcodes) {
 	GF_Descriptor *desc;
 	GF_Err e, state;
 	GF_SLHeader slh;
@@ -146,6 +157,14 @@ void getAccImgOutput(const char* file_url, const char* accessor_url, char** data
 	*dataOut = (char*)malloc(*outDataLength);
 	ASSERT_EQ(ifce_acc->ProcessData(ifce_acc, dataIn, inDataLength, 0, NULL, *dataOut, outDataLength, 0, 0), GF_OK);
 
+	/* Get caps codes*/
+	GF_CodecCapability caps;
+	memset(&caps, 0, sizeof(GF_CodecCapability));
+	for (caps.CapCode = 1; caps.CapCode < CAP_CODES; caps.CapCode++, capcodes++) {
+		ifce_acc->GetCapabilities((GF_BaseDecoder*)ifce_acc, &caps);
+		*capcodes = caps.cap.valueInt;
+	}
+
 	gf_modules_close_interface((GF_BaseInterface *)ifce_acc);
 	gf_modules_close_interface((GF_BaseInterface *)ifce_isom);
 }
@@ -158,6 +177,8 @@ TEST(File, DISABLED_JPG_PROGRESSIVE) {
 	string inFile = signals_fld;
 	string preservedFile = preserved_fld;
 	int comp;
+	int img_cap_code[CAP_CODES];
+	int acc_cap_code[CAP_CODES];
 
 	/* Set file in*/
 	inFile.append("Freedom_progressive.jpg");
@@ -165,8 +186,8 @@ TEST(File, DISABLED_JPG_PROGRESSIVE) {
 	/* Set preserved file */
 	preservedFile.append("Freedom_progressive.jpg.bvr");
 
-	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
-	getImgOutput(inFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength);
+	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength, &img_cap_code[0]);
+	getImgOutput(inFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength, &acc_cap_code[0]);
 
 	/* Compare result */
 	ASSERT_EQ(jpegDataLength, accDataLength);
@@ -182,13 +203,21 @@ TEST(File, DNG) {
 	string inFile = signals_fld;
 	string accessorFile = accessors_fld;
 	int comp;
-	
+	int img_cap_code[CAP_CODES];
+	int acc_cap_code[CAP_CODES];
+
 	/* Set file in*/
 	inFile.append("ATK_SFS_almost_no_knead_bread-32.dng");
+
 	accessorFile.append("dng_entry_0.1.bc");
 
-	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
-	getAccImgOutput(inFile.c_str(), accessorFile.c_str(), &accData, &accDataLength);
+	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength, &img_cap_code[0]);
+	getAccImgOutput(inFile.c_str(), accessorFile.c_str(), &accData, &accDataLength, &acc_cap_code[0]);
+
+	/* Compare caps */
+	for (int i = 0; i < CAP_CODES-2; i++) {
+		ASSERT_EQ(img_cap_code[i], acc_cap_code[i]);
+	}
 
 	/* Compare result */
 	ASSERT_EQ(jpegDataLength, accDataLength);
@@ -204,6 +233,8 @@ TEST(File, DISABLED_JPG) {
 	string inFile = signals_fld;
 	string preservedFile = preserved_fld;
 	int comp;
+	int img_cap_code[CAP_CODES];
+	int acc_cap_code[CAP_CODES];
 
 	/* Set file in*/
 	inFile.append("Freedom.jpg");
@@ -211,8 +242,8 @@ TEST(File, DISABLED_JPG) {
 	/* Set preserved file */
 	preservedFile.append("Freedom.jpg.bvr");
 
-	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength);
-	getImgOutput(preservedFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength);
+	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength,  &img_cap_code[0]);
+	getImgOutput(preservedFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength, &acc_cap_code[0]);
 
 	/* Compare result */
 	ASSERT_EQ(jpegDataLength, accDataLength);

@@ -25,6 +25,9 @@
 
 #include "img_in.h"
 #include <gpac/avparse.h>
+#include "libraw/libraw.h"
+
+#define HANDLE_ERRORS() if (ret) fprintf(stderr, "libraw  %s\n", libraw_strerror(ret))
 
 enum
 {
@@ -58,6 +61,9 @@ typedef struct
 
 	/*file downloader*/
 	GF_DownloadSession * dnload;
+
+	/* dng handler*/
+	libraw_data_t *iprc;
 } IMGLoader;
 
 
@@ -71,6 +77,12 @@ GF_ESD *IMG_GetESD(IMGLoader *read)
 	if (read->img_type == IMG_BMP)
 		esd->decoderConfig->objectTypeIndication = GPAC_BMP_OTI;
 	else if (read->img_type == IMG_DNG) {
+		//read->iprc = libraw_init(0);
+
+		//int ret = libraw_open_buffer(iprc, inBuffer, inBufferLength);
+		//HANDLE_ERRORS();
+
+
 		esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_DNG;
 	}else {
 		u8 OTI=0;
@@ -115,7 +127,7 @@ const char * IMG_MIME_TYPES[] = {
 	"image/x-png+depth", "pngd", "PNG+Depth Images",
 	"image/x-png+depth+mask", "pngds", "PNG+Depth+Mask Images",
 	"image/x-png+stereo", "pngs", "Stereo PNG Images",
-	"image/dng", "dng", "RAW Images",
+	"image/dng", "dng", "dng Images",
 	NULL
 };
 

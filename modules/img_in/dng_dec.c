@@ -121,7 +121,8 @@ static GF_Err LIBRAW_ProcessData(GF_MediaDecoder *ifcg,
 	
 
 	if (*outBufferLength < ctx->image->data_size) {
-		*outBufferLength = ctx->image->data_size;
+		ctx->out_size = ctx->image->data_size;
+		*outBufferLength = ctx->out_size;
 		return GF_BUFFER_TOO_SMALL;
 	}
 
