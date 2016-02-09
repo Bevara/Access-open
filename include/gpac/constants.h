@@ -98,7 +98,7 @@ enum
 	GF_STREAM_ND_SUBPIC = 0x38,
 
 	/*GPAC internal stream types*/
-
+	GF_STREAM_THUMBNAIL = 0x40,
 
 	/*!GPAC Private Scene streams\n
 	*\n\note
@@ -334,6 +334,7 @@ enum
 	GPAC_OTI_IMAGE_JPEG_2000 = 0x6E,
 	/*!OTI for RAW streams*/
 	GPAC_OTI_IMAGE_DNG = 0x6F,
+	GPAC_OTI_IMAGE_RAW = 0x70,
 
 	/*!
 	 * \brief Extra ObjectTypeIndication

@@ -36,26 +36,26 @@ static u32 DEC_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd,
 	switch (esd->decoderConfig->objectTypeIndication) {
 #ifdef GPAC_HAS_PNG
 	case GPAC_OTI_IMAGE_PNG:
-		if (NewPNGDec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
+		if (NewPNGDec(dec)) return GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 #endif
 #ifdef GPAC_HAS_JPEG
 	case GPAC_OTI_IMAGE_JPEG:
-		if (NewJPEGDec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
+		if (NewJPEGDec(dec)) return GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 #endif
 #ifdef GPAC_HAS_JP2
 	case GPAC_OTI_IMAGE_JPEG_2000:
-		if (NewJP2Dec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
+		if (NewJP2Dec(dec)) return GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 #endif
 #ifdef GPAC_HAS_RAW
 	case GPAC_OTI_IMAGE_DNG:
-		if (NewRAWDec(dec)) return esd->decoderConfig->bvr_config ? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
+		if (NewRAWDec(dec)) return GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 #endif
 	case GPAC_BMP_OTI:
-		if (NewBMPDec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
+		if (NewBMPDec(dec)) return GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 
 	default:
@@ -63,7 +63,7 @@ static u32 DEC_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd,
 	{
 		char *dsi = esd->decoderConfig->decoderSpecificInfo ? esd->decoderConfig->decoderSpecificInfo->data : NULL;
 		if (dsi && (dsi[0]=='m') && (dsi[1]=='j') && (dsi[2]=='p') && (dsi[3]=='2'))
-			if (NewJP2Dec(dec)) return esd->decoderConfig->bvr_config? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
+			if (NewJP2Dec(dec)) return GF_CODEC_SUPPORTED;
 		return GF_CODEC_NOT_SUPPORTED;
 	}
 #endif

@@ -127,7 +127,6 @@ const char * IMG_MIME_TYPES[] = {
 	"image/x-png+depth", "pngd", "PNG+Depth Images",
 	"image/x-png+depth+mask", "pngds", "PNG+Depth+Mask Images",
 	"image/x-png+stereo", "pngs", "Stereo PNG Images",
-	"image/dng", "dng", "dng Images",
 	NULL
 };
 
