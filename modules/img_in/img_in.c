@@ -37,7 +37,7 @@ enum
 	IMG_PNGD,
 	IMG_PNGDS,
 	IMG_PNGS,
-	IMG_DNG,
+	IMG_RAW,
 };
 
 typedef struct
@@ -76,14 +76,8 @@ GF_ESD *IMG_GetESD(IMGLoader *read)
 
 	if (read->img_type == IMG_BMP)
 		esd->decoderConfig->objectTypeIndication = GPAC_BMP_OTI;
-	else if (read->img_type == IMG_DNG) {
-		//read->iprc = libraw_init(0);
-
-		//int ret = libraw_open_buffer(iprc, inBuffer, inBufferLength);
-		//HANDLE_ERRORS();
-
-
-		esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_DNG;
+	else if (read->img_type == IMG_RAW) {
+		esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_RAW;
 	}else {
 		u8 OTI=0;
 		GF_BitStream *bs = gf_bs_from_file(read->stream, GF_BITSTREAM_READ);
@@ -239,7 +233,7 @@ static GF_Err IMG_ConnectService(GF_InputService *plug, GF_ClientService *serv, 
 	else if (!stricmp(sExt, ".pngds")) read->img_type = IMG_PNGDS;
 	else if (!stricmp(sExt, ".pngs")) read->img_type = IMG_PNGS;
 	else if (!stricmp(sExt, ".bmp")) read->img_type = IMG_BMP;
-	else if (!stricmp(sExt, ".dng")) read->img_type = IMG_DNG;
+	else if (!stricmp(sExt, ".raw")) read->img_type = IMG_RAW;
 
 	if (read->dnload) gf_service_download_del(read->dnload);
 	read->dnload = NULL;

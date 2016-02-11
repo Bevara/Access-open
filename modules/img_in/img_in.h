@@ -39,7 +39,7 @@ enum
 	DEC_JPEG,
 	DEC_JP2,
 	DEC_BMP,
-	DEC_DNG,
+	DEC_RAW,
 };
 
 typedef struct
