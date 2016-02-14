@@ -269,6 +269,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\modules\dng_in\dng_in.c" />
+    <ClCompile Include="..\..\modules\dng_in\raw_dec.c" />
     <ClCompile Include="..\..\modules\modules_export.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1,9 +1,10 @@
 
-#include "img_in.h"
+#include <gpac/modules/codec.h>
+#include <gpac/constants.h>
 
 #include "libraw/libraw.h"
 
-#define RAWCTX()	RAWDec *ctx = (RAWDec *) ((IMGDec *)ifcg->privateStack)->opaque
+#define RAWCTX()	RAWDec *ctx = (RAWDec *) ifcg->privateStack
 
 typedef struct
 {
@@ -12,6 +13,19 @@ typedef struct
 	u8 BPP;
 } RAWDec;
 
+static u32 RAW_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, u8 PL)
+{
+	if (StreamType != GF_STREAM_VISUAL) return GF_CODEC_NOT_SUPPORTED;
+	/*media type query*/
+	if (!esd) return GF_CODEC_STREAM_TYPE_SUPPORTED;
+
+	if (esd->decoderConfig->objectTypeIndication == GPAC_OTI_IMAGE_RAW
+		&& esd->decoderConfig->decoderSpecificInfo
+		&& esd->decoderConfig->decoderSpecificInfo->dataLength)
+		return GF_CODEC_SUPPORTED;
+
+	return GF_CODEC_NOT_SUPPORTED;
+}
 
 static GF_Err RAW_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 {
@@ -65,7 +79,7 @@ static GF_Err RAW_GetCapabilities(GF_BaseDecoder *ifcg, GF_CodecCapability *capa
 		capability->cap.valueInt = 0;
 		break;
 	case GF_CODEC_BUFFER_MAX:
-		capability->cap.valueInt = IMG_CM_SIZE;
+		capability->cap.valueInt = 1;
 		break;
 	case GF_CODEC_PADDING_BYTES:
 		capability->cap.valueInt = 4;
@@ -111,22 +125,25 @@ static GF_Err RAW_ProcessData(GF_MediaDecoder *ifcg,
 	return GF_OK;
 }
 
-Bool NewRAWDec(GF_BaseDecoder *ifcd)
+GF_BaseDecoder *NewRAWDec()
 {
-	IMGDec *wrap = (IMGDec *)ifcd->privateStack;
-	RAWDec *dec = (RAWDec *)gf_malloc(sizeof(RAWDec));
-	memset(dec, 0, sizeof(RAWDec));
-	wrap->opaque = dec;
-	wrap->type = DEC_RAW;
+	GF_MediaDecoder *ifce;
+	RAWDec *dec;
+
+	GF_SAFEALLOC(ifce, GF_MediaDecoder);
+	GF_SAFEALLOC(dec, RAWDec);
 
 	/*setup our own interface*/
-	ifcd->AttachStream = RAW_AttachStream;
-	ifcd->DetachStream = RAW_DetachStream;
-	ifcd->GetCapabilities = RAW_GetCapabilities;
-	ifcd->SetCapabilities = RAW_SetCapabilities;
-	ifcd->GetName = RAW_GetCodecName;
-	((GF_MediaDecoder *)ifcd)->ProcessData = RAW_ProcessData;
-	return GF_TRUE;
+	ifce->AttachStream = RAW_AttachStream;
+	ifce->DetachStream = RAW_DetachStream;
+	ifce->CanHandleStream = RAW_CanHandleStream;
+	ifce->GetCapabilities = RAW_GetCapabilities;
+	ifce->SetCapabilities = RAW_SetCapabilities;
+	ifce->GetName = RAW_GetCodecName;
+	ifce->ProcessData = RAW_ProcessData;
+	ifce->privateStack = dec;
+
+	return (GF_BaseDecoder*)ifce;
 }
 
 void DeleteRAWDec(GF_BaseDecoder *ifcg)
