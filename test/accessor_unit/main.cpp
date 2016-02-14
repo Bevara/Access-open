@@ -195,7 +195,7 @@ TEST(File, DISABLED_JPG_PROGRESSIVE) {
 	printf("Value of decoder comparison is %d", comp);
 }
 
-TEST(File, DNG) {
+TEST(File, DISABLED_DNG) {
 	char *accData = NULL;
 	char *jpegData = NULL;
 	u32 accDataLength = 0;
