@@ -23,29 +23,16 @@ LINKLIBS= -lgpac_static
 endif
 
 #common objects
-OBJS=img_dec.o img_in.o bmp_dec.o png_dec.o jpeg_dec.o
+OBJS=raw_dec.o
 
-#openjpeg config
-ifeq ($(CONFIG_JP2), no)
-else
-OBJS+=jp2_dec.o
-LINKLIBS+= -lopenjpeg
-CFLAGS+=-DGPAC_HAS_JP2
-#local openjpeg lib
-ifeq ($(CONFIG_JP2), local)
-NEED_LOCAL_LIB="yes"
-CFLAGS+= -I"$(LOCAL_INC_PATH)/openjpeg"
-endif
-endif
-
-#openjpeg config
+#libraw config
 ifeq ($(CONFIG_RAW), no)
 else
-OBJS+=dng_dec.o
+OBJS+=dng_in.o
 LINKLIBS+= -lraw
 CFLAGS+=-DGPAC_HAS_RAW
 #local openjpeg lib
-ifeq ($(CONFIG_JP2), local)
+ifeq ($(CONFIG_RAW), local)
 NEED_LOCAL_LIB="yes"
 CFLAGS+= -I"$(LOCAL_INC_PATH)/libraw"
 endif
@@ -60,7 +47,7 @@ endif
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_img_in$(DYN_LIB_SUFFIX)
+LIB=gm_dng_in$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 LINKLIBS+=-lwinmm
 #LDFLAGS+=-export-symbols img_in.def 

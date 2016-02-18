@@ -38,19 +38,6 @@ CFLAGS+= -I"$(LOCAL_INC_PATH)/openjpeg"
 endif
 endif
 
-#openjpeg config
-ifeq ($(CONFIG_RAW), no)
-else
-OBJS+=dng_dec.o
-LINKLIBS+= -lraw
-CFLAGS+=-DGPAC_HAS_RAW
-#local openjpeg lib
-ifeq ($(CONFIG_JP2), local)
-NEED_LOCAL_LIB="yes"
-CFLAGS+= -I"$(LOCAL_INC_PATH)/libraw"
-endif
-endif
-
 #add local lib path
 ifeq ($(NEED_LOCAL_LIB), "yes")
 LOCAL_LIB+=-L../../extra_lib/lib/gcc
