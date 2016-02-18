@@ -25,7 +25,7 @@
 
 #include "img_in.h"
 #include <gpac/avparse.h>
-#include "libraw/libraw.h"
+
 enum
 {
 	IMG_JPEG = 1,
