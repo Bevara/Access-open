@@ -60,9 +60,6 @@ typedef struct
 
 	/*file downloader*/
 	GF_DownloadSession * dnload;
-
-	/* dng handler*/
-	libraw_data_t *iprc;
 } IMGLoader;
 
 
