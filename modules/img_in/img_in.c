@@ -26,9 +26,6 @@
 #include "img_in.h"
 #include <gpac/avparse.h>
 #include "libraw/libraw.h"
-
-#define HANDLE_ERRORS() if (ret) fprintf(stderr, "libraw  %s\n", libraw_strerror(ret))
-
 enum
 {
 	IMG_JPEG = 1,
