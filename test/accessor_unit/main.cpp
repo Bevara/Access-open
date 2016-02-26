@@ -1,5 +1,8 @@
 #include "gtest/gtest.h"
 
+#include "access/accessor.h"
+#include "access/compiler.h"
+
 #include "gpac/module.h"
 #include "gpac/modules/codec.h"
 #include "gpac/modules/service.h"
@@ -130,9 +133,8 @@ void getAccImgOutput(const char* file_url, const char* accessor_url, char** data
 
 	*outDataLength = 0;
 	*dataOut = 0;
-	gf_cfg_set_key(config, "Accessor", "File", accessor_url);
-
-	ifce_acc = (GF_MediaDecoder*)gf_modules_load_interface_by_name(modules, decoder, GF_MEDIA_DECODER_INTERFACE);
+	
+	ifce_acc = (GF_MediaDecoder*)gf_accessors_load_interface_by_name(modules, decoder, GF_MEDIA_DECODER_INTERFACE);
 	ASSERT_TRUE(ifce_acc);
 	GF_InputService* ifce_isom = (GF_InputService*)gf_modules_load_interface_by_name(modules, service, GF_NET_CLIENT_INTERFACE);
 	ASSERT_TRUE(ifce_acc);
@@ -276,6 +278,8 @@ int main(int argc, char **argv) {
 	config = gf_cfg_init(NULL, NULL);
 	modules = gf_modules_new(NULL, config);
 	
+	gf_init_compiler();
+
 	//Deactivate cache
 	gf_cfg_set_key(config, "Accessor", "Enable_cache", "no");
 

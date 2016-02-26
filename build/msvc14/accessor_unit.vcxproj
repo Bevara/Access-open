@@ -21,6 +21,14 @@
   <ItemGroup>
     <ClCompile Include="..\..\test\accessor_unit\main.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="libaccess_dll.vcxproj">
+      <Project>{2b0f3690-4bff-41e4-9b98-cc7408af39f0}</Project>
+    </ProjectReference>
+    <ProjectReference Include="libgpac_dll.vcxproj">
+      <Project>{d3540754-e0cf-4604-ac11-82de9bd4d814}</Project>
+    </ProjectReference>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{69236CB2-024E-4E1A-89CE-C90F571D452D}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
@@ -108,7 +116,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
+      <AdditionalDependencies>libaccess.lib;Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>../../bin/$(Platform)\$(Configuration);../../test/gtest-1.7.0/lib/$(Configuration);../../extra_lib/lib/$(Platform)\$(Configuration);../../bin/$(Platform)\$(Configuration)</AdditionalLibraryDirectories>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
@@ -139,7 +147,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;gtest_main.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
+      <AdditionalDependencies>libaccess.lib;Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;gtest_main.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>../../gpac_dev/bin\$(Platform)\$(Configuration);../../test/gtest-1.7.0/lib/$(Configuration);../../extra_lib/lib/$(Platform)\$(Configuration);../../bin/$(Platform)\$(Configuration)</AdditionalLibraryDirectories>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
@@ -175,7 +183,7 @@
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;gtest_main.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
+      <AdditionalDependencies>libaccess.lib;Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;gtest_main.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>../../bin/$(Platform)\$(Configuration);../../test/gtest-1.7.0/lib/$(Configuration);../../extra_lib/lib/$(Platform)\$(Configuration);../../bin/$(Platform)\$(Configuration)</AdditionalLibraryDirectories>
     </Link>
     <ProjectReference>
@@ -207,7 +215,7 @@
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;gtest_main.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
+      <AdditionalDependencies>libaccess.lib;Shell32.lib;Advapi32.lib;zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;gtest.lib;gtest_main.lib;LLVMSupport.lib;libgpac_static.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>../../gpac_dev/bin\$(Platform)\$(Configuration);../../test/gtest-1.7.0/lib/$(Configuration);../../extra_lib/lib/$(Platform)\$(Configuration);../../bin/$(Platform)\$(Configuration)</AdditionalLibraryDirectories>
     </Link>
     <ProjectReference>

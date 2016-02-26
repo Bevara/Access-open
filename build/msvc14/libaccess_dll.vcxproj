@@ -137,10 +137,10 @@
       <UseLibraryDependencyInputs>false</UseLibraryDependencyInputs>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>zlib.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libgpac.lib;zlib.lib;LLVMAArch64CodeGen.lib;LLVMAArch64AsmPrinter.lib;LLVMAArch64AsmParser.lib;LLVMAArch64Desc.lib;LLVMAArch64Info.lib;LLVMAArch64Disassembler.lib;LLVMARMCodeGen.lib;LLVMARMAsmPrinter.lib;LLVMARMAsmParser.lib;LLVMARMDesc.lib;LLVMARMInfo.lib;LLVMARMDisassembler.lib;LLVMCppBackendCodeGen.lib;LLVMCppBackendInfo.lib;LLVMHexagonCodeGen.lib;LLVMHexagonDesc.lib;LLVMHexagonInfo.lib;LLVMHexagonDisassembler.lib;LLVMMipsCodeGen.lib;LLVMMipsAsmPrinter.lib;LLVMMipsAsmParser.lib;LLVMMipsDesc.lib;LLVMMipsInfo.lib;LLVMMipsDisassembler.lib;LLVMMSP430CodeGen.lib;LLVMMSP430AsmPrinter.lib;LLVMMSP430Desc.lib;LLVMMSP430Info.lib;LLVMNVPTXCodeGen.lib;LLVMNVPTXAsmPrinter.lib;LLVMNVPTXDesc.lib;LLVMNVPTXInfo.lib;LLVMPowerPCCodeGen.lib;LLVMPowerPCAsmPrinter.lib;LLVMPowerPCAsmParser.lib;LLVMPowerPCDesc.lib;LLVMPowerPCInfo.lib;LLVMPowerPCDisassembler.lib;LLVMR600CodeGen.lib;LLVMR600AsmPrinter.lib;LLVMR600AsmParser.lib;LLVMR600Desc.lib;LLVMR600Info.lib;LLVMSparcCodeGen.lib;LLVMSparcAsmPrinter.lib;LLVMSparcAsmParser.lib;LLVMSparcDesc.lib;LLVMSparcInfo.lib;LLVMSparcDisassembler.lib;LLVMSystemZCodeGen.lib;LLVMSystemZAsmPrinter.lib;LLVMSystemZAsmParser.lib;LLVMSystemZDesc.lib;LLVMSystemZInfo.lib;LLVMSystemZDisassembler.lib;LLVMX86CodeGen.lib;LLVMX86AsmPrinter.lib;LLVMX86AsmParser.lib;LLVMX86Desc.lib;LLVMX86Info.lib;LLVMX86Disassembler.lib;LLVMXCoreCodeGen.lib;LLVMXCoreAsmPrinter.lib;LLVMXCoreDesc.lib;LLVMXCoreInfo.lib;LLVMXCoreDisassembler.lib;LLVMAsmPrinter.lib;LLVMCodeGen.lib;LLVMCore.lib;LLVMIRReader.lib;LLVMMC.lib;LLVMScalarOpts.lib;LLVMSelectionDAG.lib;LLVMSupport.lib;LLVMTarget.lib;LLVMAArch64Utils.lib;LLVMipo.lib;LLVMVectorize.lib;LLVMX86Utils.lib;LLVMInstCombine.lib;LLVMProfileData.lib;LLVMObject.lib;LLVMMCParser.lib;LLVMTransformUtils.lib;LLVMipa.lib;LLVMAnalysis.lib;LLVMMCDisassembler.lib;LLVMAsmParser.lib;LLVMBitReader.lib;winmm.lib;ws2_32.lib;ssleay32.lib;libeay32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalLibraryDirectories>..\..\extra_lib\lib\w32_deb;../../extra_lib/lib/$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>../../bin/$(Platform)/$(Configuration);..\..\extra_lib\lib\w32_deb;../../extra_lib/lib/$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <IgnoreAllDefaultLibraries>false</IgnoreAllDefaultLibraries>
       <ModuleDefinitionFile>
       </ModuleDefinitionFile>
@@ -186,10 +186,10 @@
       <UseLibraryDependencyInputs>false</UseLibraryDependencyInputs>
     </ProjectReference>
     <Link>
-      <AdditionalDependencies>zlib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libgpac.lib;zlib.lib;LLVMAArch64CodeGen.lib;LLVMAArch64AsmPrinter.lib;LLVMAArch64AsmParser.lib;LLVMAArch64Desc.lib;LLVMAArch64Info.lib;LLVMAArch64Disassembler.lib;LLVMARMCodeGen.lib;LLVMARMAsmPrinter.lib;LLVMARMAsmParser.lib;LLVMARMDesc.lib;LLVMARMInfo.lib;LLVMARMDisassembler.lib;LLVMCppBackendCodeGen.lib;LLVMCppBackendInfo.lib;LLVMHexagonCodeGen.lib;LLVMHexagonDesc.lib;LLVMHexagonInfo.lib;LLVMHexagonDisassembler.lib;LLVMMipsCodeGen.lib;LLVMMipsAsmPrinter.lib;LLVMMipsAsmParser.lib;LLVMMipsDesc.lib;LLVMMipsInfo.lib;LLVMMipsDisassembler.lib;LLVMMSP430CodeGen.lib;LLVMMSP430AsmPrinter.lib;LLVMMSP430Desc.lib;LLVMMSP430Info.lib;LLVMNVPTXCodeGen.lib;LLVMNVPTXAsmPrinter.lib;LLVMNVPTXDesc.lib;LLVMNVPTXInfo.lib;LLVMPowerPCCodeGen.lib;LLVMPowerPCAsmPrinter.lib;LLVMPowerPCAsmParser.lib;LLVMPowerPCDesc.lib;LLVMPowerPCInfo.lib;LLVMPowerPCDisassembler.lib;LLVMR600CodeGen.lib;LLVMR600AsmPrinter.lib;LLVMR600AsmParser.lib;LLVMR600Desc.lib;LLVMR600Info.lib;LLVMSparcCodeGen.lib;LLVMSparcAsmPrinter.lib;LLVMSparcAsmParser.lib;LLVMSparcDesc.lib;LLVMSparcInfo.lib;LLVMSparcDisassembler.lib;LLVMSystemZCodeGen.lib;LLVMSystemZAsmPrinter.lib;LLVMSystemZAsmParser.lib;LLVMSystemZDesc.lib;LLVMSystemZInfo.lib;LLVMSystemZDisassembler.lib;LLVMX86CodeGen.lib;LLVMX86AsmPrinter.lib;LLVMX86AsmParser.lib;LLVMX86Desc.lib;LLVMX86Info.lib;LLVMX86Disassembler.lib;LLVMXCoreCodeGen.lib;LLVMXCoreAsmPrinter.lib;LLVMXCoreDesc.lib;LLVMXCoreInfo.lib;LLVMXCoreDisassembler.lib;LLVMAsmPrinter.lib;LLVMCodeGen.lib;LLVMCore.lib;LLVMIRReader.lib;LLVMMC.lib;LLVMScalarOpts.lib;LLVMSelectionDAG.lib;LLVMSupport.lib;LLVMTarget.lib;LLVMAArch64Utils.lib;LLVMipo.lib;LLVMVectorize.lib;LLVMX86Utils.lib;LLVMInstCombine.lib;LLVMProfileData.lib;LLVMObject.lib;LLVMMCParser.lib;LLVMTransformUtils.lib;LLVMipa.lib;LLVMAnalysis.lib;LLVMMCDisassembler.lib;LLVMAsmParser.lib;LLVMBitReader.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalLibraryDirectories>../../extra_lib/lib/$(Platform)/$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>../../bin/$(Platform)/$(Configuration);../../extra_lib/lib/$(Platform)/$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <IgnoreAllDefaultLibraries>false</IgnoreAllDefaultLibraries>
       <ModuleDefinitionFile>
       </ModuleDefinitionFile>
@@ -235,10 +235,10 @@
       <Culture>0x040c</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>zlib.lib;winmm.lib;ws2_32.lib;opengl32.lib;glu32.lib;ssleay32.lib;libeay32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libgpac.lib;zlib.lib;LLVMAArch64CodeGen.lib;LLVMAArch64AsmPrinter.lib;LLVMAArch64AsmParser.lib;LLVMAArch64Desc.lib;LLVMAArch64Info.lib;LLVMAArch64Disassembler.lib;LLVMARMCodeGen.lib;LLVMARMAsmPrinter.lib;LLVMARMAsmParser.lib;LLVMARMDesc.lib;LLVMARMInfo.lib;LLVMARMDisassembler.lib;LLVMCppBackendCodeGen.lib;LLVMCppBackendInfo.lib;LLVMHexagonCodeGen.lib;LLVMHexagonDesc.lib;LLVMHexagonInfo.lib;LLVMHexagonDisassembler.lib;LLVMMipsCodeGen.lib;LLVMMipsAsmPrinter.lib;LLVMMipsAsmParser.lib;LLVMMipsDesc.lib;LLVMMipsInfo.lib;LLVMMipsDisassembler.lib;LLVMMSP430CodeGen.lib;LLVMMSP430AsmPrinter.lib;LLVMMSP430Desc.lib;LLVMMSP430Info.lib;LLVMNVPTXCodeGen.lib;LLVMNVPTXAsmPrinter.lib;LLVMNVPTXDesc.lib;LLVMNVPTXInfo.lib;LLVMPowerPCCodeGen.lib;LLVMPowerPCAsmPrinter.lib;LLVMPowerPCAsmParser.lib;LLVMPowerPCDesc.lib;LLVMPowerPCInfo.lib;LLVMPowerPCDisassembler.lib;LLVMR600CodeGen.lib;LLVMR600AsmPrinter.lib;LLVMR600AsmParser.lib;LLVMR600Desc.lib;LLVMR600Info.lib;LLVMSparcCodeGen.lib;LLVMSparcAsmPrinter.lib;LLVMSparcAsmParser.lib;LLVMSparcDesc.lib;LLVMSparcInfo.lib;LLVMSparcDisassembler.lib;LLVMSystemZCodeGen.lib;LLVMSystemZAsmPrinter.lib;LLVMSystemZAsmParser.lib;LLVMSystemZDesc.lib;LLVMSystemZInfo.lib;LLVMSystemZDisassembler.lib;LLVMX86CodeGen.lib;LLVMX86AsmPrinter.lib;LLVMX86AsmParser.lib;LLVMX86Desc.lib;LLVMX86Info.lib;LLVMX86Disassembler.lib;LLVMXCoreCodeGen.lib;LLVMXCoreAsmPrinter.lib;LLVMXCoreDesc.lib;LLVMXCoreInfo.lib;LLVMXCoreDisassembler.lib;LLVMAsmPrinter.lib;LLVMCodeGen.lib;LLVMCore.lib;LLVMIRReader.lib;LLVMMC.lib;LLVMScalarOpts.lib;LLVMSelectionDAG.lib;LLVMSupport.lib;LLVMTarget.lib;LLVMAArch64Utils.lib;LLVMipo.lib;LLVMVectorize.lib;LLVMX86Utils.lib;LLVMInstCombine.lib;LLVMProfileData.lib;LLVMObject.lib;LLVMMCParser.lib;LLVMTransformUtils.lib;LLVMipa.lib;LLVMAnalysis.lib;LLVMMCDisassembler.lib;LLVMAsmParser.lib;LLVMBitReader.lib;winmm.lib;ws2_32.lib;opengl32.lib;glu32.lib;ssleay32.lib;libeay32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalLibraryDirectories>../../extra_lib/lib/$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>../../bin/$(Platform)/$(Configuration);../../extra_lib/lib/$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <ModuleDefinitionFile>
       </ModuleDefinitionFile>
       <ProgramDatabaseFile>$(IntDir)$(ProjectName).pdb</ProgramDatabaseFile>
@@ -282,10 +282,10 @@
       <Culture>0x040c</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>zlib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libgpac.lib;zlib.lib;LLVMAArch64CodeGen.lib;LLVMAArch64AsmPrinter.lib;LLVMAArch64AsmParser.lib;LLVMAArch64Desc.lib;LLVMAArch64Info.lib;LLVMAArch64Disassembler.lib;LLVMARMCodeGen.lib;LLVMARMAsmPrinter.lib;LLVMARMAsmParser.lib;LLVMARMDesc.lib;LLVMARMInfo.lib;LLVMARMDisassembler.lib;LLVMCppBackendCodeGen.lib;LLVMCppBackendInfo.lib;LLVMHexagonCodeGen.lib;LLVMHexagonDesc.lib;LLVMHexagonInfo.lib;LLVMHexagonDisassembler.lib;LLVMMipsCodeGen.lib;LLVMMipsAsmPrinter.lib;LLVMMipsAsmParser.lib;LLVMMipsDesc.lib;LLVMMipsInfo.lib;LLVMMipsDisassembler.lib;LLVMMSP430CodeGen.lib;LLVMMSP430AsmPrinter.lib;LLVMMSP430Desc.lib;LLVMMSP430Info.lib;LLVMNVPTXCodeGen.lib;LLVMNVPTXAsmPrinter.lib;LLVMNVPTXDesc.lib;LLVMNVPTXInfo.lib;LLVMPowerPCCodeGen.lib;LLVMPowerPCAsmPrinter.lib;LLVMPowerPCAsmParser.lib;LLVMPowerPCDesc.lib;LLVMPowerPCInfo.lib;LLVMPowerPCDisassembler.lib;LLVMR600CodeGen.lib;LLVMR600AsmPrinter.lib;LLVMR600AsmParser.lib;LLVMR600Desc.lib;LLVMR600Info.lib;LLVMSparcCodeGen.lib;LLVMSparcAsmPrinter.lib;LLVMSparcAsmParser.lib;LLVMSparcDesc.lib;LLVMSparcInfo.lib;LLVMSparcDisassembler.lib;LLVMSystemZCodeGen.lib;LLVMSystemZAsmPrinter.lib;LLVMSystemZAsmParser.lib;LLVMSystemZDesc.lib;LLVMSystemZInfo.lib;LLVMSystemZDisassembler.lib;LLVMX86CodeGen.lib;LLVMX86AsmPrinter.lib;LLVMX86AsmParser.lib;LLVMX86Desc.lib;LLVMX86Info.lib;LLVMX86Disassembler.lib;LLVMXCoreCodeGen.lib;LLVMXCoreAsmPrinter.lib;LLVMXCoreDesc.lib;LLVMXCoreInfo.lib;LLVMXCoreDisassembler.lib;LLVMAsmPrinter.lib;LLVMCodeGen.lib;LLVMCore.lib;LLVMIRReader.lib;LLVMMC.lib;LLVMScalarOpts.lib;LLVMSelectionDAG.lib;LLVMSupport.lib;LLVMTarget.lib;LLVMAArch64Utils.lib;LLVMipo.lib;LLVMVectorize.lib;LLVMX86Utils.lib;LLVMInstCombine.lib;LLVMProfileData.lib;LLVMObject.lib;LLVMMCParser.lib;LLVMTransformUtils.lib;LLVMipa.lib;LLVMAnalysis.lib;LLVMMCDisassembler.lib;LLVMAsmParser.lib;LLVMBitReader.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <AdditionalLibraryDirectories>../../extra_lib/lib/$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>../../bin/$(Platform)/$(Configuration);../../extra_lib/lib/$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <ModuleDefinitionFile>
       </ModuleDefinitionFile>
       <ProgramDatabaseFile>$(IntDir)$(ProjectName).pdb</ProgramDatabaseFile>
@@ -297,13 +297,15 @@
     </Bscmake>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ProjectReference Include="libgpac.vcxproj">
-      <Project>{233014d5-f6e5-419d-8757-fa9ce7337088}</Project>
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
+    <ClCompile Include="..\..\src\access_export.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\src\access_export.cpp" />
+    <ProjectReference Include="libaccess.vcxproj">
+      <Project>{fa63a886-b4ab-42f6-b9aa-e2d8358b1083}</Project>
+    </ProjectReference>
+    <ProjectReference Include="libgpac.vcxproj">
+      <Project>{233014d5-f6e5-419d-8757-fa9ce7337088}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
