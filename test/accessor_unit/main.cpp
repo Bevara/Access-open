@@ -227,7 +227,7 @@ TEST(File, DISABLED_DNG) {
 	printf("Value of decoder comparison is %d", comp);
 }
 
-TEST(File, JPG) {
+TEST(File, DISABLED_JPG) {
 	char *accData = NULL;
 	char *jpegData = NULL;
 	u32 accDataLength = 0;
