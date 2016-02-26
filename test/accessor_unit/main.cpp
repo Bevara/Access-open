@@ -225,13 +225,13 @@ TEST(File, DISABLED_DNG) {
 	printf("Value of decoder comparison is %d", comp);
 }
 
-TEST(File, DISABLED_JPG) {
+TEST(File, JPG) {
 	char *accData = NULL;
 	char *jpegData = NULL;
 	u32 accDataLength = 0;
 	u32 jpegDataLength = 0;
 	string inFile = signals_fld;
-	string preservedFile = preserved_fld;
+	string accessorFile = accessors_fld;
 	int comp;
 	int img_cap_code[CAP_CODES];
 	int acc_cap_code[CAP_CODES];
@@ -239,16 +239,10 @@ TEST(File, DISABLED_JPG) {
 	/* Set file in*/
 	inFile.append("Freedom.jpg");
 
-	/* Set preserved file */
-	preservedFile.append("Freedom.jpg.bvr");
+	accessorFile.append("nanojpeg_entry_0.3.bc");
 
-	getImgOutput(inFile.c_str(), "GPAC Image Reader", "GPAC Image Decoder", &jpegData, &jpegDataLength,  &img_cap_code[0]);
-	getImgOutput(preservedFile.c_str(), "GPAC IsoMedia Reader", "Accessor dec", &accData, &accDataLength, &acc_cap_code[0]);
+	getAccImgOutput(inFile.c_str(), accessorFile.c_str(), &accData, &accDataLength, &acc_cap_code[0]);
 
-	/* Compare result */
-	ASSERT_EQ(jpegDataLength, accDataLength);
-	comp = memcmp(jpegData, accData, accDataLength);
-	printf("Value of decoder comparison is %d", comp);
 }
 
 int main(int argc, char **argv) {
