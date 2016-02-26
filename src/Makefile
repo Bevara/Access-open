@@ -14,6 +14,12 @@ CFLAGS+=-pg
 LDFLAGS+=-pg
 endif
 
+LIBACCESS_UTILS=
+ifeq ($(CONFIG_LLVM), system)
+LIBACCESS_UTILS+=utils/accessor.o utils/os_accessor.o utils/compiler.o
+endif
+
+
 ## libgpac objects gathering: src/utils
 LIBGPAC_UTILS=utils/os_divers.o utils/os_file.o utils/list.o utils/bitstream.o utils/error.o utils/alloc.o utils/url.o utils/configfile.o 
 ifeq ($(DISABLE_CORE_TOOLS), no)
@@ -605,7 +611,7 @@ compositor: $(LIBGPAC_COMPOSITOR)
 .deps/compositor/%: CFLAGS += $(COMPOSITOR_CFLAGS)
 
 
-../bin/gcc/$(LIB): $(LIBGPAC_UTILS) $(LIBGPAC_IETF) $(LIBGPAC_BIFS) $(LIBGPAC_ODF) $(LIBGPAC_LASER) $(LIBGPAC_ISOM) $(LIBGPAC_SCENEMANAGER) $(LIBGPAC_TERMINAL) compositor scenegraph media_tools mcrypt $(OBJS)
+../bin/gcc/$(LIB): $(LIBGPAC_UTILS) $(LIBGPAC_IETF) $(LIBGPAC_BIFS) $(LIBGPAC_ODF) $(LIBGPAC_LASER) $(LIBGPAC_ISOM) $(LIBGPAC_SCENEMANAGER) $(LIBGPAC_TERMINAL) $(LIBACCESS_UTILS) compositor scenegraph media_tools mcrypt $(OBJS)
 	@echo "OBJS $(OBJS)"
 	@echo "LIBS $(EXTRALIBS)"
 
