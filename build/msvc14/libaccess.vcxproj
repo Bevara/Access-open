@@ -35,12 +35,12 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\src\utils\accessor.c" />
-    <ClCompile Include="..\..\src\utils\compiler.cpp" />
-    <ClCompile Include="..\..\src\utils\os_accessor.c" />
+    <ClCompile Include="..\..\access\utils\accessor.c" />
+    <ClCompile Include="..\..\access\utils\compiler.cpp" />
+    <ClCompile Include="..\..\access\utils\os_accessor.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\src\utils\accessor_wrap.h" />
+    <ClInclude Include="..\..\access\utils\accessor_wrap.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{FA63A886-B4AB-42F6-B9AA-E2D8358B1083}</ProjectGuid>
