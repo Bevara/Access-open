@@ -31,6 +31,9 @@ version:
 lib:	version
 	$(MAKE) -C src all
 
+access:
+	$(MAKE) -C access all
+	
 apps:
 	$(MAKE) -C applications all
 

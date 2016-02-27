@@ -15,7 +15,11 @@ CFLAGS+=-pg
 LDFLAGS+=-pg
 endif
 
-LIBACCESS_UTILS=utils/accessor.o utils/os_accessor.o utils/compiler.o
+LIBACCESS_UTILS=
+ifeq ($(CONFIG_LLVM), system)
+LIBACCESS_UTILS+=utils/accessor.o utils/os_accessor.o utils/compiler.o
+endif
+
 
 ## libgpac objects gathering: 
 OBJS=$(LIBACCESS_UTILS)
