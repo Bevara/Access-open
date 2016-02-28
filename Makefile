@@ -7,6 +7,7 @@ vpath %.c $(SRC_PATH)
 
 all:	version
 	$(MAKE) -C src all
+	$(MAKE) -C access all
 	$(MAKE) -C applications all
 	$(MAKE) -C test all
 ifneq ($(MP4BOX_STATIC),yes)
