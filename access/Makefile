@@ -3,7 +3,8 @@ include ../config.mak
 vpath %.c $(SRC_PATH)/src
 vpath %.cpp $(SRC_PATH)/src
 
-CFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include"
+CFLAGS= $(OPTFLAGS) $(CXXFLAGS) -I"$(SRC_PATH)/include" $(llvm_cxxflags)
+LDFLAGS= $(llvm_ldflags)
 
 ifeq ($(DEBUGBUILD), yes)
 CFLAGS+=-g
@@ -15,6 +16,8 @@ CFLAGS+=-pg
 LDFLAGS+=-pg
 endif
 
+EXTRALIBS+=-L../bin/gcc -lgpac $(llvm_libs)
+
 LIBACCESS_UTILS=
 ifeq ($(CONFIG_LLVM), system)
 LIBACCESS_UTILS+=utils/accessor.o utils/os_accessor.o utils/compiler.o
@@ -25,9 +28,9 @@ endif
 OBJS=$(LIBACCESS_UTILS)
 
 ##libgpac library output
-LIB=libgpac$(DYN_LIB_SUFFIX)
+LIB=libaccess$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
-LDFLAGS+=-Wl,-out-implib=../bin/gcc/libgpac.dll.a
+LDFLAGS+=-Wl,-out-implib=../bin/gcc/libaccess.dll.a
 else
 ifeq ($(CONFIG_DARWIN),yes)
 LDFLAGS+=-dynamiclib -install_name $(prefix)/lib/$(LIB)
