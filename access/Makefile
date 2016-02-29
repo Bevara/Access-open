@@ -18,14 +18,17 @@ endif
 
 EXTRALIBS+=-L../bin/gcc -lgpac $(llvm_libs)
 
-LIBACCESS_UTILS=
+LIBACCESS_UTILS_C=
+LIBACCESS_UTILS_CPP=
 ifeq ($(CONFIG_LLVM), system)
-LIBACCESS_UTILS+=utils/accessor.o utils/os_accessor.o utils/compiler.o
+LIBACCESS_UTILS_C+=utils/accessor.o utils/os_accessor.o 
+LIBACCESS_UTILS_CPP+= utils/compiler.o
 endif
 
 
 ## libgpac objects gathering: 
-OBJS=$(LIBACCESS_UTILS)
+OBJS_C=$(LIBACCESS_UTILS_C)
+OBJS_CPP=$(LIBACCESS_UTILS_CPP)
 
 ##libgpac library output
 LIB=libaccess$(DYN_LIB_SUFFIX)
@@ -34,6 +37,7 @@ LDFLAGS+=-Wl,-out-implib=../bin/gcc/libaccess.dll.a
 else
 ifeq ($(CONFIG_DARWIN),yes)
 LDFLAGS+=-dynamiclib -install_name $(prefix)/lib/$(LIB)
+EXTRALIBS+=-lz -lncurses
 endif
 EXTRALIBS+=$(GPAC_SH_FLAGS)
 endif
@@ -48,42 +52,25 @@ LD_SONAME="-Wl,-h,$(LIB)"
 LINKLIBS+= -lrt
 endif
 
-SRCS := $(OBJS:.o=.c) 
+SRCS_C := $(OBJS_C:.o=.c)
+SRCS_CPP := $(OBJS_CPP:.o=.cpp)  
 
 all: lib
 
 lib: ../bin/gcc/$(LIB)
 
-#there's a bunch of warnings in there, get rid of them
-mcrypt: CFLAGS= $(OPTFLAGS) -w -I"$(SRC_PATH)/include"
-mcrypt: $(libaccess_MCRYPT)
 
-scenegraph: CFLAGS += $(SCENEGRAPH_CFLAGS)
-scenegraph: $(libaccess_SCENE)
-.deps/scenegraph/%: CFLAGS += $(SCENEGRAPH_CFLAGS)
-.deps/scenegraph/%: CFLAGS += $(SCENEGRAPH_CFLAGS)
-
-media_tools: CFLAGS += $(MEDIATOOLS_CFLAGS)
-media_tools: $(libaccess_MEDIATOOLS)
-.deps/media_tools/%: CFLAGS += $(MEDIATOOLS_CFLAGS)
-.deps/media_tools/%: CFLAGS += $(MEDIATOOLS_CFLAGS)
-
-compositor: CFLAGS+=$(COMPOSITOR_CFLAGS)
-compositor: $(libaccess_COMPOSITOR)
-.deps/compositor/%: CFLAGS += $(COMPOSITOR_CFLAGS)
-.deps/compositor/%: CFLAGS += $(COMPOSITOR_CFLAGS)
-
-
-../bin/gcc/$(LIB): $(LIBACCESS_UTILS) $(OBJS)
-	@echo "OBJS $(OBJS)"
+../bin/gcc/$(LIB): $(LIBACCESS_UTILS_C) $(LIBACCESS_UTILS_CPP)  $(OBJS_C) $(OBJS_CPP)
+	@echo "OBJS_C $(OBJS_C)"
+	@echo "OBJS_CPP $(OBJS_CPP)"
 	@echo "LIBS $(EXTRALIBS)"
 
 ifeq ($(CONFIG_DARWIN),yes)
 
-	$(LIBTOOL) -s -o ../bin/gcc/libaccess_static.a $(OBJS)
+	$(LIBTOOL) -s -o ../bin/gcc/libaccess_static.a $(OBJS_C) $(OBJS_CPP)
 	$(RANLIB) ../bin/gcc/libaccess_static.a
 ifneq ($(STATICBUILD),yes)
-	$(CC) $(SHFLAGS) $(LD_SONAME) $(LDFLAGS) -o $@ $(OBJS) $(EXTRALIBS) 
+	$(CXX) $(SHFLAGS) $(LD_SONAME) $(LDFLAGS) -o $@ $(OBJS_C) $(OBJS_CPP) $(EXTRALIBS) 
 endif
 
 else
@@ -104,7 +91,7 @@ endif
 
 dep:
 
-DEPS := $(SRCS:%.c=.deps/%.dep)
+DEPS := $(SRCS_C:%.c=.deps/%.dep) $(SRCS_CPP:%.cpp=.deps/%.dep)
 
 -include .depend
 
