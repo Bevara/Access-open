@@ -1,4 +1,6 @@
-﻿#include <gpac/modules/service.h>
+﻿#include <time.h>
+
+#include <gpac/modules/service.h>
 #include <gpac/modules/codec.h>
 #include <gpac/constants.h>
 
