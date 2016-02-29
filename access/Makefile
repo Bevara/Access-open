@@ -3,7 +3,8 @@ include ../config.mak
 vpath %.c $(SRC_PATH)/src
 vpath %.cpp $(SRC_PATH)/src
 
-CFLAGS= $(OPTFLAGS) $(CXXFLAGS) -I"$(SRC_PATH)/include" $(llvm_cxxflags)
+CFLAGS= $(OPTFLAGS)  -I"$(SRC_PATH)/include" 
+CXXFLAGS=$(llvm_cxxflags)
 LDFLAGS= $(llvm_ldflags)
 
 ifeq ($(DEBUGBUILD), yes)
@@ -75,10 +76,10 @@ endif
 
 else
 
-	$(AR) cr ../bin/gcc/libaccess_static.a $(OBJS)
+	$(AR) cr ../bin/gcc/libaccess_static.a $(OBJS_C) $(OBJS_CPP)
 	$(RANLIB) ../bin/gcc/libaccess_static.a
 ifneq ($(STATICBUILD),yes)
-	$(CC) $(SHFLAGS) $(LD_SONAME) $(LDFLAGS) -o $@ $(OBJS) $(EXTRALIBS)	
+	$(CXX) $(SHFLAGS) $(LD_SONAME) $(LDFLAGS) -o $@ $(OBJS_C) $(OBJS_CPP) $(EXTRALIBS)	
 	mv $@ $@.$(VERSION_SONAME)
 	ln -sf $(notdir $@).$(VERSION_SONAME) $@.$(VERSION_MAJOR)
 	ln -sf $(notdir $@).$(VERSION_SONAME) $@
