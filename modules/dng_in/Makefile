@@ -30,7 +30,6 @@ ifeq ($(CONFIG_RAW), no)
 else
 OBJS+=dng_in.o
 LINKLIBS+= -lraw
-CFLAGS+=-DGPAC_HAS_RAW
 #local openjpeg lib
 ifeq ($(CONFIG_RAW), local)
 NEED_LOCAL_LIB="yes"
