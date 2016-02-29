@@ -64,6 +64,11 @@ else
 PLUGDIRS+=oss_audio
 endif
 
+ifeq ($(CONFIG_RAW), no)
+else
+PLUGDIRS+=dng_in
+endif
+
 ifeq ($(CONFIG_ALSA), yes)
 PLUGDIRS+=alsa
 endif

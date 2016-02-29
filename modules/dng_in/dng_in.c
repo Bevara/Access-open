@@ -422,6 +422,9 @@ typedef struct
 static void DNG_SetupObject(DNGLoader *read);
 static GF_ESD*  DNG_SetupRAW(libraw_processed_image_t *img);
 static GF_ESD* DNG_GetThumbESD(libraw_thumbnail_t *thumb);
+GF_BaseDecoder *NewRAWDec();
+void DeleteRAWDec(GF_BaseDecoder *ifcg);
+
 
 const char * DNG_MIME_TYPES[] = {
 	"image/dng", "dng", "DNG Images",

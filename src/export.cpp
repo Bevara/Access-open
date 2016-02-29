@@ -307,6 +307,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_cfg_save) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_cfg_get_key) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_cfg_get_sub_key) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_cfg_get_ikey) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_cfg_set_key) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_cfg_get_section_count) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_cfg_get_section_name) )

@@ -7,6 +7,7 @@ vpath %.c $(SRC_PATH)
 
 all:	version
 	$(MAKE) -C src all
+	$(MAKE) -C access all
 	$(MAKE) -C applications all
 	$(MAKE) -C test all
 ifneq ($(MP4BOX_STATIC),yes)
@@ -31,6 +32,9 @@ version:
 lib:	version
 	$(MAKE) -C src all
 
+access:
+	$(MAKE) -C access all
+	
 apps:
 	$(MAKE) -C applications all
 
