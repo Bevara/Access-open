@@ -191,9 +191,9 @@ typedef struct
 {
 	enum LibRaw_image_formats type;
 	ushort      height,
-		width,
-		colors,
-		bits;
+				width,
+				colors,
+				bits;
 	unsigned int  data_size;
 	unsigned char data[1];
 } libraw_processed_image_t;
@@ -542,8 +542,6 @@ static GF_Err DNG_ConnectService(GF_InputService *plug, GF_ClientService *serv, 
 	// populate the following with pointer to DNG data (iprc->rawdata->inbuf) and the length
 	//	of the DNG data (iprc->rawdata->inbuf_len)
 	//libraw_data_t *iprc;
-	
-
 	//ret = dng_open_file(read->iprc, url);
 	/*if (ret) {
 		printf("libraw  %s\n", libraw_strerror(ret));
@@ -1641,8 +1639,7 @@ int   parse_tiff_ifd(int base, char *buf)
 		case 33424:
 		case 65024:
 			printf("not handling KODAK...contact Bevara\n"); exit(0);
-			/* DATALOC =  myget4(buf)+base; */
-			/* parse_kodak_ifd (base, buf); */
+			// TODO: return ????
 			break;
 		case 33434:			/* ExposureTime */
 			tiff_ifd[ifd].shutter = shutter = getreal(type, buf);
@@ -1653,33 +1650,11 @@ int   parse_tiff_ifd(int base, char *buf)
 		case 34306:			/* Leaf white balance */
 			FORC4 cam_mul[c ^ 1] = 4096.0 / myget2(buf);
 			break;
-		case 34307:			/* Leaf CatchLight color matrix */
-							/* for (hhh=0; hhh<7; ++hhh) */
-							/*   { */
-							/*     *(software+hhh) = *(buf+DATALOC); ++DATALOC; */
-							/*     if (DATALOC>DATALEN)  */
-							/*       { */
-							/* 	printf("buffer length exceeded...exiting...\n"); exit(0); */
-							/*       } */
-							/*   } */
-
-							/* if (mystrncmp(software,"MATRIX",6)) break; */
-							/* colors = 4; */
-							/* for (raw_color = i=0; i < 3; i++) { */
-							/*   FORC4 fscanf (ifp, "%f", &rgb_cam[i][c^1]); */
-							/*   if (!use_camera_wb) continue; */
-							/*   num = 0; */
-							/*   FORC4 num += rgb_cam[i][c]; */
-							/*   FORC4 rgb_cam[i][c] /= num; */
-							/* } */
-							/* break; */
-		case 34310:			/* Leaf metadata */
-							/* parse_mos (ftell(ifp),buf); */
-
-							/* parse_mos (DATALOC,buf); */
+		case 34307:			/* Leaf CatchLight color matrix */							
+		case 34310:			/* Leaf metadata */							
 		case 34303:
 			printf("Leaf not yet supported....exiting...\n"); exit(0);
-			/* mystrcpy (make, "Leaf"); */
+			// TODO: return ???
 			break;
 		case 34665:			/* EXIF tag */
 							/* fseek (ifp, myget4(buf)+base, SEEK_SET); */
@@ -1717,96 +1692,23 @@ int   parse_tiff_ifd(int base, char *buf)
 			break;
 		case 40976:
 			printf("Samsung not yet supported...exiting...\n"); exit(0);
-			/* strip_offset = myget4(buf); */
-			/* switch (tiff_ifd[ifd].comp) { */
-			/*   case 32770: load_raw = &  samsung_load_raw;   break; */
-			/*   case 32772: load_raw = &  samsung2_load_raw;  break; */
-			/*   case 32773: load_raw = &  samsung3_load_raw;  break; */
-			/* } */
+			// TODO: return ????
 			break;
-		case 46275:			/* Imacon tags */
-							/* mystrcpy (make, "Imacon"); */
-							/* /\* data_offset = ftell(ifp); *\/ */
-							/* data_offset = DATALOC; */
-							/* printf("in IMACON data_offset = %d\n",(int)data_offset); */
-							/* ima_len = len; */
-							/* break; */
-		case 46279:
-			/* if (!ima_len) break; */
-			/* /\* fseek (ifp, 38, SEEK_CUR); *\/ */
-			/* DATALOC = 38; */
+		case 46275:			/* Imacon tags */						
+		case 46279:		
 		case 46274:
-			/* fseek (ifp, 40, SEEK_CUR); */
-			/* DATALOC = 40; */
-			/* raw_width  = myget4(buf); */
-			/* raw_height = myget4(buf); */
-			/* left_margin = myget4(buf) & 7; */
-			/* width = raw_width - left_margin - (myget4(buf) & 7); */
-			/* top_margin = myget4(buf) & 7; */
-			/* height = raw_height - top_margin - (myget4(buf) & 7); */
-			/* if (raw_width == 7262) { */
-			/*   height = 5444; */
-			/*   width  = 7244; */
-			/*   left_margin = 7; */
-			/* } */
-			/* /\* fseek (ifp, 52, SEEK_CUR); *\/ */
-			/* DATALOC = 52; */
-			/* FORC3 cam_mul[c] = getreal(11,buf); */
-			/* /\* fseek (ifp, 114, SEEK_CUR); *\/ */
-			/* DATALOC = 114; */
-			/* flip = (myget2(buf) >> 7) * 90; */
-			/* if (width * height * 6 == ima_len) { */
-			/*   if (flip % 180 == 90) SWAP(width,height); */
-			/*   raw_width = width; */
-			/*   raw_height = height; */
-			/*   left_margin = top_margin = filters = flip = 0; */
-			/* } */
-			/* mystrcpy(model,"Ixpress"); */
-			/* /\* sprintf (model, "Ixpress %d-Mp", height*width/1000000); *\/ */
-			/* load_raw = &  imacon_full_load_raw; */
-			/* if (filters) { */
-			/*   if (left_margin & 1) filters = 0x61616161; */
-			/*   load_raw = &  unpacked_load_raw; */
-			/* } */
-			/* maximum = 0xffff; */
 			printf("Imacon not yet supported...exiting...\n"); exit(0);
+			// TODO: return ????
 			break;
 		case 50454:			/* Sinar tag */
 		case 50455:
 			printf("Sinar not yet supported...exiting...\n"); exit(0);
-			/* if (!(cbuf = (char *) malloc(len))) break; */
-
-			/* for (hhh=0; hhh<len; ++hhh) */
-			/*   { */
-			/*     *(cbuf+hhh) = *(buf+DATALOC); ++DATALOC; */
-			/*     if (DATALOC>DATALEN)  */
-			/*       { */
-			/* 	printf("buffer length exceeded...exiting...\n"); exit(0); */
-			/*       } */
-			/*   } */
-
-			/* for (cp = cbuf-1; cp && cp < cbuf+len; cp = strchr(cp,'\n')) */
-			/*   if (!mystrncmp (++cp,"Neutral ",8)) */
-			/*     sscanf (cp+8, "%f %f %f", cam_mul, cam_mul+1, cam_mul+2); */
-			/* free (cbuf); */
+			// TODO: return ???
 			break;
-		case 50458:
-			/* if (!make[0]) mystrcpy (make, "Hasselblad"); */
-			/* break; */
-		case 50459:			/* Hasselblad tag */
-							/* i = order; */
-							/* /\* j = ftell(ifp); *\/ */
-							/* j=DATALOC; */
-							/* c = tiff_nifds; */
-							/* order = myget2(buf); */
-							/* /\* fseek (ifp, j+(myget2(buf),myget4(buf)), SEEK_SET); *\/ */
-							/* printf("DOUBLECHECK the mygets...exiting...\n"); exit(0); */
-							/* DATALOC = j+(myget2(buf),myget4(buf)); */
-							/* parse_tiff_ifd (j,buf); */
-							/* maximum = 0xffff; */
-							/* tiff_nifds = c; */
-							/* order = i; */
+		case 50458:	
+		case 50459:			/* Hasselblad tag */		
 			printf("Hasselblad not yet supported...exiting...\n"); exit(0);
+			// TODO: return ???
 			break;
 		case 50706:			/* DNGVersion */
 							/* FORC4 dng_version = (dng_version << 8) + fgetc(ifp); */
@@ -2238,33 +2140,7 @@ int   parse_tiff_ifd(int base, char *buf)
 
 
 
-	/* if (sony_length && (tmpbuf = (unsigned *) malloc(sony_length))) { */
-	/*   /\* fseek (ifp, sony_offset, SEEK_SET); *\/ */
-	/*   DATALOC = sony_offset; */
-	/*   /\* fread (tmpbuf, sony_length, 1, ifp); *\/ */
-	/*   /\* myfread (tmpbuf, sony_length, 1, buf); *\/ */
 
-
-	/* 	for (hhh=0; hhh<sony_length; ++hhh) */
-	/* 	  { */
-	/* 	    *(tmpbuf+hhh) = *(buf+DATALOC); ++DATALOC; */
-	/* 	    if (DATALOC>DATALEN)  */
-	/* 	      { */
-	/* 		printf("buffer length exceeded...exiting...\n"); exit(0); */
-	/* 	      } */
-	/* 	  } */
-	/*   sony_decrypt (tmpbuf, sony_length/4, 1, sony_key); */
-	/*   sfp = ifp; */
-	/*   printf("need to implement SONY... exiting\n"); exit(0); */
-	/* if ((ifp = tmpfile())) { */
-	/*   fwrite (tmpbuf, sony_length, 1, ifp); */
-	/*   fseek (ifp, 0, SEEK_SET); */
-	/*   parse_tiff_ifd (-sony_offset,buf); */
-	/*   fclose (ifp); */
-	/* } */
-	/* ifp = sfp; */
-	/*   free (tmpbuf); */
-	/* } */
 	for (i = 0; i < colors; i++)
 		FORCC cc[i][c] *= ab[i];
 	if (use_cm) {
@@ -2466,15 +2342,11 @@ void   apply_tiff(char *buf)
 	}
 
 
-	if (!dng_version)
-		/* if ( (tiff_samples == 3 && tiff_ifd[raw].bytes && tiff_bps != 14 && */
-		/* 	  (tiff_compress & -16) != 32768) */
-		/*   || (tiff_bps == 8 && !strcasestr(make,"Kodak") && */
-		/* 	  !strstr(model2,"DEBUG RAW"))) */
-		/*   is_raw = 0; */
+	if (!dng_version)		
 	{
 		printf("DNG version not found....exiting...\n");
 		exit(0);
+		// TODO: return ????
 	}
 
 
@@ -2604,7 +2476,7 @@ void   identify(unsigned char *buf,unsigned int insize)
 		if (!memcmp(head + 6, "HEAPCCDR", 8))
 		{
 			printf("not yet handling HEAPCCDR (Canon CRW)...contact Bevara for suppport...\n"); exit(0);
-			// return ???BAD_PARAM?????
+			// TODO: return ???BAD_PARAM?????
 
 		}
 		else if (parse_tiff(0, buf))
@@ -2616,7 +2488,7 @@ void   identify(unsigned char *buf,unsigned int insize)
 	{
 		printf("Expected DNG header not found...exiting...\n");
 		exit(0);
-		// return ??????
+		// TODO: return ??????
 	}
 
 
@@ -2624,7 +2496,7 @@ void   identify(unsigned char *buf,unsigned int insize)
 
 	{
 		printf("Camera Make not identified\n"); exit(0);
-		//return ??????;
+		// TODO: return ??????;
 	}
 
 	for (i = 0; i < sizeof corp / sizeof *corp; i++)
@@ -2696,16 +2568,20 @@ void   identify(unsigned char *buf,unsigned int insize)
 		else	 colors = tiff_samples;
 		switch (tiff_compress) {
 		case 0:
-
-			//TODO: Set the Accessor type here!
-		case 1:    printf("\t setting decompression to packed dng load raw\n");  //load_raw = &packed_dng_load_raw;  break;
-		case 7:    printf("\t setting decompression to lossless dng load raw\n"); //load_raw = &lossless_dng_load_raw;  break;
+		case 1:    
+			printf("\t setting decompression to packed dng load raw\n");  
+			load_raw = PACKED_DNG;  
+			break;
+		case 7:    
+			printf("\t setting decompression to lossless dng load raw\n"); 
+			load_raw = LOSSLESS_JPEG;
+			break;
 		case 34892:
 		{
-			/* load_raw = &  lossy_dng_load_raw;  */
+			load_raw = NON_BASELINE_JPEG;  
 			printf("not handling lossy DNGs. Contact Bevara for suppport.\n");
 			exit(0);
-			// TODO: return value
+			// TODO: return ????
 			break;
 
 		}
@@ -2871,7 +2747,7 @@ static void DNG_SetupObject(DNGLoader *read)
 		printf("libraw : error decoding raw image \n");
 	}
 */
-	//TODO: this is just here for check decompress??
+	//TODO: this is just here for checking decompression??
 	/*read->raw_data = libraw_dcraw_make_mem_image(read->iprc, &ret);
 	if (ret) {
 		printf("libraw : error decompressing raw image \n");
@@ -2887,7 +2763,10 @@ static void DNG_SetupObject(DNGLoader *read)
 	/*ret = libraw_unpack_thumb(read->iprc);
 	if (ret) {
 		printf("libraw : error unpacking thumbnail \n");
-	}
+	}*/
+
+	//TODO: loop over thumbnails and create one for each
+	/*
 	od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
 	esd = DNG_GetThumbESD(&read->iprc->thumbnail);
 	od->objectDescriptorID = esd->ESID;
@@ -2909,6 +2788,8 @@ static void DNG_SetupObject(DNGLoader *read)
 static GF_ESD*  DNG_SetupRAW(libraw_processed_image_t *img)
 {
 	GF_ESD *esd;
+
+//TODO: fill in vals
 
 	esd = gf_odf_desc_esd_new(0);
 	esd->slConfig->timestampResolution = 1000;
