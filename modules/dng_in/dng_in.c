@@ -29,6 +29,7 @@
 #define GPAC_BMP_OTI	0x82
 
 #define MAX_IFDS	10  // maximum number of IFDs handled in DNG parsing
+#define MAX_NUM_THUMBNAILS 5 //maximum number of thumbnails handled in a DNG
 
 /**
 \struct 
@@ -144,33 +145,16 @@ typedef struct
 	unsigned long inbuf_len;
 
 
-	/* really allocated bitmap */
-	void          *raw_alloc;
-	/* alias to single_channel variant */
-	ushort        *raw_image;
-	/* alias to 4-channel variant */
-	ushort(*color4_image)[4];
-	/* alias to 3-color variand decoded by RawSpeed */
-	ushort(*color3_image)[3];
 
-	/* Phase One black level data; */
-	short(*ph1_cblack)[2];
-	short(*ph1_rblack)[2];
-
-	/* save color and sizes here, too.... */
-	libraw_iparams_t  iparams;
-	libraw_image_sizes_t sizes;
-	libraw_internal_output_params_t ioparams;
-	libraw_colordata_t color;
 } libraw_rawdata_t;
 
 
-struct ph1_t
-{
-	int format, key_off, tag_21a;
-	int t_black, split_col, black_col, split_row, black_row;
-	float tag_210;
-};
+//struct ph1_t
+//{
+//	int format, key_off, tag_21a;
+//	int t_black, split_col, black_col, split_row, black_row;
+//	float tag_210;
+//};
 
 
 
@@ -187,16 +171,6 @@ enum LibRaw_image_formats
 	ZIP_DEFLATE =7
 };
 
-typedef struct
-{
-	enum LibRaw_image_formats type;
-	ushort      height,
-				width,
-				colors,
-				bits;
-	unsigned int  data_size;
-	unsigned char data[1];
-} libraw_processed_image_t;
 
 enum LibRaw_thumbnail_formats
 {
@@ -215,10 +189,18 @@ typedef struct
 				theight;
 	unsigned    tlength;
 	int         tcolors;
-
+	int			torientation;
 	char       *thumb;
 }libraw_thumbnail_t;
 
+typedef struct
+{
+	LPNETCHANNEL ch_thumb;
+	libraw_thumbnail_t *thumb_data;
+	u32 thumb_data_size;
+	Bool thumb_done;
+
+} thumbnail_chan_t;
 
 typedef struct
 {
@@ -256,14 +238,14 @@ typedef struct
 	int         use_fuji_rotate;/* -j */
 	int         green_matching;
 	/* DCB parameters */
-	int         dcb_iterations;
+	/*int         dcb_iterations;
 	int         dcb_enhance_fl;
-	int         fbdd_noiserd;
+	int         fbdd_noiserd;*/
 	/* VCD parameters */
-	int         eeci_refine;
-	int         es_med_passes;
+	/*int         eeci_refine;
+	int         es_med_passes;*/
 	/* AMaZE*/
-	int         ca_correc;
+	/*int         ca_correc;
 	float       cared;
 	float	cablue;
 	int cfaline;
@@ -275,26 +257,26 @@ typedef struct
 	float green_thresh;
 	int exp_correc;
 	float exp_shift;
-	float exp_preser;
+	float exp_preser;*/
 	/* WF debanding */
-	int   wf_debanding;
-	float wf_deband_treshold[4];
+	//int   wf_debanding;
+	//float wf_deband_treshold[4];
 	/* Raw speed */
-	int use_rawspeed;
+	//int use_rawspeed;
 	/* Disable Auto-scale */
-	int no_auto_scale;
+	//int no_auto_scale;
 	/* Disable intepolation */
-	int no_interpolation;
+	//int no_interpolation;
 	/* Disable sRAW YCC to RGB conversion */
-	int sraw_ycc;
+	//int sraw_ycc;
 	/* Force use x3f data decoding either if demosaic pack GPL2 enabled */
-	int force_foveon_x3f;
-	int x3f_flags;
+	//int force_foveon_x3f;
+	//int x3f_flags;
 	/* Sony ARW2 digging mode */
-	int sony_arw2_options;
-	int sony_arw2_posterization_thr;
+	//int sony_arw2_options;
+	//int sony_arw2_posterization_thr;
 	/* Nikon Coolscan */
-	float coolscan_nef_gamma;
+	//float coolscan_nef_gamma;
 }libraw_output_params_t;
 
 typedef struct
@@ -312,29 +294,45 @@ typedef struct
 } libraw_imgother_t;
 
 
+
 typedef struct
 {
+	enum LibRaw_image_formats type;
+	ushort      height,
+		width,
+		colors,
+		bits;
+	unsigned int  data_size;
+	unsigned char * imgdata;
+
+	/* really allocated bitmap */
+	void          *raw_alloc;
+	/* alias to single_channel variant */
+	ushort        *raw_image;
+	/* alias to 4-channel variant */
+	ushort(*color4_image)[4];
+	/* alias to 3-color variand decoded by RawSpeed */
+	ushort(*color3_image)[3];
+
+	/* Phase One black level data; */
+	/*short(*ph1_cblack)[2];
+	short(*ph1_rblack)[2];*/
+
+	/* save color and sizes here, too.... */
+	libraw_iparams_t  iparams;
+	libraw_image_sizes_t sizes;
+	libraw_internal_output_params_t ioparams;
+	libraw_colordata_t color;
+
 	ushort(*image)[4];
 	libraw_image_sizes_t        sizes;
-	libraw_iparams_t            idata;
 	//libraw_lensinfo_t			lens;
 	libraw_output_params_t		params;
-	unsigned int                progress_flags;
-	unsigned int                process_warnings;
-	libraw_colordata_t          color;
 	libraw_imgother_t           other;
-	libraw_thumbnail_t          thumbnail;
-	// BEVARA: added multiple thumbnails to this structure
-	libraw_thumbnail_t          thumbnail2;
-	libraw_thumbnail_t          thumbnail3;
-	libraw_thumbnail_t          thumbnail4;
-	libraw_thumbnail_t          thumbnail5;
 
-	// holds the original DNG data and data length
-	libraw_rawdata_t            *rawdata;
+} libraw_processed_image_t;
 
-	void						*parent_class;
-} libraw_data_t;
+
 
 //typedef struct
 //{
@@ -403,19 +401,22 @@ typedef struct
 	GF_SLHeader sl_hdr;
 
 	/* dng handler*/
-	libraw_data_t *iprc;
-	unsigned long  DNG_data_length;
+	libraw_rawdata_t *rawdata;
 
-	/* raw data */
+
+	/* raw image data */
 	LPNETCHANNEL ch_raw;
 	libraw_processed_image_t *raw_data;
 	Bool raw_done;
 
-	/* thumb data */
-	LPNETCHANNEL ch_thumb;
-	char *thumb_data;
-	u32 thumb_data_size;
-	Bool thumb_done;
+	/* thumbnails  */
+	thumbnail_chan_t thumbnail[MAX_NUM_THUMBNAILS];
+
+	/* XMP data */
+	LPNETCHANNEL ch_XMP;
+	unsigned char *XMP_data;
+	u32 XMP_data_size;
+	Bool XMP_done;
 
 } DNGLoader;
 
@@ -539,9 +540,10 @@ static GF_Err DNG_ConnectService(GF_InputService *plug, GF_ClientService *serv, 
 		return GF_BAD_PARAM;
 
 	// TODO: here implement file passing from Access
-	// populate the following with pointer to DNG data (iprc->rawdata->inbuf) and the length
-	//	of the DNG data (iprc->rawdata->inbuf_len)
-	//libraw_data_t *iprc;
+	// populate the following with pointer to DNG data (read->rawdata->inbuf) and the length
+	//	of the DNG data (read->rawdata->inbuf_len)
+	
+	// TODO: REPLACE THIS WITH ABOVE
 	//ret = dng_open_file(read->iprc, url);
 	/*if (ret) {
 		printf("libraw  %s\n", libraw_strerror(ret));
@@ -2638,14 +2640,14 @@ notraw:
 
 
 /**
-*	\fn static GF_Err DNG_Parse()
+*	\fn static GF_Err DNG_Parse_Unpack()
 *
 *	\brief This function is called by DG_SetupObject to 
 *	parse the DNG, extract TAGs into structures, and 
-*	locate the main image, thumbnails, and XMP 
+*	locate (unpack) the main image, thumbnails, and XMP 
 */
 
-static GF_Err DNG_Parse(libraw_rawdata_t *rawdata)
+static GF_Err DNG_Parse_Unpack(libraw_rawdata_t *rawdata)
 {
 
 	u32 ret = 0;
@@ -2660,7 +2662,11 @@ static GF_Err DNG_Parse(libraw_rawdata_t *rawdata)
 
 
 	/* TODO: copy over all params into libraw structs */
+	// TODO: main image copy
 
+	//	TODO: thumnail(s) data copy
+
+	//	TODO: XMP data copy
 
 
 	/*printf("After identify the DNG found height and width to be: %d  %d %d\n", height, width, colors);
@@ -2683,6 +2689,8 @@ static GF_Err DNG_Parse(libraw_rawdata_t *rawdata)
 	}
 	
 
+	// TODO: temp leave this in this bit is for main image decoding 
+	// and will be moved later
 	/*shrink = filters && (half_size || (!identify_only &&
 		(threshold || aber[0] != 1 || aber[2] != 1)));
 	iheight = (height + shrink) >> shrink;
@@ -2725,11 +2733,18 @@ static void DNG_SetupObject(DNGLoader *read)
 	GF_ObjectDescriptor *od;
 	u32 ret = 0;
 
+	int i;
+
+	// init the thumbnail size before unpacking
+	for (i = 0; i < MAX_NUM_THUMBNAILS; ++i)
+	{
+		read->thumbnail[i].thumb_data_size = 0;
+	}
+
 	/* Read the TIFF/DNG info to populate the DNG structures */
-	DNG_Parse(read->iprc->rawdata);
+	DNG_Parse_Unpack(read->rawdata);
 
 
-	/* TODO: Setup raw image */
 	// BEVARA -- we have options here:
 	// 1. most DNGs will be single main image, to handle the various
 	//	tile offsets, we just point to the entire file, with 
@@ -2737,59 +2752,62 @@ static void DNG_SetupObject(DNGLoader *read)
 	// 2. Could offset to the main image IFD; later references, e.g., to 
 	//	the tiles would then have to be offset
 	// For now, we go with option 1
-	ret = libraw_unpack(read->iprc);
-	if (ret) {
-		printf("libraw : error decoding raw image \n");
-	}
+	
 
+	//TODO: these just here for checking decompression??
 	/*ret = libraw_dcraw_process(read->iprc);
 	if (ret) {
 		printf("libraw : error decoding raw image \n");
 	}
-*/
-	//TODO: this is just here for checking decompression??
-	/*read->raw_data = libraw_dcraw_make_mem_image(read->iprc, &ret);
+	read->raw_data = libraw_dcraw_make_mem_image(read->iprc, &ret);
 	if (ret) {
 		printf("libraw : error decompressing raw image \n");
 	}*/
 
+	// BEVARA: this is indeed insane, but a temp fix
+	// we're currently allocating space for the main image, the 
+	// XMP data, and each thumbnail
+
 	od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-	esd = DNG_SetupRAW(read->raw_data);
+	esd = DNG_SetupMainESD(read->raw_data);
 	od->objectDescriptorID = esd->ESID;
 	gf_list_add(od->ESDescriptors, esd);
 	gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_FALSE);
 
-	/* TODO: Setup thumbnail(s) */
-	/*ret = libraw_unpack_thumb(read->iprc);
-	if (ret) {
-		printf("libraw : error unpacking thumbnail \n");
-	}*/
-
-	//TODO: loop over thumbnails and create one for each
-	/*
+	//TODO: setup XMP
 	od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-	esd = DNG_GetThumbESD(&read->iprc->thumbnail);
+	esd = DNG_SetupXMPESD(read->XMP_data);
 	od->objectDescriptorID = esd->ESID;
 	gf_list_add(od->ESDescriptors, esd);
-	gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_TRUE);*/
+	gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_FALSE);
 
+	//TODO: loop over thumbnails and create one for each
+	for (i = 0; i < MAX_NUM_THUMBNAILS; ++i)
+	{
+		if (read->thumbnail[i].thumb_data_size == 0) break;
+
+		od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
+		esd = DNG_SetupThumbESD(&read->thumbnail[i]);
+		od->objectDescriptorID = esd->ESID;
+		gf_list_add(od->ESDescriptors, esd);
+		gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_TRUE); 
+	}
 }
 
 /**
-* \fn static GF_ESD*  DNG_SetupRAW(libraw_processed_image_t *img)
+* \fn static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 *
 * \brief This function is called by DNG_SetupObject.
-* It aims at declaring the descriptor of the raw image contained in the DNG files.
+* It aims at declaring the descriptor of the main raw image contained in the DNG files.
 *
-* \param read The raw image descriptor of LIBRAW
+* \param img The parsed raw main image descriptor modified from LIBRAW structs
 *
-* \return The raw image descriptor for the player.
+* \return The raw main image descriptor for the player.
 */
-static GF_ESD*  DNG_SetupRAW(libraw_processed_image_t *img)
+static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 {
 	GF_ESD *esd;
 
-//TODO: fill in vals
 
 	esd = gf_odf_desc_esd_new(0);
 	esd->slConfig->timestampResolution = 1000;
@@ -2802,6 +2820,41 @@ static GF_ESD*  DNG_SetupRAW(libraw_processed_image_t *img)
 	gf_bs_write_u32(bs_dsi, img->width);
 	gf_bs_write_u32(bs_dsi, GF_PIXEL_RGB_24);
 	gf_bs_write_u8(bs_dsi, 3);
+	gf_bs_get_content(bs_dsi, &esd->decoderConfig->decoderSpecificInfo->data, &esd->decoderConfig->decoderSpecificInfo->dataLength);
+	gf_bs_del(bs_dsi);
+
+	return esd;
+}
+
+/**
+* \fn static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
+*
+* \brief This function is called by DNG_SetupObject.
+* It aims at declaring the descriptor of the XMP data contained in the DNG files.
+*
+* \param img The parsed XMP data
+*
+* \return The XMP descriptor for the player.
+*/
+static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
+{
+	GF_ESD *esd;
+
+
+	esd = gf_odf_desc_esd_new(0);
+	esd->slConfig->timestampResolution = 1000;
+	esd->decoderConfig->streamType = GF_STREAM_VISUAL;
+	esd->ESID = 1;
+	esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_RAW;
+
+	GF_BitStream *bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+	// TODO: Jerome put in required XMP values from DNGLoader. Just the length?
+	//	We currently assume UNICODE 8 but could transmit this value too
+	/*gf_bs_write_u32(bs_dsi, img->height);
+	gf_bs_write_u32(bs_dsi, img->width);
+	gf_bs_write_u32(bs_dsi, GF_PIXEL_RGB_24);
+	gf_bs_write_u8(bs_dsi, 3);*/
+
 	gf_bs_get_content(bs_dsi, &esd->decoderConfig->decoderSpecificInfo->data, &esd->decoderConfig->decoderSpecificInfo->dataLength);
 	gf_bs_del(bs_dsi);
 
@@ -2861,8 +2914,12 @@ static GF_Err IMG_CloseService(GF_InputService *plug)
 	read = (DNGLoader *)plug->priv;
 	if (!read)
 		return GF_BAD_PARAM;
-	if (read->iprc) libraw_close(read->iprc);
-	read->iprc = NULL;
+	// TODO: dealloc main image, XMP, and thumbnail data
+	/*if (read->iprc) libraw_close(read->iprc);
+	read->iprc = NULL;*/
+
+	//TODO: Jerome - what else needs closing/deallocing?
+
 	if (read->service)
 		gf_service_disconnect_ack(read->service, NULL, GF_OK);
 	return GF_OK;
@@ -2899,6 +2956,8 @@ static GF_Err DNG_ConnectChannel(GF_InputService *plug, LPNETCHANNEL channel, co
 	if (!url)
 		goto exit;
 	e = GF_STREAM_NOT_FOUND;
+
+	// TODO: switch these over to local str fns
 	if (strstr(url, "ES_ID")) {
 		sscanf(url, "ES_ID=%ud", &ES_ID);
 	}
@@ -2910,11 +2969,16 @@ static GF_Err DNG_ConnectChannel(GF_InputService *plug, LPNETCHANNEL channel, co
 		read->ch_raw = channel;
 		e = GF_OK;
 	}
-	else if (ES_ID == 2) {
-		if (read->ch_thumb == channel) goto exit;
-		read->ch_thumb = channel;
+	// TODO: Jerome check to see if correct;otherwise correct how to 
+	//	refer to the thumbnails
+	else if ((ES_ID > 1) && (ES_ID<MAX_NUM_THUMBNAILS+2)) {
+		if (read->thumbnail[ES_ID-2].ch_thumb == channel) goto exit;
+		read->thumbnail[ES_ID-2].ch_thumb = channel;
 		e = GF_OK;
 	}
+	
+	
+
 
 exit:
 	gf_service_connect_ack(read->service, channel, e);
@@ -2936,6 +3000,7 @@ static GF_Err DNG_DisconnectChannel(GF_InputService *plug, LPNETCHANNEL channel)
 {
 	GF_Err e = GF_STREAM_NOT_FOUND;
 	DNGLoader *read = (DNGLoader *)plug->priv;
+	int i;
 
 	if (read->ch_raw == channel) {
 		if (read->raw_data) {
@@ -2946,9 +3011,12 @@ static GF_Err DNG_DisconnectChannel(GF_InputService *plug, LPNETCHANNEL channel)
 		e = GF_OK;
 	}
 
-	if (read->ch_thumb == channel) {
-		read->ch_thumb = NULL;
-		e = GF_OK;
+	for (i = 0; i < MAX_NUM_THUMBNAILS; ++i)
+	{
+		if (read->thumbnail[i].ch_thumb == channel) {
+			read->thumbnail[i].ch_thumb = NULL;
+			e = GF_OK;
+		}
 	}
 
 	gf_service_disconnect_ack(read->service, channel, e);
@@ -2995,6 +3063,8 @@ static GF_Err IMG_ChannelGetSLP(GF_InputService *plug, LPNETCHANNEL channel, cha
 
 
 	/*fetching raw data*/
+	// TODO: Jerome we just point to main image data here
+	// or is this the decoded data
 	if (read->ch_raw == channel) {
 		libraw_data_t * iprc = read->iprc;
 
@@ -3016,8 +3086,11 @@ static GF_Err IMG_ChannelGetSLP(GF_InputService *plug, LPNETCHANNEL channel, cha
 		return GF_OK;
 	}
 
+	//TODO: Jerome how do you want to reference the thumbs here?
+	// we alloc up to 5, realistically the useful ones are the 
+	// uncompressed and baseline JPEG; 
 	/*fetching thumb data*/
-	if (read->ch_thumb == channel) {
+	/*if (read->ch_thumb == channel) {
 		libraw_data_t * iprc = read->iprc;
 		libraw_thumbnail_t* thumb = &iprc->thumbnail;
 
@@ -3040,7 +3113,7 @@ static GF_Err IMG_ChannelGetSLP(GF_InputService *plug, LPNETCHANNEL channel, cha
 		*out_data_ptr = read->thumb_data;
 		*out_data_size = read->thumb_data_size;
 		return GF_OK;
-	}
+	}*/
 	return GF_STREAM_NOT_FOUND;
 }
 
@@ -3058,21 +3131,26 @@ static GF_Err IMG_ChannelGetSLP(GF_InputService *plug, LPNETCHANNEL channel, cha
 static GF_Err IMG_ChannelReleaseSLP(GF_InputService *plug, LPNETCHANNEL channel)
 {
 	DNGLoader *read = (DNGLoader *)plug->priv;
+	int i;
 
 	if (read->ch_raw == channel) {
 		if (!read->raw_data) return GF_BAD_PARAM;
 		read->raw_done = GF_TRUE;
 		return GF_OK;
 	}
-	
-	if (read->ch_thumb == channel) {
-		if (!read->thumb_data) return GF_BAD_PARAM;
-		gf_free(read->thumb_data);
-		read->thumb_data = NULL;
-		read->thumb_done = GF_TRUE;
+
+	/* Close out all existing thumbnails*/
+	for (i = 0; i < MAX_NUM_THUMBNAILS; ++i)
+	{
+	if (read->thumbnail[i].ch_thumb == channel) {
+		if (!read->thumbnail[i].thumb_data) return GF_BAD_PARAM;
+		gf_free(read->thumbnail[i].thumb_data);
+		read->thumbnail[i].thumb_data = NULL;
+		read->thumbnail[i].thumb_done = GF_TRUE;
 		return GF_OK;
 
 	}
+}
 	return GF_OK;
 }
 
@@ -3097,7 +3175,9 @@ void *NewLoaderInterface()
 	plug->ServiceCommand = IMG_ServiceCommand;
 
 	GF_SAFEALLOC(priv, DNGLoader);
-	priv->iprc = libraw_init(0);
+
+	// TODO: Do initialization function here?
+	//priv->iprc = libraw_init(0);
 	plug->priv = priv;
 	return plug;
 }
@@ -3110,10 +3190,13 @@ void DeleteLoaderInterface(void *ifce)
 	if (!plug)
 		return;
 	read = (DNGLoader *)plug->priv;
-	if (read) {
+
+	// TODO: Jerome implement close elsewhere? Where do we dealloc all
+	// mem (main image, thumbnail, XMP) structs
+	/*if (read) {
 		libraw_close(read->iprc);
 		gf_free(read);
-	}
+	}*/
 		
 	plug->priv = NULL;
 	gf_free(plug);
