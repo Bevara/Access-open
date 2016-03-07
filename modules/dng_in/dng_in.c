@@ -2684,12 +2684,12 @@ static void DNG_SetupObject(DNGLoader *read)
 
 	ret = (identify(read->rawdata->inbuf, read->rawdata->inbuf_len), !is_raw);
 	if (ret == GF_BAD_PARAM)
-		return GF_BAD_PARAM;
+		return;// GF_BAD_PARAM;
 
 	if (!is_raw)
 	{
 		printf("is not a raw file....exiting\n");
-		return GF_NOT_SUPPORTED;
+		return;// GF_NOT_SUPPORTED;
 	}
 
 
