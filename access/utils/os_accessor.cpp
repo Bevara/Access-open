@@ -274,7 +274,7 @@ u32 gf_accessors_refresh(GF_ModuleManager *pm)
 #endif
 #else
 		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("Refreshing list of modules in directory %s...\n", pm->dirs[i]));
-		gf_enum_directory(pm->dirs[i], 0, enum_modules, pm, ".so");
+		gf_enum_directory(pm->dirs[i], GF_FALSE, enum_modules, pm, ".so");
 #endif
 	}
 
