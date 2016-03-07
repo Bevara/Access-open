@@ -3,7 +3,7 @@ include ../config.mak
 vpath %.c $(SRC_PATH)/src
 vpath %.cpp $(SRC_PATH)/src
 
-CFLAGS=$(OPTFLAGS) $(CXXFLAGS) -I"$(SRC_PATH)/include" $(llvm_cxxflags)
+CFLAGS=$(OPTFLAGS) $(CXXFLAGS) -I"$(SRC_PATH)/include" -fno-rtti $(llvm_cxxflags)
 LDFLAGS= $(llvm_ldflags)
 
 ifeq ($(DEBUGBUILD), yes)
