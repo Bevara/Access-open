@@ -24,8 +24,6 @@
 ***/
 
 
-//#include "libraw/libraw.h"
-
 #define GPAC_BMP_OTI	0x82
 
 #define MAX_IFDS	10  // maximum number of IFDs handled in DNG parsing
@@ -33,7 +31,7 @@
 
 /**
 \struct 
-\brief Libraw structures
+\brief Modified LibRaw structures
 */
 
 #if !defined(ushort)
@@ -60,8 +58,8 @@ typedef struct
 	char        xtrans[6][6];
 	char        xtrans_abs[6][6];
 	char        cdesc[5];
-	unsigned    xmplen;
-	char	    *xmpdata;
+	//unsigned    xmplen;
+	//char	    *xmpdata;
 
 }libraw_iparams_t;
 
@@ -175,8 +173,9 @@ enum LibRaw_image_formats
 enum LibRaw_thumbnail_formats
 {
 	LIBRAW_THUMBNAIL_UNKNOWN = 0,
-	LIBRAW_THUMBNAIL_JPEG = 1,
-	LIBRAW_THUMBNAIL_BITMAP = 2,
+	LIBRAW_THUMBNAIL_BASELINE_JPEG = 1,
+	LIBRAW_THUMBNAIL_NON_BASELINE_JPEG = 2,
+	LIBRAW_THUMBNAIL_BITMAP = 3,
 	LIBRAW_THUMBNAIL_LAYER = 4,
 	LIBRAW_THUMBNAIL_ROLLEI = 5
 };
@@ -304,15 +303,16 @@ typedef struct
 		bits;
 	unsigned int  data_size;
 	unsigned char * imgdata;
+	unsigned int  data_offset;
 
 	/* really allocated bitmap */
-	void          *raw_alloc;
+	//void          *raw_alloc;
 	/* alias to single_channel variant */
-	ushort        *raw_image;
+	//ushort        *raw_image;
 	/* alias to 4-channel variant */
-	ushort(*color4_image)[4];
+	//ushort(*color4_image)[4];
 	/* alias to 3-color variand decoded by RawSpeed */
-	ushort(*color3_image)[3];
+	//ushort(*color3_image)[3];
 
 	/* Phase One black level data; */
 	/*short(*ph1_cblack)[2];
@@ -325,7 +325,6 @@ typedef struct
 	libraw_colordata_t color;
 
 	ushort(*image)[4];
-	//libraw_image_sizes_t        sizes;
 	//libraw_lensinfo_t			lens;
 	libraw_output_params_t		params;
 	libraw_imgother_t           other;
@@ -406,7 +405,7 @@ typedef struct
 
 	/* raw image data */
 	LPNETCHANNEL ch_raw;
-	libraw_processed_image_t *raw_data;
+	libraw_processed_image_t *processed_rawdata;
 	Bool raw_done;
 
 	/* thumbnails  */
@@ -423,8 +422,9 @@ typedef struct
 
 /**** This section is out of acccessor scope ***/
 static void DNG_SetupObject(DNGLoader *read);
-static GF_ESD*  DNG_SetupRAW(libraw_processed_image_t *img);
-static GF_ESD* DNG_GetThumbESD(libraw_thumbnail_t *thumb);
+static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img);
+static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img);
+static GF_ESD*  DNG_SetupThumbESD(libraw_thumbnail_t *thumb);
 GF_BaseDecoder *NewRAWDec();
 void DeleteRAWDec(GF_BaseDecoder *ifcg);
 
@@ -542,9 +542,7 @@ static GF_Err DNG_ConnectService(GF_InputService *plug, GF_ClientService *serv, 
 	// TODO: here implement file passing from Access
 	// populate the following with pointer to DNG data (read->rawdata->inbuf) and the length
 	//	of the DNG data (read->rawdata->inbuf_len)
-	
-	// TODO: REPLACE THIS WITH ABOVE
-	//ret = dng_open_file(read->iprc, url);
+	//ret = dng_open_file(read->rawdata, url);
 	/*if (ret) {
 		printf("libraw  %s\n", libraw_strerror(ret));
 		err = GF_NOT_SUPPORTED;
@@ -575,7 +573,7 @@ int parse_xmp(char *buf)
 	int UTF = 0;
 	int saveDATALOC = DATALOC;
 
-	uchar tmpxmp;
+	/*uchar tmpxmp;
 	int ii;
 	printf("XMP: ");
 	for (ii = 0; ii<10; ++ii)
@@ -583,7 +581,7 @@ int parse_xmp(char *buf)
 		tmpxmp = *(buf + DATALOC + ii);
 		printf("0x%02x ", tmpxmp);
 	}
-
+*/
 	/*determine UTF type 8,16,32 (UTF-8, UTF-16/UCS-2, UTF-32/UCS-4*/
 	if ((*(buf + DATALOC) == 0x3C) && (*(buf + DATALOC + 1) == 0x3F))
 	{
@@ -681,6 +679,7 @@ float bright = 1, /* user_mul[4]={0,0,0,0}, */ threshold = 0;
 int mask[8][4];
 int half_size = 0, four_color_rgb = 0, /* document_mode=0, */ highlight = 0;
 int load_raw, load_thumb;
+int max_samp = 0, rawimgnum = -1;
 
 int /* use_auto_wb=0, */ /* use_camera_wb=0, */ use_camera_matrix = 1;
 int output_color = 1, output_bps = 8  /* , output_tiff=0 *//* , med_passes=0 */;
@@ -1030,8 +1029,7 @@ ushort *   make_decoder_ref(const uchar **source)
 	if (!huff)
 	{
 		printf("error allocating memory for Huffman coded...exiting\n");
-		exit(0);
-		// TODO: return ????
+		return GF_BAD_PARAM;
 	}
 	huff[0] = max;
 	for (h = len = 1; len <= max; len++)
@@ -1125,7 +1123,7 @@ void   cam_xyz_coeff(float rgb_cam[3][4], double cam_xyz[4][3])
 
 
 
-void   parse_exif(int base, char *buf)
+int   parse_exif(int base, char *buf)
 {
 	unsigned kodak, entries, tag, type, len, save, c;
 	double expo;
@@ -1149,8 +1147,7 @@ void   parse_exif(int base, char *buf)
 		case 37386:  focal_len = getreal(type, buf);		break;
 		case 37500:  /*parse_makernote(base, 0, buf);*/
 			printf("not handling makernote \n");
-			exit(0);
-			// TODO: return ????
+			return GF_BAD_PARAM;
 			break;
 		case 40962:  if (kodak) raw_width = myget4(buf);	break;
 		case 40963:  if (kodak) raw_height = myget4(buf);	break;
@@ -1173,13 +1170,9 @@ int   parse_tiff_ifd(int base, char *buf)
 	uchar cfa_pat[16], cfa_pc[] = { 0,1,2,3 }, tab[256];
 	double cc[4][4], cm[4][3], cam_xyz[4][3], num;
 	double ab[] = { 1,1,1,1 }, asn[] = { 0,0,0,0 }, xyz[] = { 1,1,1 };
-	/* unsigned sony_curve[] = { 0,0,0,0,0,4095 }; */
-	/* unsigned int *tmpbuf, sony_offset=0, sony_length=0, sony_key=0; */
-	/* struct jhead jh; */
-	/* FILE *sfp; */
+	int locret;
+	int hhh; 
 
-
-	int hhh;
 
 	printf("in parse tiff ifd...\n");
 
@@ -1243,7 +1236,7 @@ int   parse_tiff_ifd(int base, char *buf)
 		case 61440:			/* Fuji HS10 table */
 							/* fseek (ifp, myget4(buf)+base, SEEK_SET); */
 			DATALOC = myget4(buf) + base;
-			parse_tiff_ifd(base, buf);
+			if (parse_tiff_ifd(base, buf) == GF_BAD_PARAM) return GF_BAD_PARAM;
 			break;
 		case 254: /* NewSubFileType */
 				  /* printf("need to handle new subfile type\n"); */
@@ -1542,7 +1535,7 @@ int   parse_tiff_ifd(int base, char *buf)
 				/* data_offset = myget4(buf)+base; */
 
 				printf("Sony not yet supported...exiting...\n");
-				exit(0);
+				return GF_BAD_PARAM;
 				/* ifd++; */  break;
 			}
 			while (len--) {
@@ -1550,8 +1543,9 @@ int   parse_tiff_ifd(int base, char *buf)
 				/* fseek (ifp, myget4(buf)+base, SEEK_SET); */
 				i = DATALOC;
 				DATALOC = myget4(buf) + base;
-				if (parse_tiff_ifd(base, buf)) break;
-				/* fseek (ifp, i+4, SEEK_SET); */
+				locret = parse_tiff_ifd(base, buf);
+				if (locret = GF_BAD_PARAM) return GF_BAD_PARAM;
+				else if (locret > 0) break;
 				DATALOC = i + 4;
 			}
 			break;
@@ -1640,8 +1634,8 @@ int   parse_tiff_ifd(int base, char *buf)
 			goto guess_cfa_pc;
 		case 33424:
 		case 65024:
-			printf("not handling KODAK...contact Bevara\n"); exit(0);
-			// TODO: return ????
+			printf("not handling KODAK...contact Bevara\n"); 
+			return GF_BAD_PARAM;
 			break;
 		case 33434:			/* ExposureTime */
 			tiff_ifd[ifd].shutter = shutter = getreal(type, buf);
@@ -1656,13 +1650,13 @@ int   parse_tiff_ifd(int base, char *buf)
 		case 34310:			/* Leaf metadata */							
 		case 34303:
 			printf("Leaf not yet supported....exiting...\n"); exit(0);
-			// TODO: return ???
+			return GF_BAD_PARAM;
 			break;
 		case 34665:			/* EXIF tag */
-							/* fseek (ifp, myget4(buf)+base, SEEK_SET); */
+							
 			printf("found EXIF data\n");
 			DATALOC = myget4(buf) + base;
-			parse_exif(base, buf);
+			if (parse_exif(base, buf) == GF_BAD_PARAM) return GF_BAD_PARAM;
 			break;
 			/* case 34853:			/\* GPSInfo tag *\/ */
 			/* 	/\* fseek (ifp, myget4(buf)+base, SEEK_SET); *\/ */
@@ -1694,23 +1688,23 @@ int   parse_tiff_ifd(int base, char *buf)
 			break;
 		case 40976:
 			printf("Samsung not yet supported...exiting...\n"); exit(0);
-			// TODO: return ????
+			return GF_BAD_PARAM;
 			break;
 		case 46275:			/* Imacon tags */						
 		case 46279:		
 		case 46274:
 			printf("Imacon not yet supported...exiting...\n"); exit(0);
-			// TODO: return ????
+			return GF_BAD_PARAM;
 			break;
 		case 50454:			/* Sinar tag */
 		case 50455:
 			printf("Sinar not yet supported...exiting...\n"); exit(0);
-			// TODO: return ???
+			return GF_BAD_PARAM;
 			break;
 		case 50458:	
 		case 50459:			/* Hasselblad tag */		
 			printf("Hasselblad not yet supported...exiting...\n"); exit(0);
-			// TODO: return ???
+			return GF_BAD_PARAM;
 			break;
 		case 50706:			/* DNGVersion */
 							/* FORC4 dng_version = (dng_version << 8) + fgetc(ifp); */
@@ -1890,7 +1884,7 @@ int   parse_tiff_ifd(int base, char *buf)
 			/* parse_minolta (j = myget4(buf)+base,buf); */
 			/* fseek (ifp, j, SEEK_SET); */
 			DATALOC = j;
-			parse_tiff_ifd(base, buf);
+			if (parse_tiff_ifd(base, buf) == GF_BAD_PARAM) return GF_BAD_PARAM;
 			break;
 
 		case 50741: /* MakerNoteSafety*/
@@ -2176,12 +2170,15 @@ int   parse_tiff(int base, char *buf)
 
 	if (order != 0x4949 && order != 0x4d4d) return 0;
 	tmp = myget2(buf);
-
+	int locret;
 
 	while ((doff = myget4(buf))) {
 
 		DATALOC = doff + base;
-		if (parse_tiff_ifd(base, buf)) break;
+		locret = parse_tiff_ifd(base, buf);
+		if (locret == GF_BAD_PARAM) return GF_BAD_PARAM;
+		else if (locret > 0) 
+			break;
 	}
 	return 1;
 }
@@ -2245,7 +2242,10 @@ int   ljpeg_start(struct jhead *jh, int info_only, char *buf)
 			if (info_only) break;
 			/* printf("in c4....going to len = %d\n",len); */
 			for (dp = data; dp < data + len && !((c = *dp++) & -20); )
+			{
 				jh->free[c] = jh->huff[c] = make_decoder_ref(&dp);
+				if (jh->free[c] == GF_BAD_PARAM) return GF_BAD_PARAM;
+			}
 			break;
 		case 0xffda:
 			jh->psv = data[1 + data[0] * 2];
@@ -2269,8 +2269,7 @@ int   ljpeg_start(struct jhead *jh, int info_only, char *buf)
 	if (!jh->row)
 	{
 		printf("Out of memory in allocating JPEG row...exiting\n");
-		exit(0);
-		// TODO: return ????
+		return GF_BAD_PARAM;
 	}
 	
 	return zero_after_ff = 1;
@@ -2278,19 +2277,20 @@ int   ljpeg_start(struct jhead *jh, int info_only, char *buf)
 
 
 
-void   apply_tiff(char *buf)
+int   apply_tiff(char *buf)
 {
-	int max_samp = 0, ties = 0, os, ns, raw = -1, i;
+	int  ties = 0, os, ns,  i;
 	struct jhead jh;
 
 	thumb_misc = 16;
 	if (thumb_offset) {
 		DATALOC = thumb_offset;
-		if (ljpeg_start(&jh, 1, buf)) {
+		if (ljpeg_start(&jh, 1, buf) != GF_BAD_PARAM) {
 			thumb_misc = jh.bits;
 			thumb_width = jh.wide;
 			thumb_height = jh.high;
 		}
+		else return GF_BAD_PARAM;
 	}
 	for (i = tiff_nifds; i--; ) {
 		if (tiff_ifd[i].shutter)
@@ -2317,7 +2317,7 @@ void   apply_tiff(char *buf)
 			tile_width = tiff_ifd[i].tile_width;
 			tile_length = tiff_ifd[i].tile_length;
 			shutter = tiff_ifd[i].shutter;
-			raw = i;
+			rawimgnum = i;
 
 
 		}
@@ -2327,7 +2327,7 @@ void   apply_tiff(char *buf)
 	if (!tile_length) tile_length = INT_MAX;
 	for (i = tiff_nifds; i--; )
 		if (tiff_ifd[i].flip) tiff_flip = tiff_ifd[i].flip;
-	if (raw >= 0 && !load_raw)
+	if (rawimgnum >= 0 && !load_raw)
 		printf("setting load raw\n");
 	switch (tiff_compress) {
 	case 0:
@@ -2347,57 +2347,56 @@ void   apply_tiff(char *buf)
 	if (!dng_version)		
 	{
 		printf("DNG version not found....exiting...\n");
-		exit(0);
-		// TODO: return ????
+		return GF_BAD_PARAM;
 	}
 
+	// moved to DNG set fn
+	//int thm;
+	//for (i = 0; i < tiff_nifds; i++)
+	//{
+	//	if (i != rawimgnum && tiff_ifd[i].samples == max_samp &&
+	//		tiff_ifd[i].width * tiff_ifd[i].height / (SQR(tiff_ifd[i].bps) + 1) >
+	//		thumb_width *       thumb_height / (SQR(thumb_misc) + 1)
+	//		/* && tiff_ifd[i].comp != 34892 */)
+	//	{
+	//		thumb_width = tiff_ifd[i].width;
+	//		thumb_height = tiff_ifd[i].height;
+	//		thumb_offset = tiff_ifd[i].offset;
+	//		thumb_length = tiff_ifd[i].bytes;
+	//		thumb_misc = tiff_ifd[i].bps;
+	//		thm = i;
+	//		/* printf("\tthumbnail found, ifd#= %d, thumb_offset = %ld\n",i,thumb_offset); */
+	//		/* printf("\t\t thumb width and height = %d %d \n",thumb_width,thumb_height); */
+	//		/* printf("\t\t thumb comp type = %d\n",tiff_ifd[i].comp); */
+	//		/* printf("\t\t thumb bps = %d\n",tiff_ifd[i].bps); */
 
-	int thm;
-	for (i = 0; i < tiff_nifds; i++)
-	{
-		if (i != raw && tiff_ifd[i].samples == max_samp &&
-			tiff_ifd[i].width * tiff_ifd[i].height / (SQR(tiff_ifd[i].bps) + 1) >
-			thumb_width *       thumb_height / (SQR(thumb_misc) + 1)
-			/* && tiff_ifd[i].comp != 34892 */)
-		{
-			thumb_width = tiff_ifd[i].width;
-			thumb_height = tiff_ifd[i].height;
-			thumb_offset = tiff_ifd[i].offset;
-			thumb_length = tiff_ifd[i].bytes;
-			thumb_misc = tiff_ifd[i].bps;
-			thm = i;
-			/* printf("\tthumbnail found, ifd#= %d, thumb_offset = %ld\n",i,thumb_offset); */
-			/* printf("\t\t thumb width and height = %d %d \n",thumb_width,thumb_height); */
-			/* printf("\t\t thumb comp type = %d\n",tiff_ifd[i].comp); */
-			/* printf("\t\t thumb bps = %d\n",tiff_ifd[i].bps); */
+	//		/* BEVARA: choose which thumbnail to display, unncompressed or baseline
+	//		JPEG. These are the only two options supported at the moment */
+	//		if (tiff_ifd[i].comp == 1) /* we found a simple thumbnail, so stop */
+	//		{
 
-			/* BEVARA: choose which thumbnail to display, unncompressed or baseline
-			JPEG. These are the only two options supported at the moment */
-			if (tiff_ifd[i].comp == 1) /* we found a simple thumbnail, so stop */
-			{
+	//			load_thumb = UNCOMPRESSED; /* placeholder */
+	//		}
+	//		else if (tiff_ifd[i].comp == 7) /* we found a TIFF/JPEG, so stop */
+	//		{
+	//			load_thumb = LOSSLESS_JPEG; /* placeholder */
+	//			
+	//		}
+	//		else if (tiff_ifd[i].comp == 34892) /* we found a lossy JPEG, so stop */
+	//		{
+	//			printf("found non-baseline JPEG thumbnail\n");
+	//			load_thumb = NON_BASELINE_JPEG;
+	//		}
+	//		else
+	//			load_thumb = COMP_UNKNOWN;
 
-				load_thumb = UNCOMPRESSED; /* placeholder */
-			}
-			else if (tiff_ifd[i].comp == 7) /* we found a TIFF/JPEG, so stop */
-			{
-				load_thumb = LOSSLESS_JPEG; /* placeholder */
-				
-			}
-			else if (tiff_ifd[i].comp == 34892) /* we found a lossy JPEG, so stop */
-			{
-				printf("found non-baseline JPEG thumbnail\n");
-				load_thumb = NON_BASELINE_JPEG;
-			}
-			else
-				load_thumb = COMP_UNKNOWN;
-
-		}
-	}
-	//TODO: roll into each thumbnail
-	if (thm >= 0) {
-		thumb_misc |= tiff_ifd[thm].samples << 5;
-		
-	}
+	//	}
+	//}
+	////TODO: roll into each thumbnail
+	//if (thm >= 0) {
+	//	thumb_misc |= tiff_ifd[thm].samples << 5;
+	//	
+	//}
 }
 
 
@@ -2407,7 +2406,7 @@ void   apply_tiff(char *buf)
 Identify which camera created this file, and set global variables
 accordingly.
 */
-void   identify(unsigned char *buf,unsigned int insize)
+int   identify(unsigned char *buf,unsigned int insize)
 {
 
 	static const char *corp[] =
@@ -2478,27 +2477,26 @@ void   identify(unsigned char *buf,unsigned int insize)
 		if (!memcmp(head + 6, "HEAPCCDR", 8))
 		{
 			printf("not yet handling HEAPCCDR (Canon CRW)...contact Bevara for suppport...\n"); exit(0);
-			// TODO: return ???BAD_PARAM?????
+			return GF_BAD_PARAM;
 
 		}
 		else if (parse_tiff(0, buf))
 		{
-			apply_tiff(buf);
+			if (apply_tiff(buf) == GF_BAD_PARAM) return GF_BAD_PARAM;
 		}
 	}
 	else
 	{
 		printf("Expected DNG header not found...exiting...\n");
-		exit(0);
-		// TODO: return ??????
+		return GF_BAD_PARAM;
 	}
 
 
 	if (make[0] == 0)
 
 	{
-		printf("Camera Make not identified\n"); exit(0);
-		// TODO: return ??????;
+		printf("Camera Make not identified\n"); 
+		return GF_BAD_PARAM;
 	}
 
 	for (i = 0; i < sizeof corp / sizeof *corp; i++)
@@ -2582,8 +2580,7 @@ void   identify(unsigned char *buf,unsigned int insize)
 		{
 			load_raw = NON_BASELINE_JPEG;  
 			printf("not handling lossy DNGs. Contact Bevara for suppport.\n");
-			exit(0);
-			// TODO: return ????
+			return GF_BAD_PARAM;
 			break;
 
 		}
@@ -2650,71 +2647,7 @@ notraw:
 static GF_Err DNG_Parse_Unpack(libraw_rawdata_t *rawdata)
 {
 
-	u32 ret = 0;
-
-
-	/* pointer to input data stream */
-	/* for reading data */
-	DATALOC = 0;	
-	DATALEN = rawdata->inbuf_len;
-
-	ret = (identify(rawdata->inbuf, DATALEN), !is_raw);
-
-
-	/* TODO: copy over all params into libraw structs */
-	// TODO: main image copy
-
-	//	TODO: thumnail(s) data copy
-
-	//	TODO: XMP data copy
-
-
-	/*printf("After identify the DNG found height and width to be: %d  %d %d\n", height, width, colors);
-	if (*outbuf_sz < height*width*colors*output_bps / 8)
-	{
-		*outbuf_sz = height*width*colors*output_bps / 8;
-		DATALOC = 0;
-		printf("returning for more output buffer\n");
-		return GF_BUFFER_TOO_SMALL;
-	}
-
-	out_size = height*width*colors*output_bps / 8;
-	printf("height = %d, width = %d, colors = %d, output_bps = %d\n", height, width, colors, output_bps);
-*/
-
-	if (!is_raw)
-	{
-		printf("is not a raw file....exiting\n");
-		return GF_NOT_SUPPORTED;
-	}
 	
-
-	// TODO: temp leave this in this bit is for main image decoding 
-	// and will be moved later
-	/*shrink = filters && (half_size || (!identify_only &&
-		(threshold || aber[0] != 1 || aber[2] != 1)));
-	iheight = (height + shrink) >> shrink;
-	iwidth = (width + shrink) >> shrink;
-
-
-	if (meta_length) {
-		meta_data = (char *)malloc(meta_length);
-		merror(meta_data, "main()");
-	}
-	if (filters || colors == 1) {
-		raw_image = (ushort *)calloc((raw_height + 7), raw_width * 2);
-		merror(raw_image, "main()");
-	}
-	else {
-		image = (ushort(*)[4]) calloc(iheight, iwidth*sizeof *image);
-		merror(image, "main()");
-	}
-
-	if (shot_select >= is_raw)
-		printf(" \"-s %d\" requests a nonexistent image!\n", shot_select);
-
-	DATALOC = data_offset;*/
-
 
 }
 
@@ -2723,9 +2656,10 @@ static GF_Err DNG_Parse_Unpack(libraw_rawdata_t *rawdata)
 * \fn static void DNG_SetupObject(DNGLoader *read)
 *
 * \brief This function is called by DNG_ConnectService. 
-* It aims at declaring the objects contained in the DNG files.
+* It aims to parse the TIFF info and  declare
+* the objects contained in the DNG files.
 *
-* \param read The muxer
+* \param 
 */
 static void DNG_SetupObject(DNGLoader *read)
 {
@@ -2733,7 +2667,7 @@ static void DNG_SetupObject(DNGLoader *read)
 	GF_ObjectDescriptor *od;
 	u32 ret = 0;
 
-	int i;
+	int i, thumb_index = 0;;
 
 	// init the thumbnail size before unpacking
 	for (i = 0; i < MAX_NUM_THUMBNAILS; ++i)
@@ -2741,8 +2675,134 @@ static void DNG_SetupObject(DNGLoader *read)
 		read->thumbnail[i].thumb_data_size = 0;
 	}
 
-	/* Read the TIFF/DNG info to populate the DNG structures */
-	DNG_Parse_Unpack(read->rawdata);
+	/* Parse the TIFF/DNG info to populate the DNG structures */
+	
+	/* pointer to input data stream */
+	/* for reading data */
+	DATALOC = 0;
+	DATALEN = read->rawdata->inbuf_len;
+
+	ret = (identify(read->rawdata->inbuf, read->rawdata->inbuf_len), !is_raw);
+	if (ret == GF_BAD_PARAM)
+		return GF_BAD_PARAM;
+
+	if (!is_raw)
+	{
+		printf("is not a raw file....exiting\n");
+		return GF_NOT_SUPPORTED;
+	}
+
+
+	/* Copy over all params and data into DNGLoader/LibRaw structs */
+
+	// Copy or point to main image data
+	read->processed_rawdata->imgdata = read->rawdata->inbuf;
+	read->processed_rawdata->data_size = read->rawdata->inbuf_len;
+	read->processed_rawdata->data_offset = data_offset;
+
+
+	//	Copy thumbnail(s) data into DNG Loader channel structs
+	for (i = 0; i < tiff_nifds; i++)
+	{
+		if (thumb_index == MAX_NUM_THUMBNAILS) break;
+		if (i != rawimgnum && tiff_ifd[i].samples == max_samp &&
+			tiff_ifd[i].width * tiff_ifd[i].height / (SQR(tiff_ifd[i].bps) + 1) >
+			thumb_width *       thumb_height / (SQR(thumb_misc) + 1)
+			/* && tiff_ifd[i].comp != 34892 */)
+		{
+			read->thumbnail[thumb_index].thumb_data->twidth = tiff_ifd[i].width;
+			thumb_width = tiff_ifd[i].width;
+			read->thumbnail[thumb_index].thumb_data->theight = tiff_ifd[i].width;
+			thumb_height = tiff_ifd[i].height;
+			thumb_offset = tiff_ifd[i].offset;
+			thumb_length = tiff_ifd[i].bytes;
+			thumb_misc = tiff_ifd[i].bps;
+			thumb_misc |= tiff_ifd[i].samples << 5;
+			/* printf("\tthumbnail found, ifd#= %d, thumb_offset = %ld\n",i,thumb_offset); */
+			/* printf("\t\t thumb width and height = %d %d \n",thumb_width,thumb_height); */
+			/* printf("\t\t thumb comp type = %d\n",tiff_ifd[i].comp); */
+			/* printf("\t\t thumb bps = %d\n",tiff_ifd[i].bps); */
+
+			/* BEVARA: choose which thumbnail to display, unncompressed or baseline
+			JPEG. These are the only two options supported at the moment */
+			if (tiff_ifd[i].comp == 1) /* we found a simple thumbnail */
+			{
+
+				load_thumb = UNCOMPRESSED; /* placeholder */
+				read->thumbnail[thumb_index].thumb_data->tformat = LIBRAW_THUMBNAIL_BITMAP;
+			}
+			else if (tiff_ifd[i].comp == 7) /* we found a TIFF/JPEG */
+			{
+				load_thumb = LOSSLESS_JPEG; /* placeholder */
+				read->thumbnail[thumb_index].thumb_data->tformat = LIBRAW_THUMBNAIL_BASELINE_JPEG;
+			}
+			else if (tiff_ifd[i].comp == 34892) /* we found a lossy JPEG */
+			{
+				printf("found non-baseline JPEG thumbnail\n");
+				load_thumb = NON_BASELINE_JPEG;
+				read->thumbnail[thumb_index].thumb_data->tformat = LIBRAW_THUMBNAIL_NON_BASELINE_JPEG;
+			}
+			else
+				load_thumb = COMP_UNKNOWN;
+
+			++thumb_index;
+
+		}
+	}
+	
+
+
+	// allocate XMP output structure and copy from XMPLOC in the input DNG
+	// into the XMP data
+	read->XMP_data_size = XMPLEN;
+	read->XMP_data = malloc(XMPLEN);
+	if (!read->XMP_data)
+		printf("XMP memory alloc error");
+	else 
+	{
+		memcpy(read->XMP_data, read->rawdata+XMPLOC, XMPLEN);
+	}
+
+	/*printf("After identify the DNG found height and width to be: %d  %d %d\n", height, width, colors);
+	if (*outbuf_sz < height*width*colors*output_bps / 8)
+	{
+	*outbuf_sz = height*width*colors*output_bps / 8;
+	DATALOC = 0;
+	printf("returning for more output buffer\n");
+	return GF_BUFFER_TOO_SMALL;
+	}
+
+	out_size = height*width*colors*output_bps / 8;
+	printf("height = %d, width = %d, colors = %d, output_bps = %d\n", height, width, colors, output_bps);
+	*/
+
+	
+
+	// TODO: temp leave this in this bit is for main image decoding 
+	// and will be moved later
+	/*shrink = filters && (half_size || (!identify_only &&
+	(threshold || aber[0] != 1 || aber[2] != 1)));
+	iheight = (height + shrink) >> shrink;
+	iwidth = (width + shrink) >> shrink;
+
+
+	if (meta_length) {
+	meta_data = (char *)malloc(meta_length);
+	merror(meta_data, "main()");
+	}
+	if (filters || colors == 1) {
+	raw_image = (ushort *)calloc((raw_height + 7), raw_width * 2);
+	merror(raw_image, "main()");
+	}
+	else {
+	image = (ushort(*)[4]) calloc(iheight, iwidth*sizeof *image);
+	merror(image, "main()");
+	}
+
+	if (shot_select >= is_raw)
+	printf(" \"-s %d\" requests a nonexistent image!\n", shot_select);
+
+	DATALOC = data_offset;*/
 
 
 	// BEVARA -- we have options here:
@@ -2769,25 +2829,25 @@ static void DNG_SetupObject(DNGLoader *read)
 	// XMP data, and each thumbnail
 
 	od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-	//esd = DNG_SetupMainESD(read->raw_data);
+	esd = DNG_SetupMainESD(read->processed_rawdata);
 	od->objectDescriptorID = esd->ESID;
 	gf_list_add(od->ESDescriptors, esd);
 	gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_FALSE);
 
-	//TODO: setup XMP
+	//TODO: Jerome check this  --- setup XMP
 	od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-	//esd = DNG_SetupXMPESD(read->XMP_data);
+	esd = DNG_SetupXMPESD(read->XMP_data);
 	od->objectDescriptorID = esd->ESID;
 	gf_list_add(od->ESDescriptors, esd);
 	gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_FALSE);
 
-	//TODO: loop over thumbnails and create one for each
+	//TODO: Jerome check thsi --- loop over thumbnails and create one for each
 	for (i = 0; i < MAX_NUM_THUMBNAILS; ++i)
 	{
 		if (read->thumbnail[i].thumb_data_size == 0) break;
 
 		od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-		//esd = DNG_SetupThumbESD(&read->thumbnail[i]);
+		esd = DNG_SetupThumbESD(&read->thumbnail[i]);
 		od->objectDescriptorID = esd->ESID;
 		gf_list_add(od->ESDescriptors, esd);
 		gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_TRUE); 
@@ -2807,7 +2867,6 @@ static void DNG_SetupObject(DNGLoader *read)
 static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 {
 	GF_ESD *esd;
-	GF_BitStream *bs_dsi;
 
 	esd = gf_odf_desc_esd_new(0);
 	esd->slConfig->timestampResolution = 1000;
@@ -2815,7 +2874,7 @@ static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 	esd->ESID = 1;	
 	esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_RAW;
 	
-	bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+	GF_BitStream *bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 	gf_bs_write_u32(bs_dsi, img->height);
 	gf_bs_write_u32(bs_dsi, img->width);
 	gf_bs_write_u32(bs_dsi, GF_PIXEL_RGB_24);
@@ -2839,7 +2898,7 @@ static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
 {
 	GF_ESD *esd;
-	GF_BitStream *bs_dsi;
+
 
 	esd = gf_odf_desc_esd_new(0);
 	esd->slConfig->timestampResolution = 1000;
@@ -2847,7 +2906,7 @@ static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
 	esd->ESID = 1;
 	esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_RAW;
 
-	bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+	GF_BitStream *bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 	// TODO: Jerome put in required XMP values from DNGLoader. Just the length?
 	//	We currently assume UNICODE 8 but could transmit this value too
 	/*gf_bs_write_u32(bs_dsi, img->height);
@@ -2862,7 +2921,7 @@ static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
 }
 
 /**
-* \fn static GF_ESD* DNG_GetThumbESD(libraw_thumbnail_t *thumb)
+* \fn static GF_ESD* DNG_SetupThumbESD(libraw_thumbnail_t *thumb)
 *
 * \brief This function is called by DNG_SetupObject.
 * It aims at declaring the descriptor of the thumbnail image contained in the DNG files.
@@ -2871,7 +2930,7 @@ static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
 *
 * \return The thumb image descriptor for the player.
 */
-static GF_ESD* DNG_GetThumbESD(libraw_thumbnail_t *thumb)
+static GF_ESD* DNG_SetupThumbESD(libraw_thumbnail_t *thumb)
 {
 	GF_ESD *esd = gf_odf_desc_esd_new(0);
 	esd->slConfig->timestampResolution = 1000;
@@ -2880,9 +2939,10 @@ static GF_ESD* DNG_GetThumbESD(libraw_thumbnail_t *thumb)
 
 	switch (thumb->tformat)
 	{
-	case LIBRAW_THUMBNAIL_JPEG:
+		// TODO: Jerome, we've got baseline and non-baseline JPEG to handle
+	/*case LIBRAW_THUMBNAIL_JPEG:
 		esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_JPEG;
-		break;
+		break;*/
 
 	case LIBRAW_THUMBNAIL_BITMAP:
 		esd->decoderConfig->objectTypeIndication = GPAC_BMP_OTI;
@@ -3003,9 +3063,10 @@ static GF_Err DNG_DisconnectChannel(GF_InputService *plug, LPNETCHANNEL channel)
 	int i;
 
 	if (read->ch_raw == channel) {
-		if (read->raw_data) {
-			libraw_dcraw_clear_mem(read->raw_data);
-			read->raw_data = NULL;
+		if (read->processed_rawdata) {
+			// TODO: implement the dealloc here?
+			//libraw_dcraw_clear_mem(read->processed_rawdata);
+			read->processed_rawdata = NULL;
 		}
 		read->ch_raw = NULL;
 		e = GF_OK;
@@ -3066,27 +3127,27 @@ static GF_Err IMG_ChannelGetSLP(GF_InputService *plug, LPNETCHANNEL channel, cha
 	// TODO: Jerome we just point to main image data here
 	// or is this the decoded data
 	if (read->ch_raw == channel) {
-		//libraw_data_t * iprc = NULL;// read->iprc;
+		libraw_rawdata_t * DNGdata = read->rawdata;
 
 		if (read->raw_done) {
 			*out_reception_status = GF_EOS;
 			return GF_OK;
 		}
-		if (!read->raw_data) {
-			//if (!read->iprc) {
+		if (!read->rawdata) {
+			/*if (!read->iprc) {*/
 				*out_data_ptr = NULL;
 				*out_data_size = 0;
 				return GF_OK;
-			//}
+				/*}*/
 			*is_new_data = GF_TRUE;
 
 		}
-		//>*out_data_ptr = read->raw_data->data;
-		*out_data_size = read->raw_data->data_size;
+		*out_data_ptr = read->rawdata->inbuf;
+		*out_data_size = read->rawdata->inbuf_len;
 		return GF_OK;
 	}
 
-	//TODO: Jerome how do you want to reference the thumbs here?
+	//TODO: Jerome how do you want to reference the thumbs here -- when selecting from Access
 	// we alloc up to 5, realistically the useful ones are the 
 	// uncompressed and baseline JPEG; 
 	/*fetching thumb data*/
@@ -3134,7 +3195,7 @@ static GF_Err IMG_ChannelReleaseSLP(GF_InputService *plug, LPNETCHANNEL channel)
 	int i;
 
 	if (read->ch_raw == channel) {
-		if (!read->raw_data) return GF_BAD_PARAM;
+		if (!read->processed_rawdata) return GF_BAD_PARAM;
 		read->raw_done = GF_TRUE;
 		return GF_OK;
 	}
