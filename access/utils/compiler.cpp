@@ -32,6 +32,8 @@
 
 using namespace llvm;
 
+int OptLevel;
+
 GF_EXPORT
 GF_Err gf_init_compiler() {
 	sys::PrintStackTraceOnErrorSignal();
@@ -58,6 +60,211 @@ GF_Err gf_init_compiler() {
 	// Register the target printer for --version.
 	cl::AddExtraVersionPrinter(TargetRegistry::printRegisteredTargetsForVersion);
 
+	OptLevel = 3;
 
 	return GF_OK;
 }
+
+//static std::unique_ptr<tool_output_file>
+//GetOutputStream(const char *TargetName, Triple::OSType OS,
+//	const char *ProgName) {
+//	// If we don't yet have an output filename, make one.
+//	if (OutputFilename.empty()) {
+//		if (InputFilename == "-")
+//			OutputFilename = "-";
+//		else {
+//			// If InputFilename ends in .bc or .ll, remove it.
+//			StringRef IFN = InputFilename;
+//			if (IFN.endswith(".bc") || IFN.endswith(".ll"))
+//				OutputFilename = IFN.drop_back(3);
+//			else
+//				OutputFilename = IFN;
+//
+//			switch (FileType) {
+//			case TargetMachine::CGFT_AssemblyFile:
+//				if (TargetName[0] == 'c') {
+//					if (TargetName[1] == 0)
+//						OutputFilename += ".cbe.c";
+//					else if (TargetName[1] == 'p' && TargetName[2] == 'p')
+//						OutputFilename += ".cpp";
+//					else
+//						OutputFilename += ".s";
+//				}
+//				else
+//					OutputFilename += ".s";
+//				break;
+//			case TargetMachine::CGFT_ObjectFile:
+//				if (OS == Triple::Win32)
+//					OutputFilename += ".obj";
+//				else
+//					OutputFilename += ".o";
+//				break;
+//			case TargetMachine::CGFT_Null:
+//				OutputFilename += ".null";
+//				break;
+//			}
+//		}
+//	}
+//
+//	// Decide if we need "binary" output.
+//	bool Binary = false;
+//	switch (FileType) {
+//	case TargetMachine::CGFT_AssemblyFile:
+//		break;
+//	case TargetMachine::CGFT_ObjectFile:
+//	case TargetMachine::CGFT_Null:
+//		Binary = true;
+//		break;
+//	}
+//
+//	// Open the file.
+//	std::error_code EC;
+//	sys::fs::OpenFlags OpenFlags = sys::fs::F_None;
+//	if (!Binary)
+//		OpenFlags |= sys::fs::F_Text;
+//	auto FDOut = llvm::make_unique<tool_output_file>(OutputFilename, EC,
+//		OpenFlags);
+//	if (EC) {
+//		errs() << EC.message() << '\n';
+//		return nullptr;
+//	}
+//
+//	return FDOut;
+//}
+//
+
+//static int compileModule(const char *in, const char* out, LLVMContext &Context) {
+//	// Load the module to be compiled...
+//	SMDiagnostic Err;
+//	std::unique_ptr<Module> M;
+//	Triple TheTriple;
+//
+//	MCPU = sys::getHostCPUName();
+//
+//
+//	M = parseIRFile(in, Err, Context);
+//	if (!M) {
+//		printf("%s", errs());
+//		return 1;
+//	}
+//
+//	M->setTargetTriple(Triple::normalize(sys::getDefaultTargetTriple()));
+//	TheTriple = Triple(M->getTargetTriple());
+//
+//
+//	if (TheTriple.getTriple().empty())
+//		TheTriple.setTriple(sys::getDefaultTargetTriple());
+//
+//	// Get the target specific parser.
+//	std::string Error;
+//	const Target *TheTarget = TargetRegistry::lookupTarget(MArch, TheTriple,
+//		Error);
+//	if (!TheTarget) {
+//		errs() << Error;
+//		return 1;
+//	}
+//
+//	// Package up features to be passed to target/subtarget
+//	std::string FeaturesStr;
+//	if (MAttrs.size()) {
+//		SubtargetFeatures Features;
+//		for (unsigned i = 0; i != MAttrs.size(); ++i)
+//			Features.AddFeature(MAttrs[i]);
+//		FeaturesStr = Features.getString();
+//	}
+//
+//	CodeGenOpt::Level OLvl = CodeGenOpt::Default;
+//	switch (OptLevel) {
+//	default:
+//		errs() << "invalid optimization level.\n";
+//		return 1;
+//	case ' ': break;
+//	case '0': OLvl = CodeGenOpt::None; break;
+//	case '1': OLvl = CodeGenOpt::Less; break;
+//	case '2': OLvl = CodeGenOpt::Default; break;
+//	case '3': OLvl = CodeGenOpt::Aggressive; break;
+//	}
+//
+//	TargetOptions Options = InitTargetOptionsFromCodeGenFlags();
+//	/*Options.DisableIntegratedAS = NoIntegratedAssembler;
+//	Options.MCOptions.ShowMCEncoding = ShowMCEncoding;
+//	Options.MCOptions.MCUseDwarfDirectory = EnableDwarfDirectory;
+//	Options.MCOptions.AsmVerbose = AsmVerbose;
+//	*/
+//
+//	std::unique_ptr<TargetMachine> Target(
+//		TheTarget->createTargetMachine(TheTriple.getTriple(), MCPU, FeaturesStr,
+//			Options, RelocModel, CMModel, OLvl));
+//	assert(Target && "Could not allocate target machine!");
+//
+//	assert(M && "Should have exited if we didn't have a module!");
+//
+//	if (GenerateSoftFloatCalls)
+//		FloatABIForCalls = FloatABI::Soft;
+//
+//	// Figure out where we are going to send the output.
+//	std::unique_ptr<tool_output_file> Out =
+//		GetOutputStream(TheTarget->getName(), TheTriple.getOS(), NULL/*argv[0]*/);
+//	if (!Out) return 1;
+//
+//	// Build up all of the passes that we want to do to the module.
+//	PassManager PM;
+//
+//	// Add an appropriate TargetLibraryInfo pass for the module's triple.
+//	TargetLibraryInfo *TLI = new TargetLibraryInfo(TheTriple);
+//	if (DisableSimplifyLibCalls)
+//		TLI->disableAllFunctions();
+//	PM.add(TLI);
+//
+//	// Add the target data from the target machine, if it exists, or the module.
+//	if (const DataLayout *DL = Target->getSubtargetImpl()->getDataLayout())
+//		M->setDataLayout(DL);
+//	PM.add(new DataLayoutPass());
+//
+//	if (RelaxAll.getNumOccurrences() > 0 &&
+//		FileType != TargetMachine::CGFT_ObjectFile)
+//		errs() << argv[0]
+//		<< ": warning: ignoring -mc-relax-all because filetype != obj";
+//
+//	{
+//		formatted_raw_ostream FOS(Out->os());
+//
+//		AnalysisID StartAfterID = nullptr;
+//		AnalysisID StopAfterID = nullptr;
+//		const PassRegistry *PR = PassRegistry::getPassRegistry();
+//		if (!StartAfter.empty()) {
+//			const PassInfo *PI = PR->getPassInfo(StartAfter);
+//			if (!PI) {
+//				errs() << argv[0] << ": start-after pass is not registered.\n";
+//				return 1;
+//			}
+//			StartAfterID = PI->getTypeInfo();
+//		}
+//		if (!StopAfter.empty()) {
+//			const PassInfo *PI = PR->getPassInfo(StopAfter);
+//			if (!PI) {
+//				errs() << argv[0] << ": stop-after pass is not registered.\n";
+//				return 1;
+//			}
+//			StopAfterID = PI->getTypeInfo();
+//		}
+//
+//		// Ask the target to add backend passes as necessary.
+//		if (Target->addPassesToEmitFile(PM, FOS, FileType, NoVerify,
+//			StartAfterID, StopAfterID)) {
+//			errs() << argv[0] << ": target does not support generation of this"
+//				<< " file type!\n";
+//			return 1;
+//		}
+//
+//		// Before executing passes, print the final values of the LLVM options.
+//		cl::PrintOptionValues();
+//
+//		PM.run(*M);
+//	}
+//
+//	// Declare success.
+//	Out->keep();
+//
+//	return 0;
+//}

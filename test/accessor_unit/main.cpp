@@ -281,7 +281,7 @@ int main(int argc, char **argv) {
 	//gf_init_compiler();
 
 	//Deactivate cache
-	gf_cfg_set_key(config, "Accessor", "Enable_cache", "no");
+	//gf_cfg_set_key(config, "Accessor", "Enable_cache", "no");
 
 	//test_jpg();
 	return RUN_ALL_TESTS();
