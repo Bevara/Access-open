@@ -35,9 +35,9 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\access\utils\accessor.c" />
+    <ClCompile Include="..\..\access\utils\accessor.cpp" />
     <ClCompile Include="..\..\access\utils\compiler.cpp" />
-    <ClCompile Include="..\..\access\utils\os_accessor.c" />
+    <ClCompile Include="..\..\access\utils\os_accessor.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\access\utils\accessor_wrap.h" />

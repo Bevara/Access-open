@@ -233,7 +233,7 @@ GF_BaseAccInterface *gf_accessors_load_interface(GF_ModuleManager *pm, u32 which
 		if (!found) goto err_exit;
 	}
 
-	if (!inst->query_func || !inst->query_func(InterfaceFamily) ) goto err_exit;
+	if (!inst->query_func || !inst->query_func(/*InterfaceFamily*/) ) goto err_exit;
 	ifce = (GF_BaseAccInterface *) inst->load_func(InterfaceFamily);
 	/*sanity check*/
 	if (!ifce) goto err_exit;

@@ -55,7 +55,7 @@ extern "C" {
 #endif
 
 /*returns 1 if a module with the same filename is already loaded*/
-Bool gf_module_is_loaded(GF_ModuleManager *pm, char *filename);
+Bool gf_accessor_is_loaded(GF_ModuleManager *pm, char *filename);
 
 /*these are OS specific*/
 void gf_accessors_free_accessor(AccessorInstance *inst);

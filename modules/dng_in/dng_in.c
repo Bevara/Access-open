@@ -325,7 +325,7 @@ typedef struct
 	libraw_colordata_t color;
 
 	ushort(*image)[4];
-	libraw_image_sizes_t        sizes;
+	//libraw_image_sizes_t        sizes;
 	//libraw_lensinfo_t			lens;
 	libraw_output_params_t		params;
 	libraw_imgother_t           other;
@@ -2769,14 +2769,14 @@ static void DNG_SetupObject(DNGLoader *read)
 	// XMP data, and each thumbnail
 
 	od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-	esd = DNG_SetupMainESD(read->raw_data);
+	//esd = DNG_SetupMainESD(read->raw_data);
 	od->objectDescriptorID = esd->ESID;
 	gf_list_add(od->ESDescriptors, esd);
 	gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_FALSE);
 
 	//TODO: setup XMP
 	od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-	esd = DNG_SetupXMPESD(read->XMP_data);
+	//esd = DNG_SetupXMPESD(read->XMP_data);
 	od->objectDescriptorID = esd->ESID;
 	gf_list_add(od->ESDescriptors, esd);
 	gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_FALSE);
@@ -2787,7 +2787,7 @@ static void DNG_SetupObject(DNGLoader *read)
 		if (read->thumbnail[i].thumb_data_size == 0) break;
 
 		od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
-		esd = DNG_SetupThumbESD(&read->thumbnail[i]);
+		//esd = DNG_SetupThumbESD(&read->thumbnail[i]);
 		od->objectDescriptorID = esd->ESID;
 		gf_list_add(od->ESDescriptors, esd);
 		gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_TRUE); 
@@ -2807,7 +2807,7 @@ static void DNG_SetupObject(DNGLoader *read)
 static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 {
 	GF_ESD *esd;
-
+	GF_BitStream *bs_dsi;
 
 	esd = gf_odf_desc_esd_new(0);
 	esd->slConfig->timestampResolution = 1000;
@@ -2815,7 +2815,7 @@ static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 	esd->ESID = 1;	
 	esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_RAW;
 	
-	GF_BitStream *bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+	bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 	gf_bs_write_u32(bs_dsi, img->height);
 	gf_bs_write_u32(bs_dsi, img->width);
 	gf_bs_write_u32(bs_dsi, GF_PIXEL_RGB_24);
@@ -2839,7 +2839,7 @@ static GF_ESD*  DNG_SetupMainESD(libraw_processed_image_t *img)
 static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
 {
 	GF_ESD *esd;
-
+	GF_BitStream *bs_dsi;
 
 	esd = gf_odf_desc_esd_new(0);
 	esd->slConfig->timestampResolution = 1000;
@@ -2847,7 +2847,7 @@ static GF_ESD*  DNG_SetupXMPESD(libraw_processed_image_t *img)
 	esd->ESID = 1;
 	esd->decoderConfig->objectTypeIndication = GPAC_OTI_IMAGE_RAW;
 
-	GF_BitStream *bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+	bs_dsi = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 	// TODO: Jerome put in required XMP values from DNGLoader. Just the length?
 	//	We currently assume UNICODE 8 but could transmit this value too
 	/*gf_bs_write_u32(bs_dsi, img->height);
@@ -3066,22 +3066,22 @@ static GF_Err IMG_ChannelGetSLP(GF_InputService *plug, LPNETCHANNEL channel, cha
 	// TODO: Jerome we just point to main image data here
 	// or is this the decoded data
 	if (read->ch_raw == channel) {
-		libraw_data_t * iprc = read->iprc;
+		//libraw_data_t * iprc = NULL;// read->iprc;
 
 		if (read->raw_done) {
 			*out_reception_status = GF_EOS;
 			return GF_OK;
 		}
 		if (!read->raw_data) {
-			if (!read->iprc) {
+			//if (!read->iprc) {
 				*out_data_ptr = NULL;
 				*out_data_size = 0;
 				return GF_OK;
-			}
+			//}
 			*is_new_data = GF_TRUE;
 
 		}
-		*out_data_ptr = read->raw_data->data;
+		//>*out_data_ptr = read->raw_data->data;
 		*out_data_size = read->raw_data->data_size;
 		return GF_OK;
 	}

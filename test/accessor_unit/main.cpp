@@ -278,10 +278,10 @@ int main(int argc, char **argv) {
 	config = gf_cfg_init(NULL, NULL);
 	modules = gf_modules_new(NULL, config);
 	
-	//gf_init_compiler();
+	gf_init_compiler();
 
 	//Deactivate cache
-	gf_cfg_set_key(config, "Accessor", "Enable_cache", "no");
+	//gf_cfg_set_key(config, "Accessor", "Enable_cache", "no");
 
 	//test_jpg();
 	return RUN_ALL_TESTS();
