@@ -54,16 +54,22 @@ depend:
 	$(MAKE) -C src dep
 	$(MAKE) -C applications dep
 	$(MAKE) -C modules dep
-
+	$(MAKE) -C access dep
+	$(MAKE) -C test dep
+	
 clean:
 	$(MAKE) -C src clean
 	$(MAKE) -C applications clean
 	$(MAKE) -C modules clean
-
+	$(MAKE) -C access clean
+	$(MAKE) -C test clean
+	
 distclean:
 	$(MAKE) -C src distclean
 	$(MAKE) -C applications distclean
 	$(MAKE) -C modules distclean
+	$(MAKE) -C access distclean
+	$(MAKE) -C test distclean
 	rm -f config.mak config.h
 
 lcov_clean:
