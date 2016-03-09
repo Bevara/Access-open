@@ -26,7 +26,7 @@ endif
 #common obj
 OBJS= main.o 
 
-EXTRALIBS=-L../../bin/gcc -lgpac -laccess -lgtest_main -lgtest -lpthread
+EXTRALIBS=-L../../bin/gcc -laccess -lgpac -lgtest_main -lgtest -lpthread
 
 
 ifeq ($(CONFIG_WIN32),yes)
