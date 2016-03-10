@@ -16,7 +16,7 @@ CFLAGS+=-pg
 LDFLAGS+=-pg
 endif
 
-EXTRALIBS+=-L../bin/gcc -lgpac $(llvm_libs) -ltinfo
+EXTRALIBS+=-L../bin/gcc -lgpac $(llvm_libs)
 
 LIBACCESS_UTILS=
 ifeq ($(CONFIG_LLVM), system)
@@ -36,6 +36,8 @@ else
 ifeq ($(CONFIG_DARWIN),yes)
 LDFLAGS+=-dynamiclib -install_name $(prefix)/lib/$(LIB)
 EXTRALIBS+=-lstdc++ -lz -lffi -lcurses
+else 
+EXTRALIBS+=-ltinfo
 endif
 EXTRALIBS+=$(GPAC_SH_FLAGS)
 endif
