@@ -17,7 +17,7 @@ CFLAGS+=-pg
 LDFLAGS+=-pg
 endif
 
-EXTRALIBS+=-L../bin/gcc -lgpac $(llvm_libs)
+EXTRALIBS+=-L../bin/gcc -lgpac $(llvm_libs) -ltinfo
 
 LIBACCESS_UTILS_C=
 LIBACCESS_UTILS_CPP=
