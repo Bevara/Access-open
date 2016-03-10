@@ -2,8 +2,8 @@ include ../../config.mak
 
 vpath %.c $(SRC_PATH)/test/accessor_unit
 
-CXXFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
-CFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
+CXXFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../ -fno-rtti
+CFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../ -fno-rtti
 
 LINKLIBS=$(GPAC_SH_FLAGS)
 
@@ -26,6 +26,7 @@ endif
 #common obj
 OBJS= main.o 
 
+EXTRALIBS=-L../../bin/gcc -laccess -lgpac -lgtest_main -lgtest -lpthread
 
 
 ifeq ($(CONFIG_WIN32),yes)
@@ -41,7 +42,7 @@ SRCS := $(OBJS:.o=.cpp)
 all: $(PROG)
 
 accessor_unit$(EXE): $(OBJS)
-	$(CXX) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac -lgtest_main -lgtest -lpthread $(LINKLIBS)
+	$(CXX) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) $(LINKLIBS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(PROG)

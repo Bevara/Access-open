@@ -114,7 +114,7 @@ Bool gf_accessors_load_library(AccessorInstance *inst)
 	inst->lib_handle = dlopen(path, _flags);
 	if (!inst->lib_handle) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot load module file %s, error is %s\n", path, dlerror()));
-		return 0;
+		return GF_FALSE;
 	}
 	error = dlerror();    /* Clear any existing error */
 	inst->query_func = (QueryInterfaces) dlsym(inst->lib_handle, "QueryInterfaces");
@@ -270,11 +270,11 @@ u32 gf_accessors_refresh(GF_ModuleManager *pm)
 #if defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR)
 		/*we are in static build for modules by default*/
 #else
-		gf_enum_directory(pm->dirs[i], 0, enum_modules, pm, ".dylib");
+		//gf_enum_directory(pm->dirs[i], 0, enum_modules, pm, ".dylib");
 #endif
 #else
 		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("Refreshing list of modules in directory %s...\n", pm->dirs[i]));
-		gf_enum_directory(pm->dirs[i], 0, enum_modules, pm, ".so");
+		gf_enum_directory(pm->dirs[i], GF_FALSE, enum_modules, pm, ".so");
 #endif
 	}
 

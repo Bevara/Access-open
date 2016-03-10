@@ -189,6 +189,7 @@ typedef struct
 	unsigned    tlength;
 	int         tcolors;
 	int			torientation;
+	int			tbps;
 	char       *thumb;
 }libraw_thumbnail_t;
 
@@ -2684,12 +2685,12 @@ static void DNG_SetupObject(DNGLoader *read)
 
 	ret = (identify(read->rawdata->inbuf, read->rawdata->inbuf_len), !is_raw);
 	if (ret == GF_BAD_PARAM)
-		return GF_BAD_PARAM;
+		return;// GF_BAD_PARAM;
 
 	if (!is_raw)
 	{
 		printf("is not a raw file....exiting\n");
-		return GF_NOT_SUPPORTED;
+		return;// GF_NOT_SUPPORTED;
 	}
 
 
@@ -2712,10 +2713,12 @@ static void DNG_SetupObject(DNGLoader *read)
 		{
 			read->thumbnail[thumb_index].thumb_data->twidth = tiff_ifd[i].width;
 			thumb_width = tiff_ifd[i].width;
-			read->thumbnail[thumb_index].thumb_data->theight = tiff_ifd[i].width;
+			read->thumbnail[thumb_index].thumb_data->theight = tiff_ifd[i].height;
 			thumb_height = tiff_ifd[i].height;
 			thumb_offset = tiff_ifd[i].offset;
 			thumb_length = tiff_ifd[i].bytes;
+			read->thumbnail[thumb_index].thumb_data->theight = tiff_ifd[i].bps;
+			read->thumbnail[thumb_index].thumb_data->torientation = (flip & 4); // only rotate one of orientations
 			thumb_misc = tiff_ifd[i].bps;
 			thumb_misc |= tiff_ifd[i].samples << 5;
 			/* printf("\tthumbnail found, ifd#= %d, thumb_offset = %ld\n",i,thumb_offset); */
@@ -2743,7 +2746,18 @@ static void DNG_SetupObject(DNGLoader *read)
 				read->thumbnail[thumb_index].thumb_data->tformat = LIBRAW_THUMBNAIL_NON_BASELINE_JPEG;
 			}
 			else
+			{
 				load_thumb = COMP_UNKNOWN;
+				read->thumbnail[thumb_index].thumb_data->tformat = LIBRAW_THUMBNAIL_UNKNOWN;
+			}
+
+			// alloc space and copy over thumbnail data for output
+			read->thumbnail[thumb_index].thumb_data->tlength = thumb_length = tiff_ifd[i].bytes;
+			read->thumbnail[thumb_index].thumb_data->thumb = malloc(tiff_ifd[i].bytes);
+			if (!read->thumbnail[thumb_index].thumb_data->thumb)
+				printf("memory error allocation thumbnail # %d\n", thumb_index);
+			else
+				memcpy(read->thumbnail[thumb_index].thumb_data->thumb, read->rawdata + tiff_ifd[i].offset, tiff_ifd[i].bytes);
 
 			++thumb_index;
 
