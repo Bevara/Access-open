@@ -534,7 +534,7 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	strcpy(szProfilePath, szPath);
 
 
-#ifndef GPAC_CONFIG_IOS
+#if !defined(GPAC_CONFIG_IOS) && !defined(__EMSCRIPTEN__)
 	if (! get_default_install_path(szPath, GF_PATH_MODULES)) {
 		gf_file_delete(szPath);
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] default modules not found\n"));

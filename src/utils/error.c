@@ -303,25 +303,25 @@ GF_Err gf_log_modify_tools_levels(const char *val_)
 	return GF_OK;
 }
 
+#ifndef GPAC_DISABLE_LOG
 GF_EXPORT
 GF_Err gf_log_set_tools_levels(const char *val, Bool reset_all)
 {
-#ifndef GPAC_DISABLE_LOG
+
 	u32 i;
 	if (reset_all) {
 		for (i=0; i<GF_LOG_TOOL_MAX; i++)
 			global_log_tools[i].level = GF_LOG_WARNING;
 	}
 	return gf_log_modify_tools_levels(val);
-#else
-	return GF_OK;
-#endif
 }
+#endif
 
+#ifndef GPAC_DISABLE_LOG
 GF_EXPORT
 char *gf_log_get_tools_levels()
 {
-#ifndef GPAC_DISABLE_LOG
+
 	u32 i, level, len;
 	char szLogs[GF_MAX_PATH];
 	char szLogTools[GF_MAX_PATH];
@@ -372,9 +372,9 @@ char *gf_log_get_tools_levels()
 		if (szLogTools[ len-1 ] == ':') szLogTools[ len-1 ] = 0;
 		return gf_strdup(szLogTools);
 	}
-#endif
-	return gf_strdup("all@quiet");
+
 }
+#endif
 
 #ifndef GPAC_DISABLE_LOG
 u32 call_lev = 0;

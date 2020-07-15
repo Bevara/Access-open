@@ -131,6 +131,7 @@ static rmtBool g_SettingsInitialized = RMT_FALSE;
         #include <fcntl.h>
         #include <errno.h>
         #include <dlfcn.h>
+         #include <sys/select.h>
     #endif
 
     #ifdef __MINGW32__
