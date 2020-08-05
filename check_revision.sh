@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 version="`grep '#define GPAC_VERSION ' \"./include/gpac/version.h\" | cut -d '"' -f 2`"
 
