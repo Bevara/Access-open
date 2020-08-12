@@ -7,6 +7,7 @@
 
 #include "zutil.h"
 #include <gpac/setup.h>
+#if !__EMSCRIPTEN__
 
 #ifndef NO_DUMMY_DECL
 struct internal_state      {
@@ -342,3 +343,4 @@ voidpf ptr;
 }
 
 #endif /* MY_ZCALLOC */
+#endif
