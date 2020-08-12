@@ -743,6 +743,17 @@ gf_log_cbk gf_log_set_callback(void *usr_cbk, gf_log_cbk cbk)
 }
 
 #else
+
+FILE *gpac_log_file = NULL;
+Bool gpac_log_time_start = GF_FALSE;
+Bool gpac_log_utc_time = GF_FALSE;
+
+GF_EXPORT
+void gf_sys_set_console_code(FILE *std, GF_ConsoleCodes code)
+{
+}
+
+
 GF_EXPORT
 void gf_log(const char *fmt, ...)
 {
