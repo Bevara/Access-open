@@ -40,7 +40,9 @@
 #endif
 #endif
 
-#include <mad.h>
+#include <stream.h>
+#include <frame.h>
+#include <synth.h>
 
 #if !defined(__GNUC__)
 # if defined(_WIN32_WCE) || defined (WIN32)
@@ -124,7 +126,7 @@ static GF_Err maddec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CHANNEL_LAYOUT, &PROP_LONGUINT((ctx->num_channels==1) ? GF_AUDIO_CH_FRONT_CENTER : GF_AUDIO_CH_FRONT_LEFT | GF_AUDIO_CH_FRONT_RIGHT) );
 	}
 
-	gf_filter_set_name(filter, "dec_mad:MAD " MAD_VERSION);
+	gf_filter_set_name(filter, "dec_mad:MAD ");
 
 	gf_filter_pid_set_framing_mode(pid, GF_TRUE);
 	return GF_OK;
