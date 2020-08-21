@@ -32,7 +32,7 @@
 #include <windows.h>
 #else
 
-#ifdef GPAC_CONFIG_LINUX
+#if defined(GPAC_CONFIG_LINUX) || defined(__EMSCRIPTEN__)
 #include <arpa/inet.h>
 #endif
 
