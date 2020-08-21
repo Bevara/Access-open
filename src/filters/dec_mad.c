@@ -40,9 +40,38 @@
 #endif
 #endif
 
-#include <stream.h>
-#include <frame.h>
-#include <synth.h>
+# ifdef HAVE_CONFIG_H
+#  include "config.h"
+# endif
+
+# include "global.h"
+
+# ifdef HAVE_SYS_TYPES_H
+#  include <sys/types.h>
+# endif
+
+# ifdef HAVE_SYS_WAIT_H
+#  include <sys/wait.h>
+# endif
+
+# ifdef HAVE_UNISTD_H
+#  include <unistd.h>
+# endif
+
+# ifdef HAVE_FCNTL_H
+#  include <fcntl.h>
+# endif
+
+# include <stdlib.h>
+
+# ifdef HAVE_ERRNO_H
+#  include <errno.h>
+# endif
+
+# include "stream.h"
+# include "frame.h"
+# include "synth.h"
+# include "decoder.h"
 
 #if !defined(__GNUC__)
 # if defined(_WIN32_WCE) || defined (WIN32)
@@ -245,17 +274,17 @@ mad_resync:
 		s32 rs;
 		MAD_SCALE(rs, (*left_ch++) );
 
-		*ptr = (rs >> 0) & 0xff;
+		*ptr = (u8)(rs >> 0) & 0xff;
 		ptr++;
-		*ptr = (rs >> 8) & 0xff;
+		*ptr = (u8)(rs >> 8) & 0xff;
 		ptr++;
 		outSize += 2;
 
 		if (ctx->num_channels == 2) {
 			MAD_SCALE(rs, (*right_ch++) );
-			*ptr = (rs >> 0) & 0xff;
+			*ptr = (u8)(rs >> 0) & 0xff;
 			ptr++;
-			*ptr = (rs >> 8) & 0xff;
+			*ptr = (u8)(rs >> 8) & 0xff;
 			ptr++;
 			outSize += 2;
 		}
