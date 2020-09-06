@@ -42,8 +42,8 @@
 #define uint8_t u8
 #endif
 
-#include <a52dec/mm_accel.h>
-#include <a52dec/a52.h>
+#include <mm_accel.h>
+#include <a52.h>
 
 #define AC3_FRAME_SIZE 1536
 
