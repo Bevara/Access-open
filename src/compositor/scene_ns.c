@@ -507,8 +507,6 @@ void gf_scene_ns_connect_object(GF_Scene *scene, GF_ObjectManager *odm, char *se
 					opt = gf_opts_get_key(name, "cacheFile");
 					if (opt) gf_file_delete((char*) opt);
 					gf_opts_del_section(name);
-					i--;
-					count--;
 					service_cache = NULL;
 				}
 			}
@@ -558,7 +556,7 @@ void gf_scene_ns_connect_object(GF_Scene *scene, GF_ObjectManager *odm, char *se
 	if (!parent_url && odm->parentscene && odm->parentscene->root_od->scene_ns)
 		parent_url = odm->parentscene->root_od->scene_ns->url;
 
-	odm->scene_ns->source_filter = gf_filter_connect_source(scene->compositor->filter, serviceURL, parent_url, &e);
+	odm->scene_ns->source_filter = gf_filter_connect_source(scene->compositor->filter, serviceURL, parent_url, GF_FALSE, &e);
 
 	if (frag) frag[0] = '#';
 	if (!odm->scene_ns->source_filter) {
@@ -583,7 +581,9 @@ void gf_scene_ns_connect_object(GF_Scene *scene, GF_ObjectManager *odm, char *se
 		}
 		return;
 	}
-
+    //make sure we only connect this filter to ourselves 
+    gf_filter_set_source(scene->compositor->filter, odm->scene_ns->source_filter, NULL);
+    
 	gf_filter_set_setup_failure_callback(scene->compositor->filter, odm->scene_ns->source_filter, scene_ns_on_setup_error, odm);
 
 	/*OK connect*/

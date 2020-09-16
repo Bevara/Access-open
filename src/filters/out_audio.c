@@ -38,6 +38,7 @@ typedef struct
 	GF_Fraction64 dur;
 	Double speed, start;
 	u32 vol, pan, buffer;
+	GF_Fraction adelay;
 	
 	GF_FilterPid *pid;
 	u32 sr, afmt, nb_ch, timescale;
@@ -46,6 +47,7 @@ typedef struct
 	GF_Thread *th;
 	u32 audio_th_state;
 	Bool needs_recfg, wait_recfg;
+	u32 bytes_per_sample;
 
 	u32 pck_offset;
 	u64 first_cts;
@@ -55,8 +57,10 @@ typedef struct
 	Bool is_eos;
 	Bool first_write_done;
 
+	s32 pid_delay;
+
 	Bool buffer_done, no_buffering;
-	u32 hwdelay, totaldelay;
+	u64 hwdelay_us, totaldelay_us;
 } GF_AudioOutCtx;
 
 
@@ -71,12 +75,19 @@ void aout_reconfig(GF_AudioOutCtx *ctx)
 	afmt = old_afmt = ctx->afmt;
 	ch_cfg = ctx->ch_cfg;
 
+	//config not ready, wait
+	if (!nb_ch || !sr || !afmt) {
+		//force a get_packet to trigger reconfigure
+		gf_filter_pid_get_packet(ctx->pid);
+		return;
+	}
+
 	e = ctx->audio_out->Configure(ctx->audio_out, &sr, &nb_ch, &afmt, ch_cfg);
 	if (e) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[AudioOut] Failed to configure audio output: %s\n", gf_error_to_string(e) ));
-		if (afmt != GF_AUDIO_FMT_S16) afmt = GF_AUDIO_FMT_S16;
-		if (sr != 44100) sr = 44100;
-		if (nb_ch != 2) nb_ch = 2;
+		afmt = GF_AUDIO_FMT_S16;
+		sr = 44100;
+		nb_ch = 2;
 	}
 	if (ctx->speed == FIX_ONE) ctx->speed_set = GF_TRUE;
 
@@ -115,15 +126,18 @@ void aout_reconfig(GF_AudioOutCtx *ctx)
 		ctx->needs_recfg = GF_FALSE;
 		ctx->wait_recfg = GF_FALSE;
 	}
-	ctx->hwdelay = 0;
+	ctx->bytes_per_sample = gf_audio_fmt_bit_depth(afmt) * nb_ch / 8;
+	ctx->hwdelay_us = 0;
 	if (ctx->audio_out->GetAudioDelay) {
-		ctx->hwdelay = ctx->audio_out->GetAudioDelay(ctx->audio_out);
-		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[AudioOut] Hardware delay is %d ms\n", ctx->hwdelay ));
+		ctx->hwdelay_us = ctx->audio_out->GetAudioDelay(ctx->audio_out);
+		ctx->hwdelay_us *= 1000;
+		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[AudioOut] Hardware delay is "LLU" us\n", ctx->hwdelay_us ));
 	}
-	ctx->totaldelay = 0;
+	ctx->totaldelay_us = 0;
 	if (ctx->audio_out->GetTotalBufferTime) {
-		ctx->totaldelay = ctx->audio_out->GetTotalBufferTime(ctx->audio_out);
-		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[AudioOut] Total audio delay is %d ms\n", ctx->totaldelay ));
+		ctx->totaldelay_us = ctx->audio_out->GetTotalBufferTime(ctx->audio_out);
+		ctx->totaldelay_us *= 1000;
+		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[AudioOut] Total audio delay is "LLU" ms\n", ctx->totaldelay_us ));
 	}
 }
 
@@ -155,27 +169,26 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 {
 	u32 done = 0;
 	GF_AudioOutCtx *ctx = ptr;
+	Bool is_first_pck = GF_TRUE;
 
 	memset(buffer, 0, buffer_size);
 	if (!ctx->pid || ctx->aborted) return 0;
 
-	//query full buffer duration in us
-	u64 dur = gf_filter_pid_query_buffer_duration(ctx->pid, GF_FALSE);
-
-	GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[AudioOut] buffer %d / %d ms\r", dur/1000, ctx->buffer));
-
 	if (!ctx->buffer_done) {
 		u32 size;
 		GF_FilterPacket *pck;
+
+		//query full buffer duration in us
+		u64 dur = gf_filter_pid_query_buffer_duration(ctx->pid, GF_FALSE);
+
+		GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[AudioOut] buffer %d / %d ms\r", dur/1000, ctx->buffer));
 
 		/*the compositor sends empty packets after its reconfiguration to check when the config is active
 		we therefore probe the first packet before probing the buffer fullness*/
 		pck = gf_filter_pid_get_packet(ctx->pid);
 		if (!pck) return 0;
 
-		if (gf_filter_pck_is_blocking_ref(pck)) {
-			ctx->buffer_done = GF_TRUE;
-		} else {
+		if (! gf_filter_pck_is_blocking_ref(pck)) {
 			if ((dur < ctx->buffer * 1000) && !gf_filter_pid_is_eos(ctx->pid))
 				return 0;
 			gf_filter_pck_get_data(pck, &size);
@@ -189,18 +202,21 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 		}
 		ctx->buffer_done = GF_TRUE;
 	}
-
+	//do not throw underflow log util first packet is fetched
+	if (ctx->first_write_done)
+		is_first_pck = GF_FALSE;
 
 	while (done < buffer_size) {
 		const char *data;
 		u32 size;
 		u64 cts;
+		s64 delay;
 		GF_FilterPacket *pck = gf_filter_pid_get_packet(ctx->pid);
 		if (!pck) {
 			if (gf_filter_pid_is_eos(ctx->pid)) {
 				ctx->is_eos = GF_TRUE;
-			} else if (ctx->first_write_done) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[AudioOut] buffer underflow\n"));
+			} else if (!is_first_pck) {
+				GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[AudioOut] buffer underflow\n"));
 			}
 			return done;
 		}
@@ -208,9 +224,21 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 		if (ctx->needs_recfg) {
 			return done;
 		}
-		data = gf_filter_pck_get_data(pck, &size);
+
+		delay = ctx->pid_delay;
+		if (ctx->adelay.den)
+			delay += ctx->adelay.num * (s32)ctx->timescale / (s32)ctx->adelay.den;
 
 		cts = gf_filter_pck_get_cts(pck);
+		if (delay >= 0) {
+			cts += delay;
+		} else if (cts < (u64) -delay) {
+			gf_filter_pid_drop_packet(ctx->pid);
+			continue;
+		} else {
+			cts -= (u64) -delay;
+		}
+
 		if (ctx->dur.num>0) {
 			if (!ctx->first_cts) ctx->first_cts = cts+1;
 
@@ -226,9 +254,20 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 				return done;
 			}
 		}
-		if (!done && ctx->clock) {
-			gf_filter_hint_single_clock(ctx->filter, gf_sys_clock_high_res(), ((Double)cts)/ctx->timescale);
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[AudioOut] At %d ms audio frame CTS "LLU" ms\n", gf_sys_clock(), (1000*cts)/ctx->timescale));
+
+		data = gf_filter_pck_get_data(pck, &size);
+
+		if (!done && ctx->clock && data && size) {
+			GF_Fraction64 timestamp;
+			timestamp.num = cts;
+			if (ctx->pck_offset)
+				timestamp.num += ctx->pck_offset/ctx->bytes_per_sample;
+
+			timestamp.num -= (ctx->hwdelay_us*ctx->timescale)/1000000;
+			if (timestamp.num<0) timestamp.num = 0;
+			timestamp.den = ctx->timescale;
+			gf_filter_hint_single_clock(ctx->filter, gf_sys_clock_high_res(), timestamp);
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[AudioOut] At %d ms audio frame CTS "LLU" (compensated time %g s)\n", gf_sys_clock(), cts, ((Double)timestamp.num)/timestamp.den ));
 		}
 		
 		if (data && !ctx->wait_recfg) {
@@ -249,6 +288,7 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 
 			done += nb_copy;
 			ctx->first_write_done = GF_TRUE;
+			is_first_pck = GF_FALSE;
 			if (nb_copy + ctx->pck_offset < size) {
 				ctx->pck_offset += nb_copy;
 				return done;
@@ -329,6 +369,7 @@ static GF_Err aout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ctx->wait_recfg = GF_FALSE;
 		return GF_OK;
 	}
+
 	//whenever change of sample rate / format / channel, force buffer requirements and speed setup
 	if ((ctx->sr!=sr) || (ctx->afmt != afmt) || (ctx->nb_ch != nb_ch)) {
 		GF_FilterEvent evt;
@@ -363,6 +404,9 @@ static GF_Err aout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_AUDIO_PRIORITY);
 	if (p) aout_set_priority(ctx, p->value.uint);
+
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
+	ctx->pid_delay = p ? p->value.sint : 0;
 
 	ctx->needs_recfg = GF_TRUE;
 	
@@ -501,7 +545,8 @@ static const GF_FilterArgs AudioOutArgs[] =
 	{ OFFS(start), "set playback start offset. Negative value means percent of media dur with -1 <=> dur", GF_PROP_DOUBLE, "0.0", NULL, 0},
 	{ OFFS(vol), "set default audio volume, as a percentage between 0 and 100", GF_PROP_UINT, "100", "0-100", GF_FS_ARG_UPDATE},
 	{ OFFS(pan), "set stereo pan, as a percentage between 0 and 100, 50 being centered", GF_PROP_UINT, "50", "0-100", GF_FS_ARG_UPDATE},
-	{ OFFS(buffer), "set buffer in ms", GF_PROP_UINT, "100", NULL, 0},
+	{ OFFS(buffer), "set buffer in ms", GF_PROP_UINT, "200", NULL, 0},
+	{ OFFS(adelay), "set audio delay in sec", GF_PROP_FRACTION, "0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{0}
 };
 

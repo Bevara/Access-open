@@ -507,6 +507,7 @@ static GF_Err ut_filter_config_input(GF_Filter *filter, GF_FilterPid *pid, Bool 
 
 	//new PID
 	GF_SAFEALLOC(pidctx, PIDCtx);
+	if (!pidctx) return GF_OUT_OF_MEM;
 	pidctx->src_pid = pid;
 	gf_list_add(stack->pids, pidctx);
 	assert(pidctx->src_pid);
@@ -570,6 +571,7 @@ static GF_Err ut_filter_config_source(GF_Filter *filter)
 	for (i=0; i<stack->nb_pids; i++) {
 		//create a pid
 		GF_SAFEALLOC(pidctx, PIDCtx);
+		if (!pidctx) return GF_OUT_OF_MEM;
 		gf_list_add(stack->pids, pidctx);
 		pidctx->dst_pid = gf_filter_pid_new(filter);
 		gf_filter_pid_set_udta(pidctx->dst_pid, pidctx);
@@ -774,46 +776,45 @@ GF_Err utfilter_initialize(GF_Filter *filter)
 		}
 
 		old_strict = gf_log_set_strict_error(GF_FALSE);
-
-		p = gf_props_parse_value(GF_PROP_STRING, "prop", "file@_no_exist", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_STRING, "prop", "bxml@_no_exist", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_DATA, "prop", "file@_no_exist", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_DATA, "prop", "bxml@_no_exist", NULL, 0);
-
-		p = gf_props_parse_value(GF_PROP_BOOL, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_SINT, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_UINT, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_LSINT, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_LUINT, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_FLOAT, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_DOUBLE, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_FRACTION, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_FRACTION, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_STRING, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_DATA, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_CONST_DATA, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_POINTER, "prop", "", NULL, 0);
-		p = gf_props_parse_value(GF_PROP_BOOL, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_SINT, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_UINT, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_LSINT, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_LUINT, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_FLOAT, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_DOUBLE, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_FRACTION, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_FRACTION64, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_VEC2I, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_VEC2, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_VEC3I, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_VEC3, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_VEC4I, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_VEC4, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_STRING, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_DATA, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_CONST_DATA, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_POINTER, "prop", NULL, NULL, 0);
-		p = gf_props_parse_value(GF_PROP_UINT, "prop", "test", "foo|bar", 0);
-		p = gf_props_parse_value(100, "prop", "test", NULL, 0);
+		//negative tests
+		gf_props_parse_value(GF_PROP_STRING, "prop", "file@_no_exist", NULL, 0);
+		gf_props_parse_value(GF_PROP_STRING, "prop", "bxml@_no_exist", NULL, 0);
+		gf_props_parse_value(GF_PROP_DATA, "prop", "file@_no_exist", NULL, 0);
+		gf_props_parse_value(GF_PROP_DATA, "prop", "bxml@_no_exist", NULL, 0);
+		gf_props_parse_value(GF_PROP_BOOL, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_SINT, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_UINT, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_LSINT, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_LUINT, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_FLOAT, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_DOUBLE, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_FRACTION, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_FRACTION, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_STRING, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_DATA, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_CONST_DATA, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_POINTER, "prop", "", NULL, 0);
+		gf_props_parse_value(GF_PROP_BOOL, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_SINT, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_UINT, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_LSINT, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_LUINT, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_FLOAT, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_DOUBLE, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_FRACTION, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_FRACTION64, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_VEC2I, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_VEC2, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_VEC3I, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_VEC3, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_VEC4I, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_VEC4, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_STRING, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_DATA, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_CONST_DATA, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_POINTER, "prop", NULL, NULL, 0);
+		gf_props_parse_value(GF_PROP_UINT, "prop", "test", "foo|bar", 0);
+		gf_props_parse_value(100, "prop", "test", NULL, 0);
 
 		memset(&p, 0, sizeof(GF_PropertyValue));
 		p2=p;

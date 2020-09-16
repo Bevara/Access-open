@@ -178,8 +178,9 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 	}
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILEPATH);
-	if (!p || !p->value.string) {
+	if (!p || !p->value.string || !strncmp(p->value.string, "gmem://", 7)) {
 		ctx->is_file = GF_FALSE;
+		ctx->file_loaded = GF_TRUE;
 		return;
 	}
 	ctx->is_file = GF_TRUE;
@@ -246,7 +247,7 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 
 static void mpgviddmx_enqueue_or_dispatch(GF_MPGVidDmxCtx *ctx, GF_FilterPacket *pck, Bool flush_ref, Bool is_eos)
 {
-	//TODO: we are dispacthing frames in "negctts mode", ie we may have DTS>CTS
+	//TODO: we are dispatching frames in "negctts mode", ie we may have DTS>CTS
 	//need to signal this for consumers using DTS (eg MPEG-2 TS)
 	if (flush_ref && ctx->pck_queue) {
 		//send all reference packet queued
@@ -517,7 +518,8 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 	if (!pck) {
 		if (gf_filter_pid_is_eos(ctx->ipid)) {
 			mpgviddmx_enqueue_or_dispatch(ctx, NULL, GF_TRUE, GF_TRUE);
-			if (ctx->opid) gf_filter_pid_set_eos(ctx->opid);
+			if (ctx->opid)
+				gf_filter_pid_set_eos(ctx->opid);
 			if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 			ctx->src_pck = NULL;
 			return GF_EOS;
@@ -676,7 +678,7 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 			if (current<0) {
 				u8 b3, b2, b1;
 				if (! ctx->frame_started) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[MPGVid] no start code in block and no frame started, discarding data\n" ));
+					GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[MPGVid] no start code in block and no frame started, discarding data\n" ));
 					break;
 				}
 				size = remain;

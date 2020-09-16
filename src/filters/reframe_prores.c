@@ -52,7 +52,7 @@ typedef struct
 	u32 timescale;
 	GF_Fraction cur_fps;
 
-	char *buffer;
+	u8 *buffer;
 	u32 buf_size, alloc_size;
 
 	GF_ProResFrameInfo cur_cfg;
@@ -105,7 +105,7 @@ static void proresdmx_check_dur(GF_Filter *filter, GF_ProResDmxCtx *ctx)
 {
 	FILE *stream;
 	GF_BitStream *bs;
-	u64 duration, cur_dur, last_cdur;
+	u64 duration;
 	u32 idx_size;
 	const char *filepath=NULL;
 	const GF_PropertyValue *p;
@@ -115,9 +115,9 @@ static void proresdmx_check_dur(GF_Filter *filter, GF_ProResDmxCtx *ctx)
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILEPATH);
-	if (!p || !p->value.string) {
+	if (!p || !p->value.string || !strncmp(p->value.string, "gmem://", 7)) {
 		ctx->is_file = GF_FALSE;
-		ctx->file_loaded = GF_FALSE;
+		ctx->file_loaded = GF_TRUE;
 		return;
 	}
 	filepath = p->value.string;
@@ -126,7 +126,7 @@ static void proresdmx_check_dur(GF_Filter *filter, GF_ProResDmxCtx *ctx)
 	if (ctx->findex==1) {
 		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_DOWN_SIZE);
 		if (!p || (p->value.longuint > 100000000)) {
-			GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("[AV1/VP9] Source file larger than 100M, skipping indexing\n"));
+			GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("[ProResDmx] Source file larger than 100M, skipping indexing\n"));
 		} else {
 			ctx->findex = 2;
 		}
@@ -144,7 +144,6 @@ static void proresdmx_check_dur(GF_Filter *filter, GF_ProResDmxCtx *ctx)
 	ctx->file_size = gf_bs_available(bs);
 
 	duration = 0;
-	cur_dur = last_cdur = 0;
 	while (gf_bs_available(bs)) {
 		u64 frame_start = gf_bs_get_position(bs);
 		u32 fsize = gf_bs_read_u32(bs);
@@ -154,7 +153,6 @@ static void proresdmx_check_dur(GF_Filter *filter, GF_ProResDmxCtx *ctx)
 			break;
 
 		duration += ctx->cur_fps.den;
-		cur_dur += ctx->cur_fps.den;
 
 		if (!idx_size) idx_size = 10;
 		else if (idx_size == ctx->nb_frames) idx_size += 10;
@@ -201,7 +199,7 @@ static Bool proresdmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt
 				ctx->findex = 2;
 				ctx->file_loaded = GF_FALSE;
 				ctx->duration.den = ctx->duration.num = 0;
-				GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("[AV1/VP9Demx] Play request from %d, building index\n", ctx->start_range));
+				GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("[ProResDmx] Play request from %d, building index\n", ctx->start_range));
 				proresdmx_check_dur(filter, ctx);
 			}
 			if ((evt->play.speed<0) && (ctx->start_range<0)) {
@@ -363,6 +361,24 @@ static void proresdmx_check_pid(GF_Filter *filter, GF_ProResDmxCtx *ctx, GF_ProR
 		break;
 	}
 
+	switch (finfo->aspect_ratio_information) {
+	case 0:
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAR, NULL);
+		break;
+	case 1:
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAR, & PROP_FRAC_INT(1, 1) );
+		break;
+	case 2:
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAR, & PROP_FRAC_INT(4, 3) );
+		break;
+	case 3:
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAR, & PROP_FRAC_INT(16, 9) );
+		break;
+	default:
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAR, NULL);
+		break;
+	}
+
 	if (ctx->duration.num)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
@@ -370,6 +386,8 @@ static void proresdmx_check_pid(GF_Filter *filter, GF_ProResDmxCtx *ctx, GF_ProR
 	if (ctx->is_file && ctx->findex) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PLAYBACK_MODE, & PROP_UINT(GF_PLAYBACK_MODE_REWIND) );
 	}
+	if (bitrate && !gf_sys_is_test_mode())
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_BITRATE, & PROP_UINT((u32)bitrate) );
 
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_PRIMARIES, & PROP_UINT(finfo->color_primaries) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_TRANSFER, & PROP_UINT(finfo->transfer_characteristics) );
@@ -381,7 +399,7 @@ static void proresdmx_check_pid(GF_Filter *filter, GF_ProResDmxCtx *ctx, GF_ProR
 
 
 
-GF_Err proresdmx_process_buffer(GF_Filter *filter, GF_ProResDmxCtx *ctx, const char *data, u32 data_size, Bool is_copy)
+GF_Err proresdmx_process_buffer(GF_Filter *filter, GF_ProResDmxCtx *ctx, const u8 *data, u32 data_size, Bool is_copy)
 {
 	u32 last_frame_end = 0;
 	GF_Err e = GF_OK;
@@ -390,7 +408,7 @@ GF_Err proresdmx_process_buffer(GF_Filter *filter, GF_ProResDmxCtx *ctx, const c
 	else gf_bs_reassign_buffer(ctx->bs, data, data_size);
 
 	while (gf_bs_available(ctx->bs)) {
-		u8 *data;
+		u8 *output;
 		GF_FilterPacket *pck;
 		GF_ProResFrameInfo finfo;
 		e = gf_media_prores_parse_bs(ctx->bs, &finfo);
@@ -406,9 +424,9 @@ GF_Err proresdmx_process_buffer(GF_Filter *filter, GF_ProResDmxCtx *ctx, const c
 		if (gf_bs_available(ctx->bs)<finfo.frame_size)
 			break;
 
-		pck = gf_filter_pck_new_alloc(ctx->opid, finfo.frame_size, &data);
+		pck = gf_filter_pck_new_alloc(ctx->opid, finfo.frame_size, &output);
 		if (!pck) break;
-		gf_bs_read_data(ctx->bs, data, finfo.frame_size);
+		gf_bs_read_data(ctx->bs, output, finfo.frame_size);
 
 		if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, pck);
 
@@ -427,7 +445,8 @@ GF_Err proresdmx_process_buffer(GF_Filter *filter, GF_ProResDmxCtx *ctx, const c
 			assert(ctx->cur_frame);
 			ctx->cur_frame--;
 			if (!ctx->cur_frame) {
-				gf_filter_pid_set_eos(ctx->opid);
+				if (ctx->opid)
+					gf_filter_pid_set_eos(ctx->opid);
 			} else {
 				GF_FilterEvent fevt;
 				ctx->file_pos -= ctx->frame_sizes[ctx->cur_frame];

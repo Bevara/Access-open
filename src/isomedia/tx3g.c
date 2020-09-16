@@ -90,6 +90,14 @@ GF_Err gf_isom_get_text_description(GF_ISOFile *movie, u32 trackNumber, u32 desc
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
+#if 0 //unused
+/*! updates text sample description
+\param isom_file the target ISO file
+\param trackNumber the target track
+\param sampleDescriptionIndex the target sample description index
+\param desc the text sample descriptor to use
+\return error if any
+*/
 GF_Err gf_isom_update_text_description(GF_ISOFile *movie, u32 trackNumber, u32 descriptionIndex, GF_TextSampleDescriptor *desc)
 {
 	GF_TrackBox *trak;
@@ -154,6 +162,7 @@ GF_Err gf_isom_update_text_description(GF_ISOFile *movie, u32 trackNumber, u32 d
 	}
 	return e;
 }
+#endif //unused
 
 GF_EXPORT
 GF_Err gf_isom_new_text_description(GF_ISOFile *movie, u32 trackNumber, GF_TextSampleDescriptor *desc, const char *URLname, const char *URNname, u32 *outDescriptionIndex)
@@ -188,6 +197,7 @@ GF_Err gf_isom_new_text_description(GF_ISOFile *movie, u32 trackNumber, GF_TextS
 		trak->Media->mediaHeader->modificationTime = gf_isom_get_mp4time();
 
 	txt = (GF_Tx3gSampleEntryBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_TX3G);
+	if (!txt) return GF_OUT_OF_MEM;
 	txt->dataReferenceIndex = dataRefIndex;
 	gf_list_add(trak->Media->information->sampleTable->SampleDescription->child_boxes, txt);
 	if (outDescriptionIndex) *outDescriptionIndex = gf_list_count(trak->Media->information->sampleTable->SampleDescription->child_boxes);
@@ -199,9 +209,11 @@ GF_Err gf_isom_new_text_description(GF_ISOFile *movie, u32 trackNumber, GF_TextS
 	txt->vertical_justification = desc->vert_justif;
 	txt->horizontal_justification = desc->horiz_justif;
 	txt->font_table = (GF_FontTableBox *)gf_isom_box_new_parent(&txt->child_boxes, GF_ISOM_BOX_TYPE_FTAB);
+	if (!txt->font_table) return GF_OUT_OF_MEM;
 	txt->font_table->entry_count = desc->font_count;
 
 	txt->font_table->fonts = (GF_FontRecord *) gf_malloc(sizeof(GF_FontRecord) * desc->font_count);
+	if (!txt->font_table->fonts) return GF_OUT_OF_MEM;
 	for (i=0; i<desc->font_count; i++) {
 		txt->font_table->fonts[i].fontID = desc->fonts[i].fontID;
 		if (desc->fonts[i].fontName) txt->font_table->fonts[i].fontName = gf_strdup(desc->fonts[i].fontName);
@@ -223,16 +235,25 @@ GF_Err gf_isom_text_add_text(GF_TextSample *samp, char *text_data, u32 text_len)
 	return GF_OK;
 }
 
+#if 0 //unused
+/*! sets UTF16 marker for text data. This MUST be called on an empty sample. If text data added later
+on (cf below) is not formatted as UTF16 data(2 bytes char) the resulting text sample won't be compliant,
+but this library won't warn
+\param tx_samp the target text sample
+\return error if any
+*/
 GF_Err gf_isom_text_set_utf16_marker(GF_TextSample *samp)
 {
 	/*we MUST have an empty sample*/
 	if (!samp || samp->text) return GF_BAD_PARAM;
 	samp->text = (char*)gf_malloc(sizeof(char) * 2);
+	if (!samp->text) return GF_OUT_OF_MEM;
 	samp->text[0] = (char) 0xFE;
 	samp->text[1] = (char) 0xFF;
 	samp->len = 2;
 	return GF_OK;
 }
+#endif //unused
 
 GF_EXPORT
 GF_Err gf_isom_text_add_style(GF_TextSample *samp, GF_StyleRecord *rec)
@@ -264,26 +285,9 @@ GF_Err gf_isom_text_add_highlight(GF_TextSample *samp, u16 start_char, u16 end_c
 	return gf_list_add(samp->others, a);
 }
 
+
 GF_EXPORT
-GF_Err gf_isom_text_set_highlight_color(GF_TextSample *samp, u8 r, u8 g, u8 b, u8 a)
-{
-	if (!samp) return GF_BAD_PARAM;
-
-	if (!samp->highlight_color) {
-		samp->highlight_color = (GF_TextHighlightColorBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_HCLR);
-		if (!samp->highlight_color) return GF_OUT_OF_MEM;
-	}
-	samp->highlight_color->hil_color = a;
-	samp->highlight_color->hil_color <<= 8;
-	samp->highlight_color->hil_color = r;
-	samp->highlight_color->hil_color <<= 8;
-	samp->highlight_color->hil_color = g;
-	samp->highlight_color->hil_color <<= 8;
-	samp->highlight_color->hil_color = b;
-	return GF_OK;
-}
-
-GF_Err gf_isom_text_set_highlight_color_argb(GF_TextSample *samp, u32 argb)
+GF_Err gf_isom_text_set_highlight_color(GF_TextSample *samp, u32 argb)
 {
 	if (!samp) return GF_BAD_PARAM;
 
@@ -420,6 +424,7 @@ GF_Err gf_isom_text_sample_write_bs(const GF_TextSample *samp, GF_BitStream *bs)
 	return e;
 }
 
+GF_EXPORT
 GF_ISOSample *gf_isom_text_to_sample(const GF_TextSample *samp)
 {
 	GF_Err e;
@@ -609,6 +614,7 @@ GF_TextSample *gf_isom_parse_text_sample(GF_BitStream *bs)
 		/*2 extra bytes for UTF-16 term char just in case (we don't know if a BOM marker is present or
 		not since this may be a sample carried over RTP*/
 		s->text = (char *) gf_malloc(sizeof(char)*(s->len+2) );
+		if (!s->text) return NULL;
 		s->text[s->len] = 0;
 		s->text[s->len+1] = 0;
 		gf_bs_read_data(bs, s->text, s->len);
@@ -667,6 +673,7 @@ GF_TextSample *gf_isom_parse_text_sample(GF_BitStream *bs)
 	return s;
 }
 
+#if 0 //unused
 GF_TextSample *gf_isom_parse_text_sample_from_data(u8 *data, u32 dataLength)
 {
 	GF_TextSample *s;
@@ -681,6 +688,7 @@ GF_TextSample *gf_isom_parse_text_sample_from_data(u8 *data, u32 dataLength)
 	gf_bs_del(bs);
 	return s;
 }
+#endif
 
 
 /*out-of-band sample desc (128 and 255 reserved in RFC)*/

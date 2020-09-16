@@ -140,10 +140,12 @@ static GF_Err sockin_initialize(GF_Filter *filter)
 		) {
 		e = gf_sk_bind(ctx->sock_c.socket, ctx->ifce, port, url, port, GF_SOCK_REUSE_PORT);
 		ctx->listen = GF_FALSE;
-		e = gf_sk_connect(ctx->sock_c.socket, url, port, NULL);
+		if (!e)
+			e = gf_sk_connect(ctx->sock_c.socket, url, port, NULL);
 	} else if (ctx->listen) {
 		e = gf_sk_bind(ctx->sock_c.socket, NULL, port, url, 0, GF_SOCK_REUSE_PORT);
-		if (!e) e = gf_sk_listen(ctx->sock_c.socket, ctx->maxc);
+		if (!e)
+			e = gf_sk_listen(ctx->sock_c.socket, ctx->maxc);
 		if (!e) {
 			gf_filter_post_process_task(filter);
 			gf_sk_server_mode(ctx->sock_c.socket, GF_TRUE);
@@ -218,6 +220,7 @@ static GF_FilterProbeScore sockin_probe_url(const char *url, const char *mime_ty
 	return GF_FPROBE_NOT_SUPPORTED;
 }
 
+#ifndef GPAC_DISABLE_STREAMING
 static void sockin_rtp_destructor(GF_Filter *filter, GF_FilterPid *pid, GF_FilterPacket *pck)
 {
 	u32 size;
@@ -227,6 +230,7 @@ static void sockin_rtp_destructor(GF_Filter *filter, GF_FilterPid *pid, GF_Filte
 	data = (char *) gf_filter_pck_get_data(pck, &size);
 	if (data) gf_free(data);
 }
+#endif
 
 static Bool sockin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 {
@@ -294,7 +298,7 @@ static GF_Err sockin_read_client(GF_Filter *filter, GF_SockInCtx *ctx, GF_SockIn
 #ifndef GPAC_DISABLE_STREAMING
 				sock_c->rtp_reorder = gf_rtp_reorderer_new(ctx->reorder_pck, ctx->reorder_delay);
 #else
-			ctx-	>is_rtp = GF_TRUE;
+				sock_c->is_rtp = GF_TRUE;
 #endif
 				mime = "video/mp2t";
 			} else if (ctx->buffer[0] == 0x47) {
@@ -304,10 +308,7 @@ static GF_Err sockin_read_client(GF_Filter *filter, GF_SockInCtx *ctx, GF_SockIn
 
 		e = gf_filter_pid_raw_new(filter, ctx->src, NULL, mime, ctx->ext, ctx->buffer, nb_read, GF_TRUE, &sock_c->pid);
 		if (e) return e;
-		if (!mime) {
-			const GF_PropertyValue *p = gf_filter_pid_get_property(sock_c->pid, GF_PROP_PID_MIME);
-			if (p) mime = p->value.string;
-		}
+
 //		if (ctx->is_udp) gf_filter_pid_set_property(sock_c->pid, GF_PROP_PID_UDP, &PROP_BOOL(GF_TRUE) );
 
 		gf_filter_pid_set_udta(sock_c->pid, sock_c);
@@ -413,6 +414,8 @@ static GF_Err sockin_process(GF_Filter *filter)
 			if ((e==GF_OK) && new_conn) {
 				GF_SockInClient *sc;
 				GF_SAFEALLOC(sc, GF_SockInClient);
+				if (!sc) return GF_OUT_OF_MEM;
+				
 				sc->socket = new_conn;
 				strcpy(sc->address, "unknown");
 				gf_sk_get_remote_address(new_conn, sc->address);
@@ -513,6 +516,10 @@ GF_FilterRegister SockInRegister = {
 #ifdef GPAC_HAS_SOCK_UN
 		"- UDP unix domain sockets are used for source URLs formatted as `udpu://NAME`\n"
 		"- TCP unix domain sockets are used for source URLs formatted as `tcpu://NAME`\n"
+		"\n"
+		"When ports are specified in the URL and the default option separators are used (see `gpac -h doc`), the URL must either:\n"
+		"- have a trailing '/', eg `udp://localhost:1234/[:opts]`\n"
+		"- use `gpac` separator, eg `udp://localhost:1234[:gpac:opts]\n"
 #ifdef GPAC_CONFIG_DARWIN
 	"\nOn OSX with VM packet replay you will need to force multicast routing, eg: route add -net 239.255.1.4/32 -interface vboxnet0"
 #endif

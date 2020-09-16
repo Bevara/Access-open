@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2017
+ *			Copyright (c) Telecom ParisTech 2000-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / AAC ADTS reframer filter
@@ -55,13 +55,17 @@ typedef struct
 	Double index;
 	u32 sbr;
 	u32 ps;
-	Bool mpeg4;
+//	Bool mpeg4;
 	Bool ovsbr;
+	Bool expart;
 
 	//only one input pid declared
 	GF_FilterPid *ipid;
-	//only one output pid declared
+	//output pid for audio
 	GF_FilterPid *opid;
+
+	//video pid for cover art
+	GF_FilterPid *vpid;
 
 	GF_BitStream *bs;
 	u64 file_pos, cts;
@@ -86,6 +90,11 @@ typedef struct
 	u8 *adts_buffer;
 	u32 adts_buffer_size, adts_buffer_alloc, resume_from;
 	u64 byte_offset;
+
+	u32 tag_size;
+	u8 *id3_buffer;
+	u32 id3_buffer_size, id3_buffer_alloc;
+	u32 nb_frames;
 } GF_ADTSDmxCtx;
 
 
@@ -151,6 +160,7 @@ static Bool adts_dmx_sync_frame_bs(GF_BitStream *bs, ADTSHeader *hdr)
 	return GF_FALSE;
 }
 
+void id3dmx_flush(GF_Filter *filter, u8 *id3_buf, u32 id3_buf_size, GF_FilterPid *audio_pid, GF_FilterPid **video_pid_p);
 
 
 GF_Err adts_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
@@ -196,8 +206,9 @@ static void adts_dmx_check_dur(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 	}
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILEPATH);
-	if (!p || !p->value.string) {
+	if (!p || !p->value.string || !strncmp(p->value.string, "gmem://", 7)) {
 		ctx->is_file = GF_FALSE;
+		ctx->file_loaded = GF_TRUE;
 		return;
 	}
 	ctx->is_file = GF_TRUE;
@@ -237,13 +248,15 @@ static void adts_dmx_check_dur(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 	gf_bs_del(bs);
 	gf_fclose(stream);
 
-	if (!ctx->duration.num || (ctx->duration.num  * GF_M4ASampleRates[sr_idx] != duration * ctx->duration.den)) {
-		ctx->duration.num = (s32) duration;
-		ctx->duration.den = GF_M4ASampleRates[sr_idx];
+	if (sr_idx>=0) {
+		if (!ctx->duration.num || (ctx->duration.num  * GF_M4ASampleRates[sr_idx] != duration * ctx->duration.den)) {
+			ctx->duration.num = (s32) duration;
+			ctx->duration.den = GF_M4ASampleRates[sr_idx];
 
-		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+		}
 	}
-
+	
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
@@ -392,6 +405,11 @@ static void adts_dmx_check_pid(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->timescale ? ctx->timescale : timescale));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_NUM_CHANNELS, & PROP_UINT(ctx->nb_ch) );
 
+	if (ctx->id3_buffer_size) {
+		id3dmx_flush(filter, ctx->id3_buffer, ctx->id3_buffer_size, ctx->opid, ctx->expart ? &ctx->vpid : NULL);
+		ctx->id3_buffer_size = 0;
+	}
+
 }
 
 static Bool adts_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
@@ -406,6 +424,9 @@ static Bool adts_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			ctx->is_playing = GF_TRUE;
 			ctx->cts = 0;
 		}
+		ctx->nb_frames = 0;
+		ctx->id3_buffer_size = 0;
+
 		if (! ctx->is_file) {
 			if (evt->play.start_range || ctx->initial_play_done) {
 				ctx->adts_buffer_size = 0;
@@ -492,7 +513,8 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 	if (!pck) {
 		if (gf_filter_pid_is_eos(ctx->ipid)) {
 			if (!ctx->adts_buffer_size) {
-				gf_filter_pid_set_eos(ctx->opid);
+				if (ctx->opid)
+					gf_filter_pid_set_eos(ctx->opid);
 				if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 				ctx->src_pck = NULL;
 				return GF_EOS;
@@ -553,6 +575,44 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 		u8 *sync;
 		u32 sync_pos, size, offset, bytes_to_drop=0;
 
+		if (!ctx->tag_size && (remain>3)) {
+
+			/* Did we read an ID3v2 ? */
+			if (start[0] == 'I' && start[1] == 'D' && start[2] == '3') {
+				if (remain<10)
+					return GF_OK;
+
+				ctx->tag_size = ((start[9] & 0x7f) + ((start[8] & 0x7f) << 7) + ((start[7] & 0x7f) << 14) + ((start[6] & 0x7f) << 21));
+
+				bytes_to_drop = 10;
+				if (ctx->id3_buffer_alloc < ctx->tag_size+10) {
+					ctx->id3_buffer = gf_realloc(ctx->id3_buffer, ctx->tag_size+10);
+					ctx->id3_buffer_alloc = ctx->tag_size+10;
+				}
+				memcpy(ctx->id3_buffer, start, 10);
+				ctx->id3_buffer_size = 10;
+				goto drop_byte;
+			}
+		}
+		if (ctx->tag_size) {
+			if (ctx->tag_size>remain) {
+				bytes_to_drop = remain;
+				ctx->tag_size-=remain;
+			} else {
+				bytes_to_drop = ctx->tag_size;
+				ctx->tag_size = 0;
+			}
+			memcpy(ctx->id3_buffer + ctx->id3_buffer_size, start, bytes_to_drop);
+			ctx->id3_buffer_size += bytes_to_drop;
+
+			if (!ctx->tag_size && ctx->opid) {
+				id3dmx_flush(filter, ctx->id3_buffer, ctx->id3_buffer_size, ctx->opid, ctx->expart ? &ctx->vpid : NULL);
+				ctx->id3_buffer_size = 0;
+			}
+			goto drop_byte;
+
+		}
+
 		sync = memchr(start, 0xFF, remain);
 		sync_pos = (u32) (sync ? sync - start : remain);
 
@@ -562,8 +622,9 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 		}
 
 		//not sync !
-		if ((remain - sync_pos <= 1) || ((sync[1] & 0xF0) != 0xF0) ) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] invalid ADTS sync bytes, resyncing\n"));
+		if ((sync[1] & 0xF0) != 0xF0) {
+			GF_LOG(ctx->nb_frames ? GF_LOG_WARNING : GF_LOG_DEBUG, GF_LOG_PARSER, ("[ADTSDmx] invalid ADTS sync bytes, resyncing\n"));
+			ctx->nb_frames = 0;
 			goto drop_byte;
 		}
 		if (!ctx->bs) {
@@ -576,7 +637,10 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 		gf_bs_read_int(ctx->bs, 4);
 
 		ctx->hdr.is_mp2 = (Bool)gf_bs_read_int(ctx->bs, 1);
-		if (ctx->mpeg4) ctx->hdr.is_mp2 = 0;
+		//if (ctx->mpeg4)
+		//we deprecate old MPEG-2 signaling for AAC in ISOBMFF, as it is not well supported anyway and we don't write adif_header as
+		//supposed to be for these types
+		ctx->hdr.is_mp2 = 0;
 
 		gf_bs_read_int(ctx->bs, 2);
 		ctx->hdr.no_crc = (Bool)gf_bs_read_int(ctx->bs, 1);
@@ -596,7 +660,8 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 		}
 
 		if (!ctx->hdr.frame_size || !GF_M4ASampleRates[ctx->hdr.sr_idx] || !ctx->hdr.nb_ch) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] invalid ADTS frame, resyncing\n"));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[ADTSDmx] invalid ADTS frame header, resyncing\n"));
+			ctx->nb_frames = 0;
 			goto drop_byte;
 		}
 
@@ -605,7 +670,8 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 			u32 next_frame = ctx->hdr.frame_size;
 			//make sure we are sync!
 			if ((sync[next_frame] !=0xFF) || ((sync[next_frame+1] & 0xF0) !=0xF0) ) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] invalid ADTS frame, resyncing\n"));
+				GF_LOG(ctx->nb_frames ? GF_LOG_WARNING : GF_LOG_DEBUG, GF_LOG_PARSER, ("[ADTSDmx] invalid next ADTS frame sync, resyncing\n"));
+				ctx->nb_frames = 0;
 				goto drop_byte;
 			}
 		}
@@ -624,6 +690,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 			return GF_OK;
 		}
 
+		ctx->nb_frames++;
 		size = ctx->hdr.frame_size - ctx->hdr.hdr_size;
 		offset = ctx->hdr.hdr_size;
 
@@ -707,18 +774,46 @@ static void adts_dmx_finalize(GF_Filter *filter)
 	if (ctx->bs) gf_bs_del(ctx->bs);
 	if (ctx->indexes) gf_free(ctx->indexes);
 	if (ctx->adts_buffer) gf_free(ctx->adts_buffer);
+	if (ctx->id3_buffer) gf_free(ctx->id3_buffer);
 }
 
 static const char *adts_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeScore *score)
 {
 	u32 nb_frames=0, next_pos=0, max_consecutive_frames=0;
 	ADTSHeader prev_hdr;
-	GF_BitStream *bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
+	GF_BitStream *bs;
+	Bool has_id3=GF_FALSE;
+	Bool has_broken_data=GF_FALSE;
+
+	/*check for id3*/
+	if (size>= 10) {
+		if (data[0] == 'I' && data[1] == 'D' && data[2] == '3') {
+			u32 tag_size = ((data[9] & 0x7f) + ((data[8] & 0x7f) << 7) + ((data[7] & 0x7f) << 14) + ((data[6] & 0x7f) << 21));
+
+			if (tag_size+10 > size) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("ID3 tag detected size %d but probe data only %d bytes, will rely on file extension (try increasing probe size using --block_size)\n", tag_size+10, size));
+				*score = GF_FPROBE_EXT_MATCH;
+				return "aac|adts";
+			}
+			data += tag_size+10;
+			size -= tag_size+10;
+			has_id3 = GF_TRUE;
+		}
+	}
+
+	bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
 	memset(&prev_hdr, 0, sizeof(ADTSHeader));
 	while (gf_bs_available(bs)) {
 		ADTSHeader hdr;
 		u32 pos;
-		if (!adts_dmx_sync_frame_bs(bs, &hdr)) break;
+		hdr.frame_size = 0;
+		if (!adts_dmx_sync_frame_bs(bs, &hdr)) {
+			if (hdr.frame_size) {
+				//nb_frames++;
+				max_consecutive_frames++;
+			}
+			break;
+		}
 		if ((hdr.hdr_size!=7) && (hdr.hdr_size!=9)) continue;
 		if (!hdr.nb_ch) continue;
 		pos = (u32) gf_bs_get_position(bs);
@@ -729,6 +824,7 @@ static const char *adts_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 				break;
 		} else {
 			nb_frames=1;
+			has_broken_data=GF_TRUE;
 		}
 		prev_hdr = hdr;
 		gf_bs_skip_bytes(bs, hdr.frame_size);
@@ -736,6 +832,10 @@ static const char *adts_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 	}
 	gf_bs_del(bs);
 	if (max_consecutive_frames>=4) {
+		*score = has_broken_data ? GF_FPROBE_MAYBE_SUPPORTED : GF_FPROBE_SUPPORTED;
+		return "audio/aac";
+	}
+	if (has_id3 && max_consecutive_frames) {
 		*score = GF_FPROBE_MAYBE_SUPPORTED;
 		return "audio/aac";
 	}
@@ -766,7 +866,7 @@ static const GF_FilterArgs ADTSDmxArgs[] =
 {
 	{ OFFS(frame_size), "size of AAC frame in audio samples", GF_PROP_UINT, "1024", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(index), "indexing window length", GF_PROP_DOUBLE, "1.0", NULL, 0},
-	{ OFFS(mpeg4), "force signaling as MPEG-4 AAC", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+//	{ OFFS(mpeg4), "force signaling as MPEG-4 AAC", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ovsbr), "force oversampling SBR (does not multiply timescales by 2)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(sbr), "set SBR signaling\n"\
 				"- no: no SBR signaling at all\n"\
@@ -778,6 +878,7 @@ static const GF_FilterArgs ADTSDmxArgs[] =
 				"- imp: backward-compatible PS signaling (audio signaled as AAC-LC)\n"\
 				"- exp: explicit PS signaling (audio signaled as AAC-PS)"\
 				, GF_PROP_UINT, "no", "no|imp|exp", GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(expart), "expose pictures as a dedicated video pid", GF_PROP_BOOL, "false", NULL, 0},
 	{0}
 };
 

@@ -41,7 +41,7 @@ extension = {
     initial_loop: false,
     initial_speed: 1,
     initial_start: 0,
-    show_stats_init: 0,
+    show_stats_init: false,
 	def_width: 600,
 	def_height: 600,
 	disabled: false,
@@ -172,6 +172,13 @@ extension = {
 
         this.movie.children[0].extension = this;
 
+        if (gwskin.mobile_device) {
+            var size = scene.screen_width;
+            if (size > scene.screen_height) size = scene.screen_height;
+            this.def_width = size;
+        }
+
+
         this.movie.children[0].on_scene_size = function (evt) {
             var ext = this.extension;
 
@@ -181,10 +188,10 @@ extension = {
                 //process the error or connect service
                 if (evt.error) {
                     if (ext.test_mode) {
-                        gpac.exit(1);                    
+                        scene.exit(1);                    
                     }
 
-                    var notif = gw_new_message(null, 'Error opening file!', 'Failed to open ' + this.url[0] + '\n\nReason: ' + gpac.error_string(evt.error));
+                    var notif = gw_new_message(null, 'Error opening file!', 'Failed to open ' + this.url[0] + '\n\nReason: ' + Sys.error_string(evt.error));
                     notif.show();
 
                     var url = ext.movie.children[0].url.length ? ext.movie.children[0].url[0] : '';
@@ -206,9 +213,10 @@ extension = {
 
                 //switch back inline nodes and remove from dictionary
                 gw_detach_child(this);
-                //force detach, we don't know when GC will be done
-                ext.movie.children[0].url[0] = '';
+                let old_inline = ext.movie.children[0];
                 ext.movie.children[0] = this;
+                //force detach, we don't know when GC will be done
+                old_inline.url[0] = '';
                 if (evt.error) return;
 
 
@@ -222,7 +230,8 @@ extension = {
                     ext.movie_control.mediaStopTime = ext.initial_start;
                 }
                 ext.movie_control.loop = ext.initial_loop;
-                alert('mc.mST is ' + ext.movie_control.mediaStopTime);
+                ext.controler.loop.switch_icon(ext.movie_control.loop ? 1 : 0);
+
 
                 ext.movie_control.url[0] = ext.current_url;
                 ext.movie_sensor.url[0] = ext.current_url;
@@ -233,7 +242,7 @@ extension = {
                 ext.initial_speed = 1;
                 ext.initial_start = 0;
 
-                gwlog(l_inf, 'URL connected');
+                gwlog(l_deb, 'URL connected');
 
                 if ((ext.current_url.indexOf('gpac://') == 0) && ((ext.current_url.indexOf('://') < 0) || (ext.current_url.indexOf('file://') == 0))) {
                     ext.local_url = true;
@@ -241,23 +250,22 @@ extension = {
                     ext.local_url = false;
                 }
 
-                ext.root_odm = gpac.get_object_manager(ext.current_url);
+                ext.root_odm = scene.get_object_manager(ext.current_url);
                 ext.reverse_playback_supported = ext.root_odm.reverse_playback_supported;
 
                 ext.controler.hide();
 
 				var names = ext.current_url.split('/');
 				if (names.length == 0) names = ext.current_url.split('\\');
-				gpac.caption = names.pop();
+				scene.caption = names.pop();
 				
                 ext.add_bookmark(ext.current_url, true);
 
 				gwskin.enable_background(false);
                 ext.declare_addons();
 
-                if (ext.initial_service_id) {
-                    var odm = gpac.get_object_manager(ext.current_url);
-                    if (odm) odm.select_service(ext.initial_service_id);
+                if (ext.initial_service_id && ext.root_odm) {
+                    ext.root_odm.select_service(ext.initial_service_id);
                     ext.initial_service_id = 0;
                 }
 
@@ -278,32 +286,32 @@ extension = {
 
             if (!ext.movie_connected) {
                 ext.movie_connected = true;
-                gpac.set_3d(evt.type3d ? 1 : 0);
+                scene.set_3d(evt.type3d ? 1 : 0);
                 ext.controler.play.switch_icon(ext.icon_pause);
                 ext.dynamic_scene = evt.dynamic_scene;
                 //force display size notif on controler to trigger resize of the window
                 ext.controler.on_display_size(ext.controler.width, ext.controler.height);
             }
 
-            ext.root_odm = gpac.get_object_manager(ext.current_url);
+//            ext.root_odm = scene.get_object_manager(ext.current_url);
             ext.set_state(ext.GF_STATE_PLAY);
 
             //override scene size info
-            gpac.set_size(evt.width, evt.height, true);
+            scene.set_size(evt.width, evt.height, true);
 
-            if (!gpac.fullscreen && evt.width && evt.height) {
+            if (!scene.fullscreen && evt.width && evt.height) {
                 var w, h;
                 w = evt.width;
                 h = evt.height;
 
-                if (w > gpac.screen_width) w = gpac.screen_width;
-                if (h > gpac.screen_height) h = gpac.screen_height;
+                if (w > scene.screen_width) w = scene.screen_width;
+                if (h > scene.screen_height) h = scene.screen_height;
 
 				if (w<this.extension.def_width)
                     w = this.extension.def_width;
 
-                gwlog(l_inf, 'set output size to ' + w + 'x' + h);
-                gpac.set_size(w, h);
+                gwlog(l_deb, 'set output size to ' + w + 'x' + h);
+                scene.set_size(w, h);
             }
             ext.streamlist_changed();
 
@@ -351,6 +359,10 @@ extension = {
                 var percent_dload = 100 * evt.loaded / evt.total;
                 if (percent_dload >= 100) percent_dload = 0;
                 this.extension.controler.media_line.set_progress(percent_dload);
+            } else if (evt.bufferLevel && (evt.bufferRemainingTime>1000) ) {
+                var buf_lev = evt.bufferLevel;
+                if (evt.bufferLevel >= 100) buf_lev = 0;
+                this.extension.controler.media_line.set_progress(buf_lev);
             }
         }
 
@@ -362,9 +374,6 @@ extension = {
 
                 this.extension.controler.play.switch_icon(this.extension.icon_pause);
 
-                if (!this.extension.root_odm) {
-                    this.extension.root_odm = gpac.get_object_manager(this.extension.current_url);
-                }
                 if (this.extension.root_odm) {
                     this.extension.declare_addons();
                 }
@@ -646,20 +655,20 @@ extension = {
         wnd.snd_low.add_icon('audio_mute');
         wnd.snd_low.on_click = function () {
             if (this.extension.muted) {
-                gpac.volume = this.extension.muted;
+                scene.volume = this.extension.muted;
                 this.extension.muted = 0;
                 this.switch_icon(0);
             } else {
-                this.extension.muted = gpac.volume ? gpac.volume : 1;
-                gpac.volume = 0;
+                this.extension.muted = scene.volume ? scene.volume : 1;
+                scene.volume = 0;
                 this.switch_icon(1);
             }
         }
         wnd.snd_ctrl.on_slide = function (value, type) {
             if (this.extension.muted) this.extension.controler.snd_low.on_click();
-            gpac.volume = value;
+            scene.volume = value;
         }
-        wnd.snd_ctrl.set_value(gpac.volume);
+        wnd.snd_ctrl.set_value(scene.volume);
 
         wnd.open = null;
         if (!gwskin.browser_mode) {
@@ -720,13 +729,13 @@ extension = {
             wnd.fullscreen = gw_new_icon(wnd.infobar, 'fullscreen');
             wnd.fullscreen.add_icon(gwskin.images.fullscreen_back);
             wnd.fullscreen.on_click = function () {
-                gpac.fullscreen = !gpac.fullscreen;
+                scene.fullscreen = !scene.fullscreen;
             }
-            wnd.fullscreen.switch_icon(gpac.fullscreen ? 1 : 0);
+            wnd.fullscreen.switch_icon(scene.fullscreen ? 1 : 0);
 
             if (!gwskin.browser_mode) {
                 wnd.exit = gw_new_icon(wnd.infobar, 'exit');
-                wnd.exit.on_click = function () { gpac.exit(); }
+                wnd.exit.on_click = function () { scene.exit(); }
             } else {
                 wnd.exit = null;
             }
@@ -742,7 +751,7 @@ extension = {
             if (this.time) this.time.set_size(4 * wnd.time.font_size(), control_icon_size);
             if (this.snd_ctrl) {
                 this.snd_ctrl.set_size(2 * control_icon_size, control_icon_size / 2, control_icon_size / 3, control_icon_size / 2);
-                this.snd_ctrl.set_value(gpac.volume);
+                this.snd_ctrl.set_value(scene.volume);
             }
 
             var speed = this.extension.movie_control.mediaSpeed;
@@ -762,7 +771,6 @@ extension = {
             var control_icon_size = gwskin.default_icon_height;
             var is_over = true;
             var show_navigate = false;
-
             if (arguments.length == 0) {
                 width = this.width;
                 height = this.height;
@@ -772,19 +780,18 @@ extension = {
             this.on_size(width, height);
 
             if (this.fullscreen)
-                this.fullscreen.switch_icon(gpac.fullscreen ? 1 : 0);
+                this.fullscreen.switch_icon(scene.fullscreen ? 1 : 0);
 
             width -= control_icon_size / 2;
             min_w = control_icon_size;
             if (this.time.visible) min_w += this.time.width;
             if (this.open) min_w += control_icon_size;
             if (this.home) min_w += control_icon_size;
-            if (this.exit && gpac.fullscreen) min_w += control_icon_size;
+            if (this.exit && scene.fullscreen) min_w += control_icon_size;
             full_w = 0;
             if (this.snd_low) full_w += control_icon_size;
             if (this.snd_ctrl) full_w += this.snd_ctrl.width;
             if (this.fullscreen) full_w += control_icon_size;
-
 
             if (this.navigate) {
                 this.navigate.hide();
@@ -794,12 +801,12 @@ extension = {
                     full_w += control_icon_size;
 				
 					wnd.navigate.on_click = function () {
-//						var sensors_active = gpac.sensors_active;
-//						gpac.sensors_active = !sensors_active;
+//						var sensors_active = scene.sensors_active;
+//						scene.sensors_active = !sensors_active;
 //						this.switch_icon(sensors_active ? 1 : 0);
                         this.extension.select_navigation_vr();
 					}
-				} else if ( (this.extension.dynamic_scene != 1) && this.extension.movie_connected && (gpac.navigation_type != GF_NAVIGATE_TYPE_NONE)) {
+				} else if ( (this.extension.dynamic_scene != 1) && this.extension.movie_connected && (scene.navigation_type != GF_NAVIGATE_TYPE_NONE)) {
                     show_navigate = true;
                     full_w += control_icon_size;
 
@@ -807,7 +814,6 @@ extension = {
 						this.extension.select_navigation_type();
 					}
                 }
- 
             }
 
             if (this.extension.movie_connected) {
@@ -842,7 +848,7 @@ extension = {
                 this.stop.hide();
                 this.play.hide();
             }
-
+ 
             if (this.extension.duration) {
 				if (this.forward) full_w += control_icon_size;
 				if (this.extension.duration>1) {
@@ -863,14 +869,13 @@ extension = {
                 this.back_live.hide();
             }
 
-
             if (this.remote && UPnP.MediaRenderersCount && (this.extension.current_url != '')) {
                 full_w += control_icon_size;
             }
             time_w = this.media_line.visible ? 2 * control_icon_size : 0;
 
             if (this.exit) {
-                if (gpac.fullscreen) {
+                if (scene.fullscreen) {
                     this.exit.show();
                 } else {
                     this.exit.hide();
@@ -933,9 +938,9 @@ extension = {
         wnd.on_display_size = function (width, height) {
 			var h;
 
-			if (!gpac.fullscreen) {
+			if (!scene.fullscreen) {
                 if (width < this.extension.def_width) {
-                    gpac.set_size(this.extension.def_width, height);
+                    scene.set_size(this.extension.def_width, height);
                     return;
                 }
             } else {
@@ -954,9 +959,7 @@ extension = {
             }
             else h = 1.1 * gwskin.default_icon_height;
 
-
             this.set_size(this.extension.def_width, h);
-
 			this.extension.safe_interact.set_size(gwskin.default_icon_height, gwskin.default_icon_height);
 			this.extension.safe_interact.show();
 			this.extension.safe_interact.move((-gwskin.default_icon_height+width)/2, (gwskin.default_icon_height-height)/2);
@@ -990,12 +993,22 @@ extension = {
             this.init_extension();
 
             //check our args
-            var i, argc = gpac.argc;
+            var i;
             var url_arg = null;
-
-            for (i = 1; i < argc; i++) {
-                var arg = gpac.get_arg(i);
+            var prog_name = Sys.args[0]; 
+            var check_gpac_args = 1;
+            //check mp4client or MP4Client
+            if (prog_name && (prog_name.indexOf('lient')>=0))
+                check_gpac_args = 0;
+            
+            for (i = 1; i < Sys.args.length; i++) {
+                var arg = Sys.args[i];
                 if (!arg) break;
+
+                if (check_gpac_args==1) {
+                    if (arg=='-xopt') check_gpac_args=2;
+                    continue;
+                }
 
                 //that's our file
                 if (arg.charAt(0) != '-') {
@@ -1004,43 +1017,39 @@ extension = {
 
                     if (arg.indexOf('://') < 0) url_arg = 'gpac://' + arg;
                     else url_arg = arg;
+                    continue;
                 }
 
                 //MP4Client options taking 2 args
-                else if ((arg == '-rti') || (arg == '-rtix') || (arg == '-p') || (arg == '-size') || (arg == '-lf') || (arg == '-log-file') || (arg == '-logs')
-                    || (arg == '-opt') || (arg == '-ifce') || (arg == '-views') || (arg == '-mosaic') || (arg == '-avi') || (arg == '-out') || (arg == '-ntp-shift')
-                    || (arg == '-fps') || (arg == '-scale') || (arg == '-run-for') || (arg == '-bl')
-                ) {
-        			i++;
-                } else if (arg == '-service') {
-                    this.initial_service_id = parseInt(gpac.get_arg(i + 1));
-                    i++;
-                } else if (arg == '-com') {
-                    arg = gpac.get_arg(i + 1);
-                    var idx = arg.indexOf('gpac add ');
-
-                    if (idx == 0) {
-                        this.default_addon = arg.substring(9);
+                if (!check_gpac_args) {
+                    if ((arg == '-rti') || (arg == '-rtix') || (arg == '-p') || (arg == '-size') || (arg == '-lf') || (arg == '-log-file') || (arg == '-logs')
+                        || (arg == '-opt') || (arg == '-ifce') || (arg == '-views') || (arg == '-mosaic') || (arg == '-avi') || (arg == '-out') || (arg == '-ntp-shift')
+                        || (arg == '-fps') || (arg == '-scale') || (arg == '-run-for') || (arg == '-bl')
+                    ) {
+                        i++;
+                        continue;
                     }
+                }
 
-                    i++;
-                } else if (arg == '-addon') {
-                    this.default_addon = gpac.get_arg(i + 1);
-                    i++;
+                if (arg.startsWith('-service=')) {
+                    this.initial_service_id = parseInt(arg.substring(9));
+                } else if (arg.startsWith('-addon=')) {
+                    this.default_addon = arg.substring(7);
                 } else if (arg == '-loop') {
                     this.initial_loop = true;
-                } else if (arg == '-stats') {
+                } else if ((arg == '-stats') || (arg == '-stat')) {
                     this.show_stats_init = true;
                 } else if (arg == '-gui-test') {
                     this.test_mode = true;
                     this.show_stats_init = true;
-                } else if (arg == '-speed') {
-                    this.initial_speed = Number(gpac.get_arg(i + 1));
-                    i++;
-                } else if (arg == '-play-from') {
-                    this.initial_start = Number(gpac.get_arg(i + 1));
-                    i++;
+                } else if (arg.startsWith('-speed=')) {
+                    this.initial_speed = Number(arg.substring(7));
+                } else if (arg.startsWith('-play-from=')) {
+                    this.initial_start = Number(arg.substring(11));
+                } else {
+                    continue;
                 }
+                Sys.set_arg_used(i, true);
             }
 
             gwskin.media_url = '';
@@ -1058,16 +1067,6 @@ extension = {
                 return;
             }
             this.set_playlist_mode(true);
-
-            /*
-            var label = '';
-            for (i = 1; i < argc; i++) {
-            label += '#'+i + ': ' + gpac.get_arg(i) + '\n';
-            }
-            var notif = gw_new_message(null, 'GPAC Arguments', label);
-            notif.show();
-            */
-
         }
 
         this.controler.show();
@@ -1076,14 +1075,22 @@ extension = {
     },
 
     coverage_tests: function() {
-        gpac.trigger_gc();
-        gpac.navigation_supported(GF_NAVIGATE_EXAMINE);
-        gpac.move_window(0,0, true);
-        gpac.error_string(-1);
-        gpac.show_keyboard(true);
-        gpac.switch_quality(true);
-        var z = gpac.zoom;
-        z = gpac.text_selection;
+        scene.trigger_gc();
+        scene.navigation_supported(GF_NAVIGATE_EXAMINE);
+        scene.move_window(0,0, true);
+        scene.show_keyboard(true);
+        scene.switch_quality(true);
+        var z = scene.zoom;
+        z = scene.text_selection;
+
+        //test filtersession API
+        let nb_filters = session.nb_filters;
+        print("init ok, filter: " + nb_filters);
+        for (let idx=0; idx<nb_filters; idx++) {
+            let f = session.get_filter(idx);
+            if (! this.root_odm.in_parent_chain(f)) continue;
+            print("F#"+(idx+1) + " : " + f.name);
+        }
 
         var m = this.stats_resources[0];
         //m.gui.info.on_click();
@@ -1200,8 +1207,8 @@ extension = {
                 str = '-';
             }
         }
-        if (this.test_mode && (value>2)) {
-            gpac.exit();                    
+        if (this.test_mode && (value>3)) {
+            scene.exit(3);                    
         }
 
         h = Math.floor(value / 3600);
@@ -1403,7 +1410,7 @@ extension = {
             this.movie_sensor.url[0] = url;
             if (this.UPnP_Enabled) UPnP.MovieURL = url;
             this.movie_connected = (url == '') ? false : true;
-            gpac.caption = url;
+            scene.caption = url;
             this.root_odm = null;
 			this.controler.layout();
 
@@ -1416,11 +1423,13 @@ extension = {
                 this.movie_control.url[0] = url;
                 this.movie_sensor.url[0] = url;
                 this.movie.children[0].url[0] = url;
+                this.root_odm = null;
                 return;
             }
 
             this.default_addon = null;
             this.root_odm = null;
+            this.stoped_url = null;
 
             /*create a temp inline holding the previous scene, use it as the main movie and use the old inline to test the resource. 
             This avoids messing up with event targets already setup*/
@@ -1499,9 +1508,9 @@ extension = {
     },
 
     select_navigation_vr: function () {
-        var sensors_active = gpac.sensors_active;
+        var sensors_active = scene.sensors_active;
         var extension = this;
-//                      gpac.sensors_active = !sensors_active;
+//                      scene.sensors_active = !sensors_active;
 //                      this.switch_icon(sensors_active ? 1 : 0);
   
         var nb_items = 0;
@@ -1516,33 +1525,33 @@ extension = {
         wnd.on_close = function () {
             this.extension.navigation_wnd = null;
         }
-        wnd.add_menu_item(sensors_active ? "Keyboard+mouse" : "Sensors", function () { gpac.sensors_active = !sensors_active; } );
+        wnd.add_menu_item(sensors_active ? "Keyboard+mouse" : "Sensors", function () { scene.sensors_active = !sensors_active; } );
 
         if (this.view_stereo==extension.GF_VIEW_MONO) {
             wnd.add_menu_item("Stereo", function () {
                 extension.view_stereo = extension.GF_VIEW_STEREO; 
-                gpac.set_option("Compositor", "stereo", "hmd"); 
+                scene.set_option("Compositor", "stereo", "hmd"); 
               }
              );
         } else if (this.view_stereo==extension.GF_VIEW_STEREO) {
             wnd.add_menu_item("Stereo Side", function () {
                extension.view_stereo = extension.GF_VIEW_STEREO_SIDE;
-               gpac.set_option("Compositor", "fpack", "side");
-               gpac.set_option("Compositor", "stereo", "hmd");
+               scene.set_option("Compositor", "fpack", "side");
+               scene.set_option("Compositor", "stereo", "hmd");
               }
              );
         } else if (this.view_stereo==extension.GF_VIEW_STEREO_SIDE) {
             wnd.add_menu_item("Stereo Top", function () {
                  extension.view_stereo = extension.GF_VIEW_STEREO_TOP;
-                 gpac.set_option("Compositor", "fpack", "top");  
-                 gpac.set_option("Compositor", "stereo", "hmd");  
+                 scene.set_option("Compositor", "fpack", "top");  
+                 scene.set_option("Compositor", "stereo", "hmd");  
                 }
             );
         } else {
             wnd.add_menu_item("Mono", function () {
                 extension.view_stereo = extension.GF_VIEW_MONO;
-                gpac.set_option("Compositor", "fpack", "none");  
-                gpac.set_option("Compositor", "stereo", "none");  
+                scene.set_option("Compositor", "fpack", "none");  
+                scene.set_option("Compositor", "stereo", "none");  
             }
             );
         }
@@ -1554,7 +1563,7 @@ extension = {
 
     select_navigation_type: function () {
         var nb_items = 0;
-        var type = gpac.navigation;
+        var type = scene.navigation;
         if (this.navigation_wnd) {
             this.navigation_wnd.close();
             return;
@@ -1570,14 +1579,14 @@ extension = {
         wnd.select = function (type) {
             this.extension.navigation_wnd = null;
             if (type == 'reset') {
-                gpac.navigation_type = 0;
+                scene.navigation_type = 0;
             } else {
-                gpac.navigation = type;
+                scene.navigation = type;
             }
         }
         wnd.make_select_item = function (text, type, current_type) {
             if (current_type == type) text = '* ' + text;
-            if (gpac.navigation_supported(type)) {
+            if (scene.navigation_supported(type)) {
                 wnd.add_menu_item(text, function () { this.select(type); });
             }
         }
@@ -1587,7 +1596,7 @@ extension = {
         wnd.make_select_item('Slide', GF_NAVIGATE_SLIDE, type);
         wnd.make_select_item('Examine', GF_NAVIGATE_EXAMINE, type);
 
-        if (gpac.navigation_type == GF_NAVIGATE_TYPE_3D) {
+        if (scene.navigation_type == GF_NAVIGATE_TYPE_3D) {
             wnd.make_select_item('Walk', GF_NAVIGATE_WALK, type);
             wnd.make_select_item('Fly', GF_NAVIGATE_FLY, type);
             wnd.make_select_item('Pan', GF_NAVIGATE_PAN, type);
@@ -1782,10 +1791,10 @@ extension = {
 
         var t = new Date()
         stat_obj.time = Math.round(t.getTime() / 1000);
-        stat_obj.fps = Math.round(100 * gpac.fps) / 100;
-        stat_obj.cpu = gpac.cpu;
-        stat_obj.memory = Math.round(100 * gpac.memory / 1000 / 1000) / 100;
-        stat_obj.http_bandwidth = Math.round(gpac.http_bitrate);
+        stat_obj.fps = Math.round(100 * scene.fps) / 100;
+        stat_obj.cpu = Sys.process_cpu_usage;
+        stat_obj.memory = Math.round(100 * Sys.gpac_memory / 1000 / 1000) / 100;
+        stat_obj.http_bandwidth = Math.round(session.http_bitrate);
         stat_obj.bitrate = 0;
         stat_obj.buffer = 0;
         stat_obj.ntp_diff = 0;

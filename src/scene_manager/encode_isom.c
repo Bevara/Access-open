@@ -520,6 +520,7 @@ static GF_Err gf_sm_encode_scene(GF_SceneManager *ctx, GF_ISOFile *mp4, GF_SMEnc
 	if (!scene_type) {
 #ifndef GPAC_DISABLE_BIFS_ENC
 		bifs_enc = gf_bifs_encoder_new(ctx->scene_graph);
+		if (!bifs_enc) return GF_OUT_OF_MEM;
 		/*no streams defined, encode a RAP*/
 		if (!j) {
 			delete_desc = 0;
@@ -527,7 +528,8 @@ static GF_Err gf_sm_encode_scene(GF_SceneManager *ctx, GF_ISOFile *mp4, GF_SMEnc
 			is_in_iod = 1;
 			goto force_scene_rap;
 		}
-		gf_bifs_encoder_set_source_url(bifs_enc, opts->src_url);
+		if (opts)
+			gf_bifs_encoder_set_source_url(bifs_enc, opts->src_url);
 #else
 		return GF_NOT_SUPPORTED;
 #endif
@@ -536,6 +538,7 @@ static GF_Err gf_sm_encode_scene(GF_SceneManager *ctx, GF_ISOFile *mp4, GF_SMEnc
 	if (scene_type==1) {
 #ifndef GPAC_DISABLE_LASER
 		lsr_enc = gf_laser_encoder_new(ctx->scene_graph);
+		if (!lsr_enc) return GF_OUT_OF_MEM;
 		/*no streams defined, encode a RAP*/
 		if (!j) {
 			delete_desc = 0;
@@ -554,9 +557,13 @@ static GF_Err gf_sm_encode_scene(GF_SceneManager *ctx, GF_ISOFile *mp4, GF_SMEnc
 		esd = NULL;
 		if (sc->streamType != GF_STREAM_SCENE) continue;
 		/*NOT BIFS*/
-		if (!scene_type && (sc->codec_id > 2) ) continue;
+#ifndef GPAC_DISABLE_BIFS_ENC
+		if (bifs_enc && (sc->codec_id > 2) ) continue;
+#endif
 		/*NOT LASeR*/
-		if (scene_type && (sc->codec_id != 0x09) ) continue;
+#ifndef GPAC_DISABLE_LASER
+		if (lsr_enc && (sc->codec_id != 0x09) ) continue;
+#endif
 
 		delete_desc = 0;
 		esd = NULL;
@@ -583,8 +590,6 @@ static GF_Err gf_sm_encode_scene(GF_SceneManager *ctx, GF_ISOFile *mp4, GF_SMEnc
 		}
 		if (!esd && sc->ESID) esd = gf_sm_locate_esd(ctx, sc->ESID);
 
-		au = NULL;
-
 #ifndef GPAC_DISABLE_VRML
 		/*special BIFS direct import from NHNT*/
 		au = (GF_AUContext*)gf_list_get(sc->AUs, 0);
@@ -609,7 +614,11 @@ static GF_Err gf_sm_encode_scene(GF_SceneManager *ctx, GF_ISOFile *mp4, GF_SMEnc
 		}
 #endif
 
-		if (!au && esd && !esd->URLString) {
+		if (esd && !esd->URLString
+#ifndef GPAC_DISABLE_VRML
+			&& !au
+#endif
+		) {
 			/*if not in IOD, the stream will be imported when encoding the OD stream*/
 			if (!is_in_iod) continue;
 #ifndef GPAC_DISABLE_MEDIA_IMPORT
@@ -627,6 +636,10 @@ force_scene_rap:
 		if (!esd) {
 			delete_desc = 1;
 			esd = gf_odf_desc_esd_new(2);
+			if (!esd) {
+				e = GF_OUT_OF_MEM;
+				goto exit;
+			}
 			gf_odf_desc_del((GF_Descriptor *) esd->decoderConfig->decoderSpecificInfo);
 			esd->decoderConfig->decoderSpecificInfo = NULL;
 			esd->ESID = sc ? sc->ESID : 1;
@@ -634,10 +647,18 @@ force_scene_rap:
 		}
 
 		if (!esd->slConfig) esd->slConfig = (GF_SLConfig *) gf_odf_desc_new(GF_ODF_SLC_TAG);
+		if (!esd->slConfig) {
+			e = GF_OUT_OF_MEM;
+			goto exit;
+		}
 		if (sc && sc->timeScale) esd->slConfig->timestampResolution = sc->timeScale;
 		if (!esd->slConfig->timestampResolution) esd->slConfig->timestampResolution = 1000;
 
 		if (!esd->decoderConfig) esd->decoderConfig = (GF_DecoderConfig*)gf_odf_desc_new(GF_ODF_DCD_TAG);
+		if (!esd->decoderConfig) {
+			e = GF_OUT_OF_MEM;
+			goto exit;
+		}
 		esd->decoderConfig->streamType = GF_STREAM_SCENE;
 
 		/*create track*/
@@ -660,11 +681,19 @@ force_scene_rap:
 
 			if (!esd->decoderConfig->decoderSpecificInfo) {
 				bcfg = (GF_BIFSConfig*)gf_odf_desc_new(GF_ODF_BIFS_CFG_TAG);
+				if (!bcfg) {
+					e = GF_OUT_OF_MEM;
+					goto exit;
+				}
 				delete_bcfg = 1;
 			} else if (esd->decoderConfig->decoderSpecificInfo->tag == GF_ODF_BIFS_CFG_TAG) {
 				bcfg = (GF_BIFSConfig *)esd->decoderConfig->decoderSpecificInfo;
 			} else {
 				bcfg = gf_odf_get_bifs_config(esd->decoderConfig->decoderSpecificInfo, esd->decoderConfig->objectTypeIndication);
+				if (!bcfg) {
+					e = GF_OUT_OF_MEM;
+					goto exit;
+				}
 				delete_bcfg = 1;
 			}
 			/*update NodeIDbits and co*/
@@ -692,6 +721,10 @@ force_scene_rap:
 			/*create final BIFS config*/
 			if (esd->decoderConfig->decoderSpecificInfo) gf_odf_desc_del((GF_Descriptor *) esd->decoderConfig->decoderSpecificInfo);
 			esd->decoderConfig->decoderSpecificInfo = (GF_DefaultDescriptor *) gf_odf_desc_new(GF_ODF_DSI_TAG);
+			if (! esd->decoderConfig->decoderSpecificInfo) {
+				e = GF_OUT_OF_MEM;
+				goto exit;
+			}
 			gf_bifs_encoder_get_config(bifs_enc, esd->ESID, &data, &data_len);
 			esd->decoderConfig->decoderSpecificInfo->data = data;
 			esd->decoderConfig->decoderSpecificInfo->dataLength = data_len;
@@ -714,6 +747,10 @@ force_scene_rap:
 			/*create final BIFS config*/
 			if (esd->decoderConfig->decoderSpecificInfo) gf_odf_desc_del((GF_Descriptor *) esd->decoderConfig->decoderSpecificInfo);
 			esd->decoderConfig->decoderSpecificInfo = (GF_DefaultDescriptor *) gf_odf_desc_new(GF_ODF_DSI_TAG);
+			if (!esd->decoderConfig->decoderSpecificInfo) {
+				e = GF_OUT_OF_MEM;
+				goto exit;
+			}
 
 			/*this is for safety, otherwise some players may not understand NULL node*/
 			if (flags & GF_SM_ENCODE_USE_NAMES) lsrcfg.force_string_ids = 1;

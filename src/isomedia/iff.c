@@ -223,6 +223,7 @@ GF_Err pixi_box_read(GF_Box *s, GF_BitStream *bs)
 		p->num_channels = gf_bs_read_u8(bs);
 		p->bits_per_channel = (u8 *)gf_malloc(p->num_channels);
 		for (i = 0; i < p->num_channels; i++) {
+			ISOM_DECREASE_SIZE(p, 1)
 			p->bits_per_channel[i] = gf_bs_read_u8(bs);
 		}
 		return GF_OK;
@@ -476,6 +477,7 @@ GF_Err ipma_box_read(GF_Box *s, GF_BitStream *bs)
 	GF_ItemPropertyAssociationBox *p = (GF_ItemPropertyAssociationBox *)s;
 	u32 entry_count;
 
+	ISOM_DECREASE_SIZE(p, 4)
 	entry_count = gf_bs_read_u32(bs);
 	for (i = 0; i < entry_count; i++) {
 		GF_ItemPropertyAssociationEntry *entry;
@@ -483,12 +485,15 @@ GF_Err ipma_box_read(GF_Box *s, GF_BitStream *bs)
 		if (!entry) return GF_OUT_OF_MEM;
 		gf_list_add(p->entries, entry);
 		if (p->version == 0) {
+			ISOM_DECREASE_SIZE(p, 3)
 			entry->item_id = gf_bs_read_u16(bs);
 		} else {
+			ISOM_DECREASE_SIZE(p, 5)
 			entry->item_id = gf_bs_read_u32(bs);
 		}
 		entry->nb_associations = gf_bs_read_u8(bs);
 		entry->associations = gf_malloc(sizeof(GF_ItemPropertyAssociationSlot) * entry->nb_associations);
+		if (!entry->associations) return GF_OUT_OF_MEM;
 		for (j = 0; j < entry->nb_associations; j++) {
 			if (p->flags & 1) {
 				u16 tmp = gf_bs_read_u16(bs);
@@ -605,15 +610,13 @@ void grptype_box_del(GF_Box *s)
 
 GF_Err grptype_box_read(GF_Box *s, GF_BitStream *bs)
 {
-	u32 bytesToRead;
 	u32 i;
 	GF_EntityToGroupTypeBox *ptr = (GF_EntityToGroupTypeBox *)s;
 
-	bytesToRead = (u32) (ptr->size);
-	if (!bytesToRead) return GF_OK;
+	ISOM_DECREASE_SIZE(ptr, 8)
 	ptr->group_id = gf_bs_read_u32(bs);
 	ptr->entity_id_count = gf_bs_read_u32(bs);
-	ISOM_DECREASE_SIZE(ptr, 8)
+
 	if (ptr->entity_id_count*4 > ptr->size) return GF_ISOM_INVALID_FILE;
 
 	ptr->entity_ids = (u32 *) gf_malloc(ptr->entity_id_count * sizeof(u32));
@@ -859,6 +862,7 @@ void clli_box_del(GF_Box *a)
 GF_Err clli_box_read(GF_Box *s, GF_BitStream *bs)
 {
 	GF_ContentLightLevelBox *p = (GF_ContentLightLevelBox *)s;
+	ISOM_DECREASE_SIZE(p, 4)
 	p->clli.max_content_light_level = gf_bs_read_u16(bs);
 	p->clli.max_pic_average_light_level = gf_bs_read_u16(bs);
 	return GF_OK;
@@ -903,6 +907,7 @@ GF_Err mdcv_box_read(GF_Box *s, GF_BitStream *bs)
 {
 	int c = 0;
 	GF_MasteringDisplayColourVolumeBox *p = (GF_MasteringDisplayColourVolumeBox *)s;
+	ISOM_DECREASE_SIZE(p, 24)
 	for (c = 0; c<3; c++) {
 		p->mdcv.display_primaries[c].x = gf_bs_read_u16(bs);
 		p->mdcv.display_primaries[c].y = gf_bs_read_u16(bs);
@@ -951,8 +956,6 @@ GF_Err mdcv_box_size(GF_Box *s)
 static GF_Err gf_isom_iff_create_image_item_from_track_internal(GF_ISOFile *movie, Bool root_meta, u32 meta_track_number, u32 imported_track, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props, GF_List *item_extent_refs, u32 sample_number) {
 #ifndef GPAC_DISABLE_ISOM_WRITE
 	GF_Err e;
-	u32 imported_sample_desc_index = 1;
-//	u32 sample_index = 1;
 	u32 w, h, hSpacing, vSpacing;
 	u8 num_channels;
 	u8 bits_per_channel[3];
@@ -976,7 +979,7 @@ static GF_Err gf_isom_iff_create_image_item_from_track_internal(GF_ISOFile *movi
 		char sz_item_name[256];
 		GF_TileItemMode orig_tile_mode;
 
-#ifndef GPAC_DISABLE_AV_PARSERS
+#if !defined(GPAC_DISABLE_HEVC) && !defined(GPAC_DISABLE_AV_PARSERS)
 		e = gf_media_split_hevc_tiles(movie, 0);
 #else
 		e = GF_NOT_SUPPORTED;
@@ -989,6 +992,8 @@ static GF_Err gf_isom_iff_create_image_item_from_track_internal(GF_ISOFile *movi
 		count = gf_isom_get_reference_count(movie, imported_track, GF_ISOM_REF_SABT);
 		for (i = 0; i < count; i++) {
 			u32 *tile_item_id = gf_malloc(sizeof(u32));
+			if (!tile_item_id) return GF_OUT_OF_MEM;
+
 			*tile_item_id = item_id + i+1;
 			gf_list_add(tile_item_ids, tile_item_id);
 			e = gf_isom_get_reference(movie, imported_track, GF_ISOM_REF_SABT, 1, &tile_track);
@@ -1019,11 +1024,40 @@ static GF_Err gf_isom_iff_create_image_item_from_track_internal(GF_ISOFile *movi
 		return GF_OK;
 	}
 
+	if (!image_props) {
+		image_props = &local_image_props;
+		memset(image_props, 0, sizeof(GF_ImageItemProperties));
+	}
+
 import_next_sample:
+
+	timescale = gf_isom_get_media_timescale(movie, imported_track);
+	if (image_props->sample_num) {
+		sample_number = image_props->sample_num;
+		sample = gf_isom_get_sample(movie, imported_track, sample_number, &sample_desc_index);
+		e = gf_isom_last_error(movie);
+	} else if (image_props->time<0) {
+		sample = gf_isom_get_sample(movie, imported_track, sample_number, &sample_desc_index);
+		e = gf_isom_last_error(movie);
+	} else {
+		e = gf_isom_get_sample_for_media_time(movie, imported_track, (u64)(image_props->time*timescale), &sample_desc_index, GF_ISOM_SEARCH_SYNC_FORWARD, &sample, NULL, NULL);
+	}
+	if (e || !sample || !sample->IsRAP) {
+		if (!sample) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("No sample found%s\n", (image_props->time<0) ? "" : " for requested time"));
+		} else if (image_props->time<0) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error: imported sample %d (DTS "LLU") is not a sync sample (RAP %d size %d)\n", sample_number, sample->DTS, sample->IsRAP, sample->dataLength));
+		} else {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error no sync sample found after time %g\n", image_props->time));
+		}
+		if (sample) gf_isom_sample_del(&sample);
+		if (config_box) gf_isom_box_del(config_box);
+		return GF_BAD_PARAM;
+	}
 
 	/* Check if the track type is supported as item type */
 	/* Get the config box if needed */
-	subtype = gf_isom_get_media_subtype(movie, imported_track, imported_sample_desc_index);
+	subtype = gf_isom_get_media_subtype(movie, imported_track, sample_desc_index);
 	switch (subtype) {
 	case GF_ISOM_SUBTYPE_AVC_H264:
 	case GF_ISOM_SUBTYPE_AVC2_H264:
@@ -1031,7 +1065,9 @@ import_next_sample:
 	case GF_ISOM_SUBTYPE_AVC4_H264:
 		//FIXME: in avc1 with multiple descriptor, we should take the right description index
 		config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_AVCC);
-		((GF_AVCConfigurationBox *)config_box)->config = gf_isom_avc_config_get(movie, imported_track, imported_sample_desc_index);
+		if (!config_box) return GF_OUT_OF_MEM;
+		((GF_AVCConfigurationBox *)config_box)->config = gf_isom_avc_config_get(movie, imported_track, sample_desc_index);
+		if (! ((GF_AVCConfigurationBox *)config_box)->config) return GF_OUT_OF_MEM;
 		item_type = GF_ISOM_SUBTYPE_AVC_H264;
 		config_needed = 1;
 		num_channels = 3;
@@ -1041,7 +1077,9 @@ import_next_sample:
 		break;
 	case GF_ISOM_SUBTYPE_SVC_H264:
 		config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_SVCC);
-		((GF_AVCConfigurationBox *)config_box)->config = gf_isom_svc_config_get(movie, imported_track, imported_sample_desc_index);
+		if (!config_box) return GF_OUT_OF_MEM;
+		((GF_AVCConfigurationBox *)config_box)->config = gf_isom_svc_config_get(movie, imported_track, sample_desc_index);
+		if (! ((GF_AVCConfigurationBox *)config_box)->config) return GF_OUT_OF_MEM;
 		item_type = GF_ISOM_SUBTYPE_SVC_H264;
 		config_needed = 1;
 		num_channels = 3;
@@ -1051,7 +1089,9 @@ import_next_sample:
 		break;
 	case GF_ISOM_SUBTYPE_MVC_H264:
 		config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_MVCC);
-		((GF_AVCConfigurationBox *)config_box)->config = gf_isom_mvc_config_get(movie, imported_track, imported_sample_desc_index);
+		if (!config_box) return GF_OUT_OF_MEM;
+		((GF_AVCConfigurationBox *)config_box)->config = gf_isom_mvc_config_get(movie, imported_track, sample_desc_index);
+		if (! ((GF_AVCConfigurationBox *)config_box)->config) return GF_OUT_OF_MEM;
 		item_type = GF_ISOM_SUBTYPE_MVC_H264;
 		config_needed = 1;
 		num_channels = 3;
@@ -1067,7 +1107,9 @@ import_next_sample:
 	case GF_ISOM_SUBTYPE_LHV1:
 	case GF_ISOM_SUBTYPE_LHE1:
 		config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_HVCC);
-		((GF_HEVCConfigurationBox *)config_box)->config = gf_isom_hevc_config_get(movie, imported_track, imported_sample_desc_index);
+		if (!config_box) return GF_OUT_OF_MEM;
+		((GF_HEVCConfigurationBox *)config_box)->config = gf_isom_hevc_config_get(movie, imported_track, sample_desc_index);
+		if (! ((GF_HEVCConfigurationBox *)config_box)->config) return GF_OUT_OF_MEM;
 		if (subtype == GF_ISOM_SUBTYPE_HVT1) {
 			item_type = GF_ISOM_SUBTYPE_HVT1;
 		}
@@ -1076,7 +1118,8 @@ import_next_sample:
 		}
 		config_needed = 1;
 		if (!((GF_HEVCConfigurationBox *)config_box)->config) {
-			((GF_HEVCConfigurationBox *)config_box)->config = gf_isom_lhvc_config_get(movie, imported_track, imported_sample_desc_index);
+			((GF_HEVCConfigurationBox *)config_box)->config = gf_isom_lhvc_config_get(movie, imported_track, sample_desc_index);
+			if (! ((GF_HEVCConfigurationBox *)config_box)->config) return GF_OUT_OF_MEM;
 			item_type = GF_ISOM_SUBTYPE_LHV1;
 		}
 		num_channels = 3;
@@ -1088,7 +1131,9 @@ import_next_sample:
 	case GF_ISOM_SUBTYPE_AV01:
 		{
 			config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_AV1C);
-			((GF_AV1ConfigurationBox *)config_box)->config = gf_isom_av1_config_get(movie, imported_track, imported_sample_desc_index);
+			if (!config_box) return GF_OUT_OF_MEM;
+			((GF_AV1ConfigurationBox *)config_box)->config = gf_isom_av1_config_get(movie, imported_track, sample_desc_index);
+			if (! ((GF_AV1ConfigurationBox *)config_box)->config) return GF_OUT_OF_MEM;
 			item_type = GF_ISOM_SUBTYPE_AV01;
 			config_needed = 1;
 			u8 depth = ((GF_AV1ConfigurationBox *)config_box)->config->high_bitdepth ? (((GF_AV1ConfigurationBox *)config_box)->config->twelve_bit ? 12 : 10 ) : 8;
@@ -1115,21 +1160,17 @@ import_next_sample:
 		return GF_BAD_PARAM;
 	}
 	/* Get some images properties from the track data */
-	e = gf_isom_get_visual_info(movie, imported_track, imported_sample_desc_index, &w, &h);
+	e = gf_isom_get_visual_info(movie, imported_track, sample_desc_index, &w, &h);
 	if (e) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error determining image size\n"));
 		if (config_box) gf_isom_box_del(config_box);
 		return e;
 	}
-	e = gf_isom_get_pixel_aspect_ratio(movie, imported_track, imported_sample_desc_index, &hSpacing, &vSpacing);
+	e = gf_isom_get_pixel_aspect_ratio(movie, imported_track, sample_desc_index, &hSpacing, &vSpacing);
 	if (e) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error determining image aspect ratio\n"));
 		if (config_box) gf_isom_box_del(config_box);
 		return e;
-	}
-	if (!image_props) {
-		image_props = &local_image_props;
-		memset(image_props, 0, sizeof(GF_ImageItemProperties));
 	}
 	if (!image_props->width && !image_props->height) {
 		image_props->width = w;
@@ -1147,32 +1188,24 @@ import_next_sample:
 		image_props->bits_per_channel[2] = bits_per_channel[2];
 	}
 
-	timescale = gf_isom_get_media_timescale(movie, imported_track);
-	if (image_props->time<0) {
-		sample = gf_isom_get_sample(movie, imported_track, sample_number, &sample_desc_index);
-	} else {
-		e = gf_isom_get_sample_for_media_time(movie, imported_track, (u64)(image_props->time*timescale), &sample_desc_index, GF_ISOM_SEARCH_SYNC_FORWARD, &sample, NULL, NULL);
-	}
-	if (sample_desc_index != imported_sample_desc_index) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("Warning sample description index for sync sample differ from config\n"));
-	}
-	if (e || !sample || !sample->IsRAP) {
-		if (image_props->time<0) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error some imported samples are not sync samples\n", image_props->time));
-		} else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error no sync sample found after time %g\n", image_props->time));
-		}
-		if (sample) gf_isom_sample_del(&sample);
-		if (config_box) gf_isom_box_del(config_box);
-		return GF_BAD_PARAM;
-	}
-
 	if (!item_id) {
 		e = gf_isom_meta_get_next_item_id(movie, root_meta, meta_track_number, &item_id);
+		if (e) return e;
 	}
+	if (image_props->sample_num && item_name && !strcmp(item_name, "ref")) {
+		GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("Refering trackID %d sample %d as item %d\n", imported_track, sample_number, item_id));
 
-	GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("Adding sample from time %.3f as item %d\n", sample->DTS*1.0/timescale, item_id));
-	e = gf_isom_add_meta_item_memory(movie, root_meta, meta_track_number, (!item_name || !strlen(item_name) ? "Image" : item_name), item_id, item_type, NULL, NULL, image_props, sample->data, sample->dataLength, item_extent_refs);
+		e = gf_isom_add_meta_item_sample_ref(movie, root_meta, meta_track_number, (!item_name || !strlen(item_name) ? "Image" : item_name), item_id, item_type, NULL, NULL, image_props, imported_track, sample_number);
+	} else {
+
+		if (image_props->sample_num) {
+			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("Adding sample %d as item %d\n", sample_number, item_id));
+		} else {
+			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("Adding sample from time %.3f as item %d\n", sample->DTS*1.0/timescale, item_id));
+		}
+		e = gf_isom_add_meta_item_memory(movie, root_meta, meta_track_number, (!item_name || !strlen(item_name) ? "Image" : item_name), item_id, item_type, NULL, NULL, image_props, sample->data, sample->dataLength, item_extent_refs);
+
+	}
 
 	gf_isom_set_brand_info(movie, GF_ISOM_BRAND_MIF1, 0);
 	gf_isom_reset_alt_brands(movie);
@@ -1183,7 +1216,7 @@ import_next_sample:
 	gf_isom_sample_del(&sample);
 	if (config_box) gf_isom_box_del(config_box);
 
-	if (image_props->time<0) {
+	if (!image_props->sample_num && (image_props->time<0)) {
 		if (sample_number >= gf_isom_get_sample_count(movie, imported_track)) return e;
 		sample_number++;
 		item_id=0;

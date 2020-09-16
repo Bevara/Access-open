@@ -55,7 +55,7 @@ GF_Err Media_RewriteODFrame(GF_MediaBox *mdia, GF_ISOSample *sample)
 	e = Track_FindRef(mdia->mediaTrack, GF_ISOM_BOX_TYPE_MPOD, &mpod);
 	if (e) return e;
 	//no references, nothing to do...
-	if (!mpod) return GF_OK;
+	if (!mpod || !mpod->trackIDs) return GF_OK;
 
 	ODdecode = gf_odf_codec_new();
 	if (!ODdecode) return GF_OUT_OF_MEM;
@@ -255,6 +255,7 @@ GF_Err Media_ParseODFrame(GF_MediaBox *mdia, const GF_ISOSample *sample, GF_ISOS
 	tref = mdia->mediaTrack->References;
 	if (!tref) {
 		tref = (GF_TrackReferenceBox *) gf_isom_box_new_parent(&mdia->mediaTrack->child_boxes, GF_ISOM_BOX_TYPE_TREF);
+		if (!tref) return GF_OUT_OF_MEM;
 		e = trak_on_child_box((GF_Box*)mdia->mediaTrack, (GF_Box *) tref);
 		if (e) return e;
 	}
@@ -263,6 +264,7 @@ GF_Err Media_ParseODFrame(GF_MediaBox *mdia, const GF_ISOSample *sample, GF_ISOS
 	if (e) return e;
 	if (!mpod) {
 		mpod = (GF_TrackReferenceTypeBox *) gf_isom_box_new_parent(&tref->child_boxes, GF_ISOM_BOX_TYPE_REFT);
+		if (!mpod) return GF_OUT_OF_MEM;
 		mpod->reference_type = GF_ISOM_BOX_TYPE_MPOD;
 	}
 
@@ -305,9 +307,11 @@ GF_Err Media_ParseODFrame(GF_MediaBox *mdia, const GF_ISOSample *sample, GF_ISOS
 				if (e) goto err_exit;
 				if (desc->tag == GF_ODF_OD_TAG) {
 					isom_od = (GF_IsomObjectDescriptor *) gf_malloc(sizeof(GF_IsomObjectDescriptor));
+					if (!isom_od) return GF_OUT_OF_MEM;
 					isom_od->tag = GF_ODF_ISOM_OD_TAG;
 				} else {
 					isom_od = (GF_IsomObjectDescriptor *) gf_malloc(sizeof(GF_IsomInitialObjectDescriptor));
+					if (!isom_od) return GF_OUT_OF_MEM;
 					isom_od->tag = GF_ODF_ISOM_IOD_TAG;
 					//copy PL
 					((GF_IsomInitialObjectDescriptor *)isom_od)->inlineProfileFlag = ((GF_InitialObjectDescriptor *)od)->inlineProfileFlag;
@@ -496,8 +500,7 @@ static u32 Media_FindOD_ID(GF_MediaBox *mdia, GF_ISOSample *sample, u32 track_id
 
 err_exit:
 	gf_odf_codec_del(ODdecode);
-	if (e) return 0;
-	return the_od_id;
+	return the_od_id; //still 0 if error, no need to check for e
 }
 
 

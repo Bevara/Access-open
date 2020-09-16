@@ -136,6 +136,8 @@ static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 
 
 	if (!pck) {
 		GF_SAFEALLOC(pck, GF_FilterPacket);
+		if (!pck)
+			return NULL;
 		pck->data = gf_malloc(sizeof(char)*data_size);
 		pck->alloc_size = data_size;
 #ifdef GPAC_MEMORY_TRACKING
@@ -148,11 +150,11 @@ static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 
 		//were added to the list
 
 		GF_FilterPacket *head_pck = gf_fq_pop(pid->filter->pcks_alloc_reservoir);
-		char *data = pck->data;
+		char *pck_data = pck->data;
 		u32 alloc_size = pck->alloc_size;
 		pck->data = head_pck->data;
 		pck->alloc_size = head_pck->alloc_size;
-		head_pck->data = data;
+		head_pck->data = pck_data;
 		head_pck->alloc_size = alloc_size;
 		pck = head_pck;
 	}
@@ -203,7 +205,6 @@ static GF_FilterPacket *clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket
 		gf_filter_pid_set_property(pid, GF_PROP_PID_STRIDE, &PROP_UINT(stride));
 		gf_filter_pid_set_property(pid, GF_PROP_PID_STRIDE_UV, &PROP_UINT(stride_uv));
 	}
-	pf = p ? p->value.uint : 0;
 
 	dst = gf_filter_pck_new_alloc(pid, osize, data);
 	if (!dst) return NULL;
@@ -321,6 +322,7 @@ GF_FilterPacket *gf_filter_pck_new_shared_internal(GF_FilterPid *pid, const u8 *
 	pck->filter_owns_mem = 1;
 	if (!intern_pck) {
 		safe_int_inc(&pid->nb_shared_packets_out);
+		safe_int_inc(&pid->filter->nb_shared_packets_out);
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s PID %s has %d shared packets out\n", pid->filter->name, pid->name, pid->nb_shared_packets_out));
 	}
 	gf_filter_pck_reset_props(pck, pid);
@@ -353,6 +355,7 @@ GF_FilterPacket *gf_filter_pck_new_ref(GF_FilterPid *pid, const u8 *data, u32 da
 		pck->frame_ifce = reference->frame_ifce;
 	}
 	safe_int_inc(&reference->pid->nb_shared_packets_out);
+	safe_int_inc(&reference->pid->filter->nb_shared_packets_out);
 	return pck;
 }
 
@@ -392,6 +395,7 @@ GF_Err gf_filter_pck_forward(GF_FilterPacket *reference, GF_FilterPid *pid)
 	assert(reference->reference_count);
 	safe_int_inc(&reference->reference_count);
 	safe_int_inc(&reference->pid->nb_shared_packets_out);
+	safe_int_inc(&reference->pid->filter->nb_shared_packets_out);
 
 	gf_filter_pck_merge_properties(reference, pck);
 	pck->data = reference->data;
@@ -455,10 +459,14 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 			assert(props->reference_count);
 			if (safe_int_dec(&props->reference_count) == 0) {
 				if (!is_filter_destroyed) {
-					//see \ref gf_filter_pid_merge_properties_internal for mutex
-					gf_mx_p(pck->pid->filter->tasks_mx);
-					gf_list_del_item(pck->pid->properties, props);
-					gf_mx_v(pck->pid->filter->tasks_mx);
+					if (pck->pid->filter) {
+						//see \ref gf_filter_pid_merge_properties_internal for mutex
+						gf_mx_p(pck->pid->filter->tasks_mx);
+						gf_list_del_item(pck->pid->properties, props);
+						gf_mx_v(pck->pid->filter->tasks_mx);
+					} else {
+						gf_list_del_item(pck->pid->properties, props);
+					}
 				}
 				gf_props_del(props);
 			}
@@ -476,7 +484,10 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 	if (pck->filter_owns_mem && !(pck->info.flags & GF_PCK_CMD_MASK) ) {
 		assert(pck->pid);
 		assert(pck->pid->nb_shared_packets_out);
+		assert(pck->pid->filter);
+		assert(pck->pid->filter->nb_shared_packets_out);
 		safe_int_dec(&pck->pid->nb_shared_packets_out);
+		safe_int_dec(&pck->pid->filter->nb_shared_packets_out);
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s PID %s has %d shared packets out\n", pck->pid->filter->name, pck->pid->name, pck->pid->nb_shared_packets_out));
 	}
 
@@ -485,8 +496,10 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 
 	if (pck->reference) {
 		assert(pck->reference->pid->nb_shared_packets_out);
+		assert(pck->reference->pid->filter->nb_shared_packets_out);
 		safe_int_dec(&pck->reference->pid->nb_shared_packets_out);
-		
+		safe_int_dec(&pck->reference->pid->filter->nb_shared_packets_out);
+
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s PID %s has %d shared packets out\n", pck->reference->pid->filter->name, pck->reference->pid->name, pck->reference->pid->nb_shared_packets_out));
 		assert(pck->reference->reference_count);
 		if (safe_int_dec(&pck->reference->reference_count) == 0) {
@@ -505,13 +518,13 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 		if (!pck->filter_owns_mem && pck->data) gf_free(pck->data);
 		gf_free(pck);
 	} else if (pck->filter_owns_mem ) {
-		if (pid->filter->pcks_shared_reservoir) {
+		if (pid->filter && pid->filter->pcks_shared_reservoir) {
 			gf_fq_add(pid->filter->pcks_shared_reservoir, pck);
 		} else {
 			gf_free(pck);
 		}
 	} else {
-		if (pid->filter->pcks_alloc_reservoir) {
+		if (pid->filter && pid->filter->pcks_alloc_reservoir) {
 			gf_fq_add(pid->filter->pcks_alloc_reservoir, pck);
 		} else {
 			if (pck->data) gf_free(pck->data);
@@ -587,21 +600,26 @@ static Bool gf_filter_aggregate_packets(GF_FilterPidInst *dst)
 			if (pcki->pck->info.carousel_version_number > info.carousel_version_number)
 				info.carousel_version_number = pcki->pck->info.carousel_version_number;
 		}
-		memcpy(data+pos, pcki->pck->data, pcki->pck->data_length);
+		if (final)
+			memcpy(data+pos, pcki->pck->data, pcki->pck->data_length);
+
 		pos += pcki->pck->data_length;
 
-		gf_filter_pck_merge_properties(pcki->pck, final);
+		if (final) {
+			gf_filter_pck_merge_properties(pcki->pck, final);
 
-		//copy the first pid_props non null
-		if (pcki->pck->pid_props && !final->pid_props) {
-			final->pid_props = pcki->pck->pid_props;
-			safe_int_inc(&final->pid_props->reference_count);
+			//copy the first pid_props non null
+			if (pcki->pck->pid_props && !final->pid_props) {
+				final->pid_props = pcki->pck->pid_props;
+				safe_int_inc(&final->pid_props->reference_count);
+			}
 		}
+
 
 		gf_list_rem(dst->pck_reassembly, i);
 
 		//destroy pcki
-		if (i+1<count) {
+		if ((i+1<count) || !final) {
 			pcki->pck = NULL;
 			pcki->pid = NULL;
 
@@ -638,6 +656,10 @@ static Bool gf_filter_aggregate_packets(GF_FilterPidInst *dst)
 
 		count--;
 		i--;
+	}
+	if (!final) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate packet for fragment aggregation\n"));
+		return GF_FALSE;
 	}
 	return GF_TRUE;
 }
@@ -786,6 +808,11 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		} else if (pck->frame_ifce) {
 			pid->filter->nb_hw_pck_sent++;
 		}
+		if (pck->info.cts!=GF_FILTER_NO_TS) {
+			pid->last_ts_sent.num = pck->info.cts;
+			assert(pck->pid_props);
+			pid->last_ts_sent.den = pck->pid_props->timescale;
+		}
 	}
 
 	cktype = ( pck->info.flags & GF_PCK_CKTYPE_MASK) >> GF_PCK_CKTYPE_POS;
@@ -881,7 +908,6 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		//may happen if we don't have DTS, only CTS signaled and B-frames
 		if ((s32) pck->info.duration < 0) {
 			pck->info.duration = 0;
-			duration = 0;
 		}
 
 #ifndef GPAC_DISABLE_LOG
@@ -1623,8 +1649,13 @@ Bool gf_filter_pck_is_blocking_ref(GF_FilterPacket *pck)
 	pck = pck->pck;
 
 	while (pck) {
-		if (pck->destructor && pck->filter_owns_mem) return GF_TRUE;
-		if (pck->frame_ifce && (pck->frame_ifce->flags & GF_FRAME_IFCE_BLOCKING) ) return GF_TRUE;
+		if (pck->frame_ifce) {
+			if (pck->frame_ifce->flags & GF_FRAME_IFCE_BLOCKING)
+				return GF_TRUE;
+		} else {
+			if (pck->destructor && pck->filter_owns_mem)
+				return GF_TRUE;
+		}
 		pck = pck->reference;
 	}
 	return GF_FALSE;

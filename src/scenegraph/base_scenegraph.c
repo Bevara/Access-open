@@ -410,7 +410,11 @@ void gf_sg_reset(GF_SceneGraph *sg)
 restart:
 	reg_node = sg->id_node;
 	while (reg_node) {
+#if 0
 		Bool ignore = 0;
+#endif
+		GF_ParentList *nlist;
+
 		GF_Node *node = reg_node->node;
 		if (!node
 #ifndef GPAC_DISABLE_VRML
@@ -423,43 +427,45 @@ restart:
 
 		/*first replace all instances in parents by NULL WITHOUT UNREGISTERING (to avoid destroying the node).
 		This will take care of nodes referencing themselves*/
-		{
-			GF_ParentList *nlist = node->sgprivate->parents;
+		nlist = node->sgprivate->parents;
 #ifndef GPAC_DISABLE_SVG
-			type = (node->sgprivate->tag>GF_NODE_RANGE_LAST_VRML) ? 1 : 0;
+		type = (node->sgprivate->tag>GF_NODE_RANGE_LAST_VRML) ? 1 : 0;
 #endif
-			while (nlist) {
-				GF_ParentList *next = nlist->next;
+		while (nlist) {
+			GF_ParentList *next = nlist->next;
 #if 0
-				/*parent is a DEF'ed node, try to clean-up properly?*/
-				if ((nlist->node!=node) && SG_SearchForNode(sg, nlist->node) != NULL) {
-					ignore = 1;
-					break;
-				}
+			/*parent is a DEF'ed node, try to clean-up properly?*/
+			if ((nlist->node!=node) && SG_SearchForNode(sg, nlist->node) != NULL) {
+				ignore = 1;
+				break;
+			}
 #endif
 
 #ifndef GPAC_DISABLE_SVG
-				if (type) {
-					ReplaceIRINode(nlist->node, node, NULL);
-				} else
+			if (type) {
+				ReplaceIRINode(nlist->node, node, NULL);
+			} else
 #endif
-					ReplaceDEFNode(nlist->node, reg_node->node, NULL, 0);
+				ReplaceDEFNode(nlist->node, reg_node->node, NULL, 0);
 
-				/*direct cyclic reference to ourselves, make sure we update the parentList to the next entry before freeing it
-				since the next parent node could be reg_node again (reg_node->reg_node)*/
-				if (nlist->node==node) {
-					node->sgprivate->parents = next;
-				}
-				gf_free(nlist);
-				nlist = next;
+			/*direct cyclic reference to ourselves, make sure we update the parentList to the next entry before freeing it
+			since the next parent node could be reg_node again (reg_node->reg_node)*/
+			if (nlist->node==node) {
+				node->sgprivate->parents = next;
 			}
+
+			gf_free(nlist);
+			nlist = next;
+#if 0
 			if (ignore) {
 				node->sgprivate->parents = nlist;
 				continue;
 			}
-
-			node->sgprivate->parents = NULL;
+#endif
 		}
+
+		node->sgprivate->parents = NULL;
+
 		//sg->node_registry[i-1] = NULL;
 		count = get_num_id_nodes(sg);
 		node->sgprivate->num_instances = 1;
@@ -914,17 +920,11 @@ GF_Err gf_node_replace(GF_Node *node, GF_Node *new_node, Bool updateOrderedGroup
 	Bool replace_proto;
 #endif
 	Bool replace_root;
-	GF_SceneGraph *pSG = node->sgprivate->scenegraph;
-
-#ifndef GPAC_DISABLE_VRML
-	/*if this is a proto its is registered in its parent graph, not the current*/
-	if (node == (GF_Node*)pSG->pOwningProto) pSG = pSG->parent_scene;
-#endif
 
 #ifndef GPAC_DISABLE_SVG
 	type = (node->sgprivate->tag>GF_NODE_RANGE_LAST_VRML) ? 1 : 0;
 	if (type) {
-		Replace_IRI(pSG, node, new_node);
+		Replace_IRI(node->sgprivate->scenegraph, node, new_node);
 	}
 #endif
 
@@ -932,6 +932,7 @@ GF_Err gf_node_replace(GF_Node *node, GF_Node *new_node, Bool updateOrderedGroup
 	replace_root = (node->sgprivate->scenegraph->RootNode == node) ? 1 : 0;
 
 #ifndef GPAC_DISABLE_VRML
+	/*check for proto replacement*/
 	replace_proto = 0;
 	if (node->sgprivate->scenegraph->pOwningProto
 	        && (gf_list_find(node->sgprivate->scenegraph->pOwningProto->node_code, node)>=0)) {
@@ -957,13 +958,13 @@ GF_Err gf_node_replace(GF_Node *node, GF_Node *new_node, Bool updateOrderedGroup
 	}
 
 	if (replace_root) {
-		pSG = node->sgprivate->scenegraph;
+		GF_SceneGraph *pSG = node->sgprivate->scenegraph;
 		gf_node_unregister(node, NULL);
 		pSG->RootNode = new_node;
 	}
 #ifndef GPAC_DISABLE_VRML
 	if (replace_proto) {
-		pSG = node->sgprivate->scenegraph;
+		GF_SceneGraph *pSG = node->sgprivate->scenegraph;
 		gf_list_del_item(pSG->pOwningProto->node_code, node);
 		if (pSG->pOwningProto->RenderingNode==node) pSG->pOwningProto->RenderingNode = NULL;
 		gf_node_unregister(node, NULL);
@@ -1992,12 +1993,14 @@ GF_Node *gf_node_new(GF_SceneGraph *inScene, u32 tag)
 	else if (tag == TAG_DOMText) {
 		GF_DOMText *n;
 		GF_SAFEALLOC(n, GF_DOMText);
+		if (!n) return NULL;
 		node = (GF_Node*)n;
 		gf_node_setup(node, TAG_DOMText);
 	}
 	else if (tag == TAG_DOMFullNode) {
 		GF_DOMFullNode*n;
 		GF_SAFEALLOC(n, GF_DOMFullNode);
+		if (!n) return NULL;
 		node = (GF_Node*)n;
 		gf_node_setup(node, TAG_DOMFullNode);
 	}
@@ -2427,5 +2430,83 @@ Bool gf_node_parent_of(GF_Node *node, GF_Node *target)
 GF_SceneGraph *gf_sg_get_parent(GF_SceneGraph *scene)
 {
 	return scene ? scene->parent_scene : NULL;
+}
+
+
+#include <gpac/xml.h>
+
+static GF_Err gf_sg_load_dom_node(GF_SceneGraph *document, GF_XMLNode *n, GF_DOMFullNode *par)
+{
+	u32 i, count;
+	GF_DOMFullAttribute *prev = NULL;
+	GF_DOMFullNode *node;
+
+	if (!n) return GF_OK;
+	if (!par && document->RootNode) {
+		return GF_NON_COMPLIANT_BITSTREAM;
+	}
+	/*construct text / cdata node*/
+	if (n->type != GF_XML_NODE_TYPE) {
+		u32 len;
+		GF_DOMText *txt;
+		/*basic check, remove all empty text nodes*/
+		len = (u32) strlen(n->name);
+		for (i=0; i<len; i++) {
+			if (!strchr(" \n\r\t", n->name[i])) break;
+		}
+		if (i==len) return GF_OK;
+		txt = gf_dom_add_text_node((GF_Node *)par, gf_strdup(n->name) );
+		txt->type = (n->type==GF_XML_CDATA_TYPE) ? GF_DOM_TEXT_CDATA : GF_DOM_TEXT_REGULAR;
+		return GF_OK;
+	}
+	/*construct DOM node*/
+	node = (GF_DOMFullNode *) gf_node_new(document, TAG_DOMFullNode);
+	node->name = gf_strdup(n->name);
+	if (n->ns)
+		node->ns = gf_sg_get_namespace_code(document, n->ns);
+
+	count = gf_list_count(n->attributes);
+	for (i=0; i<count; i++) {
+		GF_XMLAttribute *src_att = gf_list_get(n->attributes, i);
+		/* special case for 'xml:id' to be parsed as an ID
+		NOTE: we do not test for the 'id' attribute because without DTD we are not sure that it's an ID */
+		if (!stricmp(src_att->name, "xml:id")) {
+			u32 id = gf_sg_get_max_node_id(document) + 1;
+			gf_node_set_id((GF_Node *)node, id, src_att->value);
+		} else {
+			GF_DOMFullAttribute *att;
+			GF_SAFEALLOC(att, GF_DOMFullAttribute);
+			if (!att) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[XHR] Fail to allocate DOM attribute\n"));
+				continue;
+			}
+			att->tag = TAG_DOM_ATT_any;
+			att->name = gf_strdup(src_att->name);
+			att->data_type = (u16) DOM_String_datatype;
+			att->data = gf_svg_create_attribute_value(att->data_type);
+			*((char **)att->data) = gf_strdup(src_att->value);
+			if (prev) prev->next = (GF_DOMAttribute*)att;
+			else node->attributes = (GF_DOMAttribute*)att;
+			prev = att;
+		}
+	}
+	gf_node_register((GF_Node*)node, (GF_Node*)par);
+	if (par) {
+		gf_node_list_add_child(&par->children, (GF_Node*)node);
+	} else {
+		document->RootNode = (GF_Node*)node;
+	}
+	count = gf_list_count(n->content);
+	for (i=0; i<count; i++) {
+		GF_XMLNode *child = gf_list_get(n->content, i);
+		GF_Err e = gf_sg_load_dom_node(document, child, node);
+		if (e) return e;
+	}
+	return GF_OK;
+}
+
+GF_Err gf_sg_init_from_xml_node(GF_SceneGraph *document, GF_DOMXMLNODE root_node)
+{
+	return gf_sg_load_dom_node(document, root_node, NULL);
 }
 

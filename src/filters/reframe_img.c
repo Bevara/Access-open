@@ -159,7 +159,8 @@ GF_Err img_process(GF_Filter *filter)
 	pck = gf_filter_pid_get_packet(ctx->ipid);
 	if (!pck) {
 		if (gf_filter_pid_is_eos(ctx->ipid)) {
-			gf_filter_pid_set_eos(ctx->opid);
+			if (ctx->opid)
+				gf_filter_pid_set_eos(ctx->opid);
 			ctx->is_playing = GF_FALSE;
 			return GF_EOS;
 		}
@@ -290,10 +291,10 @@ GF_Err img_process(GF_Filter *filter)
 
 	bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
 
-	fh.bfType = gf_bs_read_u16(bs);
-	fh.bfSize = gf_bs_read_u32(bs);
-	fh.bfReserved1 = gf_bs_read_u16(bs);
-	fh.bfReserved2 = gf_bs_read_u16(bs);
+	/*fh.bfType = */ gf_bs_read_u16(bs);
+	/*fh.bfSize = */ gf_bs_read_u32(bs);
+	/*fh.bfReserved1 = */ gf_bs_read_u16(bs);
+	/*fh.bfReserved2 = */ gf_bs_read_u16(bs);
 	fh.bfOffBits = gf_bs_read_u32(bs);
 	fh.bfOffBits = ntohl(fh.bfOffBits);
 

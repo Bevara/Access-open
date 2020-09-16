@@ -149,6 +149,8 @@ LOCAL_SRC_FILES := \
 	../../../../src/filter_core/filter_queue.c \
 	../../../../src/filter_core/filter_register.c \
 	../../../../src/filter_core/filter_session.c \
+	../../../../src/filter_core/filter_session_js.c \
+	../../../../src/filters/bsrw.c \
 	../../../../src/filters/compose.c \
 	../../../../src/filters/dasher.c \
 	../../../../src/filters/dec_ac52.c \
@@ -163,6 +165,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/dec_opensvc.c \
 	../../../../src/filters/decrypt_cenc_isma.c \
 	../../../../src/filters/dec_theora.c \
+	../../../../src/filters/dec_ttml.c \
 	../../../../src/filters/dec_ttxt.c \
 	../../../../src/filters/dec_vorbis.c \
 	../../../../src/filters/dec_vtb.c \
@@ -293,11 +296,11 @@ LOCAL_SRC_FILES := \
 	../../../../src/isomedia/stbl_write.c \
 	../../../../src/isomedia/track.c \
 	../../../../src/isomedia/tx3g.c \
+	../../../../src/jsmods/core.c \
 	../../../../src/jsmods/evg.c \
 	../../../../src/jsmods/scene_js.c \
 	../../../../src/jsmods/storage.c \
 	../../../../src/jsmods/webgl.c \
-	../../../../src/jsmods/webgl_pixfmt.c \
 	../../../../src/jsmods/xhr.c \
 	../../../../src/laser/lsr_dec.c \
 	../../../../src/laser/lsr_enc.c \

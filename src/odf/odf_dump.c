@@ -348,7 +348,7 @@ static void DumpBool(FILE *trace, const char *attName, u32  val, u32 indent, Boo
 	if (!val) return;
 
 	StartAttribute(trace, attName, indent, XMTDump);
-	gf_fprintf(trace, "%s", val ? "true" : "false");
+	gf_fprintf(trace, "%s", "true");
 	EndAttribute(trace, indent, XMTDump);
 }
 
@@ -753,11 +753,12 @@ GF_Err gf_odf_dump_laser_cfg(GF_LASERConfig *dsi, FILE *trace, u32 indent, Bool 
 }
 
 
-
+GF_EXPORT
 GF_Err gf_odf_dump_txtcfg(GF_TextConfig *desc, FILE *trace, u32 indent, Bool XMTDump)
 {
 	u32 i, count;
 	char ind_buf[OD_MAX_TREE];
+	if (!trace || !desc) return GF_BAD_PARAM;
 	StartDescDump(trace, "TextConfig", indent, XMTDump);
 	indent++;
 	DumpIntHex(trace, "3GPPBaseFormat", desc->Base3GPPFormat, indent, XMTDump, GF_TRUE);
@@ -818,17 +819,6 @@ GF_Err gf_odf_dump_txtcfg(GF_TextConfig *desc, FILE *trace, u32 indent, Bool XMT
 	return GF_OK;
 }
 
-GF_Err DumpRawTextConfig(GF_DefaultDescriptor *dsi, FILE *trace, u32 indent, Bool XMTDump, u32 oti)
-{
-	GF_TextConfig *cfg = (GF_TextConfig *) gf_odf_desc_new(GF_ODF_TEXT_CFG_TAG);
-	GF_Err e = gf_odf_get_text_config(dsi->data, dsi->dataLength, (u8) oti, cfg);
-	if (!e) gf_odf_dump_desc((GF_Descriptor*)cfg, trace, indent, XMTDump);
-	gf_odf_desc_del((GF_Descriptor *) cfg);
-	return e;
-}
-
-
-
 GF_Err gf_odf_dump_ui_cfg(GF_UIConfig *uid, FILE *trace, u32 indent, Bool XMTDump)
 {
 	char devName[255];
@@ -883,7 +873,7 @@ GF_Err gf_odf_dump_ui_cfg(GF_UIConfig *uid, FILE *trace, u32 indent, Bool XMTDum
 
 GF_Err DumpRawUIConfig(GF_DefaultDescriptor *dsi, FILE *trace, u32 indent, Bool XMTDump, u32 oti)
 {
-	char devName[255];
+	char devName[256];
 	u32 i;
 	u64 len;
 	GF_BitStream *bs;
@@ -951,7 +941,12 @@ GF_Err OD_DumpDSI(GF_DefaultDescriptor *dsi, FILE *trace, u32 indent, Bool XMTDu
 	case GF_STREAM_INTERACT:
 		return DumpRawUIConfig(dsi, trace, indent, XMTDump, oti);
 	case GF_STREAM_TEXT:
-		if (oti==0x08) return DumpRawTextConfig(dsi, trace, indent, XMTDump, oti);
+		if (oti==0x08) {
+			GF_TextConfig *cfg = (GF_TextConfig *) gf_odf_desc_new(GF_ODF_TEXT_CFG_TAG);
+			GF_Err e = gf_odf_get_text_config(dsi->data, dsi->dataLength, (u8) oti, cfg);
+			if (!e) gf_odf_dump_desc((GF_Descriptor*)cfg, trace, indent, XMTDump);
+			gf_odf_desc_del((GF_Descriptor *) cfg);
+		}
 		break;
 	default:
 		break;
@@ -1697,9 +1692,7 @@ GF_Err gf_odf_dump_mediatime(GF_MediaTime *mt, FILE *trace, u32 indent, Bool XMT
 
 GF_Err gf_odf_dump_muxinfo(GF_MuxInfo *mi, FILE *trace, u32 indent, Bool XMTDump)
 {
-	char *full_path = NULL;
-
-	full_path = gf_url_get_absolute_path( mi->file_name, mi->src_url );
+	char *full_path = gf_url_get_absolute_path( mi->file_name, mi->src_url );
 
 	if (!XMTDump) {
 		StartDescDump(trace, "MuxInfo", indent, GF_FALSE);

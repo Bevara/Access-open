@@ -199,7 +199,7 @@ static GF_Err pipeout_open_close(GF_PipeOutCtx *ctx, const char *filename, const
 		return e;
 	}
 	strncpy(ctx->szFileName, szFinalName, GF_MAX_PATH-1);
-	ctx->szFileName[GF_MAX_PATH-1]=0;
+	ctx->szFileName[GF_MAX_PATH-1] = 0;
 	return GF_OK;
 }
 
@@ -287,6 +287,7 @@ static GF_Err pipeout_initialize(GF_Filter *filter)
 		ctx->in_caps[1].flags = GF_CAPS_INPUT;
 	} else {
 		strncpy(ctx->szExt, ext, 9);
+		ctx->szExt[9] = 0;
 		strlwr(ctx->szExt);
 		ctx->in_caps[1].code = GF_PROP_PID_FILE_EXT;
 		ctx->in_caps[1].val = PROP_NAME( ctx->szExt );
@@ -395,9 +396,9 @@ static GF_Err pipeout_process(GF_Filter *filter)
 			h = p ? p->value.uint : 0;
 			p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_PIXFMT);
 			pf = p ? p->value.uint : 0;
-			p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_STRIDE);
-			stride = stride_uv = 0;
 
+			//get stride/stride_uv with no padding
+			stride = stride_uv = 0;
 			if (gf_pixel_get_size_info(pf, w, h, NULL, &stride, &stride_uv, &nb_planes, &uv_height) == GF_TRUE) {
 				u32 i;
 				for (i=0; i<nb_planes; i++) {

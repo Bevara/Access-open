@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2018
+ *			Copyright (c) Telecom ParisTech 2017-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / common ffmpeg filters
@@ -57,6 +57,12 @@ typedef struct
 	u32 gpac_pf;
 } GF_FF_PFREG;
 
+#ifndef FFMPEG_ENABLE_VVC
+//enable this when compiling under xcode or visual (eg without ./configure), or add macro to configuration.h or project settings
+//to remove once we have a known API version number for vvc in libavcodec
+//#define FFMPEG_ENABLE_VVC
+#endif
+
 static const GF_FF_PFREG FF2GPAC_PixelFormats[] =
 {
 	{AV_PIX_FMT_YUV420P, GF_PIXEL_YUV},
@@ -90,6 +96,8 @@ static const GF_FF_PFREG FF2GPAC_PixelFormats[] =
 	{AV_PIX_FMT_RGB565, GF_PIXEL_RGB_565},
 	{AV_PIX_FMT_RGBA, GF_PIXEL_RGBA},
 	{AV_PIX_FMT_ARGB, GF_PIXEL_ARGB},
+	{AV_PIX_FMT_ABGR, GF_PIXEL_ABGR},
+	{AV_PIX_FMT_BGRA, GF_PIXEL_BGRA},
 
 	/*aliases*/
 	{AV_PIX_FMT_YUVJ420P, GF_PIXEL_YUV},
@@ -278,6 +286,9 @@ static const GF_FF_CIDREG FF2GPAC_CodecIDs[] =
 	{AV_CODEC_ID_VP9, GF_CODECID_VP9, 0},
 	{AV_CODEC_ID_VC1, GF_CODECID_SMPTE_VC1, 0},
 
+	{AV_CODEC_ID_OPUS, GF_CODECID_OPUS, 0},
+
+
 	//ProRes
 	{AV_CODEC_ID_PRORES, GF_CODECID_APCH, GF_4CC('h','c','p','a') },
 	{AV_CODEC_ID_PRORES, GF_CODECID_APCO, GF_4CC('o','c','p','a') },
@@ -325,6 +336,11 @@ static const GF_FF_CIDREG FF2GPAC_CodecIDs[] =
 	{AV_CODEC_ID_PCM_F16LE, GF_CODECID_RAW, 0},
 	{AV_CODEC_ID_PCM_F24LE, GF_CODECID_RAW, 0},
 #endif
+
+#ifdef FFMPEG_ENABLE_VVC
+	{AV_CODEC_ID_VVC, GF_CODECID_VVC, 0},
+#endif
+
 	{0}
 };
 
@@ -604,19 +620,28 @@ static u32 ff_streamtype(u32 st)
 	return GF_STREAM_UNKNOWN;
 }
 
+#if (LIBAVFORMAT_VERSION_MAJOR >= 58) && (LIBAVFORMAT_VERSION_MINOR>=30)
+#else
+#define NO_AVIO_PROTO
+#endif
+
 static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister *orig_reg, u32 type)
 {
 	u32 i=0, idx=0, flags=0;
+#ifndef NO_AVIO_PROTO
+	Bool protocol_pass = GF_FALSE;
+#endif
 	const struct AVOption *opt;
 	GF_List *all_filters = gf_list_new();
 	AVInputFormat *fmt = NULL;
-	AVOutputFormat *ofmt = NULL;
+	const AVOutputFormat *ofmt = NULL;
 	AVCodec *codec = NULL;
 #if (LIBAVFILTER_VERSION_MAJOR > 5)
 	const AVFilter *avf = NULL;
-#if (LIBAVFILTER_VERSION_MAJOR > 6)
-	void *avf_it = NULL;
 #endif
+
+#if !defined(NO_AVIO_PROTO) || (LIBAVFILTER_VERSION_MAJOR > 6)
+	void *av_it;
 #endif
 
 	const char *fname = "";
@@ -645,6 +670,15 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 
 	((GF_FFRegistryExt *)orig_reg->udta)->all_filters = all_filters;
 
+
+#ifndef NO_AVIO_PROTO
+second_pass:
+#endif
+
+#if !defined(NO_AVIO_PROTO) || (LIBAVFILTER_VERSION_MAJOR > 6)
+	av_it = NULL;
+#endif
+
 	while (1) {
 		const AVClass *av_class=NULL;
 		const char *subname = NULL;
@@ -654,13 +688,25 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 		char szDef[100];
 		GF_FilterRegister *freg;
 		if (type==FF_REG_TYPE_DEMUX) {
-			fmt = av_iformat_next(fmt);
-			if (!fmt) break;
-			av_class = fmt->priv_class;
-			subname = fmt->name;
+#ifndef NO_AVIO_PROTO
+			if (protocol_pass) {
+				subname = avio_enum_protocols(&av_it, 0);
+				if (!subname) break;
+				av_class = avio_protocol_get_class(subname);
 #ifndef GPAC_DISABLE_DOC
-			description = fmt->long_name;
+				description = "Input protocol";
 #endif
+			} else
+#endif
+			{
+				fmt = av_iformat_next(fmt);
+				if (!fmt) break;
+				av_class = fmt->priv_class;
+				subname = fmt->name;
+#ifndef GPAC_DISABLE_DOC
+				description = fmt->long_name;
+#endif
+			}
 		} else if (type==FF_REG_TYPE_DECODE) {
 			codec = av_codec_next(codec);
 			if (!codec) break;
@@ -717,17 +763,34 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 			description = codec->long_name;
 #endif
 		} else if (type==FF_REG_TYPE_MUX) {
-			ofmt = av_oformat_next(ofmt);
-			if (!ofmt) break;
-			av_class = ofmt->priv_class;
-			subname = ofmt->name;
+#ifndef NO_AVIO_PROTO
+			if (protocol_pass) {
+				subname = avio_enum_protocols(&av_it, 1);
+				if (!subname) break;
+				av_class = avio_protocol_get_class(subname);
 #ifndef GPAC_DISABLE_DOC
-			description = ofmt->long_name;
+				description = "Output protocol";
 #endif
+			} else
+#endif
+
+			{
+#if (LIBAVFILTER_VERSION_MAJOR > 6)
+				ofmt = av_muxer_iterate(&av_it);
+#else
+				ofmt = av_oformat_next(ofmt);
+#endif
+				if (!ofmt) break;
+				av_class = ofmt->priv_class;
+				subname = ofmt->name;
+#ifndef GPAC_DISABLE_DOC
+				description = ofmt->long_name;
+#endif
+			}
 		} else if (type==FF_REG_TYPE_AVF) {
 #if (LIBAVFILTER_VERSION_MAJOR > 5)
 #if (LIBAVFILTER_VERSION_MAJOR > 6)
-			avf = av_filter_iterate(&avf_it);
+			avf = av_filter_iterate(&av_it);
 #else
 			avf = avfilter_next(avf);
 #endif
@@ -784,6 +847,7 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 		 	freg->caps =  caps;
 		}
 		else if ((type==FF_REG_TYPE_DEMUX)
+			&& fmt
 #if LIBAVCODEC_VERSION_MAJOR >= 58
 			&& (fmt->mime_type || fmt->extensions)
 #else
@@ -825,6 +889,7 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 		 	freg->caps =  caps;
 		}
 		else if ((type==FF_REG_TYPE_MUX)
+			&& ofmt
 #if LIBAVCODEC_VERSION_MAJOR >= 58
 			&& (ofmt->mime_type || ofmt->extensions)
 #else
@@ -958,9 +1023,18 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 				idx++;
 			}
 		}
-
 		gf_fs_add_filter_register(session, freg);
 	}
+
+#ifndef NO_AVIO_PROTO
+	if ((type==FF_REG_TYPE_MUX) || (type==FF_REG_TYPE_DEMUX)) {
+		if (!protocol_pass) {
+			protocol_pass = GF_TRUE;
+			goto second_pass;
+		}
+	}
+#endif
+
 }
 
 void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_reg, const GF_FilterArgs *default_args, u32 nb_def_args, u32 reg_type)
@@ -1047,7 +1121,7 @@ void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_re
 	//do not reset i
 
 	idx=0;
-	while (av_class->option) {
+	while (av_class && av_class->option) {
 		opt = &av_class->option[idx];
 		if (!opt || !opt->name) break;
 
@@ -1120,6 +1194,8 @@ void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_re
 	}
 
 	GF_SAFEALLOC(ffregext, GF_FFRegistryExt);
+	if (!ffregext) return;
+	
 	orig_reg->udta = ffregext;
 	ffregext->nb_arg_skip = nb_def_args-1;
 	orig_reg->register_free = ffmpeg_register_free;
@@ -1178,5 +1254,14 @@ void ffmpeg_set_mx_dmx_flags(const AVDictionary *options, AVFormatContext *ctx)
 	}
 }
 
+void ffmpeg_report_unused_options(GF_Filter *filter, AVDictionary *options)
+{
+	AVDictionaryEntry *prev_e = NULL;
+	while (1) {
+		prev_e = av_dict_get(options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
+		if (!prev_e) break;
+		gf_filter_report_unused_meta_option(filter, prev_e->key);
+	}
 
+}
 #endif

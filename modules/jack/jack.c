@@ -56,7 +56,7 @@ typedef struct
 static void
 Jack_cleanup (JackContext * ctx)
 {
-	u32 channels = 0;
+	u32 channels;
 	if (ctx == NULL)
 		return;
 
@@ -107,7 +107,6 @@ process_callback (jack_nframes_t nframes, void *arg)
 	unsigned int channel, i;
 	size_t toRead;
 	size_t bytesToRead;
-	size_t readen;
 	GF_AudioOutput *dr = (GF_AudioOutput *) arg;
 	JackContext *ctx;
 	if (dr == NULL)
@@ -118,9 +117,9 @@ process_callback (jack_nframes_t nframes, void *arg)
 	ctx = dr->opaque;
 	toRead = nframes * ctx->numChannels;
 	bytesToRead = toRead * ctx->bytesPerSample;
-	readen = dr->FillBuffer (dr->audio_renderer, (void *) ctx->buffer,
+	dr->FillBuffer (dr->audio_renderer, (void *) ctx->buffer,
 	                         bytesToRead);
-	toRead = readen / ctx->bytesPerSample;
+
 	if (ctx->bytesPerSample == 2)
 	{
 		short *tmpBuffer;

@@ -217,6 +217,7 @@ static Bool gsfdmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 
 static void gsfdmx_decrypt(GSF_DemuxCtx *ctx, char *data, u32 size)
 {
+#ifndef GPAC_DISABLE_CRYPTO
 	u32 pos=0;
 	u32 clear_tail = size%16;
 	u32 bytes_crypted = size - clear_tail;
@@ -239,6 +240,7 @@ static void gsfdmx_decrypt(GSF_DemuxCtx *ctx, char *data, u32 size)
 	} else {
 		gf_crypt_decrypt(ctx->crypt, data, bytes_crypted);
 	}
+#endif
 }
 
 static GFINLINE u32 gsfdmx_read_vlen(GF_BitStream *bs)
@@ -378,6 +380,7 @@ static GSF_Stream *gsfdmx_get_stream(GF_Filter *filter, GSF_DemuxCtx *ctx, u32 i
 
 	if ((pkt_type==GFS_PCKTYPE_PID_CONFIG) || (pkt_type==GFS_PCKTYPE_PID_INFO_UPDATE) ) {
 		GF_SAFEALLOC(gst, GSF_Stream);
+		if (!gst) return NULL;
 		gst->packets = gf_list_new();
 		gst->idx = idx;
 		gf_list_add(ctx->streams, gst);
@@ -473,6 +476,9 @@ static GF_Err gsfdmx_tune(GF_Filter *filter, GSF_DemuxCtx *ctx, char *pck_data, 
 		return GF_NOT_SUPPORTED;
 	}
 	if (is_crypted) {
+#ifdef GPAC_DISABLE_CRYPTO
+		return GF_NOT_SUPPORTED;
+#else
 		if (pck_size<25) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFDemux] Wrong serialized header size %d, should be at least 25 bytes for encrypted streams\n", pck_size ));
 			ctx->tune_error = GF_TRUE;
@@ -496,6 +502,7 @@ static GF_Err gsfdmx_tune(GF_Filter *filter, GSF_DemuxCtx *ctx, char *pck_data, 
 		gf_crypt_init(ctx->crypt, ctx->key.ptr, ctx->crypt_IV);
 
 		gsfdmx_decrypt(ctx, pck_data+25, pck_size - 25);
+#endif
 	}
 	ctx->use_seq_num = gf_bs_read_int(bs, 1);
 	gf_bs_read_int(bs, 7);
@@ -545,6 +552,7 @@ static GFINLINE GSF_Packet *gsfdmx_get_packet(GSF_DemuxCtx *ctx, GSF_Stream *gst
 		gpck = gf_list_pop_back(ctx->pck_res);
 		if (!gpck) {
  			GF_SAFEALLOC(gpck, GSF_Packet);
+ 			if (!gpck) return NULL;
  			gpck->nb_alloc_frags = 10;
  			gpck->frags = gf_malloc(sizeof(GSF_PacketFragment) * gpck->nb_alloc_frags);
 		}
@@ -717,7 +725,7 @@ GF_Err gsfdmx_read_data_pck(GSF_DemuxCtx *ctx, GSF_Stream *gst, GSF_Packet *gpck
 		dur = gf_bs_read_int(bs, durmodebits);
 	}
 
-	if (sap==GF_FILTER_SAP_4) {
+	if ((sap==GF_FILTER_SAP_4) || (sap==GF_FILTER_SAP_4_PROL)) {
 		roll = gf_bs_read_u16(bs);
 	}
 	if (has_dep)
@@ -817,10 +825,12 @@ GF_Err gsfdmx_read_data_pck(GSF_DemuxCtx *ctx, GSF_Stream *gst, GSF_Packet *gpck
 	if (seek) gf_filter_pck_set_seek_flag(gpck->pck, seek);
 	if (crypt) gf_filter_pck_set_crypt_flags(gpck->pck, crypt);
 	if (sap) gf_filter_pck_set_sap(gpck->pck, sap);
-	if (sap==GF_FILTER_SAP_4) gf_filter_pck_set_roll_info(gpck->pck, roll);
+	if ((sap==GF_FILTER_SAP_4) || (sap==GF_FILTER_SAP_4_PROL))
+		gf_filter_pck_set_roll_info(gpck->pck, roll);
 	return GF_OK;
 }
 
+#ifndef GPAC_DISABLE_LOG
 static const char *gsfdmx_pck_name(u32 pck_type)
 {
 	switch (pck_type) {
@@ -833,6 +843,7 @@ static const char *gsfdmx_pck_name(u32 pck_type)
 	default: return "FORBIDDEN";
 	}
 }
+#endif
 
 static GFINLINE void gsfdmx_pck_reset(GSF_Packet *pck)
 {
@@ -926,15 +937,20 @@ static GF_Err gsfdmx_process_packets(GF_Filter *filter, GSF_DemuxCtx *ctx, GSF_S
 		case GFS_PCKTYPE_PID_EOS:
 			if (gpck->pck) gf_filter_pck_discard(gpck->pck);
 			gf_filter_pid_set_eos(gst->opid);
+			e = GF_EOS;
 			break;
 		case GFS_PCKTYPE_PCK:
 			if (gpck->corrupted) gf_filter_pck_set_corrupted(gpck->pck, GF_TRUE);
 			e = gf_filter_pck_send(gpck->pck);
 			break;
+		default:
+			e = GF_OK;
+			break;
 		}
 		gf_list_rem(gst->packets, 0);
 		gsfdmx_pck_reset(gpck);
 		gf_list_add(ctx->pck_res, gpck);
+		if (e>GF_OK) e = GF_OK;
 		if (e) return e;
 	}
 	return GF_OK;
@@ -960,12 +976,16 @@ static GF_Err gsfdmx_demux(GF_Filter *filter, GSF_DemuxCtx *ctx, char *data, u32
 	while (gf_bs_available(ctx->bs_r) > 4) { //1 byte header + 3 vlen field at least 1 bytes
 		GF_Err e = GF_OK;
 		u32 pck_len, block_size, block_offset;
+#ifndef GPAC_DISABLE_LOG
 		u32 hdr_pos = (u32) gf_bs_get_position(ctx->bs_r);
+#endif
 		/*Bool reserved =*/ gf_bs_read_int(ctx->bs_r, 1);
 		u32 frag_flags = gf_bs_read_int(ctx->bs_r, 2);
 		Bool is_crypted = gf_bs_read_int(ctx->bs_r, 1);
 		u32 pck_type = gf_bs_read_int(ctx->bs_r, 4);
+#ifndef GPAC_DISABLE_LOG
 		u16 sn = 0;
+#endif
 		u32 st_idx;
 		Bool needs_agg = GF_FALSE;
 		u16 frame_sn = 0;
@@ -1075,7 +1095,8 @@ static GF_Err gsfdmx_demux(GF_Filter *filter, GSF_DemuxCtx *ctx, char *data, u32
 							gsfdmx_packet_append_frag(gpck, pck_len, block_offset);
 						}
 					}
-					e = gsfdmx_process_packets(filter, ctx, gst);
+					if (!e)
+						e = gsfdmx_process_packets(filter, ctx, gst);
 				}
 			}
 		}
@@ -1201,7 +1222,9 @@ static void gsfdmx_finalize(GF_Filter *filter)
 	}
 	gf_list_del(ctx->pck_res);
 
+#ifndef GPAC_DISABLE_CRYPTO
 	if (ctx->crypt) gf_crypt_close(ctx->crypt);
+#endif
 	if (ctx->buffer) gf_free(ctx->buffer);
 	if (ctx->bs_r) gf_bs_del(ctx->bs_r);
 	if (ctx->bs_pck) gf_bs_del(ctx->bs_pck);
@@ -1223,7 +1246,9 @@ static const GF_FilterCapability GSFDemuxCaps[] =
 #define OFFS(_n)	#_n, offsetof(GSF_DemuxCtx, _n)
 static const GF_FilterArgs GSFDemuxArgs[] =
 {
+#ifndef GPAC_DISABLE_CRYPTO
 	{ OFFS(key), "key for decrypting packets", GF_PROP_DATA, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
+#endif
 	{ OFFS(magic), "magic string to check in setup packet", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(mq), "set max packet queue length for loss detection. 0 will flush incomplete packet when a new one starts", GF_PROP_UINT, "4", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(pad), "byte value used to pad lost packets", GF_PROP_UINT, "0", "0-255", GF_FS_ARG_HINT_ADVANCED},
@@ -1234,11 +1259,17 @@ static const GF_FilterArgs GSFDemuxArgs[] =
 GF_FilterRegister GSFDemuxRegister = {
 	.name = "gsfdmx",
 	GF_FS_SET_DESCRIPTION("GSF Demuxer")
-	GF_FS_SET_HELP("This filter provides GSF (__GPAC Super/Simple/Serialized/Stream/State Format__) demultiplexing.\n"
+#ifndef GPAC_DISABLE_DOC
+	.help = "This filter provides GSF (__GPAC Super/Simple/Serialized/Stream/State Format__) demultiplexing.\n"
 			"It deserializes the stream states (config/reconfig/info update/remove/eos) and packets of input PIDs.\n"
 			"This allows either reading a session saved to file, or receiving the state/data of streams from another instance of GPAC using either pipes or sockets\n"
 			"\n"
-			"The stream format can be encrypted in AES 128 CBC mode, in which case the demux filters must be given a 128 bit key.")
+#ifndef GPAC_DISABLE_CRYPTO
+			"The stream format can be encrypted in AES 128 CBC mode, in which case the demux filters must be given a 128 bit key."
+#endif
+		,
+#endif
+	
 	.private_size = sizeof(GSF_DemuxCtx),
 	.max_extra_pids = (u32) -1,
 	.args = GSFDemuxArgs,

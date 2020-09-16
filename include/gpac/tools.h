@@ -182,7 +182,7 @@ typedef enum
 	GF_AUTHENTICATION_FAILURE				= -50,
 	/*! Script not ready for playback */
 	GF_SCRIPT_NOT_READY						= -51,
-	/*! Bad configuration for the current contex */
+	/*! Bad configuration for the current context */
 	GF_INVALID_CONFIGURATION				= -52,
 	/*! The element has not been found */
 	GF_NOT_FOUND							= -53,
@@ -217,7 +217,12 @@ const char *gf_error_to_string(GF_Err e);
 
 Macro allocating memory and zero-ing it
 */
-#define GF_SAFEALLOC(__ptr, __struct) { __ptr = (__struct *) gf_malloc(sizeof(__struct)); if (__ptr) memset((void *) __ptr, 0, sizeof(__struct)); }
+#define GF_SAFEALLOC(__ptr, __struct) {\
+		__ptr = (__struct *) gf_malloc(sizeof(__struct));\
+		if (__ptr) {\
+			memset((void *) __ptr, 0, sizeof(__struct));\
+		}\
+	}
 
 /*!
 \brief Memory allocation for an array of n structs
@@ -225,7 +230,12 @@ Macro allocating memory and zero-ing it
 
 Macro allocating memory for n structures and zero-ing it
 */
-#define GF_SAFE_ALLOC_N(__ptr, __n, __struct) { __ptr = (__struct *) gf_malloc( __n * sizeof(__struct)); if (__ptr) memset((void *) __ptr, 0, __n * sizeof(__struct)); }
+#define GF_SAFE_ALLOC_N(__ptr, __n, __struct) {\
+		__ptr = (__struct *) gf_malloc( __n * sizeof(__struct));\
+		if (__ptr) {\
+			memset((void *) __ptr, 0, __n * sizeof(__struct));\
+		}\
+	}
 
 
 /*!
@@ -328,6 +338,25 @@ Gets the number of argument of the user application if any
  */
 const char *gf_sys_get_arg(u32 arg);
 
+
+/*!
+\brief Mark arg as used
+
+Marks the argument at given index as used. By default all args are marked as not used when assigning args
+\param arg_idx Index of argument to mark
+\param used flag to set
+*/
+void gf_sys_mark_arg_used(s32 arg_idx, Bool used);
+
+/*!
+\brief Check if arg is marked as used
+
+Marks the argument at given index as used
+\param arg_idx Index of argument to mark
+\return used flag of the arg
+*/
+Bool gf_sys_is_arg_used(s32 arg_idx);
+
 /*!
 \brief checks if test mode is enabled
 
@@ -367,6 +396,34 @@ u32 gf_sys_is_quiet();
 \return the list of features.
 */
 const char *gf_sys_features(Bool disabled);
+
+/*! callback function for remotery profiler
+ \param udta user data passed by \ref gf_sys_profiler_set_callback
+ \param text string sent by webbrowser client
+*/
+typedef void (*gf_rmt_user_callback)(void *udta, const char* text);
+
+/*! Enables remotery profiler callback. If remotery is enabled, commands sent via webbrowser client will be forwarded to the callback function specified
+\param udta user data
+\param rmt_usr_cbk callback function
+\return GF_OK if success, GF_BAD_PARAM if profiler is not running, GF_NOT_SUPPORTED if profiler not supported
+*/
+GF_Err gf_sys_profiler_set_callback(void *udta, gf_rmt_user_callback rmt_usr_cbk);
+
+
+/*! Sends a message to remotery web client
+\param msg text message to send. The message format should be json
+\return GF_OK if success, GF_BAD_PARAM if profiler is not running, GF_NOT_SUPPORTED if profiler not supported
+*/
+GF_Err gf_sys_profiler_send(const char *msg);
+
+/*! Enables sampling times in RMT
+ \param enable if GF_TRUE, sampling will be enabled, otherwise disabled*/
+void gf_sys_profiler_enable_sampling(Bool enable);
+
+/*! Checks if sampling is enabled in RMT. Sampling is by default enabled when enabling remotery
+ \return GF_TRUE if sampling is enabled, GF_FALSE otherwise*/
+Bool gf_sys_profiler_sampling_enabled();
 
 /*!
 GPAC Log tools
@@ -746,6 +803,15 @@ Gets the current character entered at prompt if any.
 */
 char gf_prompt_get_char();
 
+/*!
+\brief Get prompt terminal size
+
+Gets the stdin prompt size (columns and rows)
+\param width set to number of rows in the terminal
+\param height set to number of columns in the terminal
+\return error if any
+*/
+GF_Err gf_prompt_get_size(u32 *width, u32 *height);
 
 /*!
 \brief turns prompt echo on/off
@@ -848,6 +914,15 @@ Gets UTC clock in milliseconds
 \return UTC time in milliseconds
  */
 u64 gf_net_get_utc();
+
+/*!
+\brief converts an ntp timestamp into UTC time in milliseconds
+
+Converts NTP 64-bit timestamp to UTC clock in milliseconds
+\u64 ntp NTP timestamp
+\return UTC time in milliseconds
+ */
+u64 gf_net_ntp_to_utc(u64 ntp);
 
 /*!
 \brief parses date
@@ -1185,7 +1260,7 @@ Bool gf_fileio_check(FILE *fp);
 /*!
 \brief file opening
 
-Opens a file, potentially bigger than 4GB
+Opens a file, potentially bigger than 4GB. if filename identifies a blob (gmem://), the blob will be opened
 \param file_name same as fopen
 \param mode same as fopen
 \return stream handle of the file object
@@ -1553,7 +1628,6 @@ Compresses a data buffer in place using zlib/deflate. Buffer may be reallocated 
  */
 GF_Err gf_gz_compress_payload(u8 **data, u32 data_len, u32 *out_size);
 
-#ifndef GPAC_DISABLE_ZLIB
 /**
 Compresses a data buffer in place using zlib/deflate. Buffer may be reallocated in the process.
 \param data pointer to the data buffer to be compressed
@@ -1561,10 +1635,10 @@ Compresses a data buffer in place using zlib/deflate. Buffer may be reallocated 
 \param out_size pointer for output buffer size
 \param data_offset offset in source buffer - the input payload size is data_len - data_offset
 \param skip_if_larger if GF_TRUE, will not override source buffer if compressed version is larger than input data
+\param out_comp_data if not NULL, the compressed result is set in this pointer rather than doing inplace compression
 \return error if any
  */
-GF_Err gf_gz_compress_payload_ex(u8 **data, u32 data_len, u32 *out_size, u8 data_offset, Bool skip_if_larger);
-#endif /*GPAC_DISABLE_ZLIB*/
+GF_Err gf_gz_compress_payload_ex(u8 **data, u32 data_len, u32 *out_size, u8 data_offset, Bool skip_if_larger, u8 **out_comp_data);
 
 /**
 Decompresses a data buffer using zlib/deflate.
@@ -1613,7 +1687,7 @@ u64 gf_gztell(void *file);
  \param file target gzfile
  \return same as gzrewind
  */
-u64 gf_gzrewind(void *file);
+s64 gf_gzrewind(void *file);
 /*! Wrapper around gzeof, same parameters
  \param file target gzfile
  \return same as gzeof
@@ -1840,6 +1914,49 @@ openGL extensions on windows
 not exported, and not included in src/compositor/gl_inc.h since it may be needed even when no OpenGL 
 calls are made by the caller*/
 void gf_opengl_init();
+
+typedef enum
+{
+	//pbo not enabled
+	GF_GL_PBO_NONE=0,
+	//pbo enabled, both push and glTexImage textures are done in gf_gl_txw_upload
+	GF_GL_PBO_BOTH,
+	//push only is done in gf_gl_txw_upload
+	GF_GL_PBO_PUSH,
+	// glTexImage textures only is done in gf_gl_txw_upload
+	GF_GL_PBO_TEXIMG,
+} GF_GLPBOState;
+
+typedef struct _gl_texture_wrap
+{
+	u32 textures[4];
+	u32 PBOs[4];
+
+	u32 nb_textures;
+	u32 width, height, pix_fmt, stride, uv_stride;
+	Bool is_yuv;
+	u32 bit_depth, uv_w, uv_h;
+	u32 scale_10bit;
+
+	u32 gl_format;
+	u32 bytes_per_pix;
+	Bool has_alpha;
+	Bool internal_textures;
+	Bool uniform_setup;
+	u32 memory_format;
+	struct _gf_filter_frame_interface *frame_ifce;
+	Bool first_tx_load;
+
+	//PBO state - must be managed by caller, especially if using seperated push and texImg steps through gf_gl_txw_setup calls
+	GF_GLPBOState pbo_state;
+	Bool flip;
+} GF_GLTextureWrapper;
+
+Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source);
+Bool gf_gl_txw_setup(GF_GLTextureWrapper *tx, u32 pix_fmt, u32 width, u32 height, u32 stride, u32 uv_stride, Bool linear_interp, struct _gf_filter_frame_interface *frame_ifce);
+Bool gf_gl_txw_upload(GF_GLTextureWrapper *tx, const u8 *data, struct _gf_filter_frame_interface *frame_ifce);
+Bool gf_gl_txw_bind(GF_GLTextureWrapper *tx, const char *tx_name, u32 gl_program, u32 texture_unit);
+void gf_gl_txw_reset(GF_GLTextureWrapper *tx);
 
 /* \endcond */
 

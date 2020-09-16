@@ -429,7 +429,7 @@ static void SDLVid_DestroyObjects(SDLVidCtx *ctx)
 #endif
 #endif
 
-#if SDL_VERSION_ATLEAST(2,0,0)
+#if SDL_VERSION_ATLEAST(2,0,0) && !defined(GPAC_CONFIG_IOS)
 #include <gpac/media_tools.h>
 void SDLVid_SetIcon(SDLVidCtx *ctx)
 {
@@ -464,7 +464,7 @@ void SDLVid_SetIcon(SDLVidCtx *ctx)
 
 GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 {
-	Bool hw_reset = GF_FALSE;
+	Bool hw_reset;
 	SDLVID();
 	GF_Event evt;
 
@@ -504,14 +504,14 @@ GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 		SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, nb_bits);
 		SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, nb_bits);
 
+		assert(width);
+		assert(height);
+
 #if SDL_VERSION_ATLEAST(2,0,0)
 		if (ctx->hidden)
 			flags |= SDL_WINDOW_HIDDEN;
-#endif
-		
-		assert(width);
-		assert(height);
-#if SDL_VERSION_ATLEAST(2,0,0)
+
+		hw_reset = GF_FALSE;
 
 #ifdef GPAC_USE_GLES2
 		/* Set the correct attributes for MASK and MAJOR version */
@@ -527,7 +527,9 @@ GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 			}
 			GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[SDL] Window created\n"));
 
+#if SDL_VERSION_ATLEAST(2,0,0) && !defined(GPAC_CONFIG_IOS)
 			SDLVid_SetIcon(ctx);
+#endif
 
 			/*creating a window, at least on OSX, changes the locale and screws up float parsing !!
 			force setting the local back and pray that it will be changed before any other atof/strtod is called
@@ -622,7 +624,9 @@ GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 				return GF_IO_ERR;
 			}
 
+#if SDL_VERSION_ATLEAST(2,0,0) && !defined(GPAC_CONFIG_IOS)
 			SDLVid_SetIcon(ctx);
+#endif
 
 			/*see above note*/
 #ifndef _WIN32_WCE
@@ -687,7 +691,9 @@ static Bool SDLVid_InitializeWindow(SDLVidCtx *ctx, GF_VideoOutput *dr)
 #if SDL_VERSION_ATLEAST(2,0,0)
 	SDL_DisplayMode vinf;
 #else
+#if SDL_VERSION_ATLEAST(1, 2, 10)
 	const SDL_VideoInfo *vinf;
+#endif
 #endif
 
 #ifdef WIN32
@@ -722,8 +728,9 @@ static Bool SDLVid_InitializeWindow(SDLVidCtx *ctx, GF_VideoOutput *dr)
 	dr->max_screen_height = vinf.h;
 	dr->max_screen_bpp = 8;
 #else
-	vinf = SDL_GetVideoInfo();
+
 #if SDL_VERSION_ATLEAST(1, 2, 10)
+	vinf = SDL_GetVideoInfo();
 	dr->max_screen_width = vinf->current_w;
 	dr->max_screen_height = vinf->current_h;
 	dr->max_screen_bpp = 8;
@@ -824,13 +831,24 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 				break;
 			case SDL_WINDOWEVENT_EXPOSED:
 			case SDL_WINDOWEVENT_SHOWN:
-			case SDL_WINDOWEVENT_MOVED:
 				gpac_evt.type = GF_EVENT_REFRESH;
+				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
+				break;
+			case SDL_WINDOWEVENT_MOVED:
+				gpac_evt.type = GF_EVENT_MOVE;
+				gpac_evt.move.x = sdl_evt.window.data1;
+				gpac_evt.move.y = sdl_evt.window.data2;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				break;
 			case SDL_WINDOWEVENT_CLOSE:
 				memset(&gpac_evt, 0, sizeof(GF_Event));
 				gpac_evt.type = GF_EVENT_QUIT;
+				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
+				return GF_FALSE;
+			case SDL_WINDOWEVENT_MINIMIZED:
+				memset(&gpac_evt, 0, sizeof(GF_Event));
+				gpac_evt.type = GF_EVENT_SHOWHIDE;
+				gpac_evt.show.show_type = 0;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				return GF_FALSE;
 			}
@@ -889,7 +907,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 #endif
 
 
-#if (SDL_MAJOR_VERSION>=1) && (SDL_MINOR_VERSION>=3)
+#if SDL_VERSION_ATLEAST(2,0,0)
 
 			if ((gpac_evt.type==GF_EVENT_KEYUP) && (gpac_evt.key.key_code==GF_KEY_V)
 #if defined(__DARWIN__) || defined(__APPLE__)
@@ -898,13 +916,10 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			        && ctx->ctrl_down
 #endif
 			   ) {
-#if defined(__DARWIN__) || defined(__APPLE__)
-#else
 				gpac_evt.type = GF_EVENT_PASTE_TEXT;
-				gpac_evt.message.message = (const char *) SDL_GetClipboardText();
+				gpac_evt.clipboard.text = (char *) SDL_GetClipboardText();
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
-				SDL_free((char *) gpac_evt.message.message);
-#endif
+				SDL_free(gpac_evt.clipboard.text);
 			}
 			else if ((gpac_evt.type==GF_EVENT_KEYUP) && (gpac_evt.key.key_code==GF_KEY_C)
 #if defined(__DARWIN__) || defined(__APPLE__)
@@ -914,11 +929,10 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 #endif
 			        ) {
 				gpac_evt.type = GF_EVENT_COPY_TEXT;
-#if defined(__DARWIN__) || defined(__APPLE__)
-#else
-				if (dr->on_event(dr->evt_cbk_hdl, &gpac_evt)==GF_TRUE)
-					SDL_SetClipboardText((char *)gpac_evt.message.message );
-#endif
+				if (dr->on_event(dr->evt_cbk_hdl, &gpac_evt) && gpac_evt.clipboard.text) {
+					SDL_SetClipboardText(gpac_evt.clipboard.text );
+					gf_free(gpac_evt.clipboard.text);
+				}
 			}
 #endif
 
@@ -982,6 +996,24 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			gpac_evt.type = GF_EVENT_MOUSEWHEEL;
 			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			break;
+
+		case SDL_MULTIGESTURE:
+			gpac_evt.mtouch.x = FLT2FIX(sdl_evt.mgesture.x);
+			gpac_evt.mtouch.y = FLT2FIX(sdl_evt.mgesture.y);
+			gpac_evt.mtouch.num_fingers = sdl_evt.mgesture.numFingers;
+			gpac_evt.mtouch.rotation = sdl_evt.mgesture.dTheta;
+			gpac_evt.mtouch.pinch = sdl_evt.mgesture.dDist;
+			gpac_evt.type = GF_EVENT_MULTITOUCH;
+			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
+			break;
+
+		case SDL_DROPFILE:
+			gpac_evt.type = GF_EVENT_DROPFILE;
+			gpac_evt.open_file.nb_files = 1;
+			gpac_evt.open_file.files = &sdl_evt.drop.file;
+			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
+
+
 #endif
 
 		}
@@ -1001,6 +1033,7 @@ u32 SDLVid_EventProc(void *par)
 
 	if (!SDLVid_InitializeWindow(ctx, dr)) {
 		ctx->sdl_th_state = SDL_STATE_STOP_REQ;
+		return 1;
 	}
 
 	ctx->sdl_th_state = SDL_STATE_RUNNING;
@@ -1053,15 +1086,26 @@ u32 SDLVid_EventProc(void *par)
 
 GF_Err SDLVid_Setup(struct _video_out *dr, void *os_handle, void *os_display, u32 init_flags)
 {
+	Bool show_window = GF_TRUE;
 	SDLVID();
 	/*we don't allow SDL hack, not stable enough*/
 	//if (os_handle) SDLVid_SetHack(os_handle, 1);
 
 	ctx->os_handle = os_handle;
-	ctx->is_init = GF_FALSE;
-	ctx->output_3d = GF_FALSE;
+	if (!ctx->is_init) {
+		ctx->output_3d = GF_FALSE;
+		show_window = GF_TRUE;
+	}
+
 	ctx->force_alpha = (init_flags & GF_TERM_WINDOW_TRANSPARENT) ? GF_TRUE : GF_FALSE;
 	ctx->hidden = (init_flags & GF_TERM_INIT_HIDE) ? GF_TRUE : GF_FALSE;
+
+	if (!ctx->hidden && show_window) {
+#if SDL_VERSION_ATLEAST(2,0,0)
+		SDL_ShowWindow(ctx->screen);
+#else
+#endif
+	}
 
 	if (!SDLOUT_InitSDL())
 		return GF_IO_ERR;
@@ -1155,8 +1199,7 @@ GF_Err SDLVid_SetFullScreen(GF_VideoOutput *dr, Bool bFullScreenOn, u32 *screen_
 #if ! ( SDL_VERSION_ATLEAST(2,0,0) )
 		u32 flags = ctx->output_3d ? SDL_GL_FULLSCREEN_FLAGS : SDL_FULLSCREEN_FLAGS;
 #endif
-		Bool switch_res = GF_FALSE;
-		switch_res = gf_opts_get_bool("core", "switch-vres");
+		Bool switch_res = gf_opts_get_bool("core", "switch-vres");
 		if (!dr->max_screen_width || !dr->max_screen_height) switch_res = GF_TRUE;
 
 		ctx->store_width = *screen_width;
@@ -1287,7 +1330,7 @@ GF_Err SDLVid_SetBackbufferSize(GF_VideoOutput *dr, u32 newWidth, u32 newHeight,
 
 u32 SDLVid_MapPixelFormat(SDL_PixelFormat *format, Bool force_alpha)
 {
-	if (format->palette) return 0;
+	if (!format || format->palette) return 0;
 	switch (format->BitsPerPixel) {
 	case 16:
 		if ((format->Rmask==0x7c00) && (format->Gmask==0x03e0) && (format->Bmask==0x001f) ) return GF_PIXEL_RGB_555;
@@ -2000,6 +2043,9 @@ void *SDL_NewVideo()
 #endif
 
 
+#ifdef GPAC_ENABLE_COVERAGE
+	SDLVid_MapPixelFormat(NULL, GF_FALSE);
+#endif
 
 	driv->Blit = SDL_Blit;
 	driv->LockBackBuffer = SDLVid_LockBackBuffer;

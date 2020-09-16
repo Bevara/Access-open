@@ -78,6 +78,7 @@ has_xvid="no"
 has_mad="no"
 has_faad="no"
 has_ffmpeg="no"
+ffmpeg_vvc="no"
 has_amr_nb_fixed="no"
 has_amr_nb="no"
 has_amr_wb="no"
@@ -933,6 +934,48 @@ if docc $CFLAGS_DIR $LINK_SSL $LDFLAGS ; then
 fi
 
 
+#look for atomic.h
+cat > $TMPC << EOF
+#include <pthread.h>
+#include <stdatomic.h>
+int main( void ) { return 0; }
+EOF
+
+has_atomic="no"
+if docc $CFLAGS_DIR $LDFLAGS ; then
+    has_atomic="yes"
+else
+    CFLAGS="$CFLAGS -DGPAC_NO_STDATOMIC"
+fi
+
+
+cat > $TMPC << EOF
+#include <stdint.h>
+int main(void) {
+    int i4 = 4;
+    __int64_t i8 = 8;
+    __sync_add_and_fetch(&i4, 12);
+    __sync_add_and_fetch(&i8, 12);
+}
+EOF
+has_builtinatomic="no"
+if docc ; then
+    has_builtinatomic="yes"
+else
+cat > $TMPC << EOF
+#include <stdint.h>
+int main(void) {
+    int i4 = 4;
+    __int64_t i8 = 8;
+    __atomic_add_fetch(&i4, 12, __ATOMIC_SEQ_CST);
+    __atomic_add_fetch(&i8, 12, __ATOMIC_SEQ_CST);
+}
+EOF
+    if docc -latomic ; then
+        CFLAGS="$CFLAGS -DGPAC_NEED_LIBATOMIC"
+        LDFLAGS="$LDFLAGS -latomic"
+    fi
+fi
 
 #look for JPEG support
 cat > $TMPC << EOF
@@ -1304,6 +1347,19 @@ else
     has_libswresample="no"
 fi
 
+
+#detect vvc support in ffmpegf
+cat > $TMPC << EOF
+#include <libavcodec/avcodec.h>
+int main(void) {
+    AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_VVC);
+    return 0;
+}
+EOF
+
+if docc $ffmpeg_cflags $ffmpeg_lflags ; then
+    ffmpeg_vvc="yes"
+fi
 
 #look for FREENECT support
 freenect_flags=""
@@ -2203,7 +2259,7 @@ fi
 
 #man dir
 if test x"$mandir" = x""; then
-    mandir="${prefix}/share/man"
+    mandir="share/man"
 fi
 
 if test "$static_mp4box" = "yes"; then
@@ -2587,6 +2643,9 @@ echo "MAD: $has_mad"
 echo "FAAD: $has_faad"
 echo "XVID: $has_xvid"
 echo "FFMPEG: $has_ffmpeg"
+if test "$ffmpeg_vvc" = "yes" ; then
+echo "FFMPG VVC Support: $ffmpeg_vvc"
+fi
 echo "LZMA: $has_lzma"
 echo "Xiph OGG: $has_ogg"
 echo "Platinum UPnP: $has_platinum"
@@ -2601,6 +2660,7 @@ echo "A52 (AC3): $has_a52"
 echo "OpenSVCDecoder: $has_opensvc"
 echo "OpenHEVCDecoder: $has_openhevc"
 echo "Freenect: $has_freenect"
+
 
 if test "$enable_renoir" = "yes" ; then
     echo "Renoir enabled - make sure the driver libraries are present in modules/viren_out directory"
@@ -2650,8 +2710,9 @@ fi
 if test "$darwin" = "yes" ; then
     CFLAGS="$CFLAGS_DIR $CFLAGS -Wno-deprecated -Wno-deprecated-declarations"
 else
-    CFLAGS="$CFLAGS -Wno-deprecated -Wno-deprecated-declarations"
+    CFLAGS="$CFLAGS -Wno-deprecated -Wno-deprecated-declarations -Wno-int-in-bool-context"
 fi
+
 
 if test "$enable_sanitizer" = "yes" ; then
     CFLAGS="$CFLAGS -fsanitize=address,undefined -fno-sanitize-recover -g"
@@ -2674,9 +2735,7 @@ echo "GPAC_CONFIGURATION=$GPAC_CONFIGURATION" >> config.mak
 
 echo "prefix=$prefix" >> config.mak
 echo "DESTDIR=$DESTDIR" >> config.mak
-echo "moddir=$prefix/$libdir/gpac" >> config.mak
-echo "moddir_path=$prefix/$libdir/gpac" >> config.mak
-echo "mandir=$mandir" >> config.mak
+echo "moddir=gpac" >> config.mak
 echo "tinygl_target_bin_dir=$target_bin_dir" >> config.mak
 echo "MAKE=$make" >> config.mak
 
@@ -2701,7 +2760,15 @@ echo "OPTFLAGS=$CFLAGS" >> config.mak
 echo "CXXFLAGS=$CXXFLAGS" >> config.mak
 echo "LDFLAGS=$LDFLAGS" >> config.mak
 echo "SHFLAGS=$SHFLAGS" >> config.mak
-echo "libdir=$libdir" >> config.mak
+
+pf="$prefix/"
+lib_dir=${libdir#"$pf"}
+echo "lib_dir=$lib_dir" >> config.mak
+
+pf="$prefix/"
+man_dir=${mandir#"$pf"}
+echo "man_dir=$man_dir" >> config.mak
+
 
 echo "STATIC_MODULES=$static_modules" >> config.mak
 
@@ -2889,6 +2956,9 @@ else
     echo "CONFIG_LIBAV=$is_libav" >> config.mak
     echo "CONFIG_LIBSWRESAMPLE=$has_libswresample" >> config.mak
     echo "#define GPAC_HAS_FFMPEG" >> $TMPH
+    if test "$ffmpeg_vvc" = "yes"; then
+      echo "#define FFMPEG_ENABLE_VVC" >> $TMPH
+    fi
 fi
 echo "CONFIG_FFMPEG_OLD=$old_ffmpeg_inc" >> config.mak
 
@@ -3228,5 +3298,31 @@ generate_pkgconfig () {
 }
 
 generate_pkgconfig > gpac.pc
+
+
+generate_gpacdesktop () {
+	echo "[Desktop Entry]"
+	echo "Version=1.0"
+	echo "Name=MP4Client"
+	echo "Comment=GPAC Media Player"
+	echo "GenericName=Media Player"
+	echo "Keywords=Media Player"
+	echo "Exec=MP4Client -gui %u"
+	echo "Terminal=false"
+	echo "X-MultipleArgs=false"
+	echo "Type=Application"
+	echo "Icon=$prefix/share/pixmaps/gpac.png"
+	echo "Categories=AudioVideo"
+	echo "MimeType=text/text;text/xml;application/xhtml+xml;application/xml;image/jpeg;image/png;video/webm;video/mp4;video/mpeg;audio/mp4;audio/mpeg;x-scheme-handler/rtsp;x-scheme-handler/rtp;x-scheme-handler/atsc"
+	echo "StartupNotify=true"
+	echo "Actions=new-window"
+	echo ""
+	echo "[Desktop Action new-window]"
+	echo "Name=Open a New Window"
+	echo "Exec=MP4Client"
+	echo ""
+}
+
+generate_gpacdesktop > "$source_path/share/gpac.desktop"
 
 echo "Done - type 'make help' for make info, 'make' to build"

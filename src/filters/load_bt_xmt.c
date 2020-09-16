@@ -799,9 +799,8 @@ static void ctxload_finalize(GF_Filter *filter)
 {
 	CTXLoadPriv *priv = gf_filter_get_udta(filter);
 
-	if (priv->files_to_delete)
-		gf_list_del(priv->files_to_delete);
-	priv->files_to_delete = NULL;
+	if (priv->ctx) gf_sm_del(priv->ctx);
+	if (priv->files_to_delete) gf_list_del(priv->files_to_delete);
 }
 
 #include <gpac/utf.h>
@@ -840,14 +839,14 @@ static const char *ctxload_probe_data(const u8 *probe_data, u32 size, GF_FilterP
 		|| strstr(probe_data, "mpeg4:LASeR:2005")
 	) {
 		mime_type = "application/x-LASeR+xml";
+	} else if (strstr(probe_data, "DIMSStream") ) {
+		mime_type = "application/dims";
 	} else if (strstr(probe_data, "<svg") || strstr(probe_data, "w3.org/2000/svg") ) {
 		mime_type = "image/svg+xml";
 	} else if (strstr(probe_data, "<widget")  ) {
 		mime_type = "application/widget";
 	} else if (strstr(probe_data, "<NHNTStream")) {
 		mime_type = "application/x-nhml";
-	} else if (strstr(probe_data, "DIMSStream") ) {
-		mime_type = "application/dims";
 	} else if (strstr(probe_data, "TextStream") ) {
 		mime_type = "text/ttxt";
 	} else if (strstr(probe_data, "text3GTrack") ) {
@@ -862,8 +861,6 @@ static const char *ctxload_probe_data(const u8 *probe_data, u32 size, GF_FilterP
 	*score = GF_FPROBE_NOT_SUPPORTED;
 	return NULL;
 }
-
-#endif //defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_SCENEGRAPH)
 
 static const GF_FilterCapability CTXLoadCaps[] =
 {
@@ -898,6 +895,8 @@ GF_FilterRegister CTXLoadRegister = {
 	.process_event = ctxload_process_event,
 	.probe_data = ctxload_probe_data,
 };
+
+#endif //defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_SCENEGRAPH)
 
 
 const GF_FilterRegister *ctxload_register(GF_FilterSession *session)

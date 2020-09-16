@@ -75,7 +75,6 @@ void DS_WriteAudio_Notifs(GF_AudioOutput *dr);
 
 static GF_Err DS_Setup(GF_AudioOutput *dr, void *os_handle, u32 num_buffers, u32 total_duration)
 {
-	DWORD flags;
 	HRESULT hr;
 
 	DSCONTEXT();
@@ -91,7 +90,7 @@ static GF_Err DS_Setup(GF_AudioOutput *dr, void *os_handle, u32 num_buffers, u32
 	if (ctx->cfg_num_buffers <= 1) ctx->cfg_num_buffers = 2;
 
 	if ( FAILED( hr = ctx->DirectSoundCreate( NULL, &ctx->pDS, NULL ) ) ) return GF_IO_ERR;
-	flags = DSSCL_EXCLUSIVE;
+
 	if( FAILED( hr = ctx->pDS->lpVtbl->SetCooperativeLevel(ctx->pDS, ctx->hWnd, DSSCL_EXCLUSIVE) ) ) {
 		SAFE_DS_RELEASE( ctx->pDS );
 		return GF_IO_ERR;
@@ -166,6 +165,9 @@ static GF_Err DS_Configure(GF_AudioOutput *dr, u32 *SampleRate, u32 *NbChannels,
 	ctx->format.wFormatTag = WAVE_FORMAT_PCM;
 	ctx->format.nBlockAlign = ctx->format.nChannels * ctx->format.wBitsPerSample / 8;
 	ctx->format.nAvgBytesPerSec = ctx->format.nSamplesPerSec * ctx->format.nBlockAlign;
+
+	if (!ctx->format.nBlockAlign)
+		return GF_BAD_PARAM;
 
 	if (!ctx->force_config) {
 		ctx->buffer_size = ctx->format.nBlockAlign * 1024;
@@ -398,7 +400,8 @@ static void DS_SetVolume(GF_AudioOutput *dr, u32 Volume)
 {
 	LONG Vol;
 	DSCONTEXT();
-	if (Volume > 100) Volume = DSBVOLUME_MAX;
+	if (!ctx->pOutput) return;
+	if (Volume > 100) Vol = DSBVOLUME_MAX;
 	else if(Volume == 0) Vol = DSBVOLUME_MIN;
 	else Vol = DSBVOLUME_MIN/2 + Volume * (DSBVOLUME_MAX-DSBVOLUME_MIN/2) / 100;
 	ctx->pOutput->lpVtbl->SetVolume(ctx->pOutput, Vol);
@@ -408,6 +411,7 @@ static void DS_SetPan(GF_AudioOutput *dr, u32 Pan)
 {
 	LONG dspan;
 	DSCONTEXT();
+	if (!ctx->pOutput) return;
 
 	if (Pan > 100) Pan = 100;
 	if (Pan > 50) {

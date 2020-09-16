@@ -79,7 +79,8 @@ static u64 sys_start_time_hr = 0;
 
 #include <gpac/revision.h>
 #define GPAC_FULL_VERSION       GPAC_VERSION "-rev" GPAC_GIT_REVISION
-#define GPAC_COPYRIGHT       "(c) 2000-2019 Telecom ParisTech distributed under LGPL v2.1+ - http://gpac.io"
+#define GPAC_COPYRIGHT "(c) 2000-2020 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io"
+
 
 GF_EXPORT
 const char *gf_gpac_version()
@@ -91,6 +92,16 @@ GF_EXPORT
 const char *gf_gpac_copyright()
 {
 	return GPAC_COPYRIGHT;
+}
+GF_EXPORT
+const char *gf_gpac_copyright_cite()
+{
+	return GPAC_COPYRIGHT"\n\n" \
+			"Please cite our work in your research:\n"\
+		"\tGPAC Filters: https://doi.org/10.1145/3339825.3394929\n"\
+		"\tGPAC: https://doi.org/10.1145/1291233.1291452\n"\
+		;
+
 }
 
 
@@ -114,7 +125,7 @@ u64 gf_sys_clock_high_res()
 
 #endif
 
-static Bool gf_sys_enable_profiling(Bool start, Bool is_shutdown);
+static Bool gf_sys_enable_remotery(Bool start, Bool is_shutdown);
 
 
 GF_EXPORT
@@ -219,7 +230,6 @@ int gettimeofday(struct timeval *tp, struct timezone *tzp)
 	LARGE_INTEGER   li;
 	TIME_ZONE_INFORMATION tzi;
 	__int64         t;
-	static int      tzflag;
 
 	if (NULL != tp)
 	{
@@ -367,7 +377,7 @@ void gf_utc_time_since_1970(u32 *sec, u32 *msec)
 GF_EXPORT
 void gf_get_user_name(char buf[1024])
 {
-	strcpy(buf, "mpeg4-user");
+	strcpy(buf, "gpac-user");
 
 #if 0
 	s32 len;
@@ -384,7 +394,10 @@ void gf_get_user_name(char buf[1024])
 	struct passwd *pw;
 	pw = getpwuid(getuid());
 	strcpy(buf, "");
-	if (pw && pw->pw_name) strncpy(name, pw->pw_name, 1023);
+	if (pw && pw->pw_name) {
+		strncpy(name, pw->pw_name, 1023);
+		name[1023] = 0;
+	}
 #endif
 }
 
@@ -426,6 +439,10 @@ GF_EXPORT
 void gf_prompt_set_echo_off(Bool echo_off) {
 	return;
 }
+GF_Err gf_prompt_get_size(u32 *width, u32 *height)
+{
+	return GF_NOT_SUPPORTED;
+}
 
 #else
 
@@ -451,15 +468,35 @@ void gf_prompt_set_echo_off(Bool echo_off)
 	if (!ret) {
 		DWORD err = GetLastError();
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONSOLE, ("[Console] GetConsoleMode() return with the following error code: %d\n", err));
+		return;
 	}
 	if (echo_off) flags &= ~ENABLE_ECHO_INPUT;
 	else flags |= ENABLE_ECHO_INPUT;
 	SetConsoleMode(hStdin, flags);
 }
+
+GF_EXPORT
+GF_Err gf_prompt_get_size(u32 *width, u32 *height)
+{
+    CONSOLE_SCREEN_BUFFER_INFO info;
+	HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+	BOOL ret = GetConsoleScreenBufferInfo(hStdin, &info);
+
+	if (!ret) {
+		DWORD err = GetLastError();
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONSOLE, ("[Console] GetConsoleScreenBufferInfo() return with the following error code: %d\n", err));
+		return GF_IO_ERR;
+	}
+	if (width) *width = info.dwSize.X;
+	if (height) *height = info.dwSize.Y;
+	return GF_OK;
+}
+
 #endif
 #else
 /*linux kbhit/getchar- borrowed on debian mailing lists, (author Mike Brownlow)*/
 #include <termios.h>
+#include <sys/ioctl.h>
 
 static struct termios t_orig, t_new;
 static s32 ch_peek = -1;
@@ -530,6 +567,30 @@ char gf_prompt_get_char()
 		ch = 0;
 	close_keyboard(1);
 	return ch;
+}
+
+GF_EXPORT
+GF_Err gf_prompt_get_size(u32 *width, u32 *height)
+{
+#if defined(TIOCGWINSZ)
+    struct winsize ws;
+    if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) != 0) return GF_IO_ERR;
+
+    if (width) *width = ws.ws_col;
+    if (height) *height = ws.ws_row;
+    return GF_OK;
+#elif defined(WIOCGETD)
+	struct uwdata w;
+	if (ioctl(2, WIOCGETD, &w) != 0) return GF_IO_ERR;
+
+	if (width && (w.uw_width > 0))
+		*width = w.uw_width / w.uw_hs;
+	if (height && (w.uw_height > 0))
+		*height = w.uw_height / w.uw_vs;
+    return GF_OK;
+#else
+    return GF_NOT_SUPPORTED;
+#endif
 }
 
 #endif
@@ -727,19 +788,26 @@ static u64 memory_at_gpac_startup = 0;
 
 static u32 gpac_argc = 0;
 const char **gpac_argv = NULL;
+Bool *gpac_argv_state = NULL;
 static Bool gpac_test_mode = GF_FALSE;
 static Bool gpac_old_arch = GF_FALSE;
 static Bool gpac_discard_config = GF_FALSE;
 
 //in error.c
+#ifndef GPAC_DISABLE_LOG
 extern FILE *gpac_log_file;
 extern Bool gpac_log_time_start;
 extern Bool gpac_log_utc_time;
+#endif
 
 GF_EXPORT
 Bool gf_log_use_file()
 {
+#ifndef GPAC_DISABLE_LOG
 	return gpac_log_file ? GF_TRUE : GF_FALSE;
+#else
+	return GF_FALSE;
+#endif
 }
 
 static void progress_quiet(const void *cbck, const char *title, u64 done, u64 total) { }
@@ -774,10 +842,12 @@ const char *gpac_log_file_name=NULL;
 GF_EXPORT
 void gf_log_reset_file()
 {
+#ifndef GPAC_DISABLE_LOG
 	if (gpac_log_file_name) {
 		if (gpac_log_file) gf_fclose(gpac_log_file);
 		gpac_log_file = gf_fopen(gpac_log_file_name, "wt");
 	}
+#endif
 }
 
 static Bool gpac_has_global_filter_args=GF_FALSE;
@@ -799,8 +869,8 @@ static u32 gpac_quiet = 0;
 GF_EXPORT
 GF_Err gf_sys_set_args(s32 argc, const char **argv)
 {
+	s32 i;
 	if (!gpac_argc) {
-		s32 i;
 		Bool gf_opts_load_option(const char *arg_name, const char *val, Bool *consumed_next, GF_Err *e);
 		void gf_cfg_load_restrict();
 
@@ -829,7 +899,9 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 			} else if (arg[1]=='+') {
 				gpac_has_global_filter_meta_args = GF_TRUE;
 			} else if (!strcmp(arg, "-log-file") || !strcmp(arg, "-lf")) {
+#ifndef GPAC_DISABLE_LOG
 				gpac_log_file_name = arg_val;
+#endif
 				if (!use_sep) i += 1;
 			} else if (!strcmp(arg, "-logs") ) {
 				e = gf_log_set_tools_levels(arg_val, GF_FALSE);
@@ -837,9 +909,13 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 				
 				if (!use_sep) i += 1;
 			} else if (!strcmp(arg, "-log-clock") || !strcmp(arg, "-lc")) {
+#ifndef GPAC_DISABLE_LOG
 				gpac_log_time_start = GF_TRUE;
+#endif
 			} else if (!strcmp(arg, "-log-utc") || !strcmp(arg, "-lu")) {
+#ifndef GPAC_DISABLE_LOG
 				gpac_log_utc_time = GF_TRUE;
+#endif
 			} else if (!strcmp(arg, "-quiet")) {
 				gpac_quiet = 2;
 			} else if (!strcmp(arg, "-noprog")) {
@@ -850,7 +926,10 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 				gpac_old_arch = GF_TRUE;
 			} else if (!stricmp(arg, "-no-save")) {
 				gpac_discard_config = GF_TRUE;
-
+			} else if (!stricmp(arg, "-ntp-shift")) {
+				s32 shift = arg_val ? atoi(arg_val) : 0;
+				gf_net_set_ntp_shift(shift);
+				if (!use_sep) i += 1;
 			} else if (gf_opts_load_option(arg, arg_val, &consumed, &e)) {
 				if (e) return e;
 				
@@ -863,12 +942,13 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 			}
 		}
 
+#ifndef GPAC_DISABLE_LOG
 		if (gpac_log_file_name) {
 			gpac_log_file = gf_fopen(gpac_log_file_name, "wt");
 		}
-
+#endif
 		if (gf_opts_get_bool("core", "rmt"))
-			gf_sys_enable_profiling(GF_TRUE, GF_FALSE);
+			gf_sys_enable_remotery(GF_TRUE, GF_FALSE);
 
 		if (gpac_quiet) {
 			if (gpac_quiet==2) gf_log_set_tool_level(GF_LOG_ALL, GF_LOG_QUIET);
@@ -885,8 +965,26 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 	{
 		gpac_argc = (u32) argc;
 		gpac_argv = argv;
+		gpac_argv_state = gf_realloc(gpac_argv_state, sizeof(Bool) * argc);
+		for (i=0; i<argc; i++)
+			gpac_argv_state[i] = GF_FALSE;
 	}
 	return GF_OK;
+}
+
+GF_EXPORT
+void gf_sys_mark_arg_used(s32 arg_idx, Bool used)
+{
+	if (arg_idx < (s32) gpac_argc)
+		gpac_argv_state[arg_idx] = used;
+}
+
+GF_EXPORT
+Bool gf_sys_is_arg_used(s32 arg_idx)
+{
+	if (arg_idx < (s32) gpac_argc)
+		return  gpac_argv_state[arg_idx];
+	return GF_FALSE;
 }
 
 GF_EXPORT
@@ -922,24 +1020,36 @@ Remotery *remotery_handle=NULL;
 
 gf_log_cbk gpac_prev_default_logs = NULL;
 
+const char *gf_log_tool_name(GF_LOG_Tool log_tool);
+const char *gf_log_level_name(GF_LOG_Level log_level);
+
 void gpac_rmt_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist)
 {
-	char szMsg[4046];
-	vsprintf(szMsg, fmt, vlist);
+#define RMT_LOG_SIZE	5000
+	char szMsg[RMT_LOG_SIZE];
+	u32 len;
+	sprintf(szMsg, "{ \"type\": \"logs\", \"level\": \"%s\" \"tool\": \"%s\", \"value\": \"", gf_log_level_name(level), gf_log_tool_name(tool));
+
+	len = (u32) strlen(szMsg);
+	vsnprintf(szMsg, RMT_LOG_SIZE - len - 3, fmt, vlist);
+	strcat(szMsg, "\"}");
 
 	rmt_LogText(szMsg);
+
+#undef RMT_LOG_SIZE
 }
 
-#endif
+static void *rmt_udta = NULL;
+gf_rmt_user_callback rmt_usr_cbk = NULL;
 
-#ifndef GPAC_DISABLE_REMOTERY
 static void gpac_rmt_input_handler(const char* text, void* context)
 {
-	//TODO
+	if (text && rmt_usr_cbk)
+		rmt_usr_cbk(rmt_udta, text);
 }
 #endif
 
-static Bool gf_sys_enable_profiling(Bool start, Bool is_shutdown)
+static Bool gf_sys_enable_remotery(Bool start, Bool is_shutdown)
 {
 #ifndef GPAC_DISABLE_REMOTERY
 	if (start && !remotery_handle) {
@@ -983,6 +1093,56 @@ static Bool gf_sys_enable_profiling(Bool start, Bool is_shutdown)
 #else
 	return GF_NOT_SUPPORTED;
 #endif
+}
+
+GF_EXPORT
+GF_Err gf_sys_profiler_set_callback(void *udta, gf_rmt_user_callback usr_cbk)
+{
+#ifndef GPAC_DISABLE_REMOTERY
+	if (remotery_handle) {
+		rmt_udta = udta;
+		rmt_usr_cbk = usr_cbk;
+		return GF_OK;
+	}
+	return GF_BAD_PARAM;
+#else
+	return GF_NOT_SUPPORTED;
+#endif
+}
+
+GF_EXPORT
+GF_Err gf_sys_profiler_send(const char *msg)
+{
+#ifndef GPAC_DISABLE_REMOTERY
+	if (remotery_handle) {
+		rmt_LogText(msg);
+		return GF_OK;
+	}
+	return GF_BAD_PARAM;
+#else
+	return GF_NOT_SUPPORTED;
+#endif
+}
+
+GF_EXPORT
+void gf_sys_profiler_enable_sampling(Bool enable)
+{
+#ifndef GPAC_DISABLE_REMOTERY
+	if (remotery_handle) {
+		rmt_EnableSampling(enable);
+	}
+#endif
+}
+
+GF_EXPORT
+Bool gf_sys_profiler_sampling_enabled()
+{
+#ifndef GPAC_DISABLE_REMOTERY
+	if (remotery_handle) {
+		return rmt_SamplingEnabled();
+	}
+#endif
+	return GF_FALSE;
 }
 
 void gf_init_global_config(const char *profile);
@@ -1176,14 +1336,16 @@ void gf_sys_close()
 		psapi_hinst = NULL;
 #endif
 
-		gf_sys_enable_profiling(GF_FALSE, GF_TRUE);
+		gf_sys_enable_remotery(GF_FALSE, GF_TRUE);
 		
 		gf_uninit_global_config(gpac_discard_config);
 
+#ifndef GPAC_DISABLE_LOG
 		if (gpac_log_file) {
 			gf_fclose(gpac_log_file);
 			gpac_log_file = NULL;
 		}
+#endif
 		if (gpac_lang_file) gf_cfg_del(gpac_lang_file);
 		gpac_lang_file = NULL;
 
@@ -1193,6 +1355,10 @@ void gf_sys_close()
 		logs_mx = NULL;
 		gf_mx_del(old_log_mx);
 
+		if (gpac_argv_state) {
+			gf_free(gpac_argv_state);
+			gpac_argv_state = NULL;
+		}
 	}
 }
 
@@ -2082,6 +2248,28 @@ u64 gf_net_get_ntp_ts()
 }
 
 GF_EXPORT
+s32 gf_net_ntp_diff_ms(u64 ntp_a, u64 ntp_b)
+{
+	u32 ntp_a_s, ntp_a_f, ntp_b_s, ntp_b_f;
+	s64 ntp_a_ms, ntp_b_ms;
+
+	ntp_a_s = (ntp_a >> 32);
+	ntp_a_f = (u32) (ntp_a & 0xFFFFFFFFULL);
+	ntp_b_s = (ntp_b >> 32);
+	ntp_b_f = (u32) (ntp_b & 0xFFFFFFFFULL);
+
+	ntp_a_ms = ntp_a_s;
+	ntp_a_ms *= 1000;
+	ntp_a_ms += ((u64) ntp_a_f)*1000 / 0xFFFFFFFFULL;
+
+	ntp_b_ms = ntp_b_s;
+	ntp_b_ms *= 1000;
+	ntp_b_ms += ((u64) ntp_b_f)*1000 / 0xFFFFFFFFULL;
+
+	return (s32) (ntp_a_ms - ntp_b_ms);
+}
+
+GF_EXPORT
 s32 gf_net_get_ntp_diff_ms(u64 ntp)
 {
 	u32 remote_s, remote_f, local_s, local_f;
@@ -2370,6 +2558,22 @@ u64 gf_net_get_utc_ts(u32 year, u32 month, u32 day, u32 hour, u32 min, u32 sec)
 #endif
 
 	current_time *= 1000;
+	return current_time;
+}
+
+GF_EXPORT
+u64 gf_net_ntp_to_utc(u64 ntp)
+{
+	u64 current_time;
+	Double msec;
+	u32 sec = ntp>>32;
+	u32 frac = ntp & 0xFFFFFFFFUL;
+
+	current_time = sec - GF_NTP_SEC_1900_TO_1970;
+	current_time *= 1000;
+	msec = frac*1000.0;
+	msec /= 0xFFFFFFFF;
+	current_time += (u64) msec;
 	return current_time;
 }
 

@@ -155,6 +155,9 @@ static void add_text(char **buffer, u32 *size, u32 *pos, char *msg, u32 msg_len)
 		*size = *pos+msg_len-*size+256;
 		*buffer = (char *)gf_realloc(*buffer, *size);
 	}
+	if (! *buffer)
+		return;
+
 	strncpy((*buffer)+(*pos), msg, msg_len);
 	*pos += msg_len;
 }
@@ -162,7 +165,7 @@ static void add_text(char **buffer, u32 *size, u32 *pos, char *msg, u32 msg_len)
 static GF_Err id3_parse_tag(char *data, u32 length, char **output, u32 *output_size, u32 *output_pos)
 {
 	GF_BitStream *bs;
-	u32 pos;
+	u32 pos, size;
 
 	if ((data[0] != 'I') || (data[1] != 'D') || (data[2] != '3'))
 		return GF_NOT_SUPPORTED;
@@ -175,11 +178,10 @@ static GF_Err id3_parse_tag(char *data, u32 length, char **output, u32 *output_s
 	/*u8 unsync = */gf_bs_read_int(bs, 1);
 	/*u8 ext_hdr = */ gf_bs_read_int(bs, 1);
 	gf_bs_read_int(bs, 6);
-	u32 size = gf_id3_read_size(bs);
+	/*size = */gf_id3_read_size(bs);
 
 	pos = (u32) gf_bs_get_position(bs);
-	if (size != length-pos)
-		size = length-pos;
+	size = length-pos;
 
 	while (size && (gf_bs_available(bs)>=10) ) {
 		u32 ftag = gf_bs_read_u32(bs);
@@ -188,7 +190,7 @@ static GF_Err id3_parse_tag(char *data, u32 length, char **output, u32 *output_s
 		size -= 10;
 
 		//TODO, handle more ID3 tags ?
-		if (ftag==ID3V2_FRAME_TXXX) {
+		if (ftag==GF_ID3V2_FRAME_TXXX) {
 			u32 tpos = (u32) gf_bs_get_position(bs);
 			char *text = data+tpos;
 			add_text(output, output_size, output_pos, text, fsize);
@@ -1069,48 +1071,48 @@ static void gf_m2ts_metadata_pointer_descriptor_del(GF_M2TS_MetadataPointerDescr
 
 static GF_M2TS_MetadataDescriptor *gf_m2ts_read_metadata_descriptor(GF_BitStream *bs, u32 length)
 {
-	u32 size;
+	//u32 size;
 	GF_M2TS_MetadataDescriptor *d;
 	GF_SAFEALLOC(d, GF_M2TS_MetadataDescriptor);
 	if (!d) return NULL;
 	d->application_format = gf_bs_read_u16(bs);
-	size = 2;
+	//size = 2;
 	if (d->application_format == 0xFFFF) {
 		d->application_format_identifier = gf_bs_read_u32(bs);
-		size += 4;
+		//size += 4;
 	}
 	d->format = gf_bs_read_u8(bs);
-	size += 1;
+	//size += 1;
 	if (d->format == 0xFF) {
 		d->format_identifier = gf_bs_read_u32(bs);
-		size += 4;
+		//size += 4;
 	}
 	d->service_id = gf_bs_read_u8(bs);
 	d->decoder_config_flags = gf_bs_read_int(bs, 3);
 	d->dsmcc_flag = (gf_bs_read_int(bs, 1) ? GF_TRUE : GF_FALSE);
 	gf_bs_read_int(bs, 4); /* reserved */
-	size += 2;
+	//size += 2;
 	if (d->dsmcc_flag) {
 		d->service_id_record_length = gf_bs_read_u8(bs);
 		d->service_id_record = (char *)gf_malloc(d->service_id_record_length);
-		size += 1 + d->service_id_record_length;
+		//size += 1 + d->service_id_record_length;
 		gf_bs_read_data(bs, d->service_id_record, d->service_id_record_length);
 	}
 	if (d->decoder_config_flags == 1) {
 		d->decoder_config_length = gf_bs_read_u8(bs);
 		d->decoder_config = (char *)gf_malloc(d->decoder_config_length);
-		size += 1 + d->decoder_config_length;
+		//size += 1 + d->decoder_config_length;
 		gf_bs_read_data(bs, d->decoder_config, d->decoder_config_length);
 	}
 	if (d->decoder_config_flags == 3) {
 		d->decoder_config_id_length = gf_bs_read_u8(bs);
 		d->decoder_config_id = (char *)gf_malloc(d->decoder_config_id_length);
-		size += 1 + d->decoder_config_id_length;
+		//size += 1 + d->decoder_config_id_length;
 		gf_bs_read_data(bs, d->decoder_config_id, d->decoder_config_id_length);
 	}
 	if (d->decoder_config_flags == 4) {
 		d->decoder_config_service_id = gf_bs_read_u8(bs);
-		size++;
+		//size++;
 	}
 	return d;
 }
@@ -1186,11 +1188,13 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 					}
 					if (e==GF_OK) {
 						/*remember program number for service/program selection*/
-						if (pmt->program->pmt_iod) pmt->program->pmt_iod->ServiceID = pmt->program->number;
-						/*if empty IOD (freebox case), discard it and use dynamic declaration of object*/
-						if (!gf_list_count(pmt->program->pmt_iod->ESDescriptors)) {
-							gf_odf_desc_del((GF_Descriptor *)pmt->program->pmt_iod);
-							pmt->program->pmt_iod = NULL;
+						if (pmt->program->pmt_iod) {
+							pmt->program->pmt_iod->ServiceID = pmt->program->number;
+							/*if empty IOD (freebox case), discard it and use dynamic declaration of object*/
+							if (!gf_list_count(pmt->program->pmt_iod->ESDescriptors)) {
+								gf_odf_desc_del((GF_Descriptor *)pmt->program->pmt_iod);
+								pmt->program->pmt_iod = NULL;
+							}
 						}
 					}
 				} else {
@@ -1199,6 +1203,10 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 			} else if (tag == GF_M2TS_METADATA_POINTER_DESCRIPTOR) {
 				GF_BitStream *metadatapd_bs;
 				GF_M2TS_MetadataPointerDescriptor *metapd;
+
+				if (data_size <= 8 || data_size-6 < (u32)len)
+					break;
+
 				metadatapd_bs = gf_bs_new((char *)data+6, len, GF_BITSTREAM_READ);
 				metapd = gf_m2ts_read_metadata_pointer_descriptor(metadatapd_bs, len);
 				gf_bs_del(metadatapd_bs);
@@ -1236,6 +1244,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		GF_M2TS_SECTION_ES *ses = NULL;
 		GF_M2TS_ES *es = NULL;
 		Bool inherit_pcr = 0;
+		Bool pmt_pid_reused = GF_FALSE;
 		u32 pid, stream_type, reg_desc_format;
 
 		if (pos + 5 > data_size) {
@@ -1247,8 +1256,61 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		pid = ((data[1] & 0x1f) << 8) | data[2];
 		desc_len = ((data[3] & 0xf) << 8) | data[4];
 
+		if (!pid) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid PID 0 for es descriptor in PMT of program %d, reserved for PAT\n", pmt->pid) );
+			break;
+		}
+		if (pid==1) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid PID 1 for es descriptor in PMT of program %d, reserved for CAT\n", pmt->pid) );
+			break;
+		}
+
+		if (pid==pmt->pid) {
+			pmt_pid_reused = GF_TRUE;
+		} else {
+			u32 pcount = gf_list_count(ts->programs);
+			for(i=0; i<pcount; i++) {
+				GF_M2TS_Program *prog = (GF_M2TS_Program *)gf_list_get(ts->programs,i);
+				if(prog->pmt_pid == pid) {
+					pmt_pid_reused = GF_TRUE;
+					break;
+				}
+			}
+		}
+		if (pmt_pid_reused) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid PID %d for es descriptor in PMT of program %d, this PID is already assigned to a PMT\n", pid, pmt->pid) );
+			break;
+		}
+
 		if (desc_len > data_size-5) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid PMT es descriptor size for PID %d\n", pid ) );
+			break;
+		}
+
+		if (!pid) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid PID 0 for es descriptor in PMT of program %d, reserved for PAT\n", pmt->pid) );
+			break;
+		}
+		if (pid==1) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid PID 1 for es descriptor in PMT of program %d, reserved for CAT\n", pmt->pid) );
+			break;
+		}
+
+		if (pid==pmt->pid) {
+			pmt_pid_reused = GF_TRUE;
+		} else {
+			u32 pcount = gf_list_count(ts->programs);
+			for(i=0; i<pcount; i++) {
+				GF_M2TS_Program *prog = (GF_M2TS_Program *)gf_list_get(ts->programs,i);
+				if(prog->pmt_pid == pid) {
+					pmt_pid_reused = GF_TRUE;
+					break;
+				}
+			}
+		}
+
+		if (pmt_pid_reused) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid PID %d for es descriptor in PMT of program %d, this PID is already assigned to a PMT\n", pid, pmt->pid) );
 			break;
 		}
 
@@ -1271,6 +1333,8 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		case GF_M2TS_VIDEO_SHVC_TEMPORAL:
 		case GF_M2TS_VIDEO_MHVC:
 		case GF_M2TS_VIDEO_MHVC_TEMPORAL:
+		case GF_M2TS_VIDEO_VVC:
+		case GF_M2TS_VIDEO_VVC_TEMPORAL:
 			inherit_pcr = 1;
 		case GF_M2TS_AUDIO_MPEG1:
 		case GF_M2TS_AUDIO_MPEG2:
@@ -1524,7 +1588,6 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 			}
 			desc_len-=len+2;
 		}
-
 		if (es && !es->stream_type) {
 			gf_free(es);
 			es = NULL;
@@ -1707,10 +1770,11 @@ static void gf_m2ts_process_pat(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *ses, GF
 			gf_list_add(prog->streams, pmt);
 			pmt->pid = prog->pmt_pid;
 			pmt->program = prog;
-			if (ts->ess[pmt->pid]) {
+/*			if (ts->ess[pmt->pid]) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("Redefinition of pmt for pid %d\n", pid));
 				gf_m2ts_es_del(ts->ess[pmt->pid], ts);
 			}
+*/
 			ts->ess[pmt->pid] = (GF_M2TS_ES *)pmt;
 			pmt->sec = gf_m2ts_section_filter_new(gf_m2ts_process_pmt, 0);
 		}
@@ -2015,6 +2079,7 @@ void gf_m2ts_flush_pes(GF_M2TS_Demuxer *ts, GF_M2TS_PES *pes)
 			if (pes->temi_pending) {
 				pes->temi_pending = 0;
 				pes->temi_tc.pes_pts = pes->PTS;
+				pes->temi_tc.pid = pes->pid;
 				if (ts->on_event)
 					ts->on_event(ts, GF_M2TS_EVT_TEMI_TIMECODE, &pes->temi_tc);
 			}
@@ -2135,6 +2200,17 @@ static void gf_m2ts_process_pes(GF_M2TS_Demuxer *ts, GF_M2TS_PES *pes, GF_M2TS_H
 	}
 }
 
+void gf_m2ts_flush_all(GF_M2TS_Demuxer *ts)
+{
+	u32 i;
+	for (i=0; i<GF_M2TS_MAX_STREAMS; i++) {
+		GF_M2TS_ES *stream = ts->ess[i];
+		if (stream && (stream->flags & GF_M2TS_ES_IS_PES)) {
+			gf_m2ts_flush_pes(ts, (GF_M2TS_PES *) stream);
+		}
+	}
+}
+
 
 static void gf_m2ts_get_adaptation_field(GF_M2TS_Demuxer *ts, GF_M2TS_AdaptationField *paf, u8 *data, u32 size, u32 pid)
 {
@@ -2149,6 +2225,7 @@ static void gf_m2ts_get_adaptation_field(GF_M2TS_Demuxer *ts, GF_M2TS_Adaptation
 	paf->adaptation_field_extension_flag = (data[0] & 0x1) ? 1 : 0;
 
 	af_extension = data + 1;
+
 	if (paf->PCR_flag == 1) {
 		u32 base = (data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4];
 		u64 PCR = (u64) base;
@@ -2171,6 +2248,10 @@ static void gf_m2ts_get_adaptation_field(GF_M2TS_Demuxer *ts, GF_M2TS_Adaptation
 			af_extension += 1 + priv_bytes;
 		}
 
+		if ((u32)(af_extension-data) >= size) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] PID %d: Bad Adaptation Extension found\n", pid));
+			return;
+		}
 		afext_bytes = af_extension[0];
 		ltw_flag = (af_extension[1] & 0x80) ? 1 : 0;
 		pwr_flag = (af_extension[1] & 0x40) ? 1 : 0;
@@ -2227,6 +2308,7 @@ static void gf_m2ts_get_adaptation_field(GF_M2TS_Demuxer *ts, GF_M2TS_Adaptation
 					char URL[255];
 					GF_M2TS_TemiLocationDescriptor temi_loc;
 					memset(&temi_loc, 0, sizeof(GF_M2TS_TemiLocationDescriptor) );
+					temi_loc.pid = pid;
 					temi_loc.reload_external = gf_bs_read_int(bs, 1);
 					temi_loc.is_announce = gf_bs_read_int(bs, 1);
 					temi_loc.is_splicing = gf_bs_read_int(bs, 1);
@@ -2681,7 +2763,7 @@ void gf_m2ts_reset_parsers_for_program(GF_M2TS_Demuxer *ts, GF_M2TS_Program *pro
 			gf_m2ts_section_filter_reset(ses->sec);
 		} else {
 			GF_M2TS_PES *pes = (GF_M2TS_PES *)es;
-			if (!pes || (pes->pid==pes->program->pmt_pid)) continue;
+			if (pes->pid==pes->program->pmt_pid) continue;
 			pes->cc = -1;
 			pes->pck_data_len = 0;
 			if (pes->prev_data) gf_free(pes->prev_data);
@@ -2711,6 +2793,7 @@ void gf_m2ts_reset_parsers(GF_M2TS_Demuxer *ts)
 	gf_m2ts_reset_parsers_for_program(ts, NULL);
 
 	ts->pck_number = 0;
+	ts->buffer_size = 0;
 
 	gf_m2ts_section_filter_reset(ts->cat);
 	gf_m2ts_section_filter_reset(ts->pat);
@@ -2769,6 +2852,8 @@ GF_Err gf_m2ts_set_pes_framing(GF_M2TS_PES *pes, GF_M2TSPesFraming mode)
 			gf_m2ts_set_pes_framing(o_pes, GF_M2TS_PES_FRAMING_SKIP);
 
 		GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[MPEG-2 TS] Reassinging PID %d from program %d to program %d\n", pes->pid, o_pes->program->number, pes->program->number) );
+		gf_m2ts_es_del((GF_M2TS_ES*)o_pes, pes->program->ts);
+
 		pes->program->ts->ess[pes->pid] = (GF_M2TS_ES *) pes;
 	}
 
@@ -2895,6 +2980,12 @@ void gf_m2ts_demux_del(GF_M2TS_Demuxer *ts)
 	while (gf_list_count(ts->programs)) {
 		GF_M2TS_Program *p = (GF_M2TS_Program *)gf_list_last(ts->programs);
 		gf_list_rem_last(ts->programs);
+
+		while (gf_list_count(p->streams)) {
+			GF_M2TS_ES *es = (GF_M2TS_ES *)gf_list_last(p->streams);
+			gf_list_rem_last(p->streams);
+			gf_m2ts_es_del(es, ts);
+		}
 		gf_list_del(p->streams);
 		/*reset OD list*/
 		if (p->additional_ods) {

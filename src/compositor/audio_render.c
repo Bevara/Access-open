@@ -67,7 +67,13 @@ static GF_Err gf_ar_setup_output_format(GF_AudioRenderer *ar)
 	if (ar->samplerate) {
 		ar->time_at_last_config_sr = ar->current_time_sr * freq / ar->samplerate;
 	}
-	if (!ar->compositor->abuf) ar->compositor->abuf = 100;
+	if (!ar->compositor->abuf) {
+#ifdef GPAC_CONFIG_ANDROID
+		ar->compositor->abuf = 200;
+#else
+		ar->compositor->abuf = 100;
+#endif
+	}
 	ar->samplerate = freq;
 	ar->bytes_per_samp = nb_chan * gf_audio_fmt_bit_depth(a_fmt) / 8;
 	ar->bytes_per_second = freq * ar->bytes_per_samp;
@@ -149,7 +155,7 @@ GF_AudioRenderer *gf_sc_ar_load(GF_Compositor *compositor, u32 init_flags)
 	if (! (init_flags & GF_TERM_NO_AUDIO) ) {
 		gf_ar_setup_output_format(ar);
 	}
-
+	gf_mixer_set_max_speed(ar->mixer, compositor->max_aspeed);
 	ar->current_time = 0;
 	return ar;
 }
@@ -191,6 +197,7 @@ void gf_sc_ar_set_volume(GF_AudioRenderer *ar, u32 Volume)
 {
 	if (Volume>100) Volume=100;
 	if (ar->volume==Volume) return;
+	ar->volume = Volume;
 	if (ar->aout) gf_filter_pid_set_property(ar->aout, GF_PROP_PID_AUDIO_VOLUME, &PROP_UINT(ar->volume) );
 }
 
@@ -274,7 +281,14 @@ static void gf_ar_pck_done(GF_Filter *filter, GF_FilterPid *pid, GF_FilterPacket
 void gf_ar_send_packets(GF_AudioRenderer *ar)
 {
 	u32 written, max_send=100;
-	if (!ar->aout) return;
+	u64 now = gf_sys_clock_high_res();
+
+	if (!ar->aout) {
+		if (ar->compositor->player) {
+			ar->current_time = (u32) ( (now - ar->start_time)/1000);
+		}
+		return;
+	}
 	if (!ar->scene_ready) return;
 	if (ar->need_reconfig) return;
 	if (ar->Frozen) return;
@@ -286,18 +300,18 @@ void gf_ar_send_packets(GF_AudioRenderer *ar)
 	}
 	if (ar->scene_ready) {
 		if (!ar->start_time) {
-			ar->start_time = gf_sys_clock_high_res();
+			ar->start_time = now;
 		}
 		if (!ar->nb_audio_objects && !ar->non_rt_output) {
-			ar->current_time = (u32) ( (gf_sys_clock_high_res() - ar->start_time)/1000);
+			ar->current_time = (u32) ( (now - ar->start_time)/1000);
 			return;
 		}
 	}
 
 	while (max_send) {
+		u32 delay_ms = 0;
 		u8 *data;
 		u32 dur;
-		u32 delay_ms = 0;
 		GF_FilterPacket *pck;
 
 		if (gf_filter_pid_would_block(ar->aout))
@@ -307,7 +321,21 @@ void gf_ar_send_packets(GF_AudioRenderer *ar)
 		if (!pck) break;
 
 		if (ar->compositor->async) {
-			delay_ms = (1000*ar->nb_bytes_out) / ar->bytes_per_second;
+			GF_Fraction64 ref_ts;
+			gf_filter_get_clock_hint(ar->compositor->filter, NULL, &ref_ts);
+			//valid clock hint, compute delay between last known playback point and current time
+			if (ref_ts.den) {
+				if (ref_ts.den != ar->samplerate) {
+					delay_ms = (u32) (1000 * ar->current_time_sr / ar->samplerate);
+					delay_ms -= (u32) (1000 * ref_ts.num / ref_ts.den);
+				} else {
+					delay_ms = (u32) (1000 * (ar->current_time_sr - ref_ts.num) / ar->samplerate);
+				}
+			}
+			//unknown clock hint, use number of bytes out as delay
+			else {
+				delay_ms = (1000*ar->nb_bytes_out) / ar->bytes_per_second;
+			}
 		}
 
 		gf_mixer_lock(ar->mixer, GF_TRUE);
@@ -331,7 +359,7 @@ void gf_ar_send_packets(GF_AudioRenderer *ar)
 		gf_filter_pck_set_cts(pck, ar->current_time_sr);
 		dur = written / ar->bytes_per_samp;
 		gf_filter_pck_set_duration(pck, dur);
-		GF_LOG(GF_LOG_INFO, GF_LOG_AUDIO, ("[Compositor] Send audio frame TS "LLU" nb samples %d - AR clock %u\n", ar->current_time_sr, dur, ar->current_time));
+		GF_LOG(GF_LOG_INFO, GF_LOG_AUDIO, ("[Compositor] Send audio frame TS "LLU" nb samples %d - AR clock %u - delay %d ms\n", ar->current_time_sr, dur, ar->current_time, delay_ms));
 
 		ar->nb_bytes_out += written;
 		gf_filter_pck_send(pck);

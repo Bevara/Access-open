@@ -73,137 +73,84 @@ void gf_media_get_reduced_frame_rate(u32 *timescale, u32 *sample_dur)
 	}
 }
 
+struct __m4v_profile
+{
+	u32 value;
+	const char *name;
+} M4VProfiles[] = {
+	{0x00, "Reserved (0x00) Profile"},
+	{0x01, "Simple Profile @ Level 1"},
+	{0x02, "Simple Profile @ Level 2"},
+	{0x03, "Simple Profile @ Level 3"},
+	{0x08, "Simple Profile @ Level 0"},
+	{0x10, "Simple Scalable Profile @ Level 0"},
+	{0x11, "Simple Scalable Profile @ Level 1"},
+	{0x12, "Simple Scalable Profile @ Level 2"},
+	{0x21, "Core Profile @ Level 1"},
+	{0x22, "Core Profile @ Level 2"},
+	{0x32, "Main Profile @ Level 2"},
+	{0x33, "Main Profile @ Level 3"},
+	{0x34, "Main Profile @ Level 4"},
+	{0x42, "N-bit Profile @ Level 2"},
+	{0x51, "Scalable Texture Profile @ Level 1"},
+	{0x61, "Simple Face Animation Profile @ Level 1"},
+	{0x62, "Simple Face Animation Profile @ Level 2"},
+	{0x63, "Simple FBA Profile @ Level 1"},
+	{0x64, "Simple FBA Profile @ Level 2"},
+	{0x71, "Basic Animated Texture Profile @ Level 1"},
+	{0x72, "Basic Animated Texture Profile @ Level 2"},
+	{0x7F, "AVC/H264 Profile"},
+	{0x81, "Hybrid Profile @ Level 1"},
+	{0x82, "Hybrid Profile @ Level 2"},
+	{0x91, "Advanced Real Time Simple Profile @ Level 1"},
+	{0x92, "Advanced Real Time Simple Profile @ Level 2"},
+	{0x93, "Advanced Real Time Simple Profile @ Level 3"},
+	{0x94, "Advanced Real Time Simple Profile @ Level 4"},
+	{0xA1, "Core Scalable Profile @ Level1"},
+	{0xA2, "Core Scalable Profile @ Level2"},
+	{0xA3, "Core Scalable Profile @ Level3"},
+	{0xB1, "Advanced Coding Efficiency Profile @ Level 1"},
+	{0xB2, "Advanced Coding Efficiency Profile @ Level 2"},
+	{0xB3, "Advanced Coding Efficiency Profile @ Level 3"},
+	{0xB4, "Advanced Coding Efficiency Profile @ Level 4"},
+	{0xC1, "Advanced Core Profile @ Level 1"},
+	{0xC2, "Advanced Core Profile @ Level 2"},
+	{0xD1, "Advanced Scalable Texture @ Level1"},
+	{0xD2, "Advanced Scalable Texture @ Level2"},
+	{0xE1, "Simple Studio Profile @ Level 1"},
+	{0xE2, "Simple Studio Profile @ Level 2"},
+	{0xE3, "Simple Studio Profile @ Level 3"},
+	{0xE4, "Simple Studio Profile @ Level 4"},
+	{0xE5, "Core Studio Profile @ Level 1"},
+	{0xE6, "Core Studio Profile @ Level 2"},
+	{0xE7, "Core Studio Profile @ Level 3"},
+	{0xE8, "Core Studio Profile @ Level 4"},
+	{0xF0, "Advanced Simple Profile @ Level 0"},
+	{0xF1, "Advanced Simple Profile @ Level 1"},
+	{0xF2, "Advanced Simple Profile @ Level 2"},
+	{0xF3, "Advanced Simple Profile @ Level 3"},
+	{0xF4, "Advanced Simple Profile @ Level 4"},
+	{0xF5, "Advanced Simple Profile @ Level 5"},
+	{0xF7, "Advanced Simple Profile @ Level 3b"},
+	{0xF8, "Fine Granularity Scalable Profile @ Level 0"},
+	{0xF9, "Fine Granularity Scalable Profile @ Level 1"},
+	{0xFA, "Fine Granularity Scalable Profile @ Level 2"},
+	{0xFB, "Fine Granularity Scalable Profile @ Level 3"},
+	{0xFC, "Fine Granularity Scalable Profile @ Level 4"},
+	{0xFD, "Fine Granularity Scalable Profile @ Level 5"},
+	{0xFE, "Not part of MPEG-4 Visual profiles"},
+	{0xFF, "No visual capability required"}
+};
+
 GF_EXPORT
 const char *gf_m4v_get_profile_name(u8 video_pl)
 {
-	switch (video_pl) {
-	case 0x00:
-		return "Reserved (0x00) Profile";
-	case 0x01:
-		return "Simple Profile @ Level 1";
-	case 0x02:
-		return "Simple Profile @ Level 2";
-	case 0x03:
-		return "Simple Profile @ Level 3";
-	case 0x08:
-		return "Simple Profile @ Level 0";
-	case 0x10:
-		return "Simple Scalable Profile @ Level 0";
-	case 0x11:
-		return "Simple Scalable Profile @ Level 1";
-	case 0x12:
-		return "Simple Scalable Profile @ Level 2";
-	case 0x21:
-		return "Core Profile @ Level 1";
-	case 0x22:
-		return "Core Profile @ Level 2";
-	case 0x32:
-		return "Main Profile @ Level 2";
-	case 0x33:
-		return "Main Profile @ Level 3";
-	case 0x34:
-		return "Main Profile @ Level 4";
-	case 0x42:
-		return "N-bit Profile @ Level 2";
-	case 0x51:
-		return "Scalable Texture Profile @ Level 1";
-	case 0x61:
-		return "Simple Face Animation Profile @ Level 1";
-	case 0x62:
-		return "Simple Face Animation Profile @ Level 2";
-	case 0x63:
-		return "Simple FBA Profile @ Level 1";
-	case 0x64:
-		return "Simple FBA Profile @ Level 2";
-	case 0x71:
-		return "Basic Animated Texture Profile @ Level 1";
-	case 0x72:
-		return "Basic Animated Texture Profile @ Level 2";
-	case 0x7F:
-		return "AVC/H264 Profile";
-	case 0x81:
-		return "Hybrid Profile @ Level 1";
-	case 0x82:
-		return "Hybrid Profile @ Level 2";
-	case 0x91:
-		return "Advanced Real Time Simple Profile @ Level 1";
-	case 0x92:
-		return "Advanced Real Time Simple Profile @ Level 2";
-	case 0x93:
-		return "Advanced Real Time Simple Profile @ Level 3";
-	case 0x94:
-		return "Advanced Real Time Simple Profile @ Level 4";
-	case 0xA1:
-		return "Core Scalable Profile @ Level1";
-	case 0xA2:
-		return "Core Scalable Profile @ Level2";
-	case 0xA3:
-		return "Core Scalable Profile @ Level3";
-	case 0xB1:
-		return "Advanced Coding Efficiency Profile @ Level 1";
-	case 0xB2:
-		return "Advanced Coding Efficiency Profile @ Level 2";
-	case 0xB3:
-		return "Advanced Coding Efficiency Profile @ Level 3";
-	case 0xB4:
-		return "Advanced Coding Efficiency Profile @ Level 4";
-	case 0xC1:
-		return "Advanced Core Profile @ Level 1";
-	case 0xC2:
-		return "Advanced Core Profile @ Level 2";
-	case 0xD1:
-		return "Advanced Scalable Texture @ Level1";
-	case 0xD2:
-		return "Advanced Scalable Texture @ Level2";
-	case 0xE1:
-		return "Simple Studio Profile @ Level 1";
-	case 0xE2:
-		return "Simple Studio Profile @ Level 2";
-	case 0xE3:
-		return "Simple Studio Profile @ Level 3";
-	case 0xE4:
-		return "Simple Studio Profile @ Level 4";
-	case 0xE5:
-		return "Core Studio Profile @ Level 1";
-	case 0xE6:
-		return "Core Studio Profile @ Level 2";
-	case 0xE7:
-		return "Core Studio Profile @ Level 3";
-	case 0xE8:
-		return "Core Studio Profile @ Level 4";
-	case 0xF0:
-		return "Advanced Simple Profile @ Level 0";
-	case 0xF1:
-		return "Advanced Simple Profile @ Level 1";
-	case 0xF2:
-		return "Advanced Simple Profile @ Level 2";
-	case 0xF3:
-		return "Advanced Simple Profile @ Level 3";
-	case 0xF4:
-		return "Advanced Simple Profile @ Level 4";
-	case 0xF5:
-		return "Advanced Simple Profile @ Level 5";
-	case 0xF7:
-		return "Advanced Simple Profile @ Level 3b";
-	case 0xF8:
-		return "Fine Granularity Scalable Profile @ Level 0";
-	case 0xF9:
-		return "Fine Granularity Scalable Profile @ Level 1";
-	case 0xFA:
-		return "Fine Granularity Scalable Profile @ Level 2";
-	case 0xFB:
-		return "Fine Granularity Scalable Profile @ Level 3";
-	case 0xFC:
-		return "Fine Granularity Scalable Profile @ Level 4";
-	case 0xFD:
-		return "Fine Granularity Scalable Profile @ Level 5";
-	case 0xFE:
-		return "Not part of MPEG-4 Visual profiles";
-	case 0xFF:
-		return "No visual capability required";
-	default:
-		return "ISO Reserved Profile";
+	u32 i, count = GF_ARRAY_LENGTH(M4VProfiles);
+	for (i=0; i<count; i++) {
+		if ((u32)video_pl == M4VProfiles[i].value)
+			return M4VProfiles[i].name;
 	}
+	return "ISO Reserved Profile";
 }
 
 
@@ -391,7 +338,8 @@ void gf_m4v_rewrite_pl(u8 **o_data, u32 *o_dataLen, u8 PL)
 static GF_Err M4V_Reset(GF_M4VParser *m4v, u64 start)
 {
 	gf_bs_seek(m4v->bs, start);
-	assert(start < 0xFFFFFFFF);
+
+	assert(start < (u64)1<<31);
 	m4v->current_object_start = (u32)start;
 	m4v->current_object_type = 0;
 	return GF_OK;
@@ -843,7 +791,7 @@ GF_Err gf_m4v_rewrite_par(u8 **o_data, u32 *o_dataLen, s32 par_n, s32 par_d)
 		size = end - start;
 		/*store previous object*/
 		if (size) {
-			assert(size < 0x80000000);
+			assert (size < (u64)1<<31);
 			gf_bs_write_data(mod, *o_data + start, (u32)size);
 			start = end;
 		}
@@ -943,236 +891,146 @@ GF_Err gf_mpegv12_get_config(u8 *rawdsi, u32 rawdsi_size, GF_M4VDecSpecInfo *dsi
 	AAC parser
 */
 
+struct __m4a_oti
+{
+	u32 type;
+	const char *name;
+} M4AObjectTypes[] = {
+	{0, "MPEG-4 Audio Reserved"},
+	{1, "MPEG-4 Audio AAC Main"},
+	{2, "MPEG-4 Audio AAC LC"},
+	{3, "MPEG-4 Audio AAC SSR"},
+	{4, "MPEG-4 Audio AAC LTP"},
+	{5, "MPEG-4 Audio SBR"},
+	{6, "MPEG-4 Audio AAC Scalable"},
+	{7, "MPEG-4 Audio TwinVQ"},
+	{8, "MPEG-4 Audio CELP"},
+	{9, "MPEG-4 Audio HVXC"},
+	{10, "MPEG-4 Audio Reserved"},
+	{11, "MPEG-4 Audio Reserved"},
+	{12, "MPEG-4 Audio TTSI"},
+	{13, "MPEG-4 Audio Main synthetic"},
+	{14, "MPEG-4 Audio Wavetable synthesis"},
+	{15, "MPEG-4 Audio General MIDI"},
+	{16, "MPEG-4 Audio Algorithmic Synthesis and Audio FX"},
+	{17, "MPEG-4 Audio ER AAC LC"},
+	{18, "MPEG-4 Audio Reserved"},
+	{19, "MPEG-4 Audio ER AAC LTP"},
+	{20, "MPEG-4 Audio ER AAC scalable"},
+	{21, "MPEG-4 Audio ER TwinVQ"},
+	{22, "MPEG-4 Audio ER BSAC"},
+	{23, "MPEG-4 Audio ER AAC LD"},
+	{24, "MPEG-4 Audio ER CELP"},
+	{25, "MPEG-4 Audio ER HVXC"},
+	{26, "MPEG-4 Audio ER HILN"},
+	{27, "MPEG-4 Audio ER Parametric"},
+	{28, "MPEG-4 Audio SSC"},
+	{29, "MPEG-4 Audio ParametricStereo"},
+	{30, "MPEG-4 Audio Reserved"},
+	{31, "MPEG-4 Audio Reserved"},
+	{32, "MPEG-1 Audio Layer-1"},
+	{33, "MPEG-1 Audio Layer-2"},
+	{34, "MPEG-1 Audio Layer-3"},
+	{35, "MPEG-4 Audio DST"},
+	{36, "MPEG-4 Audio ALS"}
+};
+
 GF_EXPORT
 const char *gf_m4a_object_type_name(u32 objectType)
 {
-	switch (objectType) {
-	case 0:
-		return "MPEG-4 Audio Reserved";
-	case 1:
-		return "MPEG-4 Audio AAC Main";
-	case 2:
-		return "MPEG-4 Audio AAC LC";
-	case 3:
-		return "MPEG-4 Audio AAC SSR";
-	case 4:
-		return "MPEG-4 Audio AAC LTP";
-	case 5:
-		return "MPEG-4 Audio SBR";
-	case 6:
-		return "MPEG-4 Audio AAC Scalable";
-	case 7:
-		return "MPEG-4 Audio TwinVQ";
-	case 8:
-		return "MPEG-4 Audio CELP";
-	case 9:
-		return "MPEG-4 Audio HVXC";
-	case 10:
-		return "MPEG-4 Audio Reserved";
-	case 11:
-		return "MPEG-4 Audio Reserved";
-	case 12:
-		return "MPEG-4 Audio TTSI";
-	case 13:
-		return "MPEG-4 Audio Main synthetic";
-	case 14:
-		return "MPEG-4 Audio Wavetable synthesis";
-	case 15:
-		return "MPEG-4 Audio General MIDI";
-	case 16:
-		return "MPEG-4 Audio Algorithmic Synthesis and Audio FX";
-	case 17:
-		return "MPEG-4 Audio ER AAC LC";
-	case 18:
-		return "MPEG-4 Audio Reserved";
-	case 19:
-		return "MPEG-4 Audio ER AAC LTP";
-	case 20:
-		return "MPEG-4 Audio ER AAC scalable";
-	case 21:
-		return "MPEG-4 Audio ER TwinVQ";
-	case 22:
-		return "MPEG-4 Audio ER BSAC";
-	case 23:
-		return "MPEG-4 Audio ER AAC LD";
-	case 24:
-		return "MPEG-4 Audio ER CELP";
-	case 25:
-		return "MPEG-4 Audio ER HVXC";
-	case 26:
-		return "MPEG-4 Audio ER HILN";
-	case 27:
-		return "MPEG-4 Audio ER Parametric";
-	case 28:
-		return "MPEG-4 Audio SSC";
-	case 29:
-		return "MPEG-4 Audio ParametricStereo";
-	case 30:
-		return "MPEG-4 Audio Reserved";
-	case 31:
-		return "MPEG-4 Audio Reserved";
-	case 32:
-		return "MPEG-1 Audio Layer-1";
-	case 33:
-		return "MPEG-1 Audio Layer-2";
-	case 34:
-		return "MPEG-1 Audio Layer-3";
-	case 35:
-		return "MPEG-4 Audio DST";
-	case 36:
-		return "MPEG-4 Audio ALS";
-	default:
-		return "MPEG-4 Audio Unknown";
+	u32 i, count = GF_ARRAY_LENGTH(M4AObjectTypes);
+	for (i=0; i<count; i++) {
+		if (objectType==M4AObjectTypes[i].type)
+			return M4AObjectTypes[i].name;
 	}
+	return "MPEG-4 Audio Unknown";
 }
+
+struct __m4a_profile
+{
+	u32 value;
+	const char *name;
+} M4AProfiles[] = {
+	{0x00, "ISO Reserved (0x00)"},
+	{0x01, "Main Audio Profile @ Level 1"},
+	{0x02, "Main Audio Profile @ Level 2"},
+	{0x03, "Main Audio Profile @ Level 3"},
+	{0x04, "Main Audio Profile @ Level 4"},
+	{0x05, "Scalable Audio Profile @ Level 1"},
+	{0x06, "Scalable Audio Profile @ Level 2"},
+	{0x07, "Scalable Audio Profile @ Level 3"},
+	{0x08, "Scalable Audio Profile @ Level 4"},
+	{0x09, "Speech Audio Profile @ Level 1"},
+	{0x0A, "Speech Audio Profile @ Level 2"},
+	{0x0B, "Synthetic Audio Profile @ Level 1"},
+	{0x0C, "Synthetic Audio Profile @ Level 2"},
+	{0x0D, "Synthetic Audio Profile @ Level 3"},
+	{0x0E, "High Quality Audio Profile @ Level 1"},
+	{0x0F, "High Quality Audio Profile @ Level 2"},
+	{0x10, "High Quality Audio Profile @ Level 3"},
+	{0x11, "High Quality Audio Profile @ Level 4"},
+	{0x12, "High Quality Audio Profile @ Level 5"},
+	{0x13, "High Quality Audio Profile @ Level 6"},
+	{0x14, "High Quality Audio Profile @ Level 7"},
+	{0x15, "High Quality Audio Profile @ Level 8"},
+	{0x16, "Low Delay Audio Profile @ Level 1"},
+	{0x17, "Low Delay Audio Profile @ Level 2"},
+	{0x18, "Low Delay Audio Profile @ Level 3"},
+	{0x19, "Low Delay Audio Profile @ Level 4"},
+	{0x1A, "Low Delay Audio Profile @ Level 5"},
+	{0x1B, "Low Delay Audio Profile @ Level 6"},
+	{0x1C, "Low Delay Audio Profile @ Level 7"},
+	{0x1D, "Low Delay Audio Profile @ Level 8"},
+	{0x1E, "Natural Audio Profile @ Level 1"},
+	{0x1F, "Natural Audio Profile @ Level 2"},
+	{0x20, "Natural Audio Profile @ Level 3"},
+	{0x21, "Natural Audio Profile @ Level 4"},
+	{0x22, "Mobile Audio Internetworking Profile @ Level 1"},
+	{0x23, "Mobile Audio Internetworking Profile @ Level 2"},
+	{0x24, "Mobile Audio Internetworking Profile @ Level 3"},
+	{0x25, "Mobile Audio Internetworking Profile @ Level 4"},
+	{0x26, "Mobile Audio Internetworking Profile @ Level 5"},
+	{0x27, "Mobile Audio Internetworking Profile @ Level 6"},
+	{0x28, "AAC Profile @ Level 1"},
+	{0x29, "AAC Profile @ Level 2"},
+	{0x2A, "AAC Profile @ Level 4"},
+	{0x2B, "AAC Profile @ Level 5"},
+	{0x2C, "High Efficiency AAC Profile @ Level 2"},
+	{0x2D, "High Efficiency AAC Profile @ Level 3"},
+	{0x2E, "High Efficiency AAC Profile @ Level 4"},
+	{0x2F, "High Efficiency AAC Profile @ Level 5"},
+	{0x30, "High Efficiency AAC v2 Profile @ Level 2"},
+	{0x31, "High Efficiency AAC v2 Profile @ Level 3"},
+	{0x32, "High Efficiency AAC v2 Profile @ Level 4"},
+	{0x33, "High Efficiency AAC v2 Profile @ Level 5"},
+	{0x34, "Low Delay AAC Profile"},
+	{0x35, "Baseline MPEG Surround Profile @ Level 1"},
+	{0x36, "Baseline MPEG Surround Profile @ Level 2"},
+	{0x37, "Baseline MPEG Surround Profile @ Level 3"},
+	{0x38, "Baseline MPEG Surround Profile @ Level 4"},
+	{0x39, "Baseline MPEG Surround Profile @ Level 5"},
+	{0x3A, "Baseline MPEG Surround Profile @ Level 6"},
+	{0x50, "AAC Profile @ Level 6"},
+	{0x51, "AAC Profile @ Level 7"},
+	{0x52, "High Efficiency AAC Profile @ Level 6"},
+	{0x53, "High Efficiency AAC Profile @ Level 7"},
+	{0x54, "High Efficiency AAC v2 Profile @ Level 6"},
+	{0x55, "High Efficiency AAC v2 Profile @ Level 7"},
+	{0x56, "Extended High Efficiency AAC Profile @ Level 6"},
+	{0x57, "Extended High Efficiency AAC Profile @ Level 7"},
+	{0xFE, "Not part of MPEG-4 audio profiles"},
+	{0xFF, "No audio capability required"}
+};
 
 GF_EXPORT
 const char *gf_m4a_get_profile_name(u8 audio_pl)
 {
-	switch (audio_pl) {
-	case 0x00:
-		return "ISO Reserved (0x00)";
-	case 0x01:
-		return "Main Audio Profile @ Level 1";
-	case 0x02:
-		return "Main Audio Profile @ Level 2";
-	case 0x03:
-		return "Main Audio Profile @ Level 3";
-	case 0x04:
-		return "Main Audio Profile @ Level 4";
-	case 0x05:
-		return "Scalable Audio Profile @ Level 1";
-	case 0x06:
-		return "Scalable Audio Profile @ Level 2";
-	case 0x07:
-		return "Scalable Audio Profile @ Level 3";
-	case 0x08:
-		return "Scalable Audio Profile @ Level 4";
-	case 0x09:
-		return "Speech Audio Profile @ Level 1";
-	case 0x0A:
-		return "Speech Audio Profile @ Level 2";
-	case 0x0B:
-		return "Synthetic Audio Profile @ Level 1";
-	case 0x0C:
-		return "Synthetic Audio Profile @ Level 2";
-	case 0x0D:
-		return "Synthetic Audio Profile @ Level 3";
-	case 0x0E:
-		return "High Quality Audio Profile @ Level 1";
-	case 0x0F:
-		return "High Quality Audio Profile @ Level 2";
-	case 0x10:
-		return "High Quality Audio Profile @ Level 3";
-	case 0x11:
-		return "High Quality Audio Profile @ Level 4";
-	case 0x12:
-		return "High Quality Audio Profile @ Level 5";
-	case 0x13:
-		return "High Quality Audio Profile @ Level 6";
-	case 0x14:
-		return "High Quality Audio Profile @ Level 7";
-	case 0x15:
-		return "High Quality Audio Profile @ Level 8";
-	case 0x16:
-		return "Low Delay Audio Profile @ Level 1";
-	case 0x17:
-		return "Low Delay Audio Profile @ Level 2";
-	case 0x18:
-		return "Low Delay Audio Profile @ Level 3";
-	case 0x19:
-		return "Low Delay Audio Profile @ Level 4";
-	case 0x1A:
-		return "Low Delay Audio Profile @ Level 5";
-	case 0x1B:
-		return "Low Delay Audio Profile @ Level 6";
-	case 0x1C:
-		return "Low Delay Audio Profile @ Level 7";
-	case 0x1D:
-		return "Low Delay Audio Profile @ Level 8";
-	case 0x1E:
-		return "Natural Audio Profile @ Level 1";
-	case 0x1F:
-		return "Natural Audio Profile @ Level 2";
-	case 0x20:
-		return "Natural Audio Profile @ Level 3";
-	case 0x21:
-		return "Natural Audio Profile @ Level 4";
-	case 0x22:
-		return "Mobile Audio Internetworking Profile @ Level 1";
-	case 0x23:
-		return "Mobile Audio Internetworking Profile @ Level 2";
-	case 0x24:
-		return "Mobile Audio Internetworking Profile @ Level 3";
-	case 0x25:
-		return "Mobile Audio Internetworking Profile @ Level 4";
-	case 0x26:
-		return "Mobile Audio Internetworking Profile @ Level 5";
-	case 0x27:
-		return "Mobile Audio Internetworking Profile @ Level 6";
-	case 0x28:
-		return "AAC Profile @ Level 1";
-	case 0x29:
-		return "AAC Profile @ Level 2";
-	case 0x2A:
-		return "AAC Profile @ Level 4";
-	case 0x2B:
-		return "AAC Profile @ Level 5";
-	case 0x2C:
-		return "High Efficiency AAC Profile @ Level 2";
-	case 0x2D:
-		return "High Efficiency AAC Profile @ Level 3";
-	case 0x2E:
-		return "High Efficiency AAC Profile @ Level 4";
-	case 0x2F:
-		return "High Efficiency AAC Profile @ Level 5";
-	case 0x30:
-		return "High Efficiency AAC v2 Profile @ Level 2";
-	case 0x31:
-		return "High Efficiency AAC v2 Profile @ Level 3";
-	case 0x32:
-		return "High Efficiency AAC v2 Profile @ Level 4";
-	case 0x33:
-		return "High Efficiency AAC v2 Profile @ Level 5";
-	case 0x34:
-		return "Low Delay AAC Profile";
-	case 0x35:
-		return "Baseline MPEG Surround Profile @ Level 1";
-	case 0x36:
-		return "Baseline MPEG Surround Profile @ Level 2";
-	case 0x37:
-		return "Baseline MPEG Surround Profile @ Level 3";
-	case 0x38:
-		return "Baseline MPEG Surround Profile @ Level 4";
-	case 0x39:
-		return "Baseline MPEG Surround Profile @ Level 5";
-	case 0x3A:
-		return "Baseline MPEG Surround Profile @ Level 6";
-
-	case 0x50:
-		return "AAC Profile @ Level 6";
-	case 0x51:
-		return "AAC Profile @ Level 7";
-	case 0x52:
-		return "High Efficiency AAC Profile @ Level 6";
-	case 0x53:
-		return "High Efficiency AAC Profile @ Level 7";
-	case 0x54:
-		return "High Efficiency AAC v2 Profile @ Level 6";
-	case 0x55:
-		return "High Efficiency AAC v2 Profile @ Level 7";
-	case 0x56:
-		return "Extended High Efficiency AAC Profile @ Level 6";
-	case 0x57:
-		return "Extended High Efficiency AAC Profile @ Level 7";
-
-	case 0xFE:
-		return "Not part of MPEG-4 audio profiles";
-	case 0xFF:
-		return "No audio capability required";
-	default:
-		return "ISO Reserved / User Private";
+	u32 i, count = GF_ARRAY_LENGTH(M4AProfiles);
+	for (i=0; i<count; i++) {
+		if ((u32) audio_pl==M4AProfiles[i].value)
+			return M4AProfiles[i].name;
 	}
+	return "ISO Reserved / User Private";
 }
 
 #ifndef GPAC_DISABLE_AV_PARSERS
@@ -1716,12 +1574,12 @@ static u32 uvlc(GF_BitStream *bs) {
 }
 
 static void timing_info(GF_BitStream *bs, AV1State *state) {
-	u32 num_ticks_per_picture_minus_1 = 0, time_scale = 0;
+	u32 time_scale = 0;
 	/*num_units_in_display_tick*/ gf_bs_read_int(bs, 32);
 	time_scale = gf_bs_read_int(bs, 32);
 	state->equal_picture_interval = gf_bs_read_int(bs, 1);
 	if (state->equal_picture_interval) {
-		num_ticks_per_picture_minus_1 = uvlc(bs);
+		u32 num_ticks_per_picture_minus_1 = uvlc(bs);
 		state->tb_num = (num_ticks_per_picture_minus_1 + 1);
 		state->tb_den = time_scale;
 	}
@@ -1748,20 +1606,20 @@ static void operating_parameters_info(GF_BitStream *bs, const u8 idx, const u8 b
 static void av1_parse_sequence_header_obu(GF_BitStream *bs, AV1State *state)
 {
 	u8 buffer_delay_length_minus_1 = 0;
-	Bool timing_info_present_flag, initial_display_delay_present_flag;
 	state->frame_state.seen_seq_header = GF_TRUE;
 	state->config->seq_profile = gf_bs_read_int(bs, 3);
 	state->still_picture = gf_bs_read_int(bs, 1);
 	state->reduced_still_picture_header = gf_bs_read_int(bs, 1);
 	if (state->reduced_still_picture_header) {
-		timing_info_present_flag = GF_FALSE;
-		initial_display_delay_present_flag = GF_FALSE;
+		//timing_info_present_flag = GF_FALSE;
+		//initial_display_delay_present_flag = GF_FALSE;
 		state->operating_points_count = 1;
 		state->config->seq_level_idx_0 = gf_bs_read_int(bs, 5);
 	}
 	else {
 		u8 i = 0;
-		timing_info_present_flag = gf_bs_read_int(bs, 1);
+		Bool initial_display_delay_present_flag;
+		Bool timing_info_present_flag = gf_bs_read_int(bs, 1);
 		if (timing_info_present_flag) {
 			timing_info(bs, state);
 			state->decoder_model_info_present_flag = gf_bs_read_int(bs, 1);
@@ -1969,7 +1827,7 @@ GF_Err gf_media_vp9_parse_superframe(GF_BitStream *bs, u64 ivf_frame_size, u32 *
 {
 	u32 byte, bytes_per_framesize;
 	u64 pos = gf_bs_get_position(bs), i = 0;
-	GF_Err e = GF_OK;
+	GF_Err e;
 
 	assert(bs && num_frames_in_superframe);
 
@@ -2231,8 +2089,8 @@ static void vp9_tile_info(GF_BitStream *bs, int Sb64Cols)
 	}
 	tile_rows_log2 = gf_bs_read_int(bs, 1);
 	if (tile_rows_log2) {
-		Bool increment_tile_rows_log2 = gf_bs_read_int(bs, 1);
-		tile_rows_log2 += increment_tile_rows_log2;
+		/*Bool increment_tile_rows_log2 = */gf_bs_read_int(bs, 1);
+		//tile_rows_log2 += increment_tile_rows_log2;
 	}
 }
 
@@ -2272,9 +2130,9 @@ static void vp9_read_interpolation_filter(GF_BitStream *bs)
 
 GF_Err gf_media_vp9_parse_sample(GF_BitStream *bs, GF_VPConfig *vp9_cfg, Bool *key_frame, u32 *FrameWidth, u32 *FrameHeight, u32 *renderWidth, u32 *renderHeight)
 {
-	Bool FrameIsIntra = GF_FALSE, profile_low_bit = GF_FALSE, profile_high_bit = GF_FALSE, show_existing_frame = GF_FALSE, frame_type = GF_FALSE, show_frame = GF_FALSE, error_resilient_mode = GF_FALSE;
+	Bool FrameIsIntra = GF_FALSE, profile_low_bit, profile_high_bit, show_existing_frame = GF_FALSE, frame_type = GF_FALSE, show_frame = GF_FALSE, error_resilient_mode = GF_FALSE;
 	/*u8 frame_context_idx = 0, reset_frame_context = 0, frame_marker = 0*/;
-	int Sb64Cols = 0, Sb64Rows = 0, i = 0;
+	int Sb64Cols = 0, Sb64Rows = 0, i;
 	u8 refresh_frame_flags = 0;
 
 	assert(bs && key_frame);
@@ -2345,7 +2203,6 @@ GF_Err gf_media_vp9_parse_sample(GF_BitStream *bs, GF_VPConfig *vp9_cfg, Bool *k
 			vp9_render_size(bs, *FrameWidth, *FrameHeight, renderWidth, renderHeight);
 		}
 		else {
-			int i;
 			refresh_frame_flags = gf_bs_read_int(bs, 8);
 			u8 ref_frame_idx[3];
 			for (i = 0; i < 3; i++) {
@@ -2412,7 +2269,7 @@ GF_Err gf_av1_parse_obu_header(GF_BitStream *bs, ObuType *obu_type, Bool *obu_ex
 #endif // GPAC_DISABLE_AV_PARSERS
 
 GF_EXPORT
-const char *av1_get_obu_name(ObuType obu_type)
+const char *gf_av1_get_obu_name(ObuType obu_type)
 {
 	switch (obu_type) {
 	case OBU_SEQUENCE_HEADER: return "seq_header";
@@ -2594,8 +2451,14 @@ static void av1_add_obu_internal(GF_BitStream *bs, u64 pos, u64 obu_length, ObuT
 			return;
 		}
 	}
+	if (!obu_list) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[AV1] internal error, no OBU list cannot add\n"));
+		gf_free(a->obu);
+		gf_free(a);
+		return;
+	}
 	a->obu_type = obu_type;
-	if (!*obu_list)
+	if (! *obu_list)
 		*obu_list = gf_list_new();
 	gf_list_add(*obu_list, a);
 }
@@ -2621,13 +2484,11 @@ GF_Err aom_av1_parse_temporal_unit_from_section5(GF_BitStream *bs, AV1State *sta
 	state->obu_type = -1;
 
 	while (state->obu_type != OBU_TEMPORAL_DELIMITER) {
+		GF_Err e;
 		if (!gf_bs_available(bs))
 			return state->unframed ? GF_BUFFER_TOO_SMALL : GF_OK;
 
 		u64 pos = gf_bs_get_position(bs), obu_length = 0;
-		GF_Err e;
-		if (gf_bs_available(bs)==1)
-			e=GF_OK;
 
 		e = gf_media_aom_av1_parse_obu(bs, &state->obu_type, &obu_length, NULL, state);
 		if (e)
@@ -2714,7 +2575,7 @@ Bool gf_media_aom_probe_annexb(GF_BitStream *bs)
 
 GF_Err aom_av1_parse_temporal_unit_from_annexb(GF_BitStream *bs, AV1State *state)
 {
-	GF_Err e = GF_OK;
+	GF_Err e;
 	u64 tupos;
 	u64 tusize, sz;
 	if (!bs || !state) return GF_BAD_PARAM;
@@ -3634,11 +3495,10 @@ static void av1_parse_uncompressed_header(GF_BitStream *bs, AV1State *state)
 	//segmentation_params( ):
 	u8 segmentation_enabled = gf_bs_read_int(bs, 1);
 	if (segmentation_enabled) {
-		u8 segmentation_update_map = 1;
 		/*u8 segmentation_temporal_update = 0;*/
 		u8 segmentation_update_data = 1;
 		if (primary_ref_frame != AV1_PRIMARY_REF_NONE) {
-			segmentation_update_map = gf_bs_read_int(bs, 1);
+			u8 segmentation_update_map = gf_bs_read_int(bs, 1);
 			if (segmentation_update_map == 1)
 				/*segmentation_temporal_update = */gf_bs_read_int(bs, 1);
 			segmentation_update_data = gf_bs_read_int(bs, 1);
@@ -3770,8 +3630,8 @@ static void av1_parse_uncompressed_header(GF_BitStream *bs, AV1State *state)
 			else {
 				u8 lr_unit_shift = gf_bs_read_int(bs, 1);
 				if (lr_unit_shift) {
-					u8 lr_unit_extra_shift = gf_bs_read_int(bs, 1);
-					lr_unit_shift += lr_unit_extra_shift;
+					/*u8 lr_unit_extra_shift = */gf_bs_read_int(bs, 1);
+					//lr_unit_shift += lr_unit_extra_shift;
 				}
 			}
 			if (state->config->chroma_subsampling_x && state->config->chroma_subsampling_y && usesChromaLr) {
@@ -3991,7 +3851,17 @@ static void av1_parse_uncompressed_header(GF_BitStream *bs, AV1State *state)
 }
 
 GF_EXPORT
-void av1_reset_state(AV1State *state, Bool is_destroy)
+void gf_av1_init_state(AV1State *state)
+{
+	if (!state) return;
+	memset(state, 0, sizeof(AV1State));
+	state->color_primaries = 2;
+	state->transfer_characteristics = 2;
+	state->matrix_coefficients = 2;
+}
+
+GF_EXPORT
+void gf_av1_reset_state(AV1State *state, Bool is_destroy)
 {
 	GF_List *l1, *l2;
 
@@ -4525,7 +4395,7 @@ u32 gf_mp3_get_next_header(FILE* in)
 
 		if (state == 3) {
 			bytes[state] = b;
-			return GF_4CC(bytes[0], bytes[1], bytes[2], bytes[3]);
+			return GF_4CC((u32)bytes[0], bytes[1], bytes[2], bytes[3]);
 		}
 		if (state == 2) {
 			if (((b & 0xF0) == 0) || ((b & 0xF0) == 0xF0) || ((b & 0x0C) == 0x0C)) {
@@ -5038,6 +4908,7 @@ u32 gf_media_nalu_emulation_bytes_remove_count(const u8 *buffer, u32 nal_size)
 {
 	u32 i = 0, emulation_bytes_count = 0;
 	u8 num_zero = 0;
+	if (!buffer || !nal_size) return 0;
 
 	while (i < nal_size)
 	{
@@ -5409,7 +5280,7 @@ static s32 gf_media_avc_read_sps_bs_internal(GF_BitStream *bs, AVCState *avc, u3
 			}
 		}
 		else if ((profile_idc == 118) || (profile_idc == 128)) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[avc-h264] MVC not supported - skipping parsing end of Subset SPS\n"));
+			GF_LOG(GF_LOG_INFO, GF_LOG_CODING, ("[avc-h264] MVC parsing not implemented - skipping parsing end of Subset SPS\n"));
 			return sps_id;
 		}
 
@@ -5559,23 +5430,7 @@ s32 gf_media_avc_read_pps(const u8 *pps_data, u32 pps_size, AVCState *avc)
 	return pps_id;
 }
 
-static s32 gf_media_avc_read_sps_ext_bs_internal(GF_BitStream *bs, u32 nal_hdr)
-{
-	s32 sps_id;
-
-	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
-	if (!nal_hdr) {
-		/*nal_hdr = */gf_bs_read_u8(bs);
-	}
-	sps_id = gf_bs_get_ue(bs);
-	return sps_id;
-}
-
 #if 0 //unused
-s32 gf_media_avc_read_sps_ext_bs(GF_BitStream *bs)
-{
-	return gf_media_avc_read_sps_ext_bs_internal(bs, 0);
-}
 
 s32 gf_media_avc_read_sps_ext(const char *spse_data, u32 spse_size)
 {
@@ -5800,7 +5655,7 @@ static s32 avc_parse_slice(GF_BitStream *bs, AVCState *avc, Bool svc_idr_flag, A
 	}
 
 	if (si->pps->slice_group_count > 1 && si->pps->mb_slice_group_map_type >= 3 && si->pps->mb_slice_group_map_type <= 5) {
-		/*slice_group_change_cycle = */gf_bs_read_int(bs, (u32)ceil(log((si->pps->pic_size_in_map_units_minus1 + 1) / (si->pps->slice_group_change_rate_minus1 + 1) + 1) / log(2)));
+		/*slice_group_change_cycle = */gf_bs_read_int(bs, (u32)ceil(log1p((si->pps->pic_size_in_map_units_minus1 + 1) / (si->pps->slice_group_change_rate_minus1 + 1) ) / log(2)));
 	}
 
 	return 0;
@@ -5932,6 +5787,19 @@ static s32 avc_parse_pic_timing_sei(GF_BitStream *bs, AVCState *avc)
 	return 0;
 }
 
+
+#if !defined(GPAC_DISABLE_HEVC)
+static void avc_parse_itu_t_t35_sei(GF_BitStream* bs, AVCSeiItuTT35DolbyVision *dovi)
+{
+	u8 itu_t_t35_country_code = gf_bs_read_u8(bs);
+	u16 terminal_provider_code = gf_bs_read_u16(bs);
+	u32 user_id = gf_bs_read_u32(bs);
+	u8 data_type_code = gf_bs_read_u8(bs);
+	if (itu_t_t35_country_code == 0xB5 && terminal_provider_code == 0x31 && user_id == 0x47413934 && (data_type_code == 0x8 || data_type_code == 0x9)) {
+		dovi->rpu_flag = GF_TRUE;
+	}
+}
+#endif
 
 static void avc_compute_poc(AVCSliceInfo *si)
 {
@@ -6080,7 +5948,6 @@ s32 gf_media_avc_parse_nalu(GF_BitStream *bs, AVCState *avc)
 
 	case GF_AVC_NALU_SVC_SLICE:
 		SVC_ReadNal_header_extension(bs, &n_state.NalHeader);
-		slice = 1;
 		// slice buffer - read the info and compare.
 		/*ret = */svc_parse_slice(bs, avc, &n_state);
 		if (avc->s_info.nal_ref_idc) {
@@ -6180,7 +6047,7 @@ s32 gf_media_avc_parse_nalu(GF_BitStream *bs, AVCState *avc)
 		if (avc->last_ps_idx < 0) return -1;
 		return 0;
 	case GF_AVC_NALU_SEQ_PARAM_EXT:
-		avc->last_ps_idx = gf_media_avc_read_sps_ext_bs_internal(bs, nal_hdr);
+		avc->last_ps_idx = (s32) gf_bs_get_ue(bs);
 		if (avc->last_ps_idx < 0) return -1;
 		return 0;
 
@@ -6374,14 +6241,14 @@ GF_Err gf_media_avc_change_par(GF_AVCConfig *avcc, s32 ar_n, s32 ar_d)
 	AVCState avc;
 	u32 i, bit_offset, flag;
 	s32 idx;
-	GF_AVCConfigSlot *slc;
+	GF_NALUFFParam *slc;
 	orig = NULL;
 
 	memset(&avc, 0, sizeof(AVCState));
 	avc.sps_active_idx = -1;
 
 	i = 0;
-	while ((slc = (GF_AVCConfigSlot *)gf_list_enum(avcc->sequenceParameterSets, &i))) {
+	while ((slc = (GF_NALUFFParam *)gf_list_enum(avcc->sequenceParameterSets, &i))) {
 		u8 *no_emulation_buf = NULL;
 		u32 no_emulation_buf_size = 0, emulation_bytes = 0;
 		idx = gf_media_avc_read_sps(slc->data, slc->size, &avc, 0, &bit_offset);
@@ -6601,7 +6468,7 @@ static Bool parse_short_term_ref_pic_set(GF_BitStream *bs, HEVC_SPS *sps, u32 id
 		rps->num_positive_pics = k1;
 	}
 	else {
-		s32 prev = 0, poc = 0;
+		s32 prev = 0, poc;
 		sps->rps[idx_rps].num_negative_pics = gf_bs_get_ue(bs);
 		sps->rps[idx_rps].num_positive_pics = gf_bs_get_ue(bs);
 		if (sps->rps[idx_rps].num_negative_pics > 16)
@@ -6761,8 +6628,6 @@ s32 hevc_parse_slice_segment(GF_BitStream *bs, HEVCState *hevc, HEVCSliceInfo *s
 		gf_bs_read_int(bs, pps->num_extra_slice_header_bits);
 
 		si->slice_type = gf_bs_get_ue(bs);
-		if (si->slice_type == GF_HEVC_SLICE_TYPE_P)
-			si->slice_type = GF_HEVC_SLICE_TYPE_P;
 
 		if (pps->output_flag_present_flag)
 			/*pic_output_flag = */gf_bs_read_int(bs, 1);
@@ -6802,6 +6667,9 @@ s32 hevc_parse_slice_segment(GF_BitStream *bs, HEVCState *hevc, HEVCSliceInfo *s
 				u8 DeltaPocMsbCycleLt[32];
 				u32 num_long_term_sps = 0;
 				u32 num_long_term_pics = 0;
+
+				memset(DeltaPocMsbCycleLt, 0, sizeof(u8) * 32);
+				
 				if (sps->num_long_term_ref_pic_sps > 0) {
 					num_long_term_sps = gf_bs_get_ue(bs);
 				}
@@ -6950,6 +6818,65 @@ s32 hevc_parse_slice_segment(GF_BitStream *bs, HEVCState *hevc, HEVCSliceInfo *s
 	gf_bs_align(bs);
 	si->payload_start_offset = (s32)gf_bs_get_position(bs);
 	return 0;
+}
+
+static void gf_media_hevc_vvc_parse_sei(char *buffer, u32 nal_size, HEVCState *hevc, VVCState *vvc)
+{
+	u32 ptype, psize, hdr;
+	u64 start;
+	GF_BitStream *bs;
+
+	hdr = buffer[0];
+	if (((hdr & 0x7e) >> 1) != GF_HEVC_NALU_SEI_PREFIX) return;
+
+	bs = gf_bs_new(buffer, nal_size, GF_BITSTREAM_READ);
+	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
+
+	gf_bs_read_int(bs, 16);
+
+	/*parse SEI*/
+	while (gf_bs_available(bs)) {
+		ptype = 0;
+		while (gf_bs_peek_bits(bs, 8, 0)==0xFF) {
+			gf_bs_read_int(bs, 8);
+			ptype += 255;
+		}
+		ptype += gf_bs_read_int(bs, 8);
+		psize = 0;
+		while (gf_bs_peek_bits(bs, 8, 0)==0xFF) {
+			gf_bs_read_int(bs, 8);
+			psize += 255;
+		}
+		psize += gf_bs_read_int(bs, 8);
+
+		start = gf_bs_get_position(bs);
+		if (start+psize >= nal_size) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[%s] SEI user message type %d size error (%d but %d remain), skipping SEI message\n", hevc ? "HEVC" : "VVC", ptype, psize, nal_size-start));
+			break;
+		}
+
+		switch (ptype) {
+		case 4: /*user registered ITU-T T35*/
+			if (hevc) {
+				GF_BitStream * itu_t_t35_bs = gf_bs_new(buffer + start, psize, GF_BITSTREAM_READ);
+				avc_parse_itu_t_t35_sei(itu_t_t35_bs, &hevc->sei.dovi);
+				gf_bs_del(itu_t_t35_bs);
+			}
+		default:
+			break;
+		}
+
+		gf_bs_skip_bytes(bs, (u64) psize);
+		gf_bs_align(bs);
+		if (gf_bs_available(bs) <= 2)
+			break;
+	}
+	gf_bs_del(bs);
+}
+
+void gf_media_hevc_parse_sei(char *buffer, u32 nal_size, HEVCState *hevc)
+{
+	gf_media_hevc_vvc_parse_sei(buffer, nal_size, hevc, NULL);
 }
 
 static void hevc_compute_poc(HEVCSliceInfo *si)
@@ -7481,7 +7408,7 @@ static s32 gf_media_hevc_read_vps_bs_internal(GF_BitStream *bs, HEVCState *hevc,
 {
 	u8 vps_sub_layer_ordering_info_present_flag, vps_extension_flag;
 	u32 i, j;
-	s32 vps_id = -1;
+	s32 vps_id;
 	HEVC_VPS *vps;
 	u8 layer_id_included_flag[MAX_LHVC_LAYERS][64];
 
@@ -7617,12 +7544,12 @@ s32 gf_media_hevc_read_vps_ex(u8 *data, u32 *size, HEVCState *hevc, Bool remove_
 		u32 new_vps_size, emulation_bytes;
 		u32 bit_pos = gf_bs_get_bit_offset(bs);
 		GF_BitStream *w_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-		gf_bs_write_u8(w_bs, data[0]);
-		gf_bs_write_u8(w_bs, data[1]);
-		gf_bs_write_u8(w_bs, data[2]);
-		gf_bs_write_u8(w_bs, data[3]);
-		gf_bs_write_u16(w_bs, 0xFFFF);
-		gf_bs_seek(bs, 6);
+		gf_bs_seek(bs, 0);
+		gf_bs_write_u8(w_bs, gf_bs_read_u8(bs) );
+		gf_bs_write_u8(w_bs, gf_bs_read_u8(bs) );
+		gf_bs_write_u8(w_bs, gf_bs_read_u8(bs) );
+		gf_bs_write_u8(w_bs, gf_bs_read_u8(bs) );
+		gf_bs_write_u16(w_bs, gf_bs_read_u16(bs) );
 		bit_pos -= 48;
 		while (bit_pos) {
 			u32 v = gf_bs_read_int(bs, 1);
@@ -7642,10 +7569,13 @@ s32 gf_media_hevc_read_vps_ex(u8 *data, u32 *size, HEVCState *hevc, Bool remove_
 		else {
 			*size = gf_media_nalu_add_emulation_bytes(new_vps, data, new_vps_size);
 		}
+		if (new_vps)
+			gf_free(new_vps);
 	}
 
 exit:
-	if (bs) gf_bs_del(bs);
+	if (bs)
+		gf_bs_del(bs);
 	if (data_without_emulation_bytes) gf_free(data_without_emulation_bytes);
 	return vps_id;
 }
@@ -7659,6 +7589,7 @@ s32 gf_media_hevc_read_vps(u8 *data, u32 size, HEVCState *hevc)
 GF_EXPORT
 s32 gf_media_hevc_read_vps_bs(GF_BitStream *bs, HEVCState *hevc)
 {
+	if (!bs || !hevc) return -1;
 	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
 	if (!hevc_parse_nal_header(bs, NULL, NULL, NULL)) return -1;
 	return gf_media_hevc_read_vps_bs_internal(bs, hevc, GF_FALSE);
@@ -8000,6 +7931,7 @@ GF_EXPORT
 s32 gf_media_hevc_read_sps_bs(GF_BitStream *bs, HEVCState *hevc)
 {
 	u8 layer_id;
+	if (!bs || !hevc) return -1;
 	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
 	if (!hevc_parse_nal_header(bs, NULL, NULL, &layer_id)) return -1;
 	return gf_media_hevc_read_sps_bs_internal(bs, hevc, layer_id, NULL);
@@ -8009,7 +7941,7 @@ s32 gf_media_hevc_read_sps_bs(GF_BitStream *bs, HEVCState *hevc)
 static s32 gf_media_hevc_read_pps_bs_internal(GF_BitStream *bs, HEVCState *hevc)
 {
 	u32 i;
-	s32 pps_id = -1;
+	s32 pps_id;
 	HEVC_PPS *pps;
 
 	//NAL header already read
@@ -8026,8 +7958,9 @@ static s32 gf_media_hevc_read_pps_bs_internal(GF_BitStream *bs, HEVCState *hevc)
 		pps->state = 1;
 	}
 	pps->sps_id = gf_bs_get_ue(bs);
-	if (pps->sps_id > 16) {
+	if (pps->sps_id >= 16) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[HEVC] wrong SPS ID %d in PPS\n", pps->sps_id));
+		pps->sps_id=0;
 		return -1;
 	}
 	hevc->sps_active_idx = pps->sps_id; /*set active sps*/
@@ -8115,6 +8048,7 @@ exit:
 GF_EXPORT
 s32 gf_media_hevc_read_pps_bs(GF_BitStream *bs, HEVCState *hevc)
 {
+	if (!bs || !hevc) return -1;
 	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
 	if (!hevc_parse_nal_header(bs, NULL, NULL, NULL)) return -1;
 	return gf_media_hevc_read_pps_bs_internal(bs, hevc);
@@ -8235,7 +8169,7 @@ s32 gf_media_hevc_parse_nalu(u8 *data, u32 size, HEVCState *hevc, u8 *nal_unit_t
 
 	ret = gf_media_hevc_parse_nalu_bs(bs, hevc, nal_unit_type, temporal_id, layer_id);
 
-	if (bs) gf_bs_del(bs);
+	gf_bs_del(bs);
 	return ret;
 }
 
@@ -8254,8 +8188,8 @@ GF_Err gf_media_hevc_change_par(GF_HEVCConfig *hvcc, s32 ar_n, s32 ar_d)
 	HEVCState hevc;
 	u32 i, bit_offset, flag;
 	s32 idx;
-	GF_HEVCParamArray *spss;
-	GF_AVCConfigSlot *slc;
+	GF_NALUFFParamArray *spss;
+	GF_NALUFFParam *slc;
 	orig = NULL;
 
 	memset(&hevc, 0, sizeof(HEVCState));
@@ -8263,7 +8197,7 @@ GF_Err gf_media_hevc_change_par(GF_HEVCConfig *hvcc, s32 ar_n, s32 ar_d)
 
 	i = 0;
 	spss = NULL;
-	while ((spss = (GF_HEVCParamArray *)gf_list_enum(hvcc->param_array, &i))) {
+	while ((spss = (GF_NALUFFParamArray *)gf_list_enum(hvcc->param_array, &i))) {
 		if (spss->type == GF_HEVC_NALU_SEQ_PARAM)
 			break;
 		spss = NULL;
@@ -8271,9 +8205,9 @@ GF_Err gf_media_hevc_change_par(GF_HEVCConfig *hvcc, s32 ar_n, s32 ar_d)
 	if (!spss) return GF_NON_COMPLIANT_BITSTREAM;
 
 	i = 0;
-	while ((slc = (GF_AVCConfigSlot *)gf_list_enum(spss->nalus, &i))) {
-		u8 *no_emulation_buf = NULL;
-		u32 no_emulation_buf_size = 0, emulation_bytes = 0;
+	while ((slc = (GF_NALUFFParam *)gf_list_enum(spss->nalus, &i))) {
+		u8 *no_emulation_buf;
+		u32 no_emulation_buf_size, emulation_bytes;
 
 		/*SPS may still contains emulation bytes*/
 		no_emulation_buf = gf_malloc((slc->size) * sizeof(char));
@@ -8665,7 +8599,7 @@ block:
 	hdr->bitrate = 0;
 	hdr->sample_rate = freq;
 	hdr->framesize = framesize;
-	if (strmtyp!=0x1) {
+	if (strmtyp != 1) {
 		hdr->channels = channels;
 		hdr->streams[substreamid].lfon = lfon;
 		if (full_parse) {
@@ -8682,7 +8616,7 @@ block:
 		if (lfon)
 			hdr->channels += 1;
 
-	} else if (strmtyp==1) {
+	} else {
 		hdr->streams[substreamid].num_dep_sub = substreamid;
 		hdr->streams[substreamid].chan_loc |= chanmap;
 	}
@@ -8748,20 +8682,10 @@ static u32 vorbis_book_maptype1_quantvals(u32 entries, u32 dim)
 	}
 }
 
-u32 _ilog_(u32 v)
+static u32 ilog(u32 v, Bool dec)
 {
 	u32 ret = 0;
-	while (v) {
-		ret++;
-		v >>= 1;
-	}
-	return(ret);
-}
-
-static u32 ilog(u32 v)
-{
-	u32 ret = 0;
-	if (v) --v;
+	if (dec && v) --v;
 	while (v) {
 		ret++;
 		v >>= 1;
@@ -8858,7 +8782,7 @@ Bool gf_vorbis_parse_header(GF_VorbisParser *vp, u8 *data, u32 data_len)
 		else {
 			oggpack_read(&opb, 5);
 			for (j = 0; j < entries;) {
-				u32 num = oggpack_read(&opb, _ilog_(entries - j));
+				u32 num = oggpack_read(&opb, ilog(entries - j, GF_FALSE));
 				for (k = 0; k < num && j < entries; k++, j++) {
 				}
 			}
@@ -8942,8 +8866,8 @@ Bool gf_vorbis_parse_header(GF_VorbisParser *vp, u8 *data, u32 data_len)
 		if (oggpack_read(&opb, 1)) {
 			u32 nb_steps = oggpack_read(&opb, 8) + 1;
 			for (j = 0; j < nb_steps; j++) {
-				oggpack_read(&opb, ilog(vp->channels));
-				oggpack_read(&opb, ilog(vp->channels));
+				oggpack_read(&opb, ilog(vp->channels, GF_TRUE));
+				oggpack_read(&opb, ilog(vp->channels, GF_TRUE));
 			}
 		}
 		oggpack_read(&opb, 2);
@@ -9055,3 +8979,627 @@ u32 gf_opus_check_frame(GF_OpusParser *op, u8 *data, u32 data_length)
 }
 
 #endif /*!defined(GPAC_DISABLE_AV_PARSERS) && !defined (GPAC_DISABLE_OGG)*/
+
+u64 gf_mpegh_escaped_value(GF_BitStream *bs, u32 nBits1, u32 nBits2, u32 nBits3)
+{
+	u64 value = gf_bs_read_int(bs, nBits1);
+	if (value == (1<<nBits1)-1) {
+		u32 vadd = gf_bs_read_int(bs, nBits2);
+		value += vadd;
+		if (vadd == (1<<nBits2)-1) {
+			vadd = gf_bs_read_int(bs, nBits3);
+			value += vadd;
+		}
+	}
+	return value;
+}
+
+GF_EXPORT
+s32 gf_mpegh_get_mhas_pl(u8 *ptr, u32 size)
+{
+	GF_BitStream *bs = gf_bs_new(ptr, size, GF_BITSTREAM_READ);
+
+	while (gf_bs_available(bs)) {
+		u32 type = (u32) gf_mpegh_escaped_value(bs, 3, 8, 8);
+		/*u64 label = */gf_mpegh_escaped_value(bs, 2, 8, 32);
+		u64 mh_size = gf_mpegh_escaped_value(bs, 11, 24, 24);
+		//MHAS config
+		if (type==1) {
+			u32 PL = gf_bs_read_int(bs, 8);
+			gf_bs_del(bs);
+			return PL;
+		}
+		gf_bs_skip_bytes(bs, mh_size);
+	}
+	gf_bs_del(bs);
+	return -1;
+}
+
+
+GF_EXPORT
+void gf_media_vvc_parse_sei(char *buffer, u32 nal_size, VVCState *vvc)
+{
+	gf_media_hevc_vvc_parse_sei(buffer, nal_size, NULL, vvc);
+}
+
+static Bool vvc_parse_nal_header(GF_BitStream *bs, u8 *nal_unit_type, u8 *temporal_id, u8 *layer_id)
+{
+	u32 val;
+	val = gf_bs_read_int(bs, 1);
+	if (val) return GF_FALSE;
+	val = gf_bs_read_int(bs, 1);
+	if (val) return GF_FALSE;
+
+	val = gf_bs_read_int(bs, 6);
+	if (layer_id) *layer_id = val;
+
+	val = gf_bs_read_int(bs, 5);
+	if (nal_unit_type) *nal_unit_type = val;
+
+	val = gf_bs_read_int(bs, 3);
+	if (!val) return GF_FALSE;
+	val -= 1;
+	if (temporal_id) *temporal_id = val;
+	return GF_TRUE;
+}
+
+static void vvc_profile_tier_level(GF_BitStream *bs, VVC_ProfileTierLevel *ptl)
+{
+	u32 i;
+	if (ptl->pt_present) {
+		ptl->general_profile_idc = gf_bs_read_int(bs, 7);
+		ptl->general_tier_flag = gf_bs_read_int(bs, 1);
+	}
+	ptl->general_level_idc = gf_bs_read_int(bs, 8);
+	ptl->frame_only_constraint = gf_bs_read_int(bs, 1);
+	ptl->multilayer_enabled = gf_bs_read_int(bs, 1);
+	//general constraints info - max size if 1 + 81 + 8 + 255
+	if (ptl->pt_present) {
+		//		general_constraints_info
+		ptl->gci_present = gf_bs_read_int(bs, 1);
+		if (ptl->gci_present) {
+			u8 res;
+			ptl->gci[0] = 0x80;
+			ptl->gci[0] |= gf_bs_read_int(bs, 7);
+			//81-7 = 74 bits till reserved
+			gf_bs_read_data(bs, ptl->gci+1, 9);
+			ptl->gci[10] = gf_bs_read_int(bs, 2)<<6;
+			//skip extensions
+			ptl->gci[11] = 0;
+			res = gf_bs_read_int(bs, 8);
+			gf_bs_read_int(bs, res);
+			gf_bs_align(bs);
+		}
+	}
+	for (i=ptl->ptl_max_tid; i>0; i--) {
+		ptl->sub_ptl[i-1].level_present_flag = gf_bs_read_int(bs, 1);
+	}
+	gf_bs_align(bs);
+	for (i=ptl->ptl_max_tid; i>0; i--) {
+		if (ptl->sub_ptl[i-1].level_present_flag)
+			ptl->sub_ptl[i-1].sublayer_level_idc = gf_bs_read_u8(bs);
+	}
+	if (ptl->pt_present) {
+		ptl->num_sub_profiles = gf_bs_read_u8(bs);
+		for (i=0; i<ptl->num_sub_profiles; i++) {
+			ptl->sub_profile_idc[i] = gf_bs_read_u32(bs);
+		}
+	}
+}
+
+static s32 gf_media_vvc_read_vps_bs_internal(GF_BitStream *bs, VVCState *vvc, Bool stop_at_vps_ext)
+{
+	u32 i, j;
+	s32 vps_id;
+	VVC_VPS *vps;
+	Bool vps_default_ptl_dpb_hrd_max_tid_flag=0;
+
+	//nalu header already parsed
+	vps_id = gf_bs_read_int(bs, 4);
+	if (vps_id >= 16) return -1;
+	if (!vps_id) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[VVC] VPS ID 0 is forbidden\n"));
+		return -1;
+	}
+	vps = &vvc->vps[vps_id];
+	if (!vps->state) {
+		vps->id = vps_id;
+		vps->state = 1;
+	}
+	vps->max_layers = 1 + gf_bs_read_int(bs, 6);
+	if (vps->max_layers > MAX_LHVC_LAYERS) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[VVC] sorry, %d layers in VPS but only %d supported\n", vps->max_layers, MAX_LHVC_LAYERS));
+		return -1;
+	}
+	vps->max_sub_layers = gf_bs_read_int(bs, 3) + 1;
+
+	if ((vps->max_layers>1) && (vps->max_sub_layers>1))
+		vps_default_ptl_dpb_hrd_max_tid_flag = gf_bs_read_int(bs, 1);
+
+	if (vps->max_layers>1)
+		vps->all_layers_independent = gf_bs_read_int(bs, 1);
+
+	for (i=0; i<vps->max_layers; i++) {
+		u32 layer_id = gf_bs_read_int(bs, 6);
+		if (layer_id>vps->max_layer_id) vps->max_layer_id = layer_id;
+		if (i && !vps->all_layers_independent) {
+			Bool layer_indep = gf_bs_read_int(bs, 1);
+			if (!layer_indep) {
+				Bool vps_max_tid_ref_present_flag = gf_bs_read_int(bs, 1);
+				for (j=0; j<i; j++) {
+					Bool vps_direct_ref_layer_flag = gf_bs_read_int(bs, 1);
+					if (vps_max_tid_ref_present_flag && vps_direct_ref_layer_flag) {
+						/*vps_max_tid_il_ref_pics_plus1*/gf_bs_read_int(bs, 3);
+					}
+				}
+			}
+		}
+	}
+	vps->num_ptl = 1;
+	if (vps->max_layers > 1) {
+		if (vps->all_layers_independent) {
+			vps->each_layer_is_ols = gf_bs_read_int(bs, 1);
+		}
+		if (!vps->each_layer_is_ols) {
+			u32 vps_ols_mode_idc = 2;
+			if (!vps->all_layers_independent) {
+				vps_ols_mode_idc = gf_bs_read_int(bs, 2);
+			}
+			if (vps_ols_mode_idc==2) {
+				u8 vps_num_output_layer_sets = 2 + gf_bs_read_int(bs, 8);
+				for (i=0; i<vps_num_output_layer_sets; i++) {
+					for (j=0; j<vps->max_layers; j++) {
+						gf_bs_read_int(bs, 1);
+					}
+				}
+			}
+		}
+		vps->num_ptl = 1 + gf_bs_read_int(bs, 8);
+	}
+	vps->ptl[0].pt_present = 1;
+	for (i=0; i<vps->num_ptl; i++) {
+		if (i)
+			vps->ptl[i].pt_present = gf_bs_read_int(bs, 1);
+		if (!vps_default_ptl_dpb_hrd_max_tid_flag)
+			vps->ptl[i].ptl_max_tid = gf_bs_read_int(bs, 3);
+		else
+			vps->ptl[i].ptl_max_tid = vps->max_sub_layers - 1;;
+	}
+	//align
+	gf_bs_align(bs);
+
+	for (i=0; i<vps->num_ptl; i++) {
+		vvc_profile_tier_level(bs, &vps->ptl[i]);
+	}
+
+	//TODO, parse multilayer stuff
+	return vps_id;
+}
+
+
+static s32 gf_media_vvc_read_sps_bs_internal(GF_BitStream *bs, VVCState *vvc, u8 layer_id, u32 *vui_flag_pos)
+{
+	s32 vps_id, sps_id;
+	u32 i, CtbSizeY;
+	VVC_SPS *sps;
+	u8 sps_ptl_dpb_hrd_params_present_flag;
+
+	if (vui_flag_pos) *vui_flag_pos = 0;
+
+	sps_id = gf_bs_read_int(bs, 4);
+	if (sps_id >= 16) {
+		return -1;
+	}
+	vps_id = gf_bs_read_int(bs, 4);
+	if (vps_id >= 16) {
+		return -1;
+	}
+	if (!vps_id && !vvc->vps[0].state) {
+		vvc->vps[0].state = 1;
+		vvc->vps[0].num_ptl = 1;
+		vvc->vps[0].max_layers = 1;
+		vvc->vps[0].all_layers_independent = 1;
+	}
+
+	sps = &vvc->sps[sps_id];
+	if (!sps->state) {
+		sps->state = 1;
+		sps->id = sps_id;
+		sps->vps_id = vps_id;
+	}
+	sps->max_sublayers = 1 + gf_bs_read_int(bs, 3);
+	sps->chroma_format_idc = gf_bs_read_int(bs, 2);
+	sps->log2_ctu_size = 5 + gf_bs_read_int(bs, 2);
+	CtbSizeY = 1<<sps->log2_ctu_size;
+
+	sps_ptl_dpb_hrd_params_present_flag = gf_bs_read_int(bs, 1);
+	if (sps_ptl_dpb_hrd_params_present_flag) {
+		VVC_ProfileTierLevel ptl, *p_ptl;
+		if (sps->vps_id) {
+			p_ptl = &ptl;
+		} else {
+			p_ptl = &vvc->vps[0].ptl[0];
+		}
+		memset(p_ptl, 0, sizeof(VVC_ProfileTierLevel));
+		p_ptl->pt_present = 1;
+		p_ptl->ptl_max_tid = sps->max_sublayers;
+		vvc_profile_tier_level(bs, p_ptl);
+	}
+	sps->gdr_enabled = gf_bs_read_int(bs, 1);
+	sps->ref_pic_resampling = gf_bs_read_int(bs, 1);
+	if (sps->ref_pic_resampling)
+		sps->res_change_in_clvs = gf_bs_read_int(bs, 1);
+	sps->width = gf_bs_get_ue(bs);
+	sps->height = gf_bs_get_ue(bs);
+	sps->conf_window = gf_bs_read_int(bs, 1);
+	if (sps->conf_window) {
+		sps->cw_left = gf_bs_get_ue(bs);
+		sps->cw_right = gf_bs_get_ue(bs);
+		sps->cw_top = gf_bs_get_ue(bs);
+		sps->cw_bottom = gf_bs_get_ue(bs);
+	}
+	sps->subpic_info_present = gf_bs_read_int(bs, 1);
+	if (sps->subpic_info_present) {
+		sps->nb_subpics = 1 + gf_bs_get_ue(bs);
+		if (sps->nb_subpics>1) {
+			u32 tmpWidthVal, tmpHeightVal;
+			sps->independent_subpic_flags = gf_bs_read_int(bs, 1);
+			sps->subpic_same_size = gf_bs_read_int(bs, 1);
+
+			tmpWidthVal = (sps->width + CtbSizeY-1) / CtbSizeY;
+			tmpWidthVal = gf_get_bit_size(tmpWidthVal);
+			tmpHeightVal = (sps->height + CtbSizeY-1) / CtbSizeY;
+			tmpHeightVal = gf_get_bit_size(tmpHeightVal);
+
+			for (i=0; i<sps->nb_subpics; i++) {
+				if( !sps->subpic_same_size || !i) {
+					if (i && (sps->width > CtbSizeY)) gf_bs_read_int(bs, tmpWidthVal);
+					if (i && (sps->height > CtbSizeY)) gf_bs_read_int(bs, tmpHeightVal);
+					if ((i+1 < sps->nb_subpics) && (sps->width > CtbSizeY)) gf_bs_read_int(bs, tmpWidthVal);
+					if ((i+1 < sps->nb_subpics) && (sps->height > CtbSizeY)) gf_bs_read_int(bs, tmpHeightVal);
+				}
+				if (!sps->independent_subpic_flags) {
+					gf_bs_read_int(bs, 1);
+					gf_bs_read_int(bs, 1);
+				}
+			}
+			sps->subpicid_len = gf_bs_get_ue(bs) + 1;
+			sps->subpicid_mapping_explicit = gf_bs_read_int(bs, 1);
+			if (sps->subpicid_mapping_explicit) {
+				sps->subpicid_mapping_present = gf_bs_read_int(bs, 1);
+				if (sps->subpicid_mapping_present) {
+					for (i=0; i<sps->nb_subpics; i++) {
+						gf_bs_get_ue(bs);
+					}
+				}
+			}
+		}
+	}
+	sps->bitdepth = gf_bs_get_ue(bs) + 8;
+	/*sps_entropy_coding_sync_enabled_flag*/ gf_bs_read_int(bs, 1);
+	/*sps_entry_point_offsets_present_flag*/ gf_bs_read_int(bs, 1);
+	sps->log2_max_poc_lsb = 4 + gf_bs_read_int(bs, 4);
+	if ((sps->poc_msb_cycle_flag = gf_bs_read_int(bs, 1)))
+		sps->poc_msb_cycle_len = 1 + gf_bs_get_ue(bs);
+
+	u8 sps_num_extra_ph_bits = 8 * gf_bs_read_int(bs, 2);
+	for (i=0; i<sps_num_extra_ph_bits; i++) {
+		if (gf_bs_read_int(bs, 1))
+			sps->ph_num_extra_bits++;
+	}
+	u8 sps_num_extra_sh_bits = 8 * gf_bs_read_int(bs, 2);
+	for (i=0; i<sps_num_extra_sh_bits; i++) {
+		if (gf_bs_read_int(bs, 1))
+			sps->sh_num_extra_bits++;
+	}
+
+	/*! TODO parse the rest !*/
+
+	return sps_id;
+}
+
+static s32 gf_media_vvc_read_pps_bs_internal(GF_BitStream *bs, VVCState *vvc)
+{
+	u32 i;
+	s32 pps_id;
+	VVC_PPS *pps;
+
+	//NAL header already read
+	pps_id = gf_bs_read_int(bs, 6);
+
+	if ((pps_id < 0) || (pps_id >= 64)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[VVC] wrong PPS ID %d in PPS\n", pps_id));
+		return -1;
+	}
+	pps = &vvc->pps[pps_id];
+
+	if (!pps->state) {
+		pps->id = pps_id;
+		pps->state = 1;
+	}
+	pps->sps_id = gf_bs_read_int(bs, 4);
+	if (pps->sps_id >= 16) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[VVC] wrong SPS ID %d in PPS\n", pps->sps_id));
+		pps->sps_id=0;
+		return -1;
+	}
+	vvc->sps_active_idx = pps->sps_id; /*set active sps*/
+	pps->mixed_nal_types = gf_bs_read_int(bs, 1);
+	pps->width = gf_bs_get_ue(bs);
+	pps->height = gf_bs_get_ue(bs);
+	pps->conf_window = gf_bs_read_int(bs, 1);
+	if (pps->conf_window) {
+		pps->cw_left = gf_bs_get_ue(bs);
+		pps->cw_right = gf_bs_get_ue(bs);
+		pps->cw_top = gf_bs_get_ue(bs);
+		pps->cw_bottom = gf_bs_get_ue(bs);
+	}
+	//scaling window
+	if (gf_bs_read_int(bs, 1)) {
+		gf_bs_get_se(bs);
+		gf_bs_get_se(bs);
+		gf_bs_get_se(bs);
+		gf_bs_get_se(bs);
+	}
+	pps->output_flag_present_flag = gf_bs_read_int(bs, 1);
+	pps->no_pic_partition_flag = gf_bs_read_int(bs, 1);
+	pps->subpic_id_mapping_present_flag = gf_bs_read_int(bs, 1);
+	if (pps->subpic_id_mapping_present_flag) {
+		u32 pps_subpic_id_len, pps_num_subpics=0;
+		if (!pps->no_pic_partition_flag) {
+			pps_num_subpics = 1+gf_bs_get_ue(bs);
+		}
+		pps_subpic_id_len = 1 + gf_bs_get_ue(bs);
+		for (i=0; i<pps_num_subpics; i++) {
+			gf_bs_read_int(bs, pps_subpic_id_len);
+		}
+	}
+	if (!pps->no_pic_partition_flag) {
+		/*pps_log2_ctu_size_minus5 =*/gf_bs_read_int(bs, 2);
+		u32 num_exp_tile_columns = 1 + gf_bs_get_ue(bs);
+		u32 num_exp_tile_rows = 1 + gf_bs_get_ue(bs);
+		for (i=0; i<num_exp_tile_columns; i++)
+			gf_bs_get_ue(bs);
+		for (i=0; i<num_exp_tile_rows; i++)
+			gf_bs_get_ue(bs);
+
+		return pps_id;
+	}
+
+
+	//todo parse the rest
+
+	return pps_id;
+}
+
+static
+s32 vvc_parse_picture_header(GF_BitStream *bs, VVCState *vvc, VVCSliceInfo *si)
+{
+	u32 pps_id;
+
+	si->irap_or_gdr_pic = gf_bs_read_int(bs, 1);
+	si->non_ref_pic = gf_bs_read_int(bs, 1);
+	if (si->irap_or_gdr_pic)
+		si->gdr_pic = gf_bs_read_int(bs, 1);
+	if ((si->inter_slice_allowed_flag = gf_bs_read_int(bs, 1)))
+		si->intra_slice_allowed_flag = gf_bs_read_int(bs, 1);
+
+	pps_id = gf_bs_get_ue(bs);
+	if (pps_id >= 64)
+		return -1;
+	si->pps = &vvc->pps[pps_id];
+	si->sps = &vvc->sps[si->pps->sps_id];
+	si->poc_lsb = gf_bs_read_int(bs, si->sps->log2_max_poc_lsb);
+
+	si->recovery_point_valid = 0;
+	si->gdr_recovery_count = 0;
+	if (si->gdr_pic) {
+		si->recovery_point_valid = 1;
+		si->gdr_recovery_count = gf_bs_get_ue(bs);
+	}
+	gf_bs_read_int(bs, si->sps->ph_num_extra_bits);
+
+	if (si->sps->poc_msb_cycle_flag) {
+		if ( (si->poc_msb_cycle_present_flag = gf_bs_read_int(bs, 1))) {
+			si->poc_msb_cycle = gf_bs_read_int(bs, si->sps->poc_msb_cycle_len);
+		}
+	}
+	//todo parse the rest
+	return 0;
+}
+
+static s32 vvc_parse_slice(GF_BitStream *bs, VVCState *vvc, VVCSliceInfo *si)
+{
+//	u32 CurrSubpicIdx = 0;
+
+	si->picture_header_in_slice_header_flag = gf_bs_read_int(bs, 1);
+	if (si->picture_header_in_slice_header_flag) {
+		GF_LOG(GF_LOG_INFO, GF_LOG_CODING, ("[VVC] Picture header in slice header incomplete support, cannot guess slice type\n"));
+		return vvc_parse_picture_header(bs, vvc, si);
+	}
+	if (!si->sps) return -1;
+	si->slice_type = GF_VVC_SLICE_TYPE_I;
+	if (/*)sps_subpic_info_present_flag*/gf_bs_read_int(bs, 1)) {
+		/*sh_subpic_id*/gf_bs_read_int(bs, si->sps->subpicid_len);
+		//todo update CurrSubpicIdx
+	}
+
+	if (si->pps->rect_slice_flag ) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[VVC] tiling parsing not supported - patch welcome\n"));
+		return 0;
+	}
+	gf_bs_read_int(bs, si->sps->sh_num_extra_bits);
+	/*
+		if( !pps_rect_slice_flag  &&  NumTilesInPic − sh_slice_address > 1 )
+		sh_num_tiles_in_slice_minus1
+
+	 */
+
+	if (si->inter_slice_allowed_flag )
+		si->slice_type = gf_bs_read_int(bs, 2);
+
+
+	return 0;
+}
+
+/*this needs further tests !*/
+static void vvc_compute_poc(VVCSliceInfo *si)
+{
+	u32 max_poc_lsb = 1 << (si->sps->log2_max_poc_lsb);
+
+	/*POC reset for IDR frames, NOT for CRA*/
+	if (si->irap_or_gdr_pic && !si->gdr_pic) {
+		si->poc_lsb_prev = 0;
+		si->poc_msb_prev = 0;
+	}
+
+	if (si->poc_msb_cycle_present_flag) {
+		si->poc_msb = si->poc_msb_cycle;
+	} else {
+		if ((si->poc_lsb < si->poc_lsb_prev) && (si->poc_lsb_prev - si->poc_lsb >= max_poc_lsb / 2))
+			si->poc_msb = si->poc_msb_prev + max_poc_lsb;
+		else if ((si->poc_lsb > si->poc_lsb_prev) && (si->poc_lsb - si->poc_lsb_prev > max_poc_lsb / 2))
+			si->poc_msb = si->poc_msb_prev - max_poc_lsb;
+		else
+			si->poc_msb = si->poc_msb_prev;
+	}
+
+	si->poc = si->poc_msb + si->poc_lsb;
+}
+
+
+GF_EXPORT
+s32 gf_media_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_type, u8 *temporal_id, u8 *layer_id)
+{
+	Bool is_slice = GF_FALSE;
+	s32 ret = -1;
+	VVCSliceInfo n_state;
+
+	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
+
+	memcpy(&n_state, &vvc->s_info, sizeof(VVCSliceInfo));
+	if (!vvc_parse_nal_header(bs, nal_unit_type, temporal_id, layer_id)) return -1;
+
+	n_state.nal_unit_type = *nal_unit_type;
+
+	switch (n_state.nal_unit_type) {
+	case GF_VVC_NALU_ACCESS_UNIT:
+	case GF_VVC_NALU_END_OF_SEQ:
+	case GF_VVC_NALU_END_OF_STREAM:
+		ret = 1;
+		break;
+
+	case GF_VVC_NALU_SLICE_TRAIL:
+	case GF_VVC_NALU_SLICE_STSA:
+	case GF_VVC_NALU_SLICE_RADL:
+	case GF_VVC_NALU_SLICE_RASL:
+	case GF_VVC_NALU_SLICE_IDR_W_RADL:
+	case GF_VVC_NALU_SLICE_IDR_N_LP:
+	case GF_VVC_NALU_SLICE_CRA:
+	case GF_VVC_NALU_SLICE_GDR:
+		/* slice - read the info and compare.*/
+		ret = vvc_parse_slice(bs, vvc, &n_state);
+		if (ret < 0) return ret;
+
+		ret = 0;
+		if (n_state.picture_header_in_slice_header_flag) {
+			is_slice = GF_TRUE;
+			vvc_compute_poc(&n_state);
+			if (vvc->s_info.poc != n_state.poc) {
+				ret = 1;
+				break;
+			}
+			if (!(*layer_id) || (n_state.prev_layer_id_plus1 && ((*layer_id) <= n_state.prev_layer_id_plus1 - 1))) {
+				ret = 1;
+				break;
+			}
+		}
+		break;
+
+	case GF_VVC_NALU_PIC_HEADER:
+		if (vvc_parse_picture_header(bs, vvc, &n_state)<0) {
+			ret = -1;
+			break;
+		}
+		is_slice = GF_TRUE;
+		vvc_compute_poc(&n_state);
+		if (!(*layer_id) || (n_state.prev_layer_id_plus1 && ((*layer_id) <= n_state.prev_layer_id_plus1 - 1))) {
+			ret = 1;
+		}
+		break;
+	case GF_VVC_NALU_SEQ_PARAM:
+		vvc->last_parsed_sps_id = gf_media_vvc_read_sps_bs_internal(bs, vvc, *layer_id, NULL);
+		ret = (vvc->last_parsed_sps_id>=0) ? 0 : -1;
+		break;
+	case GF_VVC_NALU_PIC_PARAM:
+		vvc->last_parsed_pps_id = gf_media_vvc_read_pps_bs_internal(bs, vvc);
+		ret = (vvc->last_parsed_pps_id>=0) ? 0 : -1;
+		break;
+	case GF_VVC_NALU_VID_PARAM:
+		vvc->last_parsed_vps_id = gf_media_vvc_read_vps_bs_internal(bs, vvc, GF_FALSE);
+		ret = (vvc->last_parsed_vps_id>=0) ? 0 : -1;
+		break;
+	case GF_VVC_NALU_DEC_PARAM:
+		ret = 0;
+		break;
+	case GF_VVC_NALU_APS_PREFIX:
+		//we use the mix aps type + aps id (first 8 bits) as unique identifier
+		vvc->last_parsed_aps_id = gf_bs_read_int(bs, 8);
+		ret = 0;
+		break;
+	default:
+		ret = 0;
+		break;
+	}
+
+	/* save _prev values */
+	if ((ret>0) && vvc->s_info.sps) {
+//		n_state.frame_num_offset_prev = vvc->s_info.frame_num_offset;
+//		n_state.frame_num_prev = vvc->s_info.frame_num;
+
+		n_state.poc_lsb_prev = vvc->s_info.poc_lsb;
+		n_state.poc_msb_prev = vvc->s_info.poc_msb;
+		if (is_slice)
+			n_state.prev_layer_id_plus1 = *layer_id + 1;
+	}
+	if (is_slice) vvc_compute_poc(&n_state);
+	memcpy(&vvc->s_info, &n_state, sizeof(VVCSliceInfo));
+
+	return ret;
+}
+
+GF_EXPORT
+s32 gf_media_vvc_parse_nalu(u8 *data, u32 size, VVCState *vvc, u8 *nal_unit_type, u8 *temporal_id, u8 *layer_id)
+{
+	GF_BitStream *bs = NULL;
+	s32 ret;
+
+	if (!vvc) {
+		if (nal_unit_type) (*nal_unit_type) = data[1] >> 3;
+		if (layer_id) (*layer_id) = data[0] & 0x3f;
+		if (temporal_id) (*temporal_id) = (data[1] & 0x7);
+		return -1;
+	}
+	bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
+	if (!bs) return -1;
+	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
+
+	ret = gf_media_vvc_parse_nalu_bs(bs, vvc, nal_unit_type, temporal_id, layer_id);
+	gf_bs_del(bs);
+	return ret;
+}
+
+Bool gf_media_vvc_slice_is_ref(VVCState *vvc)
+{
+	if (!vvc->s_info.irap_or_gdr_pic) {
+		return GF_FALSE;
+	}
+	if (vvc->s_info.gdr_pic) {
+		if (vvc->s_info.recovery_point_valid) {
+			vvc->s_info.recovery_point_valid = 0;
+			return GF_TRUE;
+		}
+		return GF_FALSE;
+	}
+	return GF_TRUE;
+}

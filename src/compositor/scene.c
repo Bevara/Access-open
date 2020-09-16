@@ -95,7 +95,7 @@ char *gf_scene_resolve_xlink(GF_Node *node, char *the_url)
 {
 	char *url;
 	GF_Scene *scene = gf_sg_get_private(gf_node_get_graph(node));
-	if (!scene) return NULL;
+	if (!scene) return gf_strdup(the_url);
 
 	url = gf_strdup(the_url);
 #ifndef GPAC_DISABLE_SVG
@@ -116,28 +116,25 @@ char *gf_scene_resolve_xlink(GF_Node *node, char *the_url)
 	/*if this is a fragment and no XML:BASE was found, this is a fragment of the current document*/
 	if (url[0]=='#') return url;
 
-	if (scene) {
-		char *the_url;
-		if (scene->redirect_xml_base) {
-			the_url = gf_url_concatenate(scene->redirect_xml_base, url);
-		} else {
+	if (scene->redirect_xml_base) {
+		the_url = gf_url_concatenate(scene->redirect_xml_base, url);
+	} else {
 //			the_url = gf_url_concatenate(is->root_od->net_service->url, url);
-			/*the root url of a document should be "." if not specified, so that the final URL resolve happens only once
-			at the service level*/
-			the_url = gf_strdup(url);
-		}
-		gf_free(url);
-		return the_url;
+		/*the root url of a document should be "." if not specified, so that the final URL resolve happens only once
+		at the service level*/
+		the_url = gf_strdup(url);
 	}
-	return url;
+	gf_free(url);
+	return the_url;
 }
 
 static Bool gf_scene_script_action(void *opaque, GF_JSAPIActionType type, GF_Node *n, GF_JSAPIParam *param)
 {
 	Bool ret;
+	GF_Scene *root_scene;
 	GF_Scene *scene = (GF_Scene *) opaque;
-	GF_Scene *root_scene = gf_scene_get_root_scene(scene);
 	if (!scene) return GF_FALSE;
+	root_scene = gf_scene_get_root_scene(scene);
 
 	if (type==GF_JSAPI_OP_MESSAGE) {
 		gf_scene_message_ex(scene, scene->root_od->scene_ns->url, param->info.msg, param->info.e, 1);
@@ -279,7 +276,8 @@ Bool gf_scene_is_root(GF_Scene *scene)
 
 GF_Scene *gf_scene_get_root_scene(GF_Scene *scene)
 {
-	while (scene->root_od->parentscene) scene = scene->root_od->parentscene;
+	while (scene && scene->root_od && scene->root_od->parentscene)
+		scene = scene->root_od->parentscene;
 	return scene;
 }
 
@@ -326,8 +324,9 @@ GF_Scene *gf_scene_new(GF_Compositor *compositor, GF_Scene *parentScene)
 
 	tmp->storages = gf_list_new();
 	tmp->keynavigators = gf_list_new();
-
+	tmp->attached_inlines = gf_list_new();
 #endif
+
 	tmp->on_media_event = inline_on_media_event;
 	return tmp;
 }
@@ -393,6 +392,14 @@ void gf_scene_del(GF_Scene *scene)
 		gf_list_del(scene->namespaces);
 	}
 
+#ifndef GPAC_DISABLE_VRML
+	while (gf_list_count(scene->attached_inlines)) {
+		GF_Node *n_inline = gf_list_pop_back(scene->attached_inlines);
+		gf_node_set_private(n_inline, NULL);
+	}
+	gf_list_del(scene->attached_inlines);
+#endif
+
 	if (scene->compositor->root_scene == scene)
 		scene->compositor->root_scene = NULL;
 
@@ -424,16 +431,18 @@ void gf_scene_disconnect(GF_Scene *scene, Bool for_shutdown)
 	if (for_shutdown && scene->root_od->mo) {
 		/*reset private stack of all inline nodes still registered*/
 		while (gf_mo_event_target_count(scene->root_od->mo)) {
-			GF_Node *n = (GF_Node *)gf_event_target_get_node(gf_mo_event_target_get(scene->root_od->mo, 0));
 			gf_mo_event_target_remove_by_index(scene->root_od->mo, 0);
 #ifndef GPAC_DISABLE_VRML
-			switch (gf_node_get_tag(n)) {
-			case TAG_MPEG4_Inline:
+			GF_Node *n = (GF_Node *)gf_event_target_get_node(gf_mo_event_target_get(scene->root_od->mo, 0));
+			if (n) {
+				switch (gf_node_get_tag(n)) {
+				case TAG_MPEG4_Inline:
 #ifndef GPAC_DISABLE_X3D
-			case TAG_X3D_Inline:
+				case TAG_X3D_Inline:
 #endif
-				gf_node_set_private(n, NULL);
-				break;
+					gf_node_set_private(n, NULL);
+					break;
+				}
 			}
 #endif
 		}
@@ -444,7 +453,7 @@ void gf_scene_disconnect(GF_Scene *scene, Bool for_shutdown)
 	if (for_shutdown) {
 		i = 0;
 		while ((odm = (GF_ObjectManager *)gf_list_enum(scene->resources, &i))) {
-			if (for_shutdown && odm->mo) {
+			if (odm->mo) {
 				odm->ck = NULL;
 				obj = odm->mo;
 				while (gf_mo_event_target_count(obj)) {
@@ -556,7 +565,6 @@ static void gf_scene_insert_object(GF_Scene *scene, GF_MediaObject *mo, Bool loc
 	mo->odm = odm;
 	odm->parentscene = scene;
 	odm->ID = GF_MEDIA_EXTERNAL_ID;
-	odm->parentscene = scene;
 	if (scene->force_single_timeline) lock_timelines = GF_TRUE;
 
 	url = mo->URLs.vals[0].url;
@@ -661,21 +669,22 @@ void gf_scene_remove_object(GF_Scene *scene, GF_ObjectManager *odm, u32 for_shut
 			/*reset private stack of all inline nodes still registered*/
 			if (discard_obj) {
 				while (gf_mo_event_target_count(obj)) {
-					GF_Node *n = (GF_Node *)gf_event_target_get_node(gf_mo_event_target_get(obj, 0));
 					gf_mo_event_target_remove_by_index(obj, 0);
-
 #ifndef GPAC_DISABLE_VRML
-					switch (gf_node_get_tag(n)) {
-					case TAG_MPEG4_Inline:
+					GF_Node *n = (GF_Node *)gf_event_target_get_node(gf_mo_event_target_get(obj, 0));
+					if (n) {
+						switch (gf_node_get_tag(n)) {
+						case TAG_MPEG4_Inline:
 #ifndef GPAC_DISABLE_X3D
-					case TAG_X3D_Inline:
+						case TAG_X3D_Inline:
 #endif
-						if (obj->num_open) gf_mo_stop(&obj);
-						gf_node_set_private(n, NULL);
-						break;
-					default:
-						gf_sc_mo_destroyed(n);
-						break;
+							if (obj->num_open) gf_mo_stop(&obj);
+							gf_node_set_private(n, NULL);
+							break;
+						default:
+							gf_sc_mo_destroyed(n);
+							break;
+						}
 					}
 #endif
 				}
@@ -917,7 +926,7 @@ GF_MediaObject *gf_scene_get_media_object_ex(GF_Scene *scene, MFURL *url, u32 ob
 	OD_ID = gf_mo_get_od_id(url);
 	if (!OD_ID) return NULL;
 
-	/*we may have overriden the time lines in parent scene, thus all objects in this scene have the same clock*/
+	/*we may have overridden the time lines in parent scene, thus all objects in this scene have the same clock*/
 	if (scene->root_od->parentscene && scene->root_od->parentscene->force_single_timeline)
 		lock_timelines = GF_TRUE;
 
@@ -1549,7 +1558,7 @@ void gf_scene_regenerate(GF_Scene *scene)
 		gf_node_register(n1, NULL);
 		root = n1;
 
-		if (! scene->root_od->parentscene) {
+		if (! scene->root_od->parentscene && !scene->compositor->dyn_filter_mode) {
 			n2 = is_create_node(scene->graph, TAG_MPEG4_Background2D, "DYN_BACK");
 			gf_node_list_add_child( &((GF_ParentNode *)n1)->children, n2);
 			gf_node_register(n2, n1);
@@ -1559,10 +1568,11 @@ void gf_scene_regenerate(GF_Scene *scene)
 		if (scene->vr_type) {
 			n2 = is_create_node(scene->graph, TAG_MPEG4_Viewpoint, "DYN_VP");
 			((M_Viewpoint *)n2)->position.z = 0;
-			((M_Viewpoint *)n2)->fieldOfView = GF_PI/2;
 
 #ifndef GPAC_DISABLE_3D
 			((M_Viewpoint *)n2)->fieldOfView = scene->compositor->fov;
+#else
+			((M_Viewpoint *)n2)->fieldOfView = GF_PI/2;
 #endif
 
 			gf_node_list_add_child( &((GF_ParentNode *)n1)->children, n2);
@@ -2256,6 +2266,10 @@ void gf_scene_restart_dynamic(GF_Scene *scene, s64 from_time, Bool restart_only,
 	to_restart = gf_list_new();
 	i=0;
 	while ((odm = (GF_ObjectManager*)gf_list_enum(scene->resources, &i))) {
+		//do not restart not selected objects
+		if (odm->state != GF_ODM_STATE_PLAY)
+			continue;
+
 		if (gf_odm_shares_clock(odm, ck)) {
 			//object is not an addon and main addon is selected, do not add
 			if (!odm->addon && scene->main_addon_selected) {
@@ -2269,12 +2283,9 @@ void gf_scene_restart_dynamic(GF_Scene *scene, s64 from_time, Bool restart_only,
 				} else {
 					gf_list_add(to_restart, odm);
 				}
-			} else if (!scene->selected_service_id || (scene->selected_service_id==odm->ServiceID)) {
-				gf_list_add(to_restart, odm);
-			}
-
-			if (odm->state == GF_ODM_STATE_PLAY) {
+			} else if (!scene->selected_service_id || (scene->selected_service_id==odm->ServiceID) ) {
 				gf_odm_stop(odm, 1);
+				gf_list_add(to_restart, odm);
 			}
 		}
 	}
@@ -3269,7 +3280,7 @@ void gf_scene_select_scalable_addon(GF_Scene *scene, GF_ObjectManager *odm)
 	if (base_ch->esd->decoderConfig->decoderSpecificInfo && base_ch->esd->decoderConfig->decoderSpecificInfo->dataLength)
 		nalu_annex_b = 0;
 
-	if (0 && odm_base->hybrid_layered_coded && ch->esd->decoderConfig->decoderSpecificInfo && ch->esd->decoderConfig->decoderSpecificInfo->dataLength) {
+	if (odm_base->hybrid_layered_coded && ch->esd->decoderConfig->decoderSpecificInfo && ch->esd->decoderConfig->decoderSpecificInfo->dataLength) {
 
 		nalu_annex_b = 0;
 		if (force_attach) {

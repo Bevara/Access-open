@@ -163,7 +163,7 @@ static void build_text_split(TextStack *st, M_Text *txt, GF_TraverseState *tr_st
 					span->bounds.width += tspan->font_scale * (span->glyphs[k] ? span->glyphs[k]->horiz_advance : tspan->font->max_advance_h);
 				}
 			} else {
-				span->glyphs[0] = tspan->glyphs[FSLTR ? j : (len - j - 1) ];
+				//span->glyphs[0] = tspan->glyphs[FSLTR ? j : (len - j - 1) ];
 				span->glyphs[0] = tspan->glyphs[j];
 				span->bounds.width = tspan->font_scale * (span->glyphs[0] ? span->glyphs[0]->horiz_advance : tspan->font->max_advance_h);
 			}
@@ -484,7 +484,6 @@ static void text_get_draw_opt(GF_Node *node, TextStack *st, Bool *force_texture,
 	*hl_color = 0;
 
 	fs_style = FSSTYLE;
-	hlight = NULL;
 	hlight = strstr(fs_style, "HIGHLIGHT");
 	if (hlight) hlight = strchr(hlight, '#');
 	if (hlight) {

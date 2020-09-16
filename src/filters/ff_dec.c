@@ -85,6 +85,8 @@ typedef struct _gf_ffdec_ctx
 	struct SwsContext *sws_ctx;
 
 	GF_List *src_packets;
+
+	Bool drop_non_refs;
 } GF_FFDecodeCtx;
 
 static GF_Err ffdec_initialize(GF_Filter *filter)
@@ -112,7 +114,7 @@ static void ffdec_finalize(GF_Filter *filter)
 	gf_list_del(ctx->src_packets);
 
 	if (ctx->owns_context && ctx->decoder) {
-		if (ctx->decoder->extradata) gf_free(ctx->decoder->extradata);
+		if (ctx->decoder->extradata) av_free(ctx->decoder->extradata);
 		avcodec_close(ctx->decoder);
 	}
 	return;
@@ -140,6 +142,11 @@ static GF_Err ffdec_process_video(GF_Filter *filter, struct _gf_ffdec_ctx *ctx)
 	} else if (!pck) {
 		is_eos = gf_filter_pid_is_eos(ctx->in_pid);
 		if (!is_eos) return GF_OK;
+	}
+
+	if (pck && ctx->drop_non_refs && !gf_filter_pck_get_sap(pck)) {
+		gf_filter_pid_drop_packet(ctx->in_pid);
+		return GF_OK;
 	}
 
 	frame = ctx->frame;
@@ -189,7 +196,7 @@ static GF_Err ffdec_process_video(GF_Filter *filter, struct _gf_ffdec_ctx *ctx)
 			return GF_EOS;
 		}
 		if (ctx->reconfig_pending) {
-			if (ctx->decoder->extradata) gf_free(ctx->decoder->extradata);
+			if (ctx->decoder->extradata) av_free(ctx->decoder->extradata);
 			ctx->decoder->extradata = NULL;
 			avcodec_close(ctx->decoder);
 			ctx->decoder = NULL;
@@ -417,7 +424,7 @@ static GF_Err ffdec_process_audio(GF_Filter *filter, struct _gf_ffdec_ctx *ctx)
 			return GF_EOS;
 		}
 		if (ctx->reconfig_pending) {
-			if (ctx->decoder->extradata) gf_free(ctx->decoder->extradata);
+			if (ctx->decoder->extradata) av_free(ctx->decoder->extradata);
 			ctx->decoder->extradata = NULL;
 			avcodec_close(ctx->decoder);
 			ctx->decoder = NULL;
@@ -676,6 +683,13 @@ static GF_Err ffdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		}
 
 		codec_id = ffmpeg_codecid_from_gpac(gpac_codecid, &ff_codectag);
+		//specific remaps
+		if (!codec_id) {
+			switch (gpac_codecid) {
+			case GF_CODECID_MVC: codec_id = AV_CODEC_ID_H264; break;
+			}
+
+		}
 		if (codec_id) codec = avcodec_find_decoder(codec_id);
 		if (!codec) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFDec] No decoder found for codec %s\n", gf_codecid_name(gpac_codecid) ));
@@ -693,15 +707,15 @@ static GF_Err ffdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		//we may have a dsi here!
 		prop = gf_filter_pid_get_property(pid, GF_PROP_PID_DECODER_CONFIG);
 		if (prop && prop->value.data.ptr && prop->value.data.size) {
-			//looks loke ffmpeg wants the fLaC keyword
+			//looks like ffmpeg wants the fLaC keyword
 			if (gpac_codecid==GF_CODECID_FLAC) {
 				ctx->decoder->extradata_size = prop->value.data.size+4;
-				ctx->decoder->extradata = gf_malloc(sizeof(char) * prop->value.data.size+4);
+				ctx->decoder->extradata = av_malloc(sizeof(char) * prop->value.data.size+4);
 				memcpy(ctx->decoder->extradata, "fLaC", 4);
 				memcpy(ctx->decoder->extradata+4, prop->value.data.ptr, prop->value.data.size);
 			} else {
 				ctx->decoder->extradata_size = prop->value.data.size;
-				ctx->decoder->extradata = gf_malloc(sizeof(char) * prop->value.data.size);
+				ctx->decoder->extradata = av_malloc(sizeof(char) * prop->value.data.size);
 				memcpy(ctx->decoder->extradata, prop->value.data.ptr, prop->value.data.size);
 			}
 			ctx->extra_data_crc = gf_crc_32(prop->value.data.ptr, prop->value.data.size);
@@ -714,13 +728,7 @@ static GF_Err ffdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		}
 	}
 
-	AVDictionaryEntry *prev_e = NULL;
-	while (1) {
-		prev_e = av_dict_get(ctx->options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
-		if (!prev_e) break;
-		gf_filter_report_unused_meta_option(filter, prev_e->key);
-	}
-
+	ffmpeg_report_unused_options(filter, ctx->options);
 
 	//we're good to go, declare our output pid
 	ctx->in_pid = pid;
@@ -841,6 +849,16 @@ static GF_Err ffdec_update_arg(GF_Filter *filter, const char *arg_name, const GF
 	return GF_NOT_SUPPORTED;
 }
 
+static Bool ffdec_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
+{
+	GF_FFDecodeCtx *ctx = (GF_FFDecodeCtx *) gf_filter_get_udta(filter);
+
+	if ((evt->base.type==GF_FEVT_PLAY) || (evt->base.type==GF_FEVT_SET_SPEED) || (evt->base.type==GF_FEVT_RESUME)) {
+		ctx->drop_non_refs = evt->play.drop_non_ref;
+	}
+	return GF_FALSE;
+}
+
 static const GF_FilterCapability FFDecodeCaps[] =
 {
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
@@ -884,6 +902,7 @@ GF_FilterRegister FFDecodeRegister = {
 	.configure_pid = ffdec_configure_pid,
 	.process = ffdec_process,
 	.update_arg = ffdec_update_arg,
+	.process_event = ffdec_process_event,
 	.flags = GF_FS_REG_META,
 	//use middle priorty, so that hardware decs/other native impl in gpac can take over if needed
 	//don't use lowest one since we use this for scalable codecs

@@ -95,7 +95,7 @@ void compositor_2d_hybgl_flush_video(GF_Compositor *compositor, GF_IRect *area)
 	visual_3d_enable_antialias(compositor->visual, GF_FALSE);
 	gf_sc_texture_set_blend_mode(compositor->hybgl_txh, TX_MODULATE);
 	//visual_3d_set_material_2d_argb(compositor->visual, 0xFFFFFFFF);
-	compositor->visual->has_material_2d = 0;
+	compositor->visual->has_material_2d = GF_FALSE;
 	a_tr_state.mesh_num_textures = gf_sc_texture_enable(compositor->hybgl_txh, NULL);
 	if (a_tr_state.mesh_num_textures ) {
 		if (area) {
@@ -432,7 +432,7 @@ void compositor_2d_release_video_access(GF_VisualManager *visual)
 
 static void store_blit_times(GF_TextureHandler *txh, u32 push_time)
 {
-#ifndef GPAC_DISABLE_LOGS
+#ifndef GPAC_DISABLE_LOG
 	u32 ck;
 #endif
 
@@ -440,7 +440,7 @@ static void store_blit_times(GF_TextureHandler *txh, u32 push_time)
 	txh->nb_frames ++;
 	txh->upload_time += push_time;
 
-#ifndef GPAC_DISABLE_LOGS
+#ifndef GPAC_DISABLE_LOG
 	gf_mo_get_object_time(txh->stream, &ck);
 	if (ck>txh->last_frame_time) {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Compositor2D] Bliting frame (CTS %d) %d ms too late\n", txh->last_frame_time, ck - txh->last_frame_time ));
@@ -782,7 +782,7 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 	}
 
 	//will pause clock if first HW load
-	gf_sc_texture_check_pause_on_first_load(txh);
+	gf_sc_texture_check_pause_on_first_load(txh, GF_TRUE);
 
 	if (overlay_type) {
 		u32 push_time;
@@ -810,7 +810,7 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 			visual->has_overlays = GF_TRUE;
 
 			//will resume clock if first HW load
-			gf_sc_texture_check_pause_on_first_load(txh);
+			gf_sc_texture_check_pause_on_first_load(txh, GF_FALSE);
 			return GF_TRUE;
 		}
 		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor2D] Error during overlay blit - trying with soft one\n"));
@@ -845,7 +845,7 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 	}
 
 	//will resume clock if first HW load
-	gf_sc_texture_check_pause_on_first_load(txh);
+	gf_sc_texture_check_pause_on_first_load(txh, GF_FALSE);
 
 	if (use_soft_stretch) {
 		GF_VideoSurface backbuffer;
@@ -862,16 +862,20 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 			store_blit_times(txh, push_time);
 			visual->compositor->video_out->LockBackBuffer(visual->compositor->video_out, &backbuffer, GF_FALSE);
 			if (e) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_COMPOSE, ("[Compositor2D] Cannot soft blit surface (error %s) - will try using software rasterizer\n", gf_error_to_string(e) ));
+				if (e != GF_NOT_SUPPORTED) {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_COMPOSE, ("[Compositor2D] Cannot soft blit surface (error %s) - will try using software rasterizer\n", gf_error_to_string(e) ));
+					visual->compositor->last_error = e;
+				}
 				if (is_attached) visual_2d_init_raster(visual);
-				visual->compositor->last_error = e;
 				txh->flags |= GF_SR_TEXTURE_DISABLE_BLIT;
 				return GF_FALSE;
 			}
 		} else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor2D] Cannot lock back buffer - Error %s\n", gf_error_to_string(e) ));
+			if (e != GF_NOT_SUPPORTED) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor2D] Cannot lock back buffer - Error %s\n", gf_error_to_string(e) ));
+				visual->compositor->last_error = e;
+			}
 			if (is_attached) visual_2d_init_raster(visual);
-			visual->compositor->last_error = e;
 			return GF_FALSE;
 		}
 		if (!visual->compositor->video_memory) {

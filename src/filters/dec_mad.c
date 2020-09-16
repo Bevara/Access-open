@@ -189,7 +189,7 @@ static GF_Err maddec_process(GF_Filter *filter)
 	mad_fixed_t *left_ch, *right_ch, chan;
 	u8 *ptr;
 	u8 *data;
-	u32 num, in_size, outSize=0;
+	u32 num, in_size; //, outSize=0;
 	GF_MADCtx *ctx = gf_filter_get_udta(filter);
 	GF_FilterPacket *dst_pck;
 	GF_FilterPacket *pck = gf_filter_pid_get_packet(ctx->ipid);
@@ -278,7 +278,7 @@ mad_resync:
 		ptr++;
 		*ptr = (u8)(rs >> 8) & 0xff;
 		ptr++;
-		outSize += 2;
+		//outSize += 2;
 
 		if (ctx->num_channels == 2) {
 			MAD_SCALE(rs, (*right_ch++) );
@@ -286,7 +286,7 @@ mad_resync:
 			ptr++;
 			*ptr = (u8)(rs >> 8) & 0xff;
 			ptr++;
-			outSize += 2;
+			//outSize += 2;
 		}
 	}
 	gf_filter_pck_send(dst_pck);

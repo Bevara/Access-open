@@ -74,7 +74,7 @@ typedef struct
 {
 	//opts
 	Bool texture, outline;
-	u32 width, height;
+	u32 txtw, txth;
 
 	GF_FilterPid *ipid, *opid;
 
@@ -82,7 +82,7 @@ typedef struct
 	GF_Scene *scene;
 	u32 dsi_crc;
 	Bool is_tx3g;
-	Bool is_playing, graph_registered;
+	Bool is_playing, graph_registered, is_eos;
 
 
 	GF_TextConfig *cfg;
@@ -125,7 +125,7 @@ static void ttd_update_size_info(GF_TTXTDec *ctx)
 		} else if (ctx->cfg->text_width && ctx->cfg->text_height) {
 			gf_sg_set_scene_size_info(ctx->scenegraph, ctx->cfg->text_width, ctx->cfg->text_height, GF_TRUE);
 		} else {
-			gf_sg_set_scene_size_info(ctx->scenegraph, ctx->width, ctx->height, GF_TRUE);
+			gf_sg_set_scene_size_info(ctx->scenegraph, ctx->txtw, ctx->txth, GF_TRUE);
 		}
 		gf_sg_get_scene_size_info(ctx->scenegraph, &w, &h);
 		if (!w || !h) return;
@@ -359,6 +359,8 @@ static void ttd_setup_scene(GF_TTXTDec *ctx)
 
 static void ttd_reset_scene(GF_TTXTDec *ctx)
 {
+	if (!ctx->scenegraph) return;
+
 	gf_scene_register_extra_graph(ctx->scene, ctx->scenegraph, GF_TRUE);
 
 	gf_node_unregister((GF_Node *) ctx->ts_blink, NULL);
@@ -1144,16 +1146,16 @@ static void ttd_toggle_display(GF_TTXTDec *ctx)
 	}
 }
 
-static Bool ttd_process_event(GF_Filter *filter, const GF_FilterEvent *com)
+static Bool ttd_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 {
 	GF_TTXTDec *ctx = gf_filter_get_udta(filter);
 
 	//check for scene attach
-	switch (com->base.type) {
+	switch (evt->base.type) {
 	case GF_FEVT_ATTACH_SCENE:
 		break;
 	case GF_FEVT_RESET_SCENE:
-		if (ctx->opid != com->attach_scene.on_pid) return GF_TRUE;
+		if (ctx->opid != evt->attach_scene.on_pid) return GF_TRUE;
 		ctx->is_playing = GF_FALSE;
 		ttd_toggle_display(ctx);
 		ttd_reset_scene(ctx);
@@ -1170,9 +1172,9 @@ static Bool ttd_process_event(GF_Filter *filter, const GF_FilterEvent *com)
 	default:
 		return GF_FALSE;
 	}
-	if (ctx->opid != com->attach_scene.on_pid) return GF_TRUE;
+	if (ctx->opid != evt->attach_scene.on_pid) return GF_TRUE;
 
-	ctx->odm = com->attach_scene.object_manager;
+	ctx->odm = evt->attach_scene.object_manager;
 	ctx->scene = ctx->odm->subscene ? ctx->odm->subscene : ctx->odm->parentscene;
 
 	/*timedtext cannot be a root scene object*/
@@ -1205,11 +1207,19 @@ static GF_Err ttd_process(GF_Filter *filter)
 	pck = gf_filter_pid_get_packet(ctx->ipid);
 	if (!pck) {
 		if (gf_filter_pid_is_eos(ctx->ipid)) {
-			gf_filter_pid_set_eos(ctx->opid);
+			if (!ctx->is_eos) {
+				gf_filter_pid_set_eos(ctx->opid);
+				ctx->ts_blink->stopTime = gf_node_get_scene_time((GF_Node *) ctx->ts_blink);
+				gf_node_changed((GF_Node *) ctx->ts_blink, NULL);
+				ctx->ts_scroll->stopTime = gf_node_get_scene_time((GF_Node *) ctx->ts_scroll);
+				gf_node_changed((GF_Node *) ctx->ts_scroll, NULL);
+				ctx->is_eos = GF_TRUE;
+			}
 			return GF_EOS;
 		}
 		return GF_OK;
 	}
+	ctx->is_eos = GF_FALSE;
 
 	//object clock shall be valid
 	assert(ctx->odm->ck);
@@ -1285,6 +1295,8 @@ void ttd_finalize(GF_Filter *filter)
 {
 	GF_TTXTDec *ctx = gf_filter_get_udta(filter);
 
+	ttd_reset_scene(ctx);
+
 	if (ctx->cfg) gf_odf_desc_del((GF_Descriptor *) ctx->cfg);
 	gf_bs_del(ctx->bs_r);
 }
@@ -1295,8 +1307,8 @@ static const GF_FilterArgs TTXTDecArgs[] =
 {
 	{ OFFS(texture), "use texturing for output text", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(outline), "draw text outline", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(width), "default width when standalone rendering", GF_PROP_UINT, "400", NULL, 0},
-	{ OFFS(height), "default height when standalone rendering", GF_PROP_UINT, "200", NULL, 0},
+	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, 0},
+	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, 0},
 	{0}
 };
 
@@ -1313,7 +1325,7 @@ static const GF_FilterCapability TTXTDecCaps[] =
 GF_FilterRegister TTXTDecRegister = {
 	.name = "ttxtdec",
 	GF_FS_SET_DESCRIPTION("TTXT/TX3G decoder")
-	GF_FS_SET_HELP("This filter decodes TTXT/TX3G streams directly into the scene graph of the compositor. It cannot be used to dump TTXT/TX3G content.\n"
+	GF_FS_SET_HELP("This filter decodes TTXT/TX3G streams into a BIFS scene graph of the compositor filter.\n"
 	"The TTXT documentation is available at https://wiki.gpac.io/TTXT-Format-Documentation\n")
 	.private_size = sizeof(GF_TTXTDec),
 	.flags = GF_FS_REG_MAIN_THREAD,

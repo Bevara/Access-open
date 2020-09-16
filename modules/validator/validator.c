@@ -90,7 +90,7 @@ static void validator_xvs_add_snapshot_node(GF_Validator *validator, const char 
 	snap_node->name = gf_strdup("snapshot");
 	snap_node->attributes = gf_list_new();
 
-	GF_SAFEALLOC(att, GF_XMLAttribute);
+	att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 	if (!att) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate snapshot\n"));
 		return;
@@ -100,7 +100,7 @@ static void validator_xvs_add_snapshot_node(GF_Validator *validator, const char 
 	sprintf(att->value, "%d", scene_time);
 	gf_list_add(snap_node->attributes, att);
 	
-	GF_SAFEALLOC(att, GF_XMLAttribute);
+	att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 	if (!att) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate snapshot\n"));
 		return;
@@ -181,7 +181,7 @@ static GF_Err validator_file_dec(char *png_filename, u32 *hint_codecid, u32 *wid
 		if (!ext) return GF_NOT_SUPPORTED;
 		if (!stricmp(ext, ".png")) codecid = GF_CODECID_PNG;
 		else if (!stricmp(ext, ".jpg") || !stricmp(ext, ".jpeg")) codecid = GF_CODECID_JPEG;
-	} else if (hint_codecid) {
+	} else {
 		codecid = *hint_codecid;
 	}
 
@@ -215,7 +215,7 @@ static Bool validator_compare_snapshots(GF_Validator *validator)
 	char *ref_name, *new_name;
 	u32 ref_width, ref_height, ref_pixel_format, ref_data_size;
 	u32 new_width, new_height, new_pixel_format, new_data_size;
-	char *ref_data, *new_data;
+	char *ref_data=NULL, *new_data=NULL;
 	Bool result = GF_FALSE;
 	GF_Err e;
 	u32 i;
@@ -234,6 +234,9 @@ static Bool validator_compare_snapshots(GF_Validator *validator)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Validator] Cannot decode PNG file %s\n", new_name));
 		goto end;
 	}
+	if (!ref_data) ref_data_size = 0;
+	if (!new_data) new_data_size = 0;
+
 	if (ref_width != new_width) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Validator] Snapshots have different widths: %d vs %d\n", ref_width, new_width));
 		goto end;
@@ -243,6 +246,10 @@ static Bool validator_compare_snapshots(GF_Validator *validator)
 		goto end;
 	}
 	if (ref_pixel_format != new_pixel_format) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Validator] Snapshots have different pixel formats: %d vs %d\n", ref_pixel_format, new_pixel_format));
+		goto end;
+	}
+	if (ref_data_size != new_data_size) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Validator] Snapshots have different pixel formats: %d vs %d\n", ref_pixel_format, new_pixel_format));
 		goto end;
 	}
@@ -259,6 +266,8 @@ end:
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_MODULE, ("[Validator] PNG Comparison result: %s\n", (result?"Same":"Different")));
 	if (ref_name) gf_free(ref_name);
 	if (new_name) gf_free(new_name);
+	if (ref_data) gf_free(ref_data);
+	if (new_data) gf_free(new_data);
 	return result;
 }
 #endif
@@ -350,7 +359,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 
 	evt_node->attributes = gf_list_new();
 
-	GF_SAFEALLOC(att, GF_XMLAttribute);
+	att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 	if (!att) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event time\n"));
 		return;
@@ -369,7 +378,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 	case GF_EVENT_MOUSEMOVE:
 	case GF_EVENT_MOUSEWHEEL:
 		if (event->type == GF_EVENT_MOUSEDOWN || event->type == GF_EVENT_MOUSEUP) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -388,7 +397,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 			}
 			gf_list_add(evt_node->attributes, att);
 		}
-		GF_SAFEALLOC(att, GF_XMLAttribute);
+		att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 		if (!att) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 			return;
@@ -398,7 +407,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 		sprintf(att->value, "%d", event->mouse.x);
 		gf_list_add(evt_node->attributes, att);
 
-		GF_SAFEALLOC(att, GF_XMLAttribute);
+		att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 		if (!att) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 			return;
@@ -408,7 +417,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 		sprintf(att->value, "%d", event->mouse.y);
 		gf_list_add(evt_node->attributes, att);
 		if (event->type == GF_EVENT_MOUSEWHEEL) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -419,7 +428,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 			gf_list_add(evt_node->attributes, att);
 		}
 		if (event->mouse.key_states & GF_KEY_MOD_SHIFT) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -429,7 +438,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 			gf_list_add(evt_node->attributes, att);
 		}
 		if (event->mouse.key_states & GF_KEY_MOD_CTRL) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -439,7 +448,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 			gf_list_add(evt_node->attributes, att);
 		}
 		if (event->mouse.key_states & GF_KEY_MOD_ALT) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -453,7 +462,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 	case GF_EVENT_KEYUP:
 	case GF_EVENT_KEYDOWN:
 	case GF_EVENT_LONGKEYPRESS:
-		GF_SAFEALLOC(att, GF_XMLAttribute);
+		att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 		if (!att) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 			return;
@@ -464,7 +473,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 #endif
 		gf_list_add(evt_node->attributes, att);
 		if (event->key.flags & GF_KEY_MOD_SHIFT) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -474,7 +483,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 			gf_list_add(evt_node->attributes, att);
 		}
 		if (event->key.flags & GF_KEY_MOD_CTRL) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -484,7 +493,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 			gf_list_add(evt_node->attributes, att);
 		}
 		if (event->key.flags & GF_KEY_MOD_ALT) {
-			GF_SAFEALLOC(att, GF_XMLAttribute);
+			att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 			if (!att) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 				return;
@@ -495,7 +504,7 @@ static void validator_xvs_add_event_dom(GF_Validator *validator, GF_Event *event
 		}
 		break;
 	case GF_EVENT_TEXTINPUT:
-		GF_SAFEALLOC(att, GF_XMLAttribute);
+		att = (GF_XMLAttribute *) gf_malloc(sizeof(GF_XMLAttribute));
 		if (!att) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Validator] Failed to allocate event info\n"));
 			return;
@@ -760,13 +769,13 @@ static void validator_xvs_close(GF_Validator *validator)
 {
 	if (validator->xvs_parser) {
 		if (validator->is_recording) {
-			GF_XMLAttribute *att;
 			FILE *xvs_fp;
 			char *xvs_content;
 			GF_XMLAttribute *att_file = NULL;
 			u32 att_index = 0;
             
             if (!validator->trace_mode) {
+				GF_XMLAttribute *att;
                 while (1) {
                     att = (GF_XMLAttribute*)gf_list_get(validator->xvs_node->attributes, att_index);
                     if (!att) {
@@ -1142,6 +1151,10 @@ GF_CompositorExt *validator_new()
 	GF_REGISTER_MODULE_INTERFACE(dr, GF_COMPOSITOR_EXT_INTERFACE, "GPAC Test Validator", "gpac distribution");
 
 	GF_SAFEALLOC(validator, GF_Validator);
+	if (!validator) {
+		gf_free(dr);
+		return NULL;
+	}
 	dr->process = validator_process;
 	dr->udta = validator;
 	return dr;

@@ -43,6 +43,7 @@ typedef struct
 	Bool exporter, frame, split;
 	u32 sstart, send;
 	u32 pfmt, afmt, decinfo;
+	GF_Fraction dur;
 
 	//only one input pid declared
 	GF_FilterPid *ipid;
@@ -67,7 +68,9 @@ typedef struct
 	u32 is_wav;
 	u32 w, h, stride;
 	u64 nb_bytes;
+	Bool dash_mode;
 
+	u64 first_dts_plus_one;
 } GF_GenDumpCtx;
 
 
@@ -131,6 +134,8 @@ GF_Err writegen_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		ctx->dcfg = p->value.data.ptr;
 		ctx->dcfg_size = p->value.data.size;
 	}
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DASH_MODE);
+	ctx->dash_mode = (p && p->value.uint) ? GF_TRUE : GF_FALSE;
 
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, &PROP_UINT(GF_STREAM_FILE) );
 
@@ -260,7 +265,8 @@ GF_Err writegen_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 			strcpy(szExt, gf_pixel_fmt_sname(ctx->target_pfmt ? ctx->target_pfmt : pf));
 			p = gf_filter_pid_caps_query(ctx->opid, GF_PROP_PID_FILE_EXT);
 			if (p) {
-				strncpy(szExt, p->value.string, 10);
+				strncpy(szExt, p->value.string, GF_4CC_MSIZE-1);
+				szExt[GF_4CC_MSIZE-1] = 0;
 				if (!strcmp(szExt, "bmp")) {
 					ctx->is_bmp = GF_TRUE;
 					//request BGR
@@ -303,7 +309,8 @@ GF_Err writegen_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 			strcpy(szExt, gf_audio_fmt_sname(ctx->target_pfmt ? ctx->target_afmt : sfmt));
 			p = gf_filter_pid_caps_query(ctx->opid, GF_PROP_PID_FILE_EXT);
 			if (p) {
-				strncpy(szExt, p->value.string, 10);
+				strncpy(szExt, p->value.string, GF_4CC_MSIZE-1);
+				szExt[GF_4CC_MSIZE-1] = 0;
 				if (!strcmp(szExt, "wav")) {
 					ctx->is_wav = GF_TRUE;
 					//request PCMs16 ?
@@ -577,6 +584,7 @@ GF_Err writegen_process(GF_Filter *filter)
 	GF_FilterPacket *pck, *dst_pck;
 	char *data;
 	u32 pck_size;
+	Bool do_abort = GF_FALSE;
 	Bool split = ctx->split;
 	if (!ctx->ipid) return GF_EOS;
 
@@ -597,12 +605,33 @@ GF_Err writegen_process(GF_Filter *filter)
 			return GF_OK;
 		}
 		if ((ctx->sstart <= ctx->send) && (ctx->sample_num>ctx->send) ) {
-			GF_FilterEvent evt;
-			gf_filter_pid_drop_packet(ctx->ipid);
-			GF_FEVT_INIT(evt, GF_FEVT_STOP, ctx->ipid);
-			gf_filter_pid_send_event(ctx->ipid, &evt);
-			return GF_OK;
+			do_abort = GF_TRUE;
 		}
+	} else if (ctx->dur.num && ctx->dur.den) {
+		u64 dts = gf_filter_pck_get_dts(pck);
+		if (dts==GF_FILTER_NO_TS)
+		dts = gf_filter_pck_get_cts(pck);
+
+		if (!ctx->first_dts_plus_one) {
+			ctx->first_dts_plus_one = dts+1;
+		} else {
+			if (ctx->dur.den * (dts + 1 - ctx->first_dts_plus_one) > ctx->dur.num * gf_filter_pck_get_timescale(pck)) {
+				do_abort = GF_TRUE;
+			}
+		}
+	}
+	if (do_abort) {
+		GF_FilterEvent evt;
+		gf_filter_pid_drop_packet(ctx->ipid);
+		GF_FEVT_INIT(evt, GF_FEVT_STOP, ctx->ipid);
+		gf_filter_pid_send_event(ctx->ipid, &evt);
+		return GF_OK;
+	}
+
+	//except in dash mode, force a new file if GF_PROP_PCK_FILENUM is set
+	if (!ctx->dash_mode && (gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENUM) != NULL)) {
+		ctx->cfg_sent = GF_FALSE;
+		ctx->first = GF_TRUE;
 	}
 
 	if (ctx->frame) {
@@ -921,6 +950,16 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/flac"),
 	{0},
 
+	//we accept unframed VVC (annex B format)
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_VVC),
+	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "266|h266|vvc|lvvc"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "video/vvc|video/lvvc"),
+	{0},
+
+
 	//anything else: only for explicit dump (filter loaded on purpose), otherwise don't load for filter link resolution
 	CAP_UINT(GF_CAPS_OUTPUT_LOADED_FILTER, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "*"),
@@ -969,10 +1008,11 @@ static GF_FilterArgs GenDumpArgs[] =
 	"- first: inserted on first packet\n"
 	"- sap: inserted at each SAP\n"
 	"- auto: selects between no and first based on media type", GF_PROP_UINT, "auto", "no|first|sap|auto", GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(split), "force one file per decoded frame.", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(split), "force one file per decoded frame", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(frame), "force single frame dump with no rewrite. In this mode, all codecids are supported", GF_PROP_BOOL, "false", NULL, 0},
-	{ OFFS(sstart), "start number of frame to dump. If 0, all samples are dumped", GF_PROP_UINT, "0", NULL, 0},
-	{ OFFS(send), "end number of frame to dump. If less than start frame, all samples after start are dumped", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(sstart), "start number of frame to forward. If 0, all samples are forwarded", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(send), "end number of frame to forward. If less than start frame, all samples after start are forwarded", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(dur), "duration of media to forward after first sample. If 0, all samples are forwarded", GF_PROP_FRACTION, "0", NULL, 0},
 	{0}
 };
 

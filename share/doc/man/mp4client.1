@@ -40,7 +40,12 @@ same as -rti but driven by GPAC logs
 .TP
 .B \-size (string)
 .br
-specifie visual size WxH? If not set, scene size or video size is used
+specify visual size WxH. If not set, scene size or video size is used
+.br
+.TP
+.B \-rti-refresh (int)
+.br
+set refresh time in ms between two runt-time counters queries (default is 200)
 .br
 .TP
 .B \-no-thread
@@ -106,11 +111,6 @@ disable automatic loading of media addons declared in source URL
 .B \-gui
 .br
 start in GUI mode. The GUI is indicated in the configuration file [General]StartupFile
-.br
-.TP
-.B \-ntp-shift (int)
-.br
-shift NTP clock of the given amount of milliseconds
 .br
 .TP
 .B \-p (string)
@@ -261,9 +261,9 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit http://github.com/gpac/gpac
 .br
-build: 0.9.0-DEV-rev3398-gc2b9f6ad5-file_io
+build: 1.1.0-DEV-rev19-gd58ce6c43-master
 .br
-Copyright: (c) 2000-2019 Telecom ParisTech distributed under LGPL v2.1+ - http://gpac.io
+Copyright: (c) 2000-2020 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br
 .SH SEE ALSO
 .LP

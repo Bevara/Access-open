@@ -44,6 +44,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_get_argc) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_get_argv) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_get_arg) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_sys_is_arg_used) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_sys_mark_arg_used) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_is_test_mode) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_old_arch_compat) )
 
@@ -54,6 +56,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_is_quiet) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_gpac_version) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_gpac_copyright) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_gpac_copyright_cite) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_features) )
 
 #pragma comment (linker, EXPORT_SYMBOL(gf_sleep) )
@@ -76,7 +79,11 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_log_use_color) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_log_use_file) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_sys_format_help) )
-
+#pragma comment (linker, EXPORT_SYMBOL(gf_sys_word_match) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_sys_profiler_set_callback) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_sys_profiler_send) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_sys_profiler_enable_sampling) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_sys_profiler_sampling_enabled) )
 
 #pragma comment (linker, EXPORT_SYMBOL(gf_get_default_cache_directory) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_4cc_to_str) )
@@ -133,8 +140,11 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_prompt_has_input) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_prompt_get_char) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_prompt_set_echo_off) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_prompt_get_size) )
+
 #pragma comment (linker, EXPORT_SYMBOL(gf_crc_32) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_gz_compress_payload) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_gz_compress_payload_ex) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_gz_decompress_payload) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_lz_compress_payload) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_lz_decompress_payload) )
@@ -303,6 +313,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_net_get_ntp_diff_ms) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_net_set_ntp_shift) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_net_get_utc_ts) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_net_ntp_to_utc) )
+
 
 #pragma comment (linker, EXPORT_SYMBOL(gf_errno_str) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_blob_get_data) )
@@ -572,6 +584,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_cmx_apply_fixed) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_color_parse) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_color_get_name) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_color_enum) )
+
 
 
 /*path2d.h exports*/
@@ -643,25 +657,33 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_avc_cfg_read) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_avc_cfg_write) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_avc_cfg_write_bs) )
+
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_new) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_read) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_del) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_read_bs) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_write) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_write_bs) )
 
-#pragma comment (linker, EXPORT_SYMBOL(av1_get_obu_name) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_vvc_cfg_new) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_vvc_cfg_read) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_vvc_cfg_del) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_vvc_cfg_read_bs) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_vvc_cfg_write) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_vvc_cfg_write_bs) )
+
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_av1_cfg_del) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_av1_cfg_new) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_av1_cfg_write) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_av1_cfg_write_bs) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_desc_write_bs) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_read_bs) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_write) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_odf_hevc_cfg_write_bs) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_vp_cfg_del) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_vp_cfg_new) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_vp_cfg_read) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_vp_cfg_read_bs) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_vp_cfg_write) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_vp_cfg_write_bs) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_odf_dump_txtcfg) )
 
 #ifndef GPAC_MINIMAL_ODF
 #pragma comment (linker, EXPORT_SYMBOL(gf_odf_desc_add_desc) )
@@ -704,7 +726,6 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_write) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_delete) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_mode) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_file_size) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_moov_first) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_box_new) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_box_del) )
@@ -775,8 +796,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_has_time_offset) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_cts_to_dts_shift) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_sync_point_count) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_isom_has_root_od) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_root_od) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_disable_odf_conversion) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_is_track_in_root_od) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_esd) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_decoder_config) )
@@ -828,6 +849,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_hevc_config_get) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_lhvc_config_get) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_hevc_lhvc_type) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_vvc_config_get) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_vvc_type) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_meta_item_count) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_meta_item_by_id) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_meta_get_next_item_id) )
@@ -884,6 +907,12 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_constant_sample_duration) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_enable_raw_pack) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_track_magic) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_sample_from_dts) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_sample_padding_bits) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_sample_get_subsample) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_sample_has_subsamples) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_sample_get_subsamples_buffer) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_max_sample_delta) )
 
 # ifndef GPAC_DISABLE_ISOM_DUMP
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_dump) )
@@ -901,9 +930,22 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_payt_info) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_sdp_get) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_sdp_track_get) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_hinter_track_force_no_offsets) )
+
 # ifndef GPAC_DISABLE_ISOM_DUMP
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_dump_hint_sample) )
 #endif
+
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_hint_pck_read) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_hint_pck_del) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_hint_pck_new) )
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_hint_pck_size) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_hint_pck_write) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_hint_pck_length) )
+#endif
+
 #endif
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
@@ -923,6 +965,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_refresh_size_info) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_add_sample_reference) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_last_sample_duration) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_last_sample_duration_ex) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_track_reference) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_remove_track_references) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_update_sample) )
@@ -960,6 +1003,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_visual_info) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_visual_color_info) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_visual_bit_depth) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_dolby_vision_profile) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_pixel_aspect_ratio) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_track_layout_info) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_track_matrix) )
@@ -1005,9 +1049,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_set_box) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_add_blink) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_set_wrap) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_to_sample) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_set_display_flags) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_isom_remove_track_protection) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_to_sample) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_ismacryp_protection) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_change_ismacryp_protection) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_avc_config_new) )
@@ -1029,7 +1072,6 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_remove_meta_item) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_meta_primary_item) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_meta_xml) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_meta_xml_memory) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_meta_add_item_ref) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_iff_create_image_item_from_track) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_remove_meta_xml) )
@@ -1059,6 +1101,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_tmcd_config_new) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_tmcd_config) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_track_magic) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_vvc_config_new) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_vvc_set_inband_config) )
 
 
 #ifndef GPAC_DISABLE_ISOM_HINTING
@@ -1087,7 +1131,6 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_finalize_for_fragment) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_start_fragment) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_flush_fragments) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_segment_name) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_fragment_reference_time) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_traf_mss_timeext) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_fragment_option) )
@@ -1138,7 +1181,6 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_cenc_is_pattern_mode) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_close_fragments) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_bitrate) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_pssh) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_sample_cenc_info_ex) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_hevc_set_tile_config) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_mvc_config_get) )
@@ -1276,7 +1318,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_rtp_builder_process) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_rtp_builder_format_sdp) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_rtp_builder_get_payload_name) )
-#pragma comment (linker, EXPORT_SYMBOL(gp_rtp_builder_set_cryp_info) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_rtp_builder_set_cryp_info) )
 
 #pragma comment (linker, EXPORT_SYMBOL(gf_rtp_depacketizer_new) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_rtp_depacketizer_del) )
@@ -1364,18 +1406,23 @@
 #ifndef GPAC_DISABLE_HEVC
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_vps) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_vps_ex) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_vps_bs) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_sps) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_sps_ex) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_sps_bs) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_pps) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_read_pps_bs) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_hevc_get_profile_name) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_hevc_get_sps_info_with_state) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_hevc_parse_nalu) )
-
 #endif //GPAC_DISABLE_HEVC
+
 
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_aom_av1_parse_obu) )
 
 #endif /*GPAC_DISABLE_AV_PARSERS*/
+
+#pragma comment (linker, EXPORT_SYMBOL(gf_mpegh_get_mhas_pl) )
 
 
 #ifndef GPAC_DISABLE_MEDIA_EXPORT
@@ -2216,6 +2263,18 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_atsc3_set_max_objects_store) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_atsc3_dmx_debug_tsi) )
 
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_find_by_id3tag) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_find_by_itag) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_find_by_name) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_get_type) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_get_name) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_get_itag) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_get_id3tag) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_itags_enum_tags) )
+
+#pragma comment (linker, EXPORT_SYMBOL(gf_id3_get_genre) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_id3_get_genre_tag) )
+
 #pragma comment (linker, EXPORT_SYMBOL(gf_pixel_fmt_all_names) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_pixel_fmt_all_shortnames) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_pixel_get_size_info) )
@@ -2263,6 +2322,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_arg_str ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_ui_event ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_is_alias ) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_stats ) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_filter_in_parent_chain ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_set_max_resolution_chain_length ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_get_max_resolution_chain_length ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_get_last_connect_error ) )
@@ -2272,11 +2333,11 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_set_ui_callback) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_enum_unmapped_options) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_send_update) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_fs_load_script) )
 
-
+#pragma comment (linker, EXPORT_SYMBOL(gf_filter_reconnect_output) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_add_event_listener ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_remove_event_listener ) )
-
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_description) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_version) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_author) )
@@ -2285,6 +2346,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_info) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_release_property) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_udta ) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_max_extra_input_pids ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_pck_discard ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_pck_ref ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_pck_ref_props ) )
@@ -2405,6 +2467,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_setup_failure ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_post_task ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_remove_src ) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_filter_remove ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_connect_source ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_connect_destination ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_load_filter ) )
@@ -2439,11 +2502,15 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_media_avc_read_pps_bs ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_dasher_set_hls_clock ) )
 
+#pragma comment (linker, EXPORT_SYMBOL(gf_av1_get_obu_name) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_av1_reset_state) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_av1_init_state) )
+
 #pragma comment (linker, EXPORT_SYMBOL(gf_get_next_pow2) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_htonl) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_htons) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_ntohl) )
-#pragma comment (linker, EXPORT_SYMBOL(gf_tohs) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_ntohs) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_inline_is_default_viewpoint) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_mpegv12_get_config) )
 

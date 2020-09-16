@@ -161,7 +161,7 @@ PulseAudio_WriteAudio (GF_AudioOutput * dr)
 	if (written <= 0)
 	{
 		ctx->consecutive_zero_reads++;
-		if (ctx->consecutive_zero_reads > 5) {
+		if (ctx->consecutive_zero_reads < 5) {
 			gf_sleep(5);
 		} else if (ctx->consecutive_zero_reads < 25) {
 			gf_sleep(10);
@@ -171,7 +171,7 @@ PulseAudio_WriteAudio (GF_AudioOutput * dr)
 		return;
 	}
 	ctx->consecutive_zero_reads = 0;
-	written = pa_simple_write (ctx->playback_handle, data, written, &pa_error);
+	/*written = */pa_simple_write (ctx->playback_handle, data, written, &pa_error);
 	if (pa_error != 0)
 	{
 		if (ctx->errors < 1)

@@ -119,8 +119,9 @@ static void flac_dmx_check_dur(GF_Filter *filter, GF_FLACDmxCtx *ctx)
 	}
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILEPATH);
-	if (!p || !p->value.string) {
+	if (!p || !p->value.string || !strncmp(p->value.string, "gmem://", 7)) {
 		ctx->is_file = GF_FALSE;
+		ctx->file_loaded = GF_TRUE;
 		return;
 	}
 	ctx->is_file = GF_TRUE;
@@ -327,7 +328,7 @@ static Bool flac_parse_header(GF_FLACDmxCtx *ctx, char *data, u32 size, FLACHead
 		res = (res<<6) + tmp;
 		top <<= 5;
 	}
-	res &= (top << 1) - 1;
+	//res &= (top << 1) - 1;
 
 	if (block_size==6) block_size = 1 + gf_bs_read_int(ctx->bs, 8);
 	else if (block_size==7) block_size = 1 + gf_bs_read_int(ctx->bs, 16);
@@ -388,7 +389,8 @@ GF_Err flac_dmx_process(GF_Filter *filter)
 	if (!pck) {
 		if (gf_filter_pid_is_eos(ctx->ipid)) {
 			if (!ctx->flac_buffer_size) {
-				gf_filter_pid_set_eos(ctx->opid);
+				if (ctx->opid)
+					gf_filter_pid_set_eos(ctx->opid);
 				if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 				ctx->src_pck = NULL;
 				return GF_EOS;

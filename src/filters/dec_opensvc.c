@@ -194,9 +194,9 @@ static GF_Err osvcdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 			u32 w=0, h=0;
 #ifndef GPAC_DISABLE_AV_PARSERS
 			u32 sid;
-#endif
 			s32 par_n=0, par_d=0;
-			GF_AVCConfigSlot *slc = (GF_AVCConfigSlot*)gf_list_get(cfg->sequenceParameterSets, i);
+#endif
+			GF_NALUFFParam *slc = (GF_NALUFFParam*)gf_list_get(cfg->sequenceParameterSets, i);
 
 #ifndef GPAC_DISABLE_AV_PARSERS
 			gf_avc_get_sps_info(slc->data, slc->size, &sid, &w, &h, &par_n, &par_d);
@@ -206,10 +206,12 @@ static GF_Err osvcdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 				if ((ctx->width<w) || (ctx->height<h)) {
 					ctx->width = w;
 					ctx->height = h;
+#ifndef GPAC_DISABLE_AV_PARSERS
 					if ( ((s32)par_n>0) && ((s32)par_d>0) ) {
 						ctx->pixel_ar.num = par_n;
 						ctx->pixel_ar.den = par_d;
 					}
+#endif
 				}
 			}
 			res = decodeNAL(ctx->codec, (unsigned char *) slc->data, slc->size, &Picture, ctx->layers);
@@ -221,7 +223,7 @@ static GF_Err osvcdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 
 		count = gf_list_count(cfg->pictureParameterSets);
 		for (i=0; i<count; i++) {
-			GF_AVCConfigSlot *slc = (GF_AVCConfigSlot*)gf_list_get(cfg->pictureParameterSets, i);
+			GF_NALUFFParam *slc = (GF_NALUFFParam*)gf_list_get(cfg->pictureParameterSets, i);
 #ifndef GPAC_DISABLE_AV_PARSERS
 			u32 sps_id, pps_id;
 			gf_avc_get_pps_info(slc->data, slc->size, &pps_id, &sps_id);
@@ -376,7 +378,9 @@ static GF_Err osvcdec_process(GF_Filter *filter)
 	for (idx=0; idx<ctx->nb_streams; idx++) {
 		u64 dts, cts;
 #ifndef GPAC_DISABLE_AV_PARSERS
+#ifndef GPAC_DISABLE_LOG
 		u32 sps_id, pps_id;
+#endif
 #endif
 		u32 maxDqIdInAU;
 		if (!ctx->streams[idx].ipid) continue;

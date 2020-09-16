@@ -187,7 +187,7 @@ static void layer3d_setup_clip(Layer3DStack *st, GF_TraverseState *tr_state, Boo
 
 static void TraverseLayer3D(GF_Node *node, void *rs, Bool is_destroy)
 {
-	Bool prev_layer, changed = 0;
+	Bool prev_layer;//, changed;
 	GF_List *oldb, *oldv, *oldf, *oldn;
 	GF_Rect rc;
 	u32 cur_lights;
@@ -226,7 +226,7 @@ static void TraverseLayer3D(GF_Node *node, void *rs, Bool is_destroy)
 		if (l->size.y>=0) st->clip.height = l->size.y;
 		st->clip = gf_rect_center(st->clip.width, st->clip.height);
 
-		changed = 1;
+//		changed = 1;
 	}
 
 	transform = &tr_state->transform;
@@ -325,7 +325,7 @@ static void TraverseLayer3D(GF_Node *node, void *rs, Bool is_destroy)
 	if ((tr_state->traversing_mode==TRAVERSE_SORT) || (tr_state->traversing_mode==TRAVERSE_DRAW_2D)) {
 		u32 trav_mode = tr_state->traversing_mode;
 
-		if (gf_node_dirty_get(node)) changed = 1;
+//		if (gf_node_dirty_get(node)) changed = 1;
 		gf_node_dirty_clear(node, GF_SG_NODE_DIRTY|GF_SG_VRML_BINDABLE_DIRTY);
 
 		/*!! we were in a 2D mode without hybridGL, not supported !*/
@@ -339,7 +339,7 @@ static void TraverseLayer3D(GF_Node *node, void *rs, Bool is_destroy)
 
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Layer3D] Redrawing\n"));
 
-		layer3d_setup_clip(st, tr_state, prev_cam ? 1 : 0, rc);
+		layer3d_setup_clip(st, tr_state, 1, rc);
 
 		//this only happens in hybridGL mode
 		if (trav_mode==TRAVERSE_DRAW_2D) {
@@ -355,7 +355,7 @@ static void TraverseLayer3D(GF_Node *node, void *rs, Bool is_destroy)
 		/*this will init projection. Note that we're binding the viewpoint in the current pixelMetrics context
 		even if the viewpoint was declared in an inline below
 		if no previous camera, we're using offscreen rendering, force clear */
-		visual_3d_init_draw(tr_state, prev_cam ? 1 : 2);
+		visual_3d_init_draw(tr_state, 1);
 
 		visual_3d_check_collisions(tr_state, NULL, l->children);
 		tr_state->traversing_mode = TRAVERSE_SORT;
@@ -381,6 +381,7 @@ static void TraverseLayer3D(GF_Node *node, void *rs, Bool is_destroy)
 		tr_state->visual->type_3d = old_type_3d;
 		tr_state->layer3d = NULL;
 
+#if 0
 		/*!! we were in a 2D mode, create drawable context!!*/
 		if (!prev_cam ) {
 			DrawableContext *ctx;
@@ -408,6 +409,8 @@ static void TraverseLayer3D(GF_Node *node, void *rs, Bool is_destroy)
 			if (st->txh.transparent) ctx->flags |= CTX_IS_TRANSPARENT;
 			drawable_finalize_sort(ctx, tr_state, NULL);
 		}
+#endif
+
 	}
 	/*check picking - we must fall in our 2D clipper except when mvt is grabbed on layer*/
 	else if (!gf_node_dirty_get(node)  && (tr_state->traversing_mode==TRAVERSE_PICK)) {

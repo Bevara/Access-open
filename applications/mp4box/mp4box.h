@@ -64,7 +64,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	return GF_NOT_SUPPORTED;
 }
 #endif
-GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb, char *inName, Double interleaving_time, Double chunk_start, Bool adjust_split_end, char *outName, const char *tmpdir, Bool force_rap_split);
+GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb, char *inName, Double interleaving_time, Double chunk_start, Bool adjust_split_end, char *outName, const char *tmpdir, Bool force_rap_split, const char *split_range_str);
 GF_Err cat_isomedia_file(GF_ISOFile *mp4, char *fileName, u32 import_flags, GF_Fraction force_fps, u32 frames_per_sample, char *tmp_dir, Bool force_cat, Bool align_timelines, Bool allow_add_in_command, Bool is_pl);
 
 #if !defined(GPAC_DISABLE_SCENE_ENCODER)
@@ -85,7 +85,7 @@ u32 id3_get_genre_tag(const char *name);
 
 /*in filedump.c*/
 #ifndef GPAC_DISABLE_SCENE_DUMP
-GF_Err dump_isom_scene(char *file, char *inName, Bool is_final_name, GF_SceneDumpFormat dump_mode, Bool do_log);
+GF_Err dump_isom_scene(char *file, char *inName, Bool is_final_name, GF_SceneDumpFormat dump_mode, Bool do_log, Bool no_odf_conv);
 //void gf_check_isom_files(char *conf_rules, char *inName);
 #endif
 #ifndef GPAC_DISABLE_SCENE_STATS
@@ -96,7 +96,7 @@ void PrintBuiltInNodes(u32 graph_type, Bool dump_all);
 void PrintBuiltInBoxes(Bool do_cov);
 
 #ifndef GPAC_DISABLE_ISOM_DUMP
-GF_Err dump_isom_xml(GF_ISOFile *file, char *inName, Bool is_final_name, Bool do_track_dump, Bool merge_vtt_cues, Bool skip_init);
+GF_Err dump_isom_xml(GF_ISOFile *file, char *inName, Bool is_final_name, Bool do_track_dump, Bool merge_vtt_cues, Bool skip_init, Bool skip_samples);
 #endif
 
 
@@ -108,7 +108,7 @@ void dump_isom_sdp(GF_ISOFile *file, char *inName, Bool is_final_name);
 #endif
 
 void dump_isom_timestamps(GF_ISOFile *file, char *inName, Bool is_final_name, Bool skip_offset);
-void dump_isom_nal(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool is_final_name, Bool dump_crc);
+void dump_isom_nal(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool is_final_name, u32 dump_flags);
 void dump_isom_saps(GF_ISOFile *file, GF_ISOTrackID trackID, u32 dump_saps_mode, char *inName, Bool is_final_name);
 
 #ifndef GPAC_DISABLE_ISOM_DUMP

@@ -62,6 +62,8 @@
 
 #endif
 
+#include <errno.h>
+
 #ifndef EISCONN
 /*common win32 redefs*/
 #undef EAGAIN
@@ -1221,6 +1223,7 @@ GF_SockGroup *gf_sk_group_new()
 {
 	GF_SockGroup *tmp;
 	GF_SAFEALLOC(tmp, GF_SockGroup);
+	if (!tmp) return NULL;
 	tmp->sockets = gf_list_new();
 	FD_ZERO(&tmp->rgroup);
 	FD_ZERO(&tmp->wgroup);
@@ -1256,6 +1259,9 @@ GF_Err gf_sk_group_select(GF_SockGroup *sg, u32 usec_wait, GF_SockSelectMode mod
 	GF_Socket *sock;
 	fd_set *rgroup=NULL, *wgroup=NULL;
 
+	if (!gf_list_count(sg->sockets))
+		return GF_IP_NETWORK_EMPTY;
+		
 	FD_ZERO(&sg->rgroup);
 	FD_ZERO(&sg->wgroup);
 
@@ -1841,7 +1847,7 @@ u32 gf_htonl(u32 val)
 GF_EXPORT
 u32 gf_ntohl(u32 val)
 {
-	return htonl(val);
+	return ntohl(val);
 }
 
 GF_EXPORT
@@ -1852,9 +1858,9 @@ u16 gf_htons(u16 val)
 
 
 GF_EXPORT
-u16 gf_tohs(u16 val)
+u16 gf_ntohs(u16 val)
 {
-	return htons(val);
+	return ntohs(val);
 }
 
 #endif /*GPAC_DISABLE_CORE_TOOLS*/

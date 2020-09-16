@@ -231,11 +231,12 @@ GF_Err X11_Blit(struct _video_out *vout, GF_VideoSurface *video_src, GF_Window *
 	if ((xwin->xvport<0) || !xwin->overlay) {
 		e = X11_InitOverlay(vout, video_src->width, video_src->height);
 		if (e) return e;
+		if (!xwin->overlay) return GF_IO_ERR;
 	}
 
 	/*different size, recreate an image*/
 	if ((xwin->overlay->width != video_src->width) || (xwin->overlay->height != video_src->height)) {
-		if (xwin->overlay) XFree(xwin->overlay);
+		XFree(xwin->overlay);
 		xwin->overlay = XvCreateImage(xwin->display, xwin->xvport, xwin->xv_pf_format, NULL, video_src->width, video_src->height);
 		if (!xwin->overlay) return GF_IO_ERR;
 	}
@@ -548,7 +549,7 @@ static void X11_HandleEvents(GF_VideoOutput *vout)
 				xWindow->w_height = evt.size.height = xevent.xconfigure.height;
 				vout->on_event(vout->evt_cbk_hdl, &evt);
 			} else {
-				evt.type = GF_EVENT_MOVE_NOTIF;
+				evt.type = GF_EVENT_MOVE;
 				evt.move.x = xevent.xconfigure.x;
 				evt.move.y = xevent.xconfigure.y;
 				vout->on_event(vout->evt_cbk_hdl, &evt);
@@ -618,7 +619,7 @@ static void X11_HandleEvents(GF_VideoOutput *vout)
 							memcpy(text, data, nb_bytes);
 							text[nb_bytes] = 0;
 							evt.type = GF_EVENT_PASTE_TEXT;
-							evt.message.message = (const char *) text;
+							evt.clipboard.text = text;
 							vout->on_event(vout->evt_cbk_hdl, &evt);
 							gf_free(text);
 						}
@@ -630,9 +631,9 @@ static void X11_HandleEvents(GF_VideoOutput *vout)
 				Atom clipb_atom = XInternAtom(xWindow->display, "CLIPBOARD", 0);
 				evt.type = GF_EVENT_COPY_TEXT;
 				if (vout->on_event(vout->evt_cbk_hdl, &evt)==GF_TRUE) {
-					const char *txt = evt.message.message;
-					if (txt) {
-						XChangeProperty(xWindow->display, DefaultRootWindow(xWindow->display), XA_CUT_BUFFER0, XA_STRING, 8, PropModeReplace, (const unsigned char *)txt, strlen(txt));
+					if (evt.clipboard.text) {
+						XChangeProperty(xWindow->display, DefaultRootWindow(xWindow->display), XA_CUT_BUFFER0, XA_STRING, 8, PropModeReplace, (const unsigned char *)evt.clipboard.text, strlen(evt.clipboard.text));
+						gf_free(evt.clipboard.text);
 					}
 
 					if ((clipb_atom != None) && XGetSelectionOwner(xWindow->display, clipb_atom) != the_window) {
@@ -825,7 +826,9 @@ static void X11_ReleaseBackBuffer (GF_VideoOutput * vout)
  */
 GF_Err X11_InitBackBuffer (GF_VideoOutput * vout, u32 VideoWidth, u32 VideoHeight)
 {
+#ifdef GPAC_HAS_X11_SHM
 	Window cur_wnd;
+#endif
 	u32 size;
 	VideoWidth = VideoWidth > 32 ? VideoWidth : 32;
 	VideoWidth = VideoWidth < 4096 ? VideoWidth : 4096;
@@ -842,9 +845,9 @@ GF_Err X11_InitBackBuffer (GF_VideoOutput * vout, u32 VideoWidth, u32 VideoHeigh
 		VideoWidth++;
 
 	size = VideoWidth * VideoHeight * xWindow->bpp;
-	cur_wnd = xWindow->fullscreen ? xWindow->full_wnd : xWindow->wnd;
 
 #ifdef GPAC_HAS_X11_SHM
+	cur_wnd = xWindow->fullscreen ? xWindow->full_wnd : xWindow->wnd;
 	/*if we're using YUV blit to offscreen, we must use a pixmap*/
 	if (vout->hw_caps & GF_VIDEO_HW_HAS_YUV) {
 		GF_SAFEALLOC(xWindow->shmseginfo, XShmSegmentInfo);
@@ -972,10 +975,14 @@ GF_Err X11_ProcessEvent (struct _video_out * vout, GF_Event * evt)
 		case GF_EVENT_SET_GL:
 			if (!xWindow->output_3d) return GF_OK;
 
+#ifdef GPAC_HAS_OPENGL
 			if ( ! glXMakeCurrent(xWindow->display, xWindow->fullscreen ? xWindow->full_wnd : xWindow->wnd, xWindow->glx_context) ) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[X11] Cannot make context current\n"));
 				return GF_IO_ERR;
 			}
+#else
+			return GF_NOT_SUPPORTED;
+#endif
 			break;
 		}
 	} else {
@@ -1075,7 +1082,7 @@ static int X11_BadAccess_ByPass(Display * display,
                                 XErrorEvent * event)
 {
 	char msg[60];
-	if (!display) return 0;
+	if (!display || !event) return 0;
 
 	if (event->error_code == BadAccess)
 	{
@@ -1494,6 +1501,13 @@ GF_Err X11_Setup(struct _video_out *vout, void *os_handle, void *os_display, u32
 	/*assign window if any, NEVER display*/
 	xWindow->par_wnd = (Window) os_handle;
 	xWindow->init_flags = flags;
+
+	//window already setup and this restup asks for visible, show window
+	if (xWindow->wnd) {
+		if (!(xWindow->init_flags & GF_TERM_INIT_HIDE)) {
+			XMapWindow (xWindow->display, (Window) xWindow->wnd);
+		}
+	}
 
 	/*OSMOZILLA HACK*/
 	if (os_display) xWindow->no_select_input = 1;

@@ -126,8 +126,9 @@ static void amrdmx_check_dur(GF_Filter *filter, GF_AMRDmxCtx *ctx)
 	}
 	
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILEPATH);
-	if (!p || !p->value.string) {
+	if (!p || !p->value.string || !strncmp(p->value.string, "gmem://", 7)) {
 		ctx->is_file = GF_FALSE;
+		ctx->file_loaded = GF_TRUE;
 		return;
 	}
 	ctx->is_file = GF_TRUE;
@@ -344,7 +345,8 @@ GF_Err amrdmx_process(GF_Filter *filter)
 	pck = gf_filter_pid_get_packet(ctx->ipid);
 	if (!pck) {
 		if (gf_filter_pid_is_eos(ctx->ipid)) {
-			gf_filter_pid_set_eos(ctx->opid);
+			if (ctx->opid)
+				gf_filter_pid_set_eos(ctx->opid);
 			assert(ctx->remaining == 0);
 			return GF_EOS;
 		}

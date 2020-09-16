@@ -7,8 +7,6 @@
 
 /* @(#) $Id: gzio.cpp,v 1.4 2010-02-23 16:24:20 jeanlf Exp $ */
 
-#include <stdio.h>
-
 #include <gpac/tools.h>
 
 #ifndef GPAC_DISABLE_ZLIB
@@ -59,8 +57,7 @@ static int const gz_magic[2] = {0x1f, 0x8b}; /* gzip magic header */
 #define COMMENT      0x10 /* bit 4 set: file comment present */
 #define RESERVED     0xE0 /* bits 5..7: reserved */
 
-#if 0
-const char * const z_errmsg[10] = {
+const char * const gf_z_errmsg[10] = {
 	"need dictionary",     /* Z_NEED_DICT       2  */
 	"stream end",          /* Z_STREAM_END      1  */
 	"",                    /* Z_OK              0  */
@@ -72,8 +69,6 @@ const char * const z_errmsg[10] = {
 	"incompatible version",/* Z_VERSION_ERROR (-6) */
 	""
 };
-
-#endif
 
 typedef struct gz_stream {
 	z_stream stream;
@@ -116,8 +111,10 @@ GF_EXPORT
 void *gf_gzopen(const char *path, const char *mode)
 {
 	int err;
+#ifndef NO_GZCOMPRESS
 	int level = Z_DEFAULT_COMPRESSION; /* compression level */
 	int strategy = Z_DEFAULT_STRATEGY; /* compression strategy */
+#endif
 	char *p = (char*)mode;
 	gz_stream *s;
 	char fmode[80]; /* copy of mode, without the compression level */
@@ -156,13 +153,20 @@ void *gf_gzopen(const char *path, const char *mode)
 		if (*p == 'r') s->mode = 'r';
 		if (*p == 'w' || *p == 'a') s->mode = 'w';
 		if (*p >= '0' && *p <= '9') {
+#ifndef NO_GZCOMPRESS
 			level = *p - '0';
-		} else if (*p == 'f') {
+#endif
+		}
+		else if (*p == 'f') {
+#ifndef NO_GZCOMPRESS
 			strategy = Z_FILTERED;
+#endif
 		} else if (*p == 'h') {
+#ifndef NO_GZCOMPRESS
 			strategy = Z_HUFFMAN_ONLY;
 			//} else if (*p == 'R') {
 			//  strategy = Z_RLE;
+#endif
 		} else {
 			*m++ = *p; /* copy the mode */
 		}
@@ -720,7 +724,7 @@ int gf_gzflush (gzFile file, int flush)
      Rewinds input file.
 */
 GF_EXPORT
-u64 gf_gzrewind(void *file)
+s64 gf_gzrewind(void *file)
 {
 	gz_stream *s = (gz_stream*)file;
 
@@ -735,7 +739,7 @@ u64 gf_gzrewind(void *file)
 	if (!s->transparent) (void)inflateReset(&s->stream);
 	s->in = 0;
 	s->out = 0;
-	return gf_fseek(s->file, s->start, SEEK_SET);
+	return (s64) gf_fseek(s->file, s->start, SEEK_SET);
 }
 
 /* ===========================================================================
@@ -747,9 +751,10 @@ u64 gf_gzrewind(void *file)
       In this version of the library, gf_gzseek can be extremely slow.
 */
 GF_EXPORT
-u64 gf_gzseek(void *file, u64 offset, int whence)
+u64 gf_gzseek(void *file, u64 _offset, int whence)
 {
 	gz_stream *s = (gz_stream*)file;
+	s64 offset = (s64) _offset;
 
 	if (s == NULL || whence == SEEK_END ||
 	        s->z_err == Z_ERRNO || s->z_err == Z_DATA_ERROR) {

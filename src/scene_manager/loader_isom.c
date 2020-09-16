@@ -49,17 +49,21 @@ static void UpdateODCommand(GF_ISOFile *mp4, GF_ODCom *com)
 			GF_ESD *esd;
 			j=0;
 			while ((esd = (GF_ESD *)gf_list_enum(od->ESDescriptors, &j))) {
-				Bool import = 1;
+				//can happen when dumping with keep-ods
+				if (esd->tag!=GF_ODF_ESD_TAG) {
+					continue;
+				}
 				if (esd->URLString) continue;
+
 				switch (esd->decoderConfig->streamType) {
 				case GF_STREAM_OD:
-					import = 0;
-					break;
+					continue;
+
 				case GF_STREAM_SCENE:
 					if ((esd->decoderConfig->objectTypeIndication != GF_CODECID_AFX) &&
 					        (esd->decoderConfig->objectTypeIndication != GF_CODECID_SYNTHESIZED_TEXTURE)
 					   ) {
-						import = 0;
+						continue;
 					}
 					break;
 				/*dump the OCR track duration in case the OCR is used by media controls & co*/
@@ -73,19 +77,18 @@ static void UpdateODCommand(GF_ISOFile *mp4, GF_ODCom *com)
 					dur = (Double) (s64) gf_isom_get_track_duration(mp4, track);
 					dur /= gf_isom_get_timescale(mp4);
 					mi->duration = (u32) (dur * 1000);
-					import = 0;
+					continue;;
 				}
 				break;
 				default:
 					break;
 				}
-				if (import) {
-					GF_MuxInfo *mi = (GF_MuxInfo *) gf_odf_desc_new(GF_ODF_MUXINFO_TAG);
-					gf_list_add(esd->extensionDescriptors, mi);
-					sprintf(szPath, "%s#%d", szName, esd->ESID);
-					mi->file_name = gf_strdup(szPath);
-					mi->streamFormat = gf_strdup("MP4");
-				}
+
+				GF_MuxInfo *mi = (GF_MuxInfo *) gf_odf_desc_new(GF_ODF_MUXINFO_TAG);
+				gf_list_add(esd->extensionDescriptors, mi);
+				sprintf(szPath, "%s#%d", szName, esd->ESID);
+				mi->file_name = gf_strdup(szPath);
+				mi->streamFormat = gf_strdup("MP4");
 			}
 		}
 		return;
@@ -183,12 +186,16 @@ static GF_Err gf_sm_load_run_isom(GF_SceneLoader *load)
 	nb_samp = 0;
 	for (i=0; i<gf_isom_get_track_count(load->isom); i++) {
 		u32 type = gf_isom_get_media_type(load->isom, i+1);
+		u32 subtype = gf_isom_get_mpeg4_subtype(load->isom, i+1, 1);
 		switch (type) {
 		case GF_ISOM_MEDIA_SCENE:
 		case GF_ISOM_MEDIA_OD:
 			nb_samp += gf_isom_get_sample_count(load->isom, i+1);
 			break;
 		default:
+			if (subtype==GF_ISOM_SUBTYPE_MP4S) {
+				nb_samp += gf_isom_get_sample_count(load->isom, i+1);
+			}
 			break;
 		}
 	}
@@ -197,16 +204,20 @@ static GF_Err gf_sm_load_run_isom(GF_SceneLoader *load)
 
 	for (i=0; i<gf_isom_get_track_count(load->isom); i++) {
 		u32 type = gf_isom_get_media_type(load->isom, i+1);
+		u32 subtype = gf_isom_get_mpeg4_subtype(load->isom, i+1, 1);
 		switch (type) {
 		case GF_ISOM_MEDIA_SCENE:
 		case GF_ISOM_MEDIA_OD:
 			break;
 		default:
-			continue;
+			if (subtype!=GF_ISOM_SUBTYPE_MP4S)
+				continue;
+			break;
 		}
 		esd = gf_isom_get_esd(load->isom, i+1, 1);
-		if (!esd) continue;
-
+		if (!esd || !esd->decoderConfig) continue;
+		if (esd->decoderConfig->objectTypeIndication==GF_CODECID_TEXT_MPEG4)
+			continue;
 
 		if ((esd->decoderConfig->objectTypeIndication == GF_CODECID_AFX) ||
 		        (esd->decoderConfig->objectTypeIndication == GF_CODECID_SYNTHESIZED_TEXTURE)
@@ -345,9 +356,19 @@ GF_Err gf_sm_load_init_isom(GF_SceneLoader *load)
 	if (!load->ctx->root_od) {
 		e = gf_isom_last_error(load->isom);
 		if (e) return e;
-	} else if ((load->ctx->root_od->tag != GF_ODF_OD_TAG) && (load->ctx->root_od->tag != GF_ODF_IOD_TAG)) {
-		gf_odf_desc_del((GF_Descriptor *) load->ctx->root_od);
-		load->ctx->root_od = NULL;
+	}
+	else {
+		switch (load->ctx->root_od->tag) {
+		case GF_ODF_OD_TAG:
+		case GF_ODF_IOD_TAG:
+		case GF_ODF_ISOM_OD_TAG:
+		case GF_ODF_ISOM_IOD_TAG:
+			break;
+		default:
+			gf_odf_desc_del((GF_Descriptor *) load->ctx->root_od);
+			load->ctx->root_od = NULL;
+			break;
+		}
 	}
 
 	esd = NULL;
@@ -382,7 +403,7 @@ GF_Err gf_sm_load_init_isom(GF_SceneLoader *load)
 	GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("%s\n", scene_msg));
 
 	/*BIFS: update size & pixel metrics info*/
-	if (esd && esd->decoderConfig) {
+	if (esd->decoderConfig) {
 		if (esd->decoderConfig->objectTypeIndication<=2) {
 			bc = gf_odf_get_bifs_config(esd->decoderConfig->decoderSpecificInfo, esd->decoderConfig->objectTypeIndication);
 			if (!bc->elementaryMasks && bc->pixelWidth && bc->pixelHeight) {

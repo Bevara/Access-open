@@ -242,6 +242,9 @@ Bool gf_mo_get_audio_info(GF_MediaObject *mo, u32 *sample_rate, u32 *bits_per_sa
 {
 	if (!mo->odm || (mo->type != GF_MEDIA_OBJECT_AUDIO)) return GF_FALSE;
 
+	if (mo->odm->pid && (!mo->sample_rate || !mo->num_channels))
+		gf_filter_pid_get_packet(mo->odm->pid);
+
 	if (mo->config_changed) {
 		gf_mo_update_caps(mo);
 	}
@@ -269,22 +272,33 @@ Bool gf_mo_get_audio_info(GF_MediaObject *mo, u32 *sample_rate, u32 *bits_per_sa
 
 void gf_mo_update_caps(GF_MediaObject *mo)
 {
+	Bool changed = GF_FALSE;
 	const GF_PropertyValue *v, *v2;
 	if (!mo->odm || !mo->odm->pid) return;
 
 	mo->planar_audio = GF_FALSE;
 
+#define UPDATE_CAP(_code, _field) \
+		v = gf_filter_pid_get_property(mo->odm->pid, _code);\
+		if (v) {\
+			if (mo->_field && (mo->_field != v->value.uint)) changed=GF_TRUE;\
+			mo->_field = v->value.uint;\
+		}\
+
 	if (mo->odm->type==GF_STREAM_VISUAL) {
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_WIDTH);
-		if (v) mo->width = v->value.uint;
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_HEIGHT);
-		if (v) mo->height = v->value.uint;
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_STRIDE);
-		if (v) mo->stride = v->value.uint;
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_PIXFMT);
-		if (v) mo->pixelformat = v->value.uint;
+
+		UPDATE_CAP(GF_PROP_PID_WIDTH, width)
+		UPDATE_CAP(GF_PROP_PID_HEIGHT, height)
+		UPDATE_CAP(GF_PROP_PID_STRIDE, stride)
+		UPDATE_CAP(GF_PROP_PID_PIXFMT, pixelformat)
+		UPDATE_CAP(GF_PROP_PID_BITRATE, bitrate)
+
 		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_SAR);
-		if (v) mo->pixel_ar = (v->value.frac.num) << 16 | (v->value.frac.den);
+		if (v) {
+			u32 n_par = (v->value.frac.num) << 16 | (v->value.frac.den);
+			if (mo->pixel_ar && (mo->pixel_ar!=n_par)) changed = GF_TRUE;
+			mo->pixel_ar = n_par;
+		}
 
 		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_SRD);
 		v2 = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_SRD_REF);
@@ -306,7 +320,17 @@ void gf_mo_update_caps(GF_MediaObject *mo)
 					mo->odm->parentscene->srd_type = 1;
 				}
 				if (old_type != mo->odm->parentscene->srd_type) {
+					//reset scene graph but prevent object stop/start
+					u32 i, count = gf_list_count(mo->odm->parentscene->scene_objects);
+					for (i=0; i<count; i++) {
+						GF_MediaObject *an_mo = gf_list_get(mo->odm->parentscene->scene_objects, i);
+						an_mo->num_open++;
+					}
 					gf_sg_reset(mo->odm->parentscene->graph);
+					for (i=0; i<count; i++) {
+						GF_MediaObject *an_mo = gf_list_get(mo->odm->parentscene->scene_objects, i);
+						an_mo->num_open--;
+					}
 					gf_scene_regenerate(mo->odm->parentscene);
 				}
 			}
@@ -320,15 +344,16 @@ void gf_mo_update_caps(GF_MediaObject *mo)
 			}
 		}
 	} else if (mo->odm->type==GF_STREAM_AUDIO) {
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_SAMPLE_RATE);
-		if (v) mo->sample_rate = v->value.uint;
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_NUM_CHANNELS);
-		if (v) mo->num_channels = v->value.uint;
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_CHANNEL_LAYOUT);
-		if (v) mo->channel_config = v->value.longuint;
-		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_AUDIO_FORMAT);
-		if (v) mo->afmt = v->value.uint;
+		UPDATE_CAP(GF_PROP_PID_SAMPLE_RATE, sample_rate)
+		UPDATE_CAP(GF_PROP_PID_NUM_CHANNELS, num_channels)
+		UPDATE_CAP(GF_PROP_PID_AUDIO_FORMAT, afmt)
 		else mo->afmt = GF_AUDIO_FMT_S16;
+
+		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_CHANNEL_LAYOUT);
+		if (v) {
+			if (mo->channel_config && (mo->channel_config!=v->value.longuint)) changed = GF_TRUE;
+			mo->channel_config = v->value.longuint;
+		}
 
 		mo->bytes_per_sec = gf_audio_fmt_bit_depth(mo->afmt) * mo->num_channels * mo->sample_rate / 8;
 		mo->planar_audio = gf_audio_fmt_is_planar(mo->afmt);
@@ -341,14 +366,39 @@ void gf_mo_update_caps(GF_MediaObject *mo)
 	} else if (mo->odm->type==GF_STREAM_TEXT) {
 		//nothing to do
 	} else {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("NOT YET IMPLEMENTED IN FILTERS\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unknwon scene object type %d\n", mo->odm->type));
 	}
+
+	if (changed) {
+		GF_Event evt;
+		GF_Scene *scene = mo->odm->subscene ? mo->odm->subscene : mo->odm->parentscene;
+		memset(&evt, 0, sizeof(GF_Event));
+		evt.type = GF_EVENT_QUALITY_SWITCHED;
+		gf_sc_send_event(scene->compositor, &evt);
+	}
+}
+
+static u64 convert_ts_to_ms(GF_MediaObject *mo, u64 ts, u32 timescale, Bool *discard)
+{
+	if (mo->odm->delay) {
+		if (mo->odm->delay >= 0) {
+			ts += mo->odm->delay;
+		} else if (ts < (u64) -mo->odm->delay) {
+			*discard = GF_TRUE;
+			return 0;
+		} else {
+			ts -= -mo->odm->delay;
+		}
+	}
+	ts *= 1000;
+	ts /= timescale;
+	return ts;
 }
 
 GF_EXPORT
 u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_ms, Bool *eos, u32 *timestamp, u32 *size, s32 *ms_until_pres, s32 *ms_until_next, GF_FilterFrameInterface **outFrame, u32 *planar_size)
 {
-
+	Bool discard=GF_FALSE;
 	u32 force_decode_mode = 0;
 	u32 obj_time, obj_time_orig;
 	s64 diff;
@@ -388,6 +438,8 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 			return NULL;
 	}
 
+retry:
+	discard = GF_FALSE;
 	if (!mo->pck) {
 		mo->pck = gf_filter_pid_get_packet(mo->odm->pid);
 		if (!mo->pck) {
@@ -409,14 +461,10 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 		}
 		is_first = GF_TRUE;
 	}
-	*eos = mo->is_eos;
 	assert(mo->pck);
 	mo->first_frame_fetched = GF_TRUE;
+	mo->is_eos = GF_FALSE;
 
-	/*data = */gf_filter_pck_get_data(mo->pck, size);
-	timescale = gf_filter_pck_get_timescale(mo->pck);
-
-	pck_ts = (u32) (1000*gf_filter_pck_get_cts(mo->pck) / timescale);
 
 	/*not running and no resync (ie audio)*/
 	if (!gf_clock_is_started(mo->odm->ck)) {
@@ -426,6 +474,16 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 		} else if (mo->odm->ck->nb_buffering && mo->odm->type==GF_STREAM_AUDIO) {
 			return NULL;
 		}
+	}
+
+	/*data = */gf_filter_pck_get_data(mo->pck, size);
+	timescale = gf_filter_pck_get_timescale(mo->pck);
+
+	pck_ts = convert_ts_to_ms(mo, gf_filter_pck_get_cts(mo->pck), timescale, &discard);
+	if (discard) {
+		gf_filter_pck_unref(mo->pck);
+		mo->pck = NULL;
+		goto retry;
 	}
 
 	if (resync==GF_MO_FETCH_PAUSED)
@@ -442,7 +500,7 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 		retry_pull--;
 		next_ts = 0;
 		if (gf_filter_pid_get_first_packet_cts(mo->odm->pid, &next_ts) ) {
-			next_ts = 1+ (u32) (1000*next_ts / timescale);
+			next_ts = 1 + convert_ts_to_ms(mo, next_ts, timescale, &discard);
 			break;
 		} else {
 			if (gf_filter_pid_is_eos(mo->odm->pid)) {
@@ -462,7 +520,7 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 		gf_filter_pid_try_pull(mo->odm->pid);
 	}
 	if (!retry_pull && (force_decode_mode==1)) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ODM%d] At %d could not force a pull from pid - POTENTIAL blank frame after TS %u\n", mo->odm->ID, gf_clock_time(mo->odm->ck), mo->timestamp));
+		GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[ODM%d] At %d could not force a pull from pid - POTENTIAL blank frame after TS %u\n", mo->odm->ID, gf_clock_time(mo->odm->ck), mo->timestamp));
 	}
 
 	/*resync*/
@@ -503,7 +561,6 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 		&& mo->odm->buffer_playout_us
 	) {
 		assert(mo->odm->parentscene);
-
 		if (! mo->odm->parentscene->compositor->drop) {
 			if (mo->odm->parentscene->compositor->force_late_frame_draw) {
 				mo->flags |= GF_MO_IN_RESYNC;
@@ -517,11 +574,11 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 			else if (next_ts && (next_ts < pck_ts) ) {
 				skip_resync = GF_TRUE;
 			}
-			//if the next AU is at most 1 sec from the current clock use no drop mode
-			else if (next_ts + 1000 >= obj_time) {
+			//if the next AU is at most 300 ms from the current clock use no drop mode
+			else if (next_ts + 300 >= obj_time) {
 				skip_resync = GF_TRUE;
-			} else {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] At %u frame TS %u next frame TS %d too late in no-drop mode, enabling drop - resync mode %d\n", mo->odm->ID, obj_time, pck_ts, next_ts, resync));
+			} else if (next_ts) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("[ODM%d] At %u frame TS %u next frame TS %d too late in no-drop mode, enabling drop - resync mode %d\n", mo->odm->ID, obj_time, pck_ts, next_ts, resync));
 				mo->flags |= GF_MO_IN_RESYNC;
 			}
 		}
@@ -543,7 +600,7 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] Switching to CU CTS %u (next %d) now %u\n", mo->odm->ID, pck_ts, next_ts, obj_time));
 		}
 	}
-	if (resync) {
+	if (resync!=GF_MO_FETCH) {
 		u32 nb_dropped = 0;
 		while (next_ts) {
 			if (!move_to_next_only) {
@@ -575,7 +632,8 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 			gf_filter_pck_unref(mo->pck);
 			mo->pck = gf_filter_pid_get_packet(mo->odm->pid);
 			gf_filter_pck_ref( &mo->pck);
-			pck_ts = (u32) (1000 * gf_filter_pck_get_cts(mo->pck) / timescale);
+
+			pck_ts = convert_ts_to_ms(mo, gf_filter_pck_get_cts(mo->pck), timescale, &discard);
 			//drop next packet from pid
 			gf_filter_pid_drop_packet(mo->odm->pid);
 
@@ -592,12 +650,13 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 
 			next_ts = 0;
 			if (gf_filter_pid_get_first_packet_cts(mo->odm->pid, &next_ts)) {
-				next_ts = (u32) (1000*next_ts / timescale);
+				next_ts = convert_ts_to_ms(mo, next_ts, timescale, &discard);
 			}
 			if (move_to_next_only)
 				break;
 		}
 	}
+
 
 	mo->frame = (char *) gf_filter_pck_get_data(mo->pck, &mo->size);
 	mo->framesize = mo->size - mo->RenderedLength;
@@ -641,8 +700,9 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 		mo->frame_dur = (u32) dur;
 		mo->last_fetch_time = obj_time;
 
+		mo->timestamp = (u32) pck_ts;
 		media_time = gf_clock_to_media_time(mo->odm->ck, mo->timestamp);
-		
+
 		if (mo->odm->media_current_time <= media_time)
 			mo->odm->media_current_time = media_time;
 
@@ -664,11 +724,34 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 
 		v = gf_filter_pck_get_property(mo->pck, GF_PROP_PCK_SENDER_NTP);
 		if (v) {
-			s32 ntp_diff = gf_net_get_ntp_diff_ms(v->value.longuint);
-			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[ODM%d (%s)] Frame TS %u NTP diff with sender %d ms\n", mo->odm->ID, mo->odm->scene_ns->url, pck_ts, ntp_diff));
+			GF_PropertyEntry *pe = NULL;
+
+			mo->odm->last_drawn_frame_ntp_sender = v->value.longuint;
+
+			v = gf_filter_pck_get_property(mo->pck, GF_PROP_PCK_RECEIVER_NTP);
+			if (v) {
+				mo->odm->last_drawn_frame_ntp_receive = v->value.longuint;
+			}
+
+			mo->odm->last_drawn_frame_ntp_diff = gf_net_get_ntp_diff_ms(mo->odm->last_drawn_frame_ntp_sender);
+			v = gf_filter_pid_get_info_str(mo->odm->pid, "ntpdiff", &pe);
+			if (v) {
+				mo->odm->last_drawn_frame_ntp_diff -= v->value.sint;
+			}
+			gf_filter_release_property(pe);
+			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[ODM%d (%s)] Frame TS %u NTP diff with sender %d ms\n", mo->odm->ID, mo->odm->scene_ns->url, pck_ts, mo->odm->last_drawn_frame_ntp_diff));
+
+			if (mo->odm->parentscene->compositor->ntpsync
+				&& (mo->odm->last_drawn_frame_ntp_diff > (s32) mo->odm->parentscene->compositor->ntpsync)
+//				&& first_ntp
+			) {
+//					first_ntp = GF_FALSE;
+					u32 ntp_diff = mo->odm->last_drawn_frame_ntp_diff - mo->odm->parentscene->compositor->ntpsync;
+					mo->odm->ck->init_timestamp += ntp_diff;
+					mo->flags |= GF_MO_IN_RESYNC;
+			}
 		}
 
-		mo->timestamp = (u32) pck_ts;
 		/*signal EOS after rendering last frame, not while rendering it*/
 		*eos = GF_FALSE;
 
@@ -748,7 +831,7 @@ void gf_mo_release_data(GF_MediaObject *mo, u32 nb_bytes, s32 drop_mode)
 		
 		if (drop_mode==3)
 			drop_mode=0;
-		else if (gf_filter_pck_is_blocking_ref(mo->pck) && gf_clock_is_started(mo->odm->ck))
+		else if (gf_filter_pck_is_blocking_ref(mo->pck) )
 			drop_mode = 1;
 
 		if (drop_mode) {
@@ -790,7 +873,6 @@ void gf_mo_play(GF_MediaObject *mo, Double clipBegin, Double clipEnd, Bool can_l
 				mo->num_open++;
 				return;
 			}
-			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("NOT YET IMPLEMENTED IN FILTERS\n"));
 		}
 		if (mo->odm->flags & GF_ODM_NO_TIME_CTRL) {
 			mo->odm->media_start_time = 0;
@@ -859,13 +941,12 @@ void gf_mo_stop(GF_MediaObject **_mo)
 GF_EXPORT
 void gf_mo_restart(GF_MediaObject *mo)
 {
-	void *mediactrl_stack = NULL;
-
-#ifndef GPAC_DISABLE_VRML
-	mediactrl_stack = gf_odm_get_mediacontrol(mo->odm);
-#endif
 	/*if no control and not root of a scene, check timelines are unlocked*/
-	if (!mediactrl_stack && !mo->odm->subscene) {
+	if (!mo->odm->subscene
+#ifndef GPAC_DISABLE_VRML
+		&& !gf_odm_get_mediacontrol(mo->odm)
+#endif
+	) {
 		/*don't restart if sharing parent scene clock*/
 		if (gf_odm_shares_clock(mo->odm, gf_odm_get_media_clock(mo->odm->parentscene->root_od))) {
 			return;
@@ -962,7 +1043,7 @@ Bool gf_mo_is_same_url(GF_MediaObject *obj, MFURL *an_url, Bool *keep_fragment, 
 
 			/*fragment is a media segment, same URL*/
 			if (frag ) {
-				Bool same_res = GF_FALSE;
+				Bool same_res;
 				frag[0] = 0;
 				same_res = !strncmp(an_url->vals[i].url, szURL1, strlen(an_url->vals[i].url)) ? GF_TRUE : GF_FALSE;
 				frag[0] = '#';
@@ -1167,6 +1248,7 @@ Bool gf_mo_should_deactivate(GF_MediaObject *mo)
 	MediaControlStack *ctrl;
 #endif
 
+	if (!mo || !mo->odm) return GF_TRUE;
 	if (!mo->odm->state) return GF_FALSE;
 	//if dynamic scene we can deactivate
 	if (mo->odm->parentscene && mo->odm->parentscene->is_dynamic_scene) {
@@ -1192,11 +1274,11 @@ Bool gf_mo_should_deactivate(GF_MediaObject *mo)
 GF_EXPORT
 Bool gf_mo_is_muted(GF_MediaObject *mo)
 {
-	Bool res = GF_FALSE;
 #ifndef GPAC_DISABLE_VRML
-	res = mo->odm->media_ctrl ? mo->odm->media_ctrl->control->mute : GF_FALSE;
+	return mo->odm->media_ctrl ? mo->odm->media_ctrl->control->mute : GF_FALSE;
+#else
+	return GF_FALSE;
 #endif
-	return res;
 }
 
 GF_EXPORT
@@ -1236,7 +1318,7 @@ void gf_mo_adjust_clock(GF_MediaObject *mo, s32 ms_drift)
 {
 	if (!mo || !mo->odm) return;
 	if (mo->odm->type != GF_STREAM_AUDIO) return;
-	gf_clock_adjust_drift(mo->odm->ck, ms_drift);
+	gf_clock_set_audio_delay(mo->odm->ck, ms_drift);
 }
 
 GF_EXPORT

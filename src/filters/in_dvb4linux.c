@@ -80,10 +80,10 @@ typedef struct
 
 static GF_Err dvblin_tune(GF_DVBLinuxCtx *ctx)
 {
-	int demux1, front1;
 	FILE *chanfile;
 	char line[255];
 #ifndef GPAC_SIM_LINUX_DVB
+	int demux1, front1;
 	struct dmx_pes_filter_params pesFilterParams;
 	struct dvb_frontend_parameters frp;
 	char chan_name_t[255];
@@ -127,6 +127,8 @@ static GF_Err dvblin_tune(GF_DVBLinuxCtx *ctx)
 
 #ifndef GPAC_SIM_LINUX_DVB
 			strncpy(chan_name_t, line, index(line, ':')-line);
+			chan_name_t[254] = 0;
+
 			if (strncmp(chan_name,chan_name_t,strlen(chan_name))==0) {
 				sscanf(strstr(line,":"), chan_conf, freq_str, inv, bw, lcr, cr, mod, transm, gi, hier, apid_str, vpid_str);
 				ctx->freq = (uint32_t) atoi(freq_str);
@@ -195,6 +197,7 @@ static GF_Err dvblin_tune(GF_DVBLinuxCtx *ctx)
 	sprintf(demux_name, "/dev/dvb/adapter%d/demux0", adapter_num);
 	sprintf(dvr_name, "/dev/dvb/adapter%d/dvr0", adapter_num);
 
+#ifndef GPAC_SIM_LINUX_DVB
 	// Open frontend
 	if((front1 = open(frontend_name,O_RDWR|O_NONBLOCK)) < 0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Cannot open frontend %s.\n", frontend_name));
@@ -210,7 +213,6 @@ static GF_Err dvblin_tune(GF_DVBLinuxCtx *ctx)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Demux %s opened.\n", demux_name));
 	}
 	// Set FrontendParameters - DVB-T
-#ifndef GPAC_SIM_LINUX_DVB
 	frp.frequency = ctx->freq;
 	frp.inversion = ctx->specInv;
 	frp.u.ofdm.bandwidth = ctx->bandwidth;
@@ -385,40 +387,52 @@ static GF_Err dvblin_process(GF_Filter *filter)
 	return GF_OK;
 }
 
+#else
+static GF_Err dvblin_process(GF_Filter *filter)
+{
+	return GF_EOS;
+}
+#endif //GPAC_HAS_LINUX_DVB
 
 
+#ifdef GPAC_HAS_LINUX_DVB
 #define OFFS(_n)	#_n, offsetof(GF_DVBLinuxCtx, _n)
+#else
+#define OFFS(_n)	#_n, -1
+#endif
 
 static const GF_FilterArgs DVBLinuxArgs[] =
 {
 	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(block_size), "block size used to read file", GF_PROP_UINT, "65536", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(chcfg), "path to channels.conf file", GF_PROP_NAME, NULL, NULL, 0},
-	{}
+	{0}
 };
 
 GF_FilterRegister DVBLinuxRegister = {
 	.name = "dvbin",
 	GF_FS_SET_DESCRIPTION("DVB for Linux")
 	GF_FS_SET_HELP("Experimental DVB support for linux, requires a channel config file through [-chcfg]()")
-	.private_size = sizeof(GF_DVBLinuxCtx),
 	.args = DVBLinuxArgs,
+#ifdef GPAC_HAS_LINUX_DVB
+	.private_size = sizeof(GF_DVBLinuxCtx),
 	.initialize = dvblin_initialize,
 	.finalize = dvblin_finalize,
 	.process = dvblin_process,
 	.process_event = dvblin_process_event,
 	.probe_url = dvblin_probe_url
-};
-
+#else
+	.process = dvblin_process,
 #endif
+};
 
 const GF_FilterRegister *dvblin_register(GF_FilterSession *session)
 {
-#if defined(GPAC_HAS_LINUX_DVB) && !defined(GPAC_SIM_LINUX_DVB)
-	return &DVBLinuxRegister;
-#else
-	return NULL;
+#if !defined(GPAC_HAS_LINUX_DVB) || defined(GPAC_SIM_LINUX_DVB)
+	if (!gf_opts_get_bool("temp", "gendoc"))
+		return NULL;
+	DVBLinuxRegister.version = "! Warning: DVB4Linux NOT AVAILABLE IN THIS BUILD !";
 #endif
-
+	return &DVBLinuxRegister;
 }
 

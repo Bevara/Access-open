@@ -1,4 +1,4 @@
-//This software module was originally developed by TelecomParisTech in the
+//This software module was originally developed by Telecom Paris in the
 //course of the development of MPEG-U Widgets (ISO/IEC 23007-1) standard.
 //
 //This software module is an implementation of a part of one or 
@@ -14,7 +14,7 @@
 //for use of this software module or modifications thereof in an implementation. 
 //Copyright is not released for non MPEG-U Widgets (ISO/IEC 23007-1) conforming 
 //products. 
-//Telecom ParisTech retains full right to use the code for his/her own purpose, 
+//Telecom Paris retains full right to use the code for his/her own purpose, 
 //assign or donate the code to a third party and to inhibit third parties from 
 //using the code for non MPEG-U Widgets (ISO/IEC 23007-1) conforming products. 
 //
@@ -27,8 +27,8 @@
 /////////////////////////////////////////////////////////////////////////////////
 //
 //	Authors:	
-//					Jean Le Feuvre, Telecom ParisTech
-//					Jean-Claude Dufourd, Telecom ParisTech
+//					Jean Le Feuvre, Telecom Paris
+//					Jean-Claude Dufourd, Telecom Paris
 //
 /////////////////////////////////////////////////////////////////////////////////
 
@@ -892,9 +892,9 @@ function wmjs_get_mpegu_service_providers(index) {
 function wmjs_create_standard_service() {
     //alert("create_standard_service");
     var name = "MPEG-U";
-    var option = gpac.get_option('General', 'DeviceName');
+    var option = scene.get_option('General', 'DeviceName');
     if (option) name = option;
-    WidgetManager.device = UPnP.CreateDevice("urn:mpeg-u:device:widget-manager:1", name+"@"+gpac.hostname);
+    WidgetManager.device = UPnP.CreateDevice("urn:mpeg-u:device:widget-manager:1", name+"@"+Sys.hostname);
     WidgetManager.device.enabled = 1;
     /* implement the response to a external call (messageOut of another widget) */
     WidgetManager.device.OnAction = wmjs_widget_standard_service_process_action;

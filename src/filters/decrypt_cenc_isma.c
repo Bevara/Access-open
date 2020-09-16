@@ -51,6 +51,8 @@ typedef struct
 	u32 pssh_crc;
 	u32 scheme_type, scheme_version;
 
+	GF_Err key_error;
+
 	//ISMA & OMA
 	char salt[8];
 	u64 last_IV;
@@ -68,7 +70,7 @@ typedef struct
 	bin128 *KIDs;
 	bin128 *keys;
 
-	/*adobe*/
+	/*adobe and CENC*/
 	Bool crypt_init;
 } GF_CENCDecStream;
 
@@ -292,7 +294,8 @@ static GF_Err cenc_dec_access_isma(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, B
 
 	if (is_play) {
 		char IV[16];
-		if (cstr->state != DECRYPT_STATE_SETUP) return GF_SERVICE_ERROR;
+		if (cstr->state != DECRYPT_STATE_SETUP)
+			return GF_SERVICE_ERROR;
 		assert(!cstr->crypt);
 
 		//if (!ctx->nb_allow_play) return GF_AUTHENTICATION_FAILURE;
@@ -310,7 +313,8 @@ static GF_Err cenc_dec_access_isma(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, B
 		cstr->state = DECRYPT_STATE_PLAY;
 		return GF_OK;
 	} else {
-		if (cstr->state != DECRYPT_STATE_PLAY) return GF_SERVICE_ERROR;
+		if (cstr->state != DECRYPT_STATE_PLAY)
+			return GF_SERVICE_ERROR;
 		if (cstr->crypt) gf_crypt_close(cstr->crypt);
 		cstr->crypt = NULL;
 		cstr->state = DECRYPT_STATE_SETUP;
@@ -328,7 +332,8 @@ static GF_Err cenc_dec_process_isma(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 	u32 offset=0;
 	GF_FilterPacket *out_pck;
 	Bool is_encrypted=GF_FALSE;
-	if (!cstr->crypt) return GF_SERVICE_ERROR;
+	if (!cstr->crypt)
+		return GF_SERVICE_ERROR;
 
 	if (! gf_filter_pck_get_crypt_flags(in_pck)) {
 		out_pck = gf_filter_pck_new_ref(cstr->opid, NULL, 0, in_pck);
@@ -467,9 +472,17 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 
 	cstr->state = DECRYPT_STATE_ERROR;
 
-	if ((scheme_type != GF_ISOM_CENC_SCHEME) && (scheme_type != GF_ISOM_CBC_SCHEME) && (scheme_type != GF_ISOM_CENS_SCHEME) && (scheme_type != GF_ISOM_CBCS_SCHEME))
+	if ((scheme_type != GF_ISOM_CENC_SCHEME)
+		&& (scheme_type != GF_ISOM_CBC_SCHEME)
+		&& (scheme_type != GF_ISOM_CENS_SCHEME)
+		&& (scheme_type != GF_ISOM_CBCS_SCHEME)
+		&& (scheme_type != GF_ISOM_PIFF_SCHEME)
+	)
 		return GF_NOT_SUPPORTED;
-	if (scheme_version != 0x00010000) return GF_NOT_SUPPORTED;
+
+	if (scheme_version != 0x00010000) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC/ISMA] Invalid scheme version %08X for scheme type %s, results might be wrong\n", scheme_version, gf_4cc_to_str(scheme_type) ));
+	}
 
 	prop = gf_filter_pid_get_property(pid, GF_PROP_PID_CENC_PSSH);
 	if (prop) {
@@ -483,7 +496,7 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 	cstr->scheme_type = scheme_type;
 	cstr->pssh_crc = pssh_crc;
 
-	if ((scheme_type == GF_ISOM_CENC_SCHEME) || (scheme_type == GF_ISOM_CENS_SCHEME))
+	if ((scheme_type == GF_ISOM_CENC_SCHEME) || (scheme_type == GF_ISOM_PIFF_SCHEME) || (scheme_type == GF_ISOM_CENS_SCHEME))
 		cstr->is_cenc = GF_TRUE;
 	else
 		cstr->is_cbc = GF_TRUE;
@@ -566,9 +579,9 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 
 	if (cinfo_prop) {
 		GF_Err e;
-		cinfo = gf_crypt_info_load(prop->value.string, &e);
+		cinfo = gf_crypt_info_load(cinfo_prop->value.string, &e);
 		if (!cinfo) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC/ISMA] Failed to open crypt info file %s\n", prop->value.string));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC/ISMA] Failed to open crypt info file %s\n", cinfo_prop->value.string));
 			return e;
 		}
 	}
@@ -679,7 +692,8 @@ static GF_Err cenc_dec_setup_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u
 static GF_Err cenc_dec_access_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, Bool is_play)
 {
 	if (is_play) {
-		if (cstr->state != DECRYPT_STATE_SETUP) return GF_SERVICE_ERROR;
+		if (cstr->state != DECRYPT_STATE_SETUP)
+			return GF_SERVICE_ERROR;
 		assert(!cstr->crypt);
 
 		//if (!ctx->nb_allow_play) return GF_AUTHENTICATION_FAILURE;
@@ -695,7 +709,8 @@ static GF_Err cenc_dec_access_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, B
 		cstr->state = DECRYPT_STATE_PLAY;
 		return GF_OK;
 	} else {
-		if (cstr->state != DECRYPT_STATE_PLAY) return GF_SERVICE_ERROR;
+		if (cstr->state != DECRYPT_STATE_PLAY)
+			return GF_SERVICE_ERROR;
 		if (cstr->crypt) gf_crypt_close(cstr->crypt);
 		cstr->crypt = NULL;
 		cstr->state = DECRYPT_STATE_SETUP;
@@ -707,7 +722,8 @@ static GF_Err cenc_dec_access_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, B
 static GF_Err cenc_dec_access_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, Bool is_play)
 {
 	if (is_play) {
-		if (cstr->state != DECRYPT_STATE_SETUP) return GF_SERVICE_ERROR;
+		if (cstr->state != DECRYPT_STATE_SETUP)
+			return GF_SERVICE_ERROR;
 		assert(!cstr->crypt);
 
 		cstr->crypt = gf_crypt_open(GF_AES_128, GF_CBC);
@@ -716,7 +732,8 @@ static GF_Err cenc_dec_access_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 		cstr->state = DECRYPT_STATE_PLAY;
 		return GF_OK;
 	} else {
-		if (cstr->state != DECRYPT_STATE_PLAY) return GF_SERVICE_ERROR;
+		if (cstr->state != DECRYPT_STATE_PLAY)
+			return GF_SERVICE_ERROR;
 		if (cstr->crypt) gf_crypt_close(cstr->crypt);
 		cstr->crypt = NULL;
 		cstr->state = DECRYPT_STATE_SETUP;
@@ -741,7 +758,8 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 	GF_FilterPacket *out_pck;
 	const GF_PropertyValue *prop, *const_IV=NULL, *cbc_pattern=NULL;
 
-	if (!cstr->crypt) return GF_SERVICE_ERROR;
+	if (!cstr->crypt)
+		return GF_SERVICE_ERROR;
 
 	gf_filter_pck_get_data(in_pck, &data_size);
 
@@ -775,7 +793,6 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 		return GF_SERVICE_ERROR;
 	}
 
-	IV_size = 8;
 	//memset to 0 in case we use <16 byte key
 	memset(IV, 0, sizeof(char)*17);
 	prop = NULL;
@@ -808,10 +825,14 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 	if (const_IV) IV_size = const_IV->value.data.size;
 
 	if (strncmp(cstr->kid, KID, 16)) {
+		bin128 blank_KID;
 		Bool found = GF_FALSE;
 		memcpy(cstr->kid, KID, 16);
+		memset(blank_KID, 0, 16);
 		for (i = 0; i < cstr->KID_count; i++) {
-			if (!strncmp((const char *)KID, (const char *)cstr->KIDs[i], 16)) {
+			if (!strncmp((const char *)KID, (const char *)cstr->KIDs[i], 16)
+			 || !strncmp((const char *)blank_KID, (const char *)cstr->KIDs[i], 16)
+			) {
 				memcpy(cstr->key, cstr->keys[i], 16);
 				found = GF_TRUE;
 				break;
@@ -819,10 +840,20 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 		}
 		if (!found) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC] Cannot locate key with given KID !\n" ));
-			e = GF_SERVICE_ERROR;
+			cstr->key_error = e = GF_SERVICE_ERROR;
 			goto exit;
 		}
+		cstr->key_error = GF_OK;
 		crypt_reinit = GF_TRUE;
+		cstr->crypt_init  =GF_TRUE;
+	}
+	if (!cstr->crypt_init) {
+		crypt_reinit = GF_TRUE;
+		cstr->crypt_init = GF_TRUE;
+	}
+	if (cstr->key_error) {
+		e = cstr->key_error;
+		goto exit;
 	}
 
 	if (crypt_reinit) {
@@ -836,7 +867,6 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 			goto exit;
 		}
 	} else {
-		e = GF_OK;
 		//always restore IV at begining of sample regardless of the mode (const IV or IV CBC or CTR
 		if (!cstr->is_cbc) {
 			memmove(&IV[1], &IV[0], sizeof(char) * IV_size);
@@ -952,22 +982,22 @@ static GF_Err cenc_dec_process_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr,
 	u8 *out_data;
 	GF_FilterPacket *out_pck;
 	GF_Err e;
-	u32 trim_bytes = 0;
 	u32 offset, size;
 	Bool encrypted_au;
 
-	if (!cstr->crypt) return GF_SERVICE_ERROR;
+	if (!cstr->crypt)
+		return GF_SERVICE_ERROR;
 
 	in_data = gf_filter_pck_get_data(in_pck, &data_size);
 	out_pck = gf_filter_pck_new_alloc(cstr->opid, data_size, &out_data);
 
 	memcpy(out_data, in_data, data_size);
 
-	trim_bytes = 0;
 	offset=0;
 	size = data_size;
 	encrypted_au = out_data[0] ? GF_TRUE : GF_FALSE;
 	if (encrypted_au) {
+		u32 trim_bytes;
 		char IV[17];
 		if (size<17) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[ADOBE] Error in sample size, %d bytes remain but at least 17 are required\n", size ) );
@@ -1032,7 +1062,9 @@ static GF_Err cenc_dec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 
 	if (is_remove) {
 		cstr = gf_filter_pid_get_udta(pid);
-		if (cstr->opid) gf_filter_pid_remove(cstr->opid);
+		if (cstr->opid) {
+			gf_filter_pid_remove(cstr->opid);
+		}
 		gf_list_del_item(ctx->streams, cstr);
 		cenc_dec_stream_del(cstr);
 		return GF_OK;
@@ -1044,6 +1076,7 @@ static GF_Err cenc_dec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	cstr = gf_filter_pid_get_udta(pid);
 	if (!cstr) {
 		GF_SAFEALLOC(cstr, GF_CENCDecStream);
+		if (!cstr) return GF_OUT_OF_MEM;
 		cstr->opid = gf_filter_pid_new(filter);
 		cstr->ipid = pid;
 		gf_list_add(ctx->streams, cstr);
@@ -1087,6 +1120,7 @@ static GF_Err cenc_dec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 #endif
 		break;
 	case GF_ISOM_CENC_SCHEME:
+	case GF_ISOM_PIFF_SCHEME:
 	case GF_ISOM_CBC_SCHEME:
 	case GF_ISOM_CENS_SCHEME:
 	case GF_ISOM_CBCS_SCHEME:
@@ -1252,6 +1286,7 @@ static const GF_FilterCapability CENCDecCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_ISOM_CBC_SCHEME),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_ISOM_CBCS_SCHEME),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_ISOM_ADOBE_SCHEME),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_ISOM_PIFF_SCHEME),
 
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_ENCRYPTED),
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),

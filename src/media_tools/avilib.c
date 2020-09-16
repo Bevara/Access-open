@@ -35,9 +35,7 @@
 #define INFO_LIST
 
 // add a new riff chunk after XX MB
-//#define NEW_RIFF_THRES (1900*1024*1024)
 #define NEW_RIFF_THRES (1900*1024*1024)
-//#define NEW_RIFF_THRES (10*1024*1024)
 
 // Maximum number of indices per stream
 #define NR_IXNN_CHUNKS 96
@@ -63,11 +61,10 @@ static char id_str[MAX_INFO_STRLEN];
 
 static u32 avi_read(FILE *fd, char *buf, u32 len)
 {
-	s32 n = 0;
 	u32 r = 0;
 
 	while (r < len) {
-		n = (s32) gf_fread(buf + r, len - r, fd);
+		s32 n = (s32) gf_fread(buf + r, len - r, fd);
 		if (n == 0) break;
 		if (n < 0) return r;
 		r += n;
@@ -78,11 +75,10 @@ static u32 avi_read(FILE *fd, char *buf, u32 len)
 
 static u32 avi_write (FILE *fd, char *buf, u32 len)
 {
-	s32 n = 0;
 	u32 r = 0;
 
 	while (r < len) {
-		n = (u32) gf_fwrite (buf + r, len - r, fd);
+		s32 n = (u32) gf_fwrite (buf + r, len - r, fd);
 		if (n < 0)
 			return n;
 
@@ -299,7 +295,7 @@ static int avi_init_super_index(avi_t *AVI, unsigned char *idxtag, avisuperindex
 	for (k = 0; k < NR_IXNN_CHUNKS; k++) {
 		sil->stdindex[k] = (avistdindex_chunk *) gf_malloc (sizeof (avistdindex_chunk));
 		// gets rewritten later
-		sil->stdindex[k]->qwBaseOffset = (u64)k * NEW_RIFF_THRES;
+		sil->stdindex[k]->qwBaseOffset = (u64)k * AVI->new_riff_threshold;
 		sil->stdindex[k]->aIndex = NULL;
 	}
 
@@ -437,7 +433,7 @@ static int avi_add_odml_index_entry(avi_t *AVI, unsigned char *tag, int flags, u
 	//GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[avilib] ODML: towrite = 0x%llX = %"LLD"\n", towrite, towrite));
 
 	if (AVI->video_superindex &&
-	        (s64)(AVI->pos+towrite) > (s64)((s64)NEW_RIFF_THRES*AVI->video_superindex->nEntriesInUse)) {
+	        (s64)(AVI->pos+towrite) > (s64)((s64) AVI->new_riff_threshold*AVI->video_superindex->nEntriesInUse)) {
 
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[avilib] Adding a new RIFF chunk: %d\n", AVI->video_superindex->nEntriesInUse));
 
@@ -609,7 +605,7 @@ int AVI_can_read_audio(avi_t *AVI)
 */
 
 GF_EXPORT
-avi_t* AVI_open_output_file(char * filename)
+avi_t* AVI_open_output_file(char * filename, u64 opendml_threshold)
 {
 	avi_t *AVI;
 	int i;
@@ -649,6 +645,10 @@ avi_t* AVI_open_output_file(char * filename)
 
 	AVI->pos  = HEADERBYTES;
 	AVI->mode = AVI_MODE_WRITE; /* open for writing */
+	if (opendml_threshold)
+		AVI->new_riff_threshold = opendml_threshold;
+	else
+		AVI->new_riff_threshold = (1900*1024*1024);
 
 	//init
 	AVI->anum = 0;
@@ -735,7 +735,7 @@ void AVI_set_audio(avi_t *AVI, int channels, int rate, int bits, int format, int
 //ThOe write preliminary AVI file header: 0 frames, max vid/aud size
 int avi_update_header(avi_t *AVI)
 {
-	int njunk, hasIndex, ms_per_frame, frate, flag;
+	int njunk, ms_per_frame, frate, flag;
 	int movi_len, hdrl_start, strl_start;
 	u32 j;
 	unsigned char AVI_header[HEADERBYTES];
@@ -746,7 +746,7 @@ int avi_update_header(avi_t *AVI)
 	movi_len = AVI_MAX_LEN - HEADERBYTES + 4;
 
 	//assume index will be written
-	hasIndex=1;
+//	int hasIndex=1;
 
 	if(AVI->fps < 0.001) {
 		frate=0;
@@ -793,8 +793,10 @@ int avi_update_header(avi_t *AVI)
 	OUTLONG(0);                  /* PaddingGranularity (whatever that might be) */
 	/* Other sources call it 'reserved' */
 	flag = AVIF_ISINTERLEAVED;
-	if(hasIndex) flag |= AVIF_HASINDEX;
-	if(hasIndex && AVI->must_use_index) flag |= AVIF_MUSTUSEINDEX;
+	//if (hasIndex)
+		flag |= AVIF_HASINDEX;
+	if (/*hasIndex && */AVI->must_use_index)
+		flag |= AVIF_MUSTUSEINDEX;
 	OUTLONG(flag);               /* Flags */
 	OUTLONG(0);                  // no frames yet
 	OUTLONG(0);                  /* InitialFrames */
@@ -1808,7 +1810,7 @@ int AVI_close(avi_t *AVI)
 
 avi_t *AVI_open_input_file(char *filename, int getIndex)
 {
-	avi_t *AVI=NULL;
+	avi_t *AVI;
 
 	/* Create avi_t structure */
 
@@ -1898,19 +1900,23 @@ int avi_parse_input_file(avi_t *AVI, int getIndex)
 	s64 oldpos=-1, newpos=-1;
 
 	int aud_chunks = 0;
+	if (!AVI) {
+	   AVI_errno = AVI_ERR_OPEN;
+	   return 0;
+	}
+
 	/* Read first 12 bytes and check that this is an AVI file */
+	if (avi_read(AVI->fdes,data,12) != 12 )
+		ERR_EXIT(AVI_ERR_READ)
 
-	if( avi_read(AVI->fdes,data,12) != 12 ) ERR_EXIT(AVI_ERR_READ)
+	if (strnicmp(data  ,"RIFF",4) !=0 || strnicmp(data+8,"AVI ",4) !=0 )
+		ERR_EXIT(AVI_ERR_NO_AVI)
 
-		if( strnicmp(data  ,"RIFF",4) !=0 ||
-		        strnicmp(data+8,"AVI ",4) !=0 ) ERR_EXIT(AVI_ERR_NO_AVI)
+	/* Go through the AVI file and extract the header list,
+	   the start position of the 'movi' list and an optionally
+	   present idx1 tag */
 
-			/* Go through the AVI file and extract the header list,
-			   the start position of the 'movi' list and an optionally
-			   present idx1 tag */
-
-			hdrl_data = 0;
-
+	hdrl_data = 0;
 
 	while(1)
 	{
@@ -2970,7 +2976,7 @@ int AVI_set_audio_position_index(avi_t *AVI, int indexpos)
 
 int AVI_set_audio_position(avi_t *AVI, int byte)
 {
-	int n0, n1, n;
+	int n0, n1;
 
 	if(AVI->mode==AVI_MODE_WRITE) {
 		AVI_errno = AVI_ERR_NOT_PERM;
@@ -2990,7 +2996,7 @@ int AVI_set_audio_position(avi_t *AVI, int byte)
 
 	while(n0<n1-1)
 	{
-		n = (n0+n1)/2;
+		int n = (n0+n1)/2;
 		if(AVI->track[AVI->aptr].audio_index[n].tot>(u32) byte)
 			n1 = n;
 		else

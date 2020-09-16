@@ -372,16 +372,16 @@ static u8 BS_ReadByte(GF_BitStream *bs)
 	/*we are in FILE mode, test for end of file*/
 	if (!is_eos || bs->cache_read) {
 		u8 res;
-		Bool is_eos=GF_FALSE;
+		Bool loc_eos=GF_FALSE;
 		assert(bs->position<=bs->size);
 		bs->position++;
 
-		res = gf_bs_load_byte(bs, &is_eos);
-		if (is_eos) goto bs_eof;
+		res = gf_bs_load_byte(bs, &loc_eos);
+		if (loc_eos) goto bs_eof;
 
 		if (bs->remove_emul_prevention_byte) {
 			if ((bs->nb_zeros==2) && (res==0x03) && (bs->position<bs->size)) {
-				u8 next = gf_bs_load_byte(bs, &is_eos);
+				u8 next = gf_bs_load_byte(bs, &loc_eos);
 				if (next < 0x04) {
 					bs->nb_zeros = 0;
 					res = next;
@@ -726,7 +726,7 @@ static void BS_WriteByte(GF_BitStream *bs, u8 val)
 			if (bs->size > 0xFFFFFFFF) return;
 			bs->size = bs->size ? (bs->size * 2) : BS_MEM_BLOCK_ALLOC_SIZE;
 			bs->original = (char*)gf_realloc(bs->original, (u32)bs->size);
-			if (!bs->original) return;	
+			if (!bs->original) return;
 		}
 		if (bs->original)
 			bs->original[bs->position - bs->bytes_out] = val;
@@ -766,7 +766,7 @@ static void BS_WriteBit(GF_BitStream *bs, u32 bit)
 static s32 bs_handle_nbits_overflow(GF_BitStream* bs, s32 nBits, s32 max_shift)
 {
 	if (nBits > max_shift) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[BS] Attempt to write %d bits, when max is %d\n", nBits, max_shift));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[BS] Attempt to write %d bits, when max is %d\n", nBits, max_shift));
 	}
 	while (nBits > max_shift) {
 		gf_bs_write_long_int(bs, 0, max_shift);
@@ -989,8 +989,11 @@ u32 gf_bs_write_data(GF_BitStream *bs, const u8 *data, u32 nbBytes)
 					memcpy(bs->original + bs->position - bs->bytes_out, data, nbBytes);
 					bs->position += nbBytes;
 				} else {
-					bs->on_block_out(bs->usr_data, bs->original, (u32) (bs->position - bs->bytes_out) );
-					bs->on_block_out(bs->usr_data, (char *) data, nbBytes);
+					if (bs->position > bs->bytes_out)
+						bs->on_block_out(bs->usr_data, bs->original, (u32) (bs->position - bs->bytes_out) );
+					if (nbBytes)
+						bs->on_block_out(bs->usr_data, (char *) data, nbBytes);
+
 					bs->position += nbBytes;
 					bs->bytes_out = bs->position;
 				}
@@ -1189,7 +1192,7 @@ void gf_bs_skip_bytes(GF_BitStream *bs, u64 nbBytes)
 
 		if (bs->cache_read) {
 			u32 csize = bs->cache_read_size - bs->cache_read_pos;
-			if (csize>nbBytes) {
+			if (csize>=nbBytes) {
 				bs->cache_read_pos += (u32) nbBytes;
 				bs->position += nbBytes;
 				return;
@@ -1198,9 +1201,10 @@ void gf_bs_skip_bytes(GF_BitStream *bs, u64 nbBytes)
 			bs->position += csize;
 			bs->cache_read_pos = bs->cache_read_size;
 		}
-
-		gf_fseek(bs->stream, nbBytes, SEEK_CUR);
+		//weird msys2 bug resulting in broken seek on some files ?!?  -the big is not happening when doing absolute seek
+//		gf_fseek(bs->stream, nbBytes, SEEK_CUR);
 		bs->position += nbBytes;
+		gf_fseek(bs->stream, bs->position, SEEK_SET);
 		return;
 	}
 
@@ -1461,6 +1465,19 @@ u16 gf_bs_read_u16_le(GF_BitStream *bs)
 	v<<=8;
 	ret |= v;
 	return ret;
+}
+
+GF_EXPORT
+void gf_bs_write_u64_le(GF_BitStream *bs, u64 val)
+{
+	gf_bs_write_int(bs, val & 0xFF, 8);
+	gf_bs_write_int(bs, (val>>8) & 0xFF, 8);
+	gf_bs_write_int(bs, (val>>16) & 0xFF, 8);
+	gf_bs_write_int(bs, (val>>24) & 0xFF, 8);
+	gf_bs_write_int(bs, (val>>32) & 0xFF, 8);
+	gf_bs_write_int(bs, (val>>40) & 0xFF, 8);
+	gf_bs_write_int(bs, (val>>48) & 0xFF, 8);
+	gf_bs_write_int(bs, (val>>56) & 0xFF, 8);
 }
 
 GF_EXPORT

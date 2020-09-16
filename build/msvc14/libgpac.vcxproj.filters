@@ -1157,6 +1157,9 @@
     <ClCompile Include="..\..\src\filter_core\filter_session.c">
       <Filter>filter_core</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filter_core\filter_session_js.c">
+      <Filter>filter_core</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\filters\compose.c">
       <Filter>filters</Filter>
     </ClCompile>
@@ -1191,6 +1194,9 @@
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\dec_theora.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\dec_ttml.c">
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\dec_ttxt.c">
@@ -1400,6 +1406,9 @@
     <ClCompile Include="..\..\src\filters\dasher.c">
       <Filter>filters</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filters\bsrw.c">
+      <Filter>filters</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\filters\dmx_gsf.c">
       <Filter>filters</Filter>
     </ClCompile>
@@ -1499,6 +1508,9 @@
     <ClCompile Include="..\..\src\jsmods\xhr.c">
       <Filter>jsmods</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\jsmods\core.c">
+      <Filter>jsmods</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\scenegraph\dom_js.c">
       <Filter>scenegraph</Filter>
     </ClCompile>
@@ -1532,9 +1544,6 @@
     <ClCompile Include="..\..\src\jsmods\webgl.c">
       <Filter>jsmods</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\src\jsmods\webgl_pixfmt.c">
-      <Filter>jsmods</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\src\utils\gltools.c">
       <Filter>utils</Filter>
     </ClCompile>
@@ -1551,6 +1560,9 @@
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\tssplit.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\dec_mediacodec.c">
       <Filter>filters</Filter>
     </ClCompile>
   </ItemGroup>

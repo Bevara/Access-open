@@ -62,7 +62,8 @@ typedef struct
 	Bool analyze;
 	char *catseg;
 	Bool sigfrag;
-	Bool nocrypt;
+	Bool nocrypt, strtxt;
+	u32 mstore_purge, mstore_samples, mstore_size;
 
 	//internal
 
@@ -80,9 +81,10 @@ typedef struct
 	Bool input_loaded;
 	//fragmented file to be refreshed before processing it
 	Bool refresh_fragmented;
-
+	Bool input_is_stop;
 	u64 missing_bytes, last_size;
 
+	Bool seg_name_changed;
 	u32 play_only_track_id;
 	u32 play_only_first_media;
 	Bool full_segment_flush;
@@ -102,7 +104,7 @@ typedef struct
 	Bool no_order_check;
 	Bool moov_not_loaded;
 
-	u64 last_sender_ntp, cts_for_last_sender_ntp;
+	u64 last_sender_ntp, ntp_at_last_sender_ntp, cts_for_last_sender_ntp;
 	Bool is_partial_download, wait_for_source;
 
 	u32 src_crc;
@@ -110,8 +112,14 @@ typedef struct
 	GF_FilterPid *pid;
 
 	Bool eos_signaled;
+	u32 mem_load_mode;
+	u8 *mem_url;
+	GF_Blob mem_blob;
+	u64 bytes_removed;
+	u64 last_min_offset;
+	GF_Err in_error;
+	Bool force_fetch;
 } ISOMReader;
-
 
 typedef struct
 {
@@ -121,16 +129,16 @@ typedef struct
 	u32 base_track;
 	u32 next_track;
 	GF_FilterPid *pid;
-
 	ISOMReader *owner;
 	u64 duration;
 
 	/*current sample*/
 	GF_ISOSample *static_sample;
 	GF_ISOSample *sample;
-
+	u64 sample_data_offset, last_valid_sample_data_offset;
 	GF_Err last_state;
-	Bool sap_3, sap_4;
+	Bool sap_3;
+	GF_ISOSampleRollType sap_4_type;
 	s32 roll;
 
 	Bool has_edit_list;
@@ -148,8 +156,9 @@ typedef struct
 
 	u32 time_scale;
 	Bool to_init, has_rap;
-	u32 play_state;
+	Bool playing, eos_sent;
 	u8 streamType;
+	Bool initial_play_seen;
 
 	Bool is_encrypted, is_cenc;
 
@@ -166,7 +175,7 @@ typedef struct
 	bin128 constant_IV;
 	u8 IV_size;
 	u32 au_seq_num;
-	u64 sender_ntp;
+	u64 sender_ntp, ntp_at_server_ntp;
 	u32 seek_flag;
 	u32 au_duration;
 	Bool set_disc;
@@ -178,13 +187,14 @@ typedef struct
 	u8 *sai_buffer;
 	u32 sai_alloc_size, sai_buffer_size;
 
-	Bool check_avc_ps, check_hevc_ps;
+	Bool check_avc_ps, check_hevc_ps, check_mhas_pl;
 	GF_HEVCConfig *hvcc;
 	GF_AVCConfig *avcc;
 	GF_BitStream *nal_bs;
 	u32 dsi_crc;
 
 	Bool needs_pid_reconfig;
+	u32 sap_only;
 } ISOMChannel;
 
 void isor_reset_reader(ISOMChannel *ch);

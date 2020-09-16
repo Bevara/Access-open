@@ -447,6 +447,8 @@ static void visual_3d_draw_background(GF_TraverseState *tr_state, u32 layer_type
 				alpha = FIX_ONE;
 				if (tr_state->visual->compositor->init_flags & GF_TERM_WINDOW_TRANSPARENT) {
 					alpha = 0;
+				} else if (tr_state->visual->compositor->dyn_filter_mode) {
+					alpha = 0;
 				}
 			}
 			visual_3d_clear(tr_state->visual, col, alpha);
@@ -673,12 +675,10 @@ void visual_3d_init_draw(GF_TraverseState *tr_state, u32 layer_type)
 
 static GFINLINE Bool visual_3d_has_alpha(GF_TraverseState *tr_state, GF_Node *geom)
 {
-	Bool is_mat3D;
 	Drawable3D *stack;
 
-
-	is_mat3D = 0;
 #ifndef GPAC_DISABLE_VRML
+	Bool is_mat3D = GF_FALSE;
 	if (tr_state->appear) {
 		GF_Node *mat = ((M_Appearance *)tr_state->appear)->material;
 		if (mat) {
@@ -692,7 +692,7 @@ static GFINLINE Bool visual_3d_has_alpha(GF_TraverseState *tr_state, GF_Node *ge
 #ifndef GPAC_DISABLE_X3D
 			case TAG_X3D_Material:
 #endif
-				is_mat3D = 1;
+				is_mat3D = GF_TRUE;
 				if ( ((M_Material *)mat)->transparency) return 1;
 				break;
 			case TAG_MPEG4_MaterialKey:
@@ -962,7 +962,7 @@ Bool visual_3d_draw_frame(GF_VisualManager *visual, GF_Node *root, GF_TraverseSt
 		compositor_3d_enable_fbo(visual->compositor, GF_TRUE);
 
 	visual_3d_setup(visual);
-	visual->glsl_flags = 0;
+	visual->active_glsl_flags = 0;
 
 	/*setup our traversing state*/
 	visual_3d_setup_traversing_state(visual, tr_state);
@@ -997,7 +997,7 @@ Bool visual_3d_draw_frame(GF_VisualManager *visual, GF_Node *root, GF_TraverseSt
 				visual_3d_end_auto_stereo_pass(visual);
 			}
 
-			if (is_root_visual) visual->compositor->reset_graphics = 0;
+			visual->compositor->reset_graphics = 0;
 		}
 
 	} else {
@@ -1288,6 +1288,7 @@ Bool visual_3d_setup_ray(GF_VisualManager *visual, GF_TraverseState *tr_state, s
 		y = gf_mulfix(y, scale);
 	}
 
+#if 0
 	start.z = visual->camera.z_near;
 	end.z = visual->camera.z_far;
 	if (!tr_state->camera->is_3D && !tr_state->pixel_metrics) {
@@ -1297,6 +1298,7 @@ Bool visual_3d_setup_ray(GF_VisualManager *visual, GF_TraverseState *tr_state, s
 		start.x = end.x = x;
 		start.y = end.y = y;
 	}
+#endif
 
 	/*unproject to world coords*/
 	in_x = 2*x/ (s32) visual->width;
@@ -1930,10 +1932,6 @@ Bool visual_3d_setup_texture(GF_TraverseState *tr_state, Fixed diffuse_alpha)
 			}
 			tr_state->mesh_is_transparent = 1;
 			break;
-			/*			case GF_PIXEL_GREYSCALE:
-							tr_state->mesh_num_textures = 2;
-							break;
-			*/
 		}
 	}
 	return tr_state->mesh_num_textures ? GF_TRUE : GF_FALSE;
@@ -2008,8 +2006,8 @@ void visual_3d_enable_headlight(GF_VisualManager *visual, Bool bOn, GF_Camera *c
 
 void visual_3d_set_material_2d(GF_VisualManager *visual, SFColor col, Fixed alpha)
 {
-	visual->has_material_2d = alpha ? 1 : 0;
-	visual->has_material=0;
+	visual->has_material_2d = alpha ? GF_TRUE : GF_FALSE;
+	visual->has_material = 0;
 	if (visual->has_material_2d) {
 		visual->mat_2d.red = col.red;
 		visual->mat_2d.green = col.green;
@@ -2022,8 +2020,8 @@ void visual_3d_set_material_2d(GF_VisualManager *visual, SFColor col, Fixed alph
 void visual_3d_set_material_2d_argb(GF_VisualManager *visual, u32 col)
 {
 	u32 a = GF_COL_A(col);
-	visual->has_material_2d = a ? 1 : 0;
-	visual->has_material=0;
+	visual->has_material_2d = a ? GF_TRUE : GF_FALSE;
+	visual->has_material = 0;
 	if (visual->has_material_2d) {
 		visual->mat_2d.red = INT2FIX( GF_COL_R(col) ) / 255;
 		visual->mat_2d.green = INT2FIX( GF_COL_G(col) ) / 255;

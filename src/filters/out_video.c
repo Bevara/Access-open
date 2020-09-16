@@ -29,10 +29,12 @@
 #include <gpac/modules/video_out.h>
 #include <gpac/color.h>
 
+#ifndef GPAC_DISABLE_PLAYER
 
 //#define GPAC_DISABLE_3D
 
-#ifndef GPAC_DISABLE_3D
+#if !defined(GPAC_DISABLE_3D) && !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
+#define VOUT_USE_OPENGL
 
 //include openGL
 #include "../compositor/gl_inc.h"
@@ -49,267 +51,6 @@
 #else
 #define GF_SHADERID u32
 #endif
-
-
-static char *glsl_yuv_shader = "#version 120\n"\
-	"uniform sampler2D y_plane;\
-	uniform sampler2D u_plane;\
-	uniform sampler2D v_plane;\
-	const vec3 offset = vec3(-0.0625, -0.5, -0.5);\
-	const vec3 R_mul = vec3(1.164,  0.000,  1.596);\
-	const vec3 G_mul = vec3(1.164, -0.391, -0.813);\
-	const vec3 B_mul = vec3(1.164,  2.018,  0.000);\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc;\
-		vec3 yuv, rgb;\
-		texc = TexCoord.st;\
-		yuv.x = texture2D(y_plane, texc).r; \
-		yuv.y = texture2D(u_plane, texc).r; \
-		yuv.z = texture2D(v_plane, texc).r; \
-		yuv += offset; \
-	    rgb.r = dot(yuv, R_mul); \
-	    rgb.g = dot(yuv, G_mul); \
-	    rgb.b = dot(yuv, B_mul); \
-		gl_FragColor = vec4(rgb, 1.0);\
-	}";
-
-static char *glsl_nv12_shader = "#version 120\n"\
-	"uniform sampler2D y_plane;\
-	uniform sampler2D u_plane;\
-	const vec3 offset = vec3(-0.0625, -0.5, -0.5);\
-	const vec3 R_mul = vec3(1.164,  0.000,  1.596);\
-	const vec3 G_mul = vec3(1.164, -0.391, -0.813);\
-	const vec3 B_mul = vec3(1.164,  2.018,  0.000);\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc;\
-		vec3 yuv, rgb;\
-		texc = TexCoord.st;\
-		yuv.x = texture2D(y_plane, texc).r; \
-		yuv.yz = texture2D(u_plane, texc).ra; \
-		yuv += offset; \
-	    rgb.r = dot(yuv, R_mul); \
-	    rgb.g = dot(yuv, G_mul); \
-	    rgb.b = dot(yuv, B_mul); \
-		gl_FragColor = vec4(rgb, 1.0);\
-	}";
-
-static char *glsl_nv21_shader = "#version 120\n"\
-	"uniform sampler2D y_plane;\
-	uniform sampler2D u_plane;\
-	const vec3 offset = vec3(-0.0625, -0.5, -0.5);\
-	const vec3 R_mul = vec3(1.164,  0.000,  1.596);\
-	const vec3 G_mul = vec3(1.164, -0.391, -0.813);\
-	const vec3 B_mul = vec3(1.164,  2.018,  0.000);\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc;\
-		vec3 yuv, rgb;\
-		texc = TexCoord.st;\
-		yuv.x = texture2D(y_plane, texc).r; \
-		yuv.yz = texture2D(u_plane, texc).ar; \
-		yuv += offset; \
-	    rgb.r = dot(yuv, R_mul); \
-	    rgb.g = dot(yuv, G_mul); \
-	    rgb.b = dot(yuv, B_mul); \
-		gl_FragColor = vec4(rgb, 1.0);\
-	}";
-
-static char *glsl_uyvy_shader = "#version 120\n"\
-	"uniform sampler2D y_plane;\
-	uniform float width;\
-	const vec3 offset = vec3(-0.0625, -0.5, -0.5);\
-	const vec3 R_mul = vec3(1.164,  0.000,  1.596);\
-	const vec3 G_mul = vec3(1.164, -0.391, -0.813);\
-	const vec3 B_mul = vec3(1.164,  2.018,  0.000);\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc, t_texc;\
-		vec3 yuv, rgb;\
-		vec4 uyvy;\
-		float tex_s;\
-		texc = TexCoord.st;\
-		t_texc = texc * vec2(1, 1);\
-		uyvy = texture2D(y_plane, t_texc); \
-		tex_s = texc.x*width;\
-		if (tex_s - (2.0 * floor(tex_s/2.0)) == 1.0) {\
-        	uyvy.g = uyvy.a; \
-    	}\
-    	yuv.r = uyvy.g;\
-    	yuv.g = uyvy.r;\
-    	yuv.b = uyvy.b;\
-		yuv += offset; \
-	    rgb.r = dot(yuv, R_mul); \
-	    rgb.g = dot(yuv, G_mul); \
-	    rgb.b = dot(yuv, B_mul); \
-		gl_FragColor = vec4(rgb, 1.0);\
-	}";
-
-static char *glsl_vyuy_shader = "#version 120\n"\
-	"uniform sampler2D y_plane;\
-	uniform float width;\
-	const vec3 offset = vec3(-0.0625, -0.5, -0.5);\
-	const vec3 R_mul = vec3(1.164,  0.000,  1.596);\
-	const vec3 G_mul = vec3(1.164, -0.391, -0.813);\
-	const vec3 B_mul = vec3(1.164,  2.018,  0.000);\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc, t_texc;\
-		vec3 yuv, rgb;\
-		vec4 vyuy;\
-		float tex_s;\
-		texc = TexCoord.st;\
-		t_texc = texc * vec2(1, 1);\
-		vyuy = texture2D(y_plane, t_texc); \
-		tex_s = texc.x*width;\
-		if (tex_s - (2.0 * floor(tex_s/2.0)) == 1.0) {\
-        	vyuy.g = vyuy.a; \
-    	}\
-    	yuv.r = vyuy.g;\
-    	yuv.g = vyuy.b;\
-    	yuv.b = vyuy.r;\
-		yuv += offset; \
-	    rgb.r = dot(yuv, R_mul); \
-	    rgb.g = dot(yuv, G_mul); \
-	    rgb.b = dot(yuv, B_mul); \
-		gl_FragColor = vec4(rgb, 1.0);\
-	}";
-
-
-static char *glsl_yuyv_shader = "#version 120\n"\
-	"uniform sampler2D y_plane;\
-	uniform float width;\
-	const vec3 offset = vec3(-0.0625, -0.5, -0.5);\
-	const vec3 R_mul = vec3(1.164,  0.000,  1.596);\
-	const vec3 G_mul = vec3(1.164, -0.391, -0.813);\
-	const vec3 B_mul = vec3(1.164,  2.018,  0.000);\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc, t_texc;\
-		vec3 yuv, rgb;\
-		vec4 yvyu;\
-		float tex_s;\
-		texc = TexCoord.st;\
-		t_texc = texc * vec2(1, 1);\
-		yvyu = texture2D(y_plane, t_texc); \
-		tex_s = texc.x*width;\
-		if (tex_s - (2.0 * floor(tex_s/2.0)) == 1.0) {\
-        	yvyu.r = yvyu.b; \
-    	}\
-    	yuv.r = yvyu.r;\
-    	yuv.g = yvyu.g;\
-    	yuv.b = yvyu.a;\
-		yuv += offset; \
-	    rgb.r = dot(yuv, R_mul); \
-	    rgb.g = dot(yuv, G_mul); \
-	    rgb.b = dot(yuv, B_mul); \
-		gl_FragColor = vec4(rgb, 1.0);\
-	}";
-
-static char *glsl_yvyu_shader = "#version 120\n"\
-	"uniform sampler2D y_plane;\
-	uniform float width;\
-	const vec3 offset = vec3(-0.0625, -0.5, -0.5);\
-	const vec3 R_mul = vec3(1.164,  0.000,  1.596);\
-	const vec3 G_mul = vec3(1.164, -0.391, -0.813);\
-	const vec3 B_mul = vec3(1.164,  2.018,  0.000);\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc, t_texc;\
-		vec3 yuv, rgb;\
-		vec4 yuyv;\
-		float tex_s;\
-		texc = TexCoord.st;\
-		t_texc = texc * vec2(1, 1);\
-		yuyv = texture2D(y_plane, t_texc); \
-		tex_s = texc.x*width;\
-		if (tex_s - (2.0 * floor(tex_s/2.0)) == 1.0) {\
-        	yuyv.r = yuyv.b; \
-    	}\
-    	yuv.r = yuyv.r;\
-    	yuv.g = yuyv.a;\
-    	yuv.b = yuyv.g;\
-		yuv += offset; \
-	    rgb.r = dot(yuv, R_mul); \
-	    rgb.g = dot(yuv, G_mul); \
-	    rgb.b = dot(yuv, B_mul); \
-		gl_FragColor = vec4(rgb, 1.0);\
-	}";
-
-static char *glsl_rgb_shader = "#version 120\n"\
-	"uniform sampler2D rgbtx;\
-	uniform int rgb_mode;\
-	varying vec2 TexCoord;\
-	void main(void)  \
-	{\
-		vec2 texc;\
-		vec4 col;\
-		float res, col_r, col_g1, col_g, col_b;\
-		texc = TexCoord.st;\
-		col = texture2D(rgbtx, texc); \
-		if (rgb_mode==1) {\
-			gl_FragColor.r = col.b;\
-			gl_FragColor.g = col.g;\
-			gl_FragColor.b = col.r;\
-			gl_FragColor.a = col.a;\
-		} else if (rgb_mode==2) {\
-			gl_FragColor.r = col.g;\
-			gl_FragColor.g = col.b;\
-			gl_FragColor.b = col.a;\
-			gl_FragColor.a = col.r;\
-		} else if (rgb_mode==3) {\
-			gl_FragColor.r = col.g;\
-			gl_FragColor.g = col.a;\
-			gl_FragColor.b = col.b;\
-			gl_FragColor.a = col.r;\
-		} else if (rgb_mode==4) {\
-			gl_FragColor.r = col.a;\
-			gl_FragColor.g = col.b;\
-			gl_FragColor.b = col.g;\
-			gl_FragColor.a = col.r;\
-		} else if (rgb_mode==5) {\
-			gl_FragColor.r = gl_FragColor.g = gl_FragColor.b = col.a;\
-		} else if (rgb_mode==6) {\
-			res = floor( 255.0 * col.a ); \
-			col_g = floor(res / 16.0); \
-			col_b = floor(res - col_g*16.0); \
-			gl_FragColor.r = col.r * 17.0;\
-			gl_FragColor.g = col_g / 15.0;\
-			gl_FragColor.b = col_b / 15.0;\
-		} else if (rgb_mode==7) {\
-			res = floor(255.0 * col.r); \
-			col_r = floor(res / 4.0); \
-			col_g1 = floor(res - col_r*4.0); \
-			res = floor(255.0 * col.a); \
-			col_g = floor(res / 32); \
-			col_b = floor(res - col_g*32.0); \
-			col_g += col_g1 * 8; \
-			gl_FragColor.r = col_r / 31.0;\
-			gl_FragColor.g = col_g / 31.0;\
-			gl_FragColor.b = col_b / 31.0;\
-		} else if (rgb_mode==8) {\
-			res = floor(255.0 * col.r); \
-			col_r = floor(res / 8.0); \
-			col_g1 = floor(res - col_r*8.0); \
-			res = floor(255.0 * col.a); \
-			col_g = floor(res / 32); \
-			col_b = floor(res - col_g*32.0); \
-			col_g += col_g1 * 8; \
-			gl_FragColor.r = col_r / 31.0;\
-			gl_FragColor.g = col_g / 63.0;\
-			gl_FragColor.b = col_b / 31.0;\
-		} else {\
-			gl_FragColor = col;\
-		}\
-	}";
 
 
 static char *default_glsl_vertex = "\
@@ -345,7 +86,7 @@ typedef struct
 	GF_PropVec2i wpos;
 	Double start;
 	u32 buffer;
-	GF_Fraction delay;
+	GF_Fraction vdelay;
 	const char *out;
 	GF_PropUIntList dumpframes;
 
@@ -366,28 +107,19 @@ typedef struct
 	Float dh, dw, oh, ow;
 	Bool has_alpha;
 	u32 nb_frames;
-	Bool swap_uv;
 
 	//if source is raw live grab (webcam/etc), we don't trust cts and always draw the frame
 	//this is needed for cases where we have a sudden jump in timestamps as is the case with ffmpeg: not doing so would
 	//hold the frame until its CTS is reached, triggering drops at capture time
 	Bool raw_grab;
 
-#ifndef GPAC_DISABLE_3D
+#ifdef VOUT_USE_OPENGL
 	GLint glsl_program;
 	GF_SHADERID vertex_shader;
 	GF_SHADERID fragment_shader;
-	Bool first_tx_load;
-	GLint txid[3];
 
-	GLint pbo_Y;
-	GLint pbo_U;
-	GLint pbo_V;
-	GLint memory_format;
-	u32 bytes_per_pix;
-	GLint pixel_format;
-	Bool internal_textures;
-#endif // GPAC_DISABLE_3D
+	GF_GLTextureWrapper tx;
+#endif // VOUT_USE_OPENGL
 
 	u32 num_textures;
 
@@ -411,7 +143,7 @@ typedef struct
 
 static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx);
 
-#ifndef GPAC_DISABLE_3D
+#ifdef VOUT_USE_OPENGL
 static Bool vout_compile_shader(GF_SHADERID shader_id, const char *name, const char *source)
 {
 	GLint blen = 0;
@@ -438,7 +170,8 @@ static Bool vout_compile_shader(GF_SHADERID shader_id, const char *name, const c
 	}
 	return 1;
 }
-#endif
+#endif // VOUT_USE_OPENGL
+
 
 static void vout_set_caption(GF_VideoOutCtx *ctx)
 {
@@ -457,9 +190,6 @@ static void vout_set_caption(GF_VideoOutCtx *ctx)
 static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 {
 	GF_Event evt;
-#ifndef GPAC_DISABLE_3D
-	int rgb_mode=0;
-#endif
 	const GF_PropertyValue *p;
 	u32 w, h, pfmt, stride, stride_uv, timescale, dw, dh, hw, hh;
 	GF_VideoOutCtx *ctx = (GF_VideoOutCtx *) gf_filter_get_udta(filter);
@@ -577,7 +307,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		evt.setup.width = dw;
 		evt.setup.height = dh;
 
-#ifndef GPAC_DISABLE_3D
+#ifdef VOUT_USE_OPENGL
 		if (ctx->disp<MODE_2D) {
 			evt.setup.use_opengl = GF_TRUE;
 			//always double buffer
@@ -598,7 +328,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		}
 		ctx->display_changed = GF_TRUE;
 
-#if !defined(GPAC_DISABLE_3D) && defined(WIN32)
+#if defined(VOUT_USE_OPENGL) && defined(WIN32)
 		if (evt.setup.use_opengl)
 			gf_opengl_init();
 
@@ -644,7 +374,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	ctx->uv_stride = stride_uv;
 	ctx->bit_depth = 0;
 	ctx->has_alpha = GF_FALSE;
-	ctx->swap_uv = GF_FALSE;
+
 	if (!stride) {
 		gf_pixel_get_size_info(ctx->pfmt, w, h, NULL, &stride, &ctx->uv_stride, NULL, &ctx->uv_h);
 	}
@@ -654,10 +384,6 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ctx->dump_buffer = NULL;
 	}
 
-
-#ifndef GPAC_DISABLE_3D
-	ctx->pixel_format = GL_LUMINANCE;
-#endif
 	hw = ctx->width/2;
 	if (ctx->width %2) hw++;
 	hh = ctx->height/2;
@@ -716,94 +442,25 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		}
 		ctx->is_yuv = GF_TRUE;
 		break;
-	case GF_PIXEL_GREYSCALE:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_LUMINANCE;
-		ctx->bytes_per_pix = 1;
-#endif
-		break;
-	case GF_PIXEL_ALPHAGREY:
-#ifndef GPAC_DISABLE_3D
-		rgb_mode=5;
-#endif
-	case GF_PIXEL_GREYALPHA:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_LUMINANCE_ALPHA;
-		ctx->bytes_per_pix = 2;
-#endif
-		break;
-	case GF_PIXEL_RGB:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_RGB;
-		ctx->bytes_per_pix = 3;
-#endif
-		break;
-	case GF_PIXEL_BGR:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_RGB;
-		ctx->bytes_per_pix = 3;
-		rgb_mode=1;
-#endif
-		break;
-	case GF_PIXEL_BGRA:
-		ctx->has_alpha = GF_TRUE;
-	case GF_PIXEL_BGRX:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_RGBA;
-		ctx->bytes_per_pix = 4;
-		rgb_mode=1;
-#endif
-		break;
-	case GF_PIXEL_ARGB:
-		ctx->has_alpha = GF_TRUE;
-	case GF_PIXEL_XRGB:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_RGBA;
-		ctx->bytes_per_pix = 4;
-		rgb_mode=2;
-#endif
-		break;
-	case GF_PIXEL_ABGR:
-		ctx->has_alpha = GF_TRUE;
-	case GF_PIXEL_XBGR:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_RGBA;
-		ctx->bytes_per_pix = 4;
-		rgb_mode=4;
-#endif
-		break;
 
+	case GF_PIXEL_ALPHAGREY:
+	case GF_PIXEL_GREYALPHA:
+	case GF_PIXEL_BGRA:
+	case GF_PIXEL_ARGB:
+	case GF_PIXEL_ABGR:
 	case GF_PIXEL_RGBA:
 		ctx->has_alpha = GF_TRUE;
+		break;
+	case GF_PIXEL_GREYSCALE:
+	case GF_PIXEL_RGB:
+	case GF_PIXEL_BGR:
+	case GF_PIXEL_BGRX:
+	case GF_PIXEL_XRGB:
+	case GF_PIXEL_XBGR:
 	case GF_PIXEL_RGBX:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_RGBA;
-		ctx->bytes_per_pix = 4;
-#endif
-		break;
-
 	case GF_PIXEL_RGB_444:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_LUMINANCE_ALPHA;
-		ctx->bytes_per_pix = 2;
-		rgb_mode=6;
-#endif
-		break;
-
 	case GF_PIXEL_RGB_555:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_LUMINANCE_ALPHA;
-		ctx->bytes_per_pix = 2;
-		rgb_mode=7;
-#endif
-		break;
-
 	case GF_PIXEL_RGB_565:
-#ifndef GPAC_DISABLE_3D
-		ctx->pixel_format = GL_LUMINANCE_ALPHA;
-		ctx->bytes_per_pix = 2;
-		rgb_mode=8;
-#endif
 		break;
 
 	case 0:
@@ -814,11 +471,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		return GF_OK;
 	}
 
-#ifndef GPAC_DISABLE_3D
-	if (ctx->is_yuv) {
-		ctx->bytes_per_pix = (ctx->bit_depth > 8) ? 2 : 1;
-	}
-
+#ifdef VOUT_USE_OPENGL
 	if (ctx->disp<MODE_2D) {
 		memset(&evt, 0, sizeof(GF_Event));
 		evt.type = GF_EVENT_SET_GL;
@@ -828,149 +481,36 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	DEL_SHADER(ctx->vertex_shader);
 	DEL_SHADER(ctx->fragment_shader);
 	DEL_PROGRAM(ctx->glsl_program );
-	if (ctx->pbo_Y) glDeleteBuffers(1, &ctx->pbo_Y);
-	if (ctx->pbo_U) glDeleteBuffers(1, &ctx->pbo_U);
-	if (ctx->pbo_V) glDeleteBuffers(1, &ctx->pbo_V);
-	ctx->pbo_Y = ctx->pbo_U = ctx->pbo_V = 0;
-
-	if (ctx->internal_textures && ctx->num_textures && ctx->txid[0])
-		glDeleteTextures(ctx->num_textures, ctx->txid);
-	ctx->num_textures = 0;
-	ctx->internal_textures = GF_FALSE;
+	gf_gl_txw_reset(&ctx->tx);
 
 	if (ctx->disp<MODE_2D) {
-		GLint loc;
-		u32 i;
+		char *frag_shader_src = NULL;
 		GF_Matrix mx;
 		Float ft_hw, ft_hh;
 
-		ctx->memory_format = GL_UNSIGNED_BYTE;
 		ctx->glsl_program = glCreateProgram();
 		ctx->vertex_shader = glCreateShader(GL_VERTEX_SHADER);
 		vout_compile_shader(ctx->vertex_shader, "vertex", default_glsl_vertex);
 
 		ctx->fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-		switch (ctx->pfmt) {
-		case GF_PIXEL_NV21:
-		case GF_PIXEL_NV21_10:
-			ctx->num_textures = 2;
-			vout_compile_shader(ctx->fragment_shader, "fragment", glsl_nv21_shader);
-			break;
-		case GF_PIXEL_NV12:
-		case GF_PIXEL_NV12_10:
-			ctx->num_textures = 2;
-			vout_compile_shader(ctx->fragment_shader, "fragment", glsl_nv12_shader);
-			break;
-		case GF_PIXEL_UYVY:
-			ctx->num_textures = 1;
-			vout_compile_shader(ctx->fragment_shader, "fragment", glsl_uyvy_shader);
-			break;
-		case GF_PIXEL_YUYV:
-			ctx->num_textures = 1;
-			vout_compile_shader(ctx->fragment_shader, "fragment", glsl_yuyv_shader);
-			break;
-		case GF_PIXEL_VYUY:
-			ctx->num_textures = 1;
-			vout_compile_shader(ctx->fragment_shader, "fragment", glsl_vyuy_shader);
-			break;
-		case GF_PIXEL_YVYU:
-			ctx->num_textures = 1;
-			vout_compile_shader(ctx->fragment_shader, "fragment", glsl_yvyu_shader);
-			break;
-		default:
-			if (ctx->is_yuv) {
-				ctx->num_textures = 3;
-				vout_compile_shader(ctx->fragment_shader, "fragment", glsl_yuv_shader);
-			} else {
-				ctx->num_textures = 1;
-				vout_compile_shader(ctx->fragment_shader, "fragment", glsl_rgb_shader);
-			}
-			break;
-		}
+		gf_gl_txw_setup(&ctx->tx, ctx->pfmt, ctx->width, ctx->height, ctx->stride, ctx->uv_stride, ctx->linear, NULL);
+
+		gf_dynstrcat(&frag_shader_src, "#version 120\n", NULL);
+
+		gf_gl_txw_insert_fragment_shader(ctx->tx.pix_fmt, "maintx", &frag_shader_src);
+		gf_dynstrcat(&frag_shader_src, "varying vec2 TexCoord;\n"
+										"void main(void) {\n"
+										"gl_FragColor = maintx_sample(TexCoord.st);\n"
+										"}"
+								, NULL);
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] Fragment shader is %s\n", frag_shader_src));
+
+		vout_compile_shader(ctx->fragment_shader, "fragment", frag_shader_src);
+		gf_free(frag_shader_src);
+
 		glAttachShader(ctx->glsl_program, ctx->vertex_shader);
 		glAttachShader(ctx->glsl_program, ctx->fragment_shader);
 		glLinkProgram(ctx->glsl_program);
-
-		ctx->internal_textures = GF_TRUE;
-		glGenTextures(ctx->num_textures, ctx->txid);
-		for (i=0; i<ctx->num_textures; i++) {
-
-			glEnable(TEXTURE_TYPE);
-			glBindTexture(TEXTURE_TYPE, ctx->txid[i] );
-
-			if (ctx->is_yuv && ctx->bit_depth>8) {
-#if !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
-				//we use x bits but GL will normalise using 16 bits, so we need to multiply the normalized result by 2^(16-x)
-				u32 nb_bits = (16 - ctx->bit_depth);
-				u32 scale = 1;
-				while (nb_bits) {
-					scale*=2;
-					nb_bits--;
-				}
-				glPixelTransferi(GL_RED_SCALE, scale);
-				if ((ctx->num_textures==2) && (i==1))
-					glPixelTransferi(GL_ALPHA_SCALE, scale);
-
-				glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-#endif
-				ctx->memory_format = GL_UNSIGNED_SHORT;
-
-			} else {
-				ctx->memory_format = GL_UNSIGNED_BYTE;
-#if !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
-				glPixelTransferi(GL_RED_SCALE, 1);
-				glPixelTransferi(GL_ALPHA_SCALE, 1);
-				glPixelStorei(GL_UNPACK_LSB_FIRST, 0);
-#endif
-				glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-			}
-
-#if !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
-			glTexParameteri(TEXTURE_TYPE, GL_TEXTURE_WRAP_S, GL_CLAMP);
-			glTexParameteri(TEXTURE_TYPE, GL_TEXTURE_WRAP_T, GL_CLAMP);
-			glTexParameteri(TEXTURE_TYPE, GL_TEXTURE_MAG_FILTER, ctx->linear ? GL_LINEAR : GL_NEAREST);
-			glTexParameteri(TEXTURE_TYPE, GL_TEXTURE_MIN_FILTER, ctx->linear ? GL_LINEAR : GL_NEAREST);
-#endif
-
-			glDisable(TEXTURE_TYPE);
-		}
-
-		//sets uniforms: y, u, v textures point to texture slots 0, 1 and 2
-		glUseProgram(ctx->glsl_program);
-		for (i=0; i<ctx->num_textures; i++) {
-			const char *txname = (i==0) ? "y_plane" : (i==1) ? "u_plane" : "v_plane";
-			if (! ctx->is_yuv) txname = "rgbtx";
-			loc = glGetUniformLocation(ctx->glsl_program, txname);
-			if (loc == -1) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Failed to locate texture %s in %s shader\n", txname, ctx->is_yuv ? "YUV" : "RGB"));
-				continue;
-			}
-			glUniform1i(loc, i);
-		}
-		switch (ctx->pfmt) {
-		case GF_PIXEL_UYVY:
-		case GF_PIXEL_YUYV:
-		case GF_PIXEL_VYUY:
-		case GF_PIXEL_YVYU:
-			loc = glGetUniformLocation(ctx->glsl_program, "width");
-			if (loc == -1) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Failed to locate width uniform in shader\n"));
-			} else {
-				glUniform1f(loc, (GLfloat) ctx->width);
-			}
-			break;
-		default:
-			if (!ctx->is_yuv) {
-				loc = glGetUniformLocation(ctx->glsl_program, "rgb_mode");
-				if (loc == -1) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Failed to locate rgb_mode uniform in shader\n"));
-				} else {
-					glUniform1i(loc, rgb_mode);
-				}
-			}
-			break;
-		}
-		glUseProgram(0);
 
 #ifdef WIN32
 		if (glMapBuffer == NULL) {
@@ -978,41 +518,6 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 				GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[VideoOut] GL PixelBufferObject extensions not found, fallback to regular GL\n"));
 				ctx->disp = MODE_GL;
 			}
-		}
-#endif
-
-		ctx->first_tx_load = GF_TRUE;
-#if !defined(GPAC_DISABLE_3D) && !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
-		if (ctx->is_yuv && (ctx->disp==MODE_GL_PBO)) {
-			ctx->first_tx_load = GF_FALSE;
-			glGenBuffers(1, &ctx->pbo_Y);
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_Y);
-
-			if (ctx->num_textures>1) {
-				glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->bytes_per_pix * ctx->width*ctx->height, NULL, GL_DYNAMIC_DRAW_ARB);
-
-				glGenBuffers(1, &ctx->pbo_U);
-				glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_U);
-			} else {
-				//packed YUV
-				glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->bytes_per_pix * 4*ctx->width/2*ctx->height, NULL, GL_DYNAMIC_DRAW_ARB);
-
-			}
-
-			if (ctx->num_textures==3) {
-				glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->bytes_per_pix * ctx->uv_w*ctx->uv_h, NULL, GL_DYNAMIC_DRAW_ARB);
-
-				glGenBuffers(1, &ctx->pbo_V);
-				glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_V);
-				glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->bytes_per_pix * ctx->uv_w*ctx->uv_h, NULL, GL_DYNAMIC_DRAW_ARB);
-			}
-			//nv12/21
-			else {
-				glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->bytes_per_pix * 2*ctx->uv_w*ctx->uv_h, NULL, GL_DYNAMIC_DRAW_ARB);
-
-			}
-
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
 		}
 #endif
 
@@ -1044,7 +549,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 			glDisable(GL_BLEND);
 		}
 	} else
-#endif
+#endif //VOUT_USE_OPENGL
 	{
 		switch (ctx->pfmt) {
 		case GF_PIXEL_NV12:
@@ -1111,6 +616,9 @@ static Bool vout_on_event(void *cbk, GF_Event *evt)
 	 return GF_TRUE;
 }
 
+GF_VideoOutput *gf_filter_claim_opengl_provider(GF_Filter *filter);
+Bool gf_filter_unclaim_opengl_provider(GF_Filter *filter, GF_VideoOutput *vout);
+
 static GF_Err vout_initialize(GF_Filter *filter)
 {
 	const char *sOpt;
@@ -1121,7 +629,14 @@ static GF_Err vout_initialize(GF_Filter *filter)
 
 	ctx->filter = filter;
 
-	ctx->video_out = (GF_VideoOutput *) gf_module_load(GF_VIDEO_OUTPUT_INTERFACE, ctx->drv);
+#ifdef VOUT_USE_OPENGL
+	if (ctx->disp <= MODE_GL_PBO) {
+		ctx->video_out = (GF_VideoOutput *) gf_filter_claim_opengl_provider(filter);
+	}
+#endif
+
+	if (!ctx->video_out)
+		ctx->video_out = (GF_VideoOutput *) gf_module_load(GF_VIDEO_OUTPUT_INTERFACE, ctx->drv);
 
 
 	if (ctx->dumpframes.nb_items) {
@@ -1162,17 +677,16 @@ static GF_Err vout_initialize(GF_Filter *filter)
 		return e;
 	}
 
-	if ( !(ctx->video_out->hw_caps & GF_VIDEO_HW_OPENGL)
-#ifdef GPAC_DISABLE_3D
-	|| (1)
+#ifdef VOUT_USE_OPENGL
+	if ( !(ctx->video_out->hw_caps & GF_VIDEO_HW_OPENGL) )
 #endif
-	) {
+	{
 		if (ctx->disp < MODE_2D) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("No openGL support - using 2D rasterizer!\n", ctx->video_out->module_name));
 			ctx->disp = MODE_2D;
 		}
 	}
-#ifndef GPAC_DISABLE_3D
+#ifdef VOUT_USE_OPENGL
 	if (ctx->disp <= MODE_GL_PBO) {
 		GF_Event evt;
 		memset(&evt, 0, sizeof(GF_Event));
@@ -1191,6 +705,7 @@ static GF_Err vout_initialize(GF_Filter *filter)
 	}
 #endif
 
+	gf_filter_set_event_target(filter, GF_TRUE);
 	return GF_OK;
 }
 
@@ -1208,49 +723,32 @@ static void vout_finalize(GF_Filter *filter)
 		gf_sleep(holdms);
 	}
 
-#ifndef GPAC_DISABLE_3D
+#ifdef VOUT_USE_OPENGL
 	DEL_SHADER(ctx->vertex_shader);
 	DEL_SHADER(ctx->fragment_shader);
 	DEL_PROGRAM(ctx->glsl_program );
-	if (ctx->pbo_Y) glDeleteBuffers(1, &ctx->pbo_Y);
-	if (ctx->pbo_U) glDeleteBuffers(1, &ctx->pbo_U);
-	if (ctx->pbo_V) glDeleteBuffers(1, &ctx->pbo_V);
-	if (ctx->num_textures && ctx->txid[0])
-		glDeleteTextures(ctx->num_textures, ctx->txid);
-#endif //GPAC_DISABLE_3D
+	gf_gl_txw_reset(&ctx->tx);
+#endif //VOUT_USE_OPENGL
 
 	/*stop and shutdown*/
 	if (ctx->video_out) {
-		ctx->video_out->Shutdown(ctx->video_out);
-		gf_modules_close_interface((GF_BaseInterface *)ctx->video_out);
+		if (! gf_filter_unclaim_opengl_provider(filter, ctx->video_out)) {
+			ctx->video_out->Shutdown(ctx->video_out);
+			gf_modules_close_interface((GF_BaseInterface *)ctx->video_out);
+		}
 		ctx->video_out = NULL;
 	}
 	if (ctx->dump_buffer) gf_free(ctx->dump_buffer);
 
 }
 
-#ifndef GPAC_DISABLE_3D
+#ifdef VOUT_USE_OPENGL
 
-static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool from_textures)
+static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 {
 	Float dw, dh;
-	glUseProgram(ctx->glsl_program);
 
-	if (ctx->num_textures>2) {
-		glActiveTexture(GL_TEXTURE2);
-		glBindTexture(TEXTURE_TYPE, ctx->txid[2]);
-	}
-	if (ctx->num_textures>1) {
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(TEXTURE_TYPE, ctx->txid[1]);
-	}
-	if (ctx->num_textures) {
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(TEXTURE_TYPE, ctx->txid[0]);
-
-		glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-		glClientActiveTexture(GL_TEXTURE0);
-	}
+	gf_gl_txw_bind(&ctx->tx, "maintx", ctx->glsl_program, 0);
 
 	dw = ((Float)ctx->dw) / 2;
 	dh = ((Float)ctx->dh) / 2;
@@ -1269,8 +767,8 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool from_textures)
 		0.0f,  1.0f,
 		0.0f,  0.0f,
 	};
-	//drawing from textures, don't flip y coordinates
-	if (from_textures) {
+
+	if (flip_texture) {
 		textureVertices[1] = textureVertices[7] = 1.0f;
 		textureVertices[3] = textureVertices[5] = 0.0f;
 	}
@@ -1327,48 +825,30 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool from_textures)
 
 static void vout_draw_gl_hw_textures(GF_VideoOutCtx *ctx, GF_FilterFrameInterface *hwf)
 {
-	u32 gl_format, i;
-	GF_Matrix txmx;
-
-	if (ctx->internal_textures) {
-		//glDeleteTextures(ctx->num_textures, ctx->txid);
-		ctx->txid[0] = ctx->txid[1] = ctx->txid[2] = 0;
-		ctx->internal_textures = GF_FALSE;
+	if (ctx->tx.internal_textures) {
+		glDeleteTextures(ctx->tx.nb_textures, ctx->tx.textures);
+		ctx->tx.internal_textures = GF_FALSE;
 	}
+	ctx->tx.frame_ifce = hwf;
+	gf_gl_txw_bind(&ctx->tx, "maintx", ctx->glsl_program, 0);
+
 	glMatrixMode(GL_TEXTURE);
 	glLoadIdentity();
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	gf_mx_init(txmx);
-	for (i=0; i<ctx->num_textures; i++) {
-		if (hwf->get_gl_texture(hwf, 0, &gl_format, &ctx->txid[i], &txmx) != GF_OK) {
-			if (!i) return;
-			break;
-		}
-		glEnable(gl_format);
-		glBindTexture(gl_format, ctx->txid[i]);
-		glTexParameteri(gl_format, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(gl_format, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-//		glTexParameteri(gl_format, GL_TEXTURE_MAG_FILTER, ctx->linear ? GL_LINEAR : GL_NEAREST);
-//		glTexParameteri(gl_format, GL_TEXTURE_MIN_FILTER, ctx->linear ? GL_LINEAR : GL_NEAREST);
-		glTexParameteri(gl_format, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	}
-
 	//and draw
-	vout_draw_gl_quad(ctx, GF_TRUE);
+	vout_draw_gl_quad(ctx, ctx->tx.flip ? GF_TRUE : GF_FALSE);
 	GL_CHECK_ERR()
 }
 
 static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 {
-	Bool use_stride = GF_FALSE;
 	char *data;
 	GF_Event evt;
 	GF_Matrix mx;
 	Float hw, hh;
-	u32 wsize, stride_luma, stride_chroma;
-	char *pY=NULL, *pU=NULL, *pV=NULL;
+	u32 wsize;
 	GF_FilterFrameInterface *frame_ifce;
 
 	if (!ctx->glsl_program) return;
@@ -1424,7 +904,15 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	glClearColor(0, 0, 0, 1.0);
+	if (ctx->has_alpha) {
+		Float r, g, b;
+		r = GF_COL_R(ctx->back); r /= 255;
+		g = GF_COL_G(ctx->back); g /= 255;
+		b = GF_COL_B(ctx->back); b /= 255;
+		glClearColor(r, g, b, 1.0);
+	} else {
+		glClearColor(0, 0, 0, 1.0);
+	}
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	//we are not sure if we are the only ones using the gl context, reset our defaults
@@ -1446,266 +934,20 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 		glClear(GL_COLOR_BUFFER_BIT);
 	}
 
-	stride_luma = ctx->stride;
-	stride_chroma = ctx->uv_stride;
+	glUseProgram(ctx->glsl_program);
+
+	if (frame_ifce && frame_ifce->get_gl_texture) {
+		vout_draw_gl_hw_textures(ctx, frame_ifce);
+		return;
+	}
 
 	data = (char*) gf_filter_pck_get_data(pck, &wsize);
-	if (!data) {
-		GF_Err e;
-		if (frame_ifce->flags & GF_FRAME_IFCE_BLOCKING)
-			ctx->force_release = GF_TRUE;
 
-		if (frame_ifce->get_gl_texture) {
-			vout_draw_gl_hw_textures(ctx, frame_ifce);
-			return;
-		}
-		e = frame_ifce->get_plane(frame_ifce, 0, (const u8 **) &pY, &stride_luma);
-		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Error fetching chroma plane from hardware frame\n"));
-			return;
-		}
-		data = pY;
-		pU = pV = NULL;
-		if (ctx->num_textures>1) {
-			e = frame_ifce->get_plane(frame_ifce, 1, (const u8 **) &pU, &stride_chroma);
-			if (e) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Error fetching luma U plane from hardware frame\n"));
-				return;
-			}
-		}
-		if (ctx->num_textures>2) {
-			e = frame_ifce->get_plane(frame_ifce, 2, (const u8 **) &pV, &stride_chroma);
-			if (e) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Error fetching luma V plane from hardware frame\n"));
-				return;
-			}
-		}
-	} else {
-		if (ctx->is_yuv) {
-			pY = data;
-			if (ctx->num_textures>1) {
-				pU = pY + ctx->stride*ctx->height;
-				if (ctx->num_textures>2) {
-					pV = pU + ctx->uv_stride * ctx->uv_h;
-				}
-			}
-		}
-	}
+	//upload texture
+	gf_gl_txw_upload(&ctx->tx, data, frame_ifce);
 
-	if (ctx->is_yuv && (stride_luma != ctx->width)) {
-		use_stride = GF_TRUE; //whether >8bits or real stride
-	}
-	if (ctx->swap_uv) {
-		char *tmp = pU;
-		pU = pV;
-		pV = tmp;
-	}
-
-	glEnable(TEXTURE_TYPE);
-
-	if (!ctx->is_yuv) {
-		glBindTexture(TEXTURE_TYPE, ctx->txid[0] );
-		if (use_stride) {
-#if !defined(GPAC_GL_NO_STRIDE)
-			glPixelStorei(GL_UNPACK_ROW_LENGTH, ctx->stride / ctx->bytes_per_pix);
-#endif
-
-		}
-		if (ctx->first_tx_load) {
-			glTexImage2D(TEXTURE_TYPE, 0, ctx->pixel_format, ctx->width, ctx->height, 0, ctx->pixel_format, GL_UNSIGNED_BYTE, data);
-			ctx->first_tx_load = GF_FALSE;
-		} else {
-			glTexSubImage2D(TEXTURE_TYPE, 0, 0, 0, ctx->width, ctx->height, ctx->pixel_format, ctx->memory_format, data);
-		}
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-#endif
-	}
-#if !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
-	else if (ctx->disp==MODE_GL_PBO) {
-		u32 i, linesize, count, p_stride;
-		u8 *ptr;
-
-		//packed YUV
-		if (ctx->num_textures==1) {
-
-			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_Y);
-			ptr =(u8 *)glMapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY_ARB);
-
-			linesize = ctx->width/2 * ctx->bytes_per_pix * 4;
-			p_stride = stride_luma;
-			count = ctx->height;
-
-			for (i=0; i<count; i++) {
-				memcpy(ptr, pY, linesize);
-				pY += p_stride;
-				ptr += linesize;
-			}
-
-			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB);
-
-			glBindTexture(TEXTURE_TYPE, ctx->txid[0] );
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_Y);
-			glTexImage2D(TEXTURE_TYPE, 0, GL_RGBA, ctx->width/2, ctx->height, 0, GL_RGBA, ctx->memory_format, NULL);
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
-		} else {
-			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_Y);
-			ptr =(u8 *)glMapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY_ARB);
-
-			linesize = ctx->width*ctx->bytes_per_pix;
-			p_stride = stride_luma;
-			count = ctx->height;
-
-			for (i=0; i<count; i++) {
-				memcpy(ptr, pY, linesize);
-				pY += p_stride;
-				ptr += linesize;
-			}
-
-			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB);
-
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_U);
-			ptr =(u8 *)glMapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY_ARB);
-
-			linesize = ctx->uv_w * ctx->bytes_per_pix;
-			p_stride = stride_chroma;
-			count = ctx->uv_h;
-			//NV12 and  NV21
-			if (!pV) {
-				linesize *= 2;
-			}
-
-			for (i=0; i<count; i++) {
-				memcpy(ptr, pU, linesize);
-				pU += p_stride;
-				ptr += linesize;
-			}
-
-			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB);
-
-			if (pV) {
-				glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_V);
-				ptr =(u8 *)glMapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY_ARB);
-
-				for (i=0; i<count; i++) {
-					memcpy(ptr, pV, linesize);
-					pV += p_stride;
-					ptr += linesize;
-				}
-
-				glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER_ARB);
-			}
-
-
-			glBindTexture(TEXTURE_TYPE, ctx->txid[0] );
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_Y);
-			glTexImage2D(TEXTURE_TYPE, 0, GL_LUMINANCE, ctx->width, ctx->height, 0, ctx->pixel_format, ctx->memory_format, NULL);
-
-			glBindTexture(TEXTURE_TYPE, ctx->txid[1] );
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_U);
-			glTexImage2D(TEXTURE_TYPE, 0, pV ? GL_LUMINANCE : GL_LUMINANCE_ALPHA, ctx->uv_w, ctx->uv_h, 0, pV ? GL_LUMINANCE : GL_LUMINANCE_ALPHA, ctx->memory_format, NULL);
-
-			if (pV) {
-				glBindTexture(TEXTURE_TYPE, ctx->txid[2] );
-				glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->pbo_V);
-				glTexImage2D(TEXTURE_TYPE, 0, GL_LUMINANCE, ctx->uv_w, ctx->uv_h, 0, ctx->pixel_format, ctx->memory_format, NULL);
-			}
-
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
-		}
-	}
-#endif
-	else if ((ctx->pfmt==GF_PIXEL_UYVY) || (ctx->pfmt==GF_PIXEL_YUYV) || (ctx->pfmt==GF_PIXEL_VYUY) || (ctx->pfmt==GF_PIXEL_YVYU)) {
-		u32 uv_stride = 0;
-		glBindTexture(TEXTURE_TYPE, ctx->txid[0] );
-
-		use_stride = GF_FALSE;
-		if (stride_luma > 2*ctx->width) {
-			//stride is given in bytes for packed formats, so divide by 2 to get the number of pixels
-			//for YUYV, and we upload as a texture with half the wsize so rdevide again by two
-			//since GL_UNPACK_ROW_LENGTH counts in component and we moved the set 2 bytes per comp on 10 bits
-			//no need to further divide
-			uv_stride = stride_luma/4;
-			use_stride = GF_TRUE;
-		}
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, uv_stride);
-#endif
-		if (ctx->first_tx_load) {
-			glTexImage2D(TEXTURE_TYPE, 0, GL_RGBA, ctx->width/2, ctx->height, 0, GL_RGBA, ctx->memory_format, pY);
-			ctx->first_tx_load = GF_FALSE;
-		} else {
-			glTexSubImage2D(TEXTURE_TYPE, 0, 0, 0, ctx->width/2, ctx->height, GL_RGBA, ctx->memory_format, pY);
-
-		}
-
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-#endif
-
-	}
-	else if (ctx->first_tx_load) {
-		glBindTexture(TEXTURE_TYPE, ctx->txid[0] );
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, stride_luma/ctx->bytes_per_pix);
-#endif
-		glTexImage2D(TEXTURE_TYPE, 0, GL_LUMINANCE, ctx->width, ctx->height, 0, ctx->pixel_format, ctx->memory_format, pY);
-
-		glBindTexture(TEXTURE_TYPE, ctx->txid[1] );
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, pV ? stride_chroma/ctx->bytes_per_pix : stride_chroma/ctx->bytes_per_pix/2);
-#endif
-		glTexImage2D(TEXTURE_TYPE, 0, pV ? GL_LUMINANCE : GL_LUMINANCE_ALPHA, ctx->uv_w, ctx->uv_h, 0, pV ? GL_LUMINANCE : GL_LUMINANCE_ALPHA, ctx->memory_format, pU);
-
-		if (pV) {
-			glBindTexture(TEXTURE_TYPE, ctx->txid[2] );
-#if !defined(GPAC_GL_NO_STRIDE)
-			if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, stride_chroma/ctx->bytes_per_pix);
-#endif
-			glTexImage2D(TEXTURE_TYPE, 0, GL_LUMINANCE, ctx->uv_w, ctx->uv_h, 0, ctx->pixel_format, ctx->memory_format, pV);
-		}
-
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-#endif
-		ctx->first_tx_load = GF_FALSE;
-	}
-	else {
-		glBindTexture(TEXTURE_TYPE, ctx->txid[0] );
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, stride_luma/ctx->bytes_per_pix);
-#endif
-		glTexSubImage2D(TEXTURE_TYPE, 0, 0, 0, ctx->width, ctx->height, ctx->pixel_format, ctx->memory_format, pY);
-		glBindTexture(TEXTURE_TYPE, 0);
-
-		glBindTexture(TEXTURE_TYPE, ctx->txid[1] );
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, pV ? stride_chroma/ctx->bytes_per_pix : stride_chroma/ctx->bytes_per_pix/2);
-#endif
-		glTexSubImage2D(TEXTURE_TYPE, 0, 0, 0, ctx->uv_w, ctx->uv_h, pV ? GL_LUMINANCE : GL_LUMINANCE_ALPHA, ctx->memory_format, pU);
-		glBindTexture(TEXTURE_TYPE, 0);
-
-		if (pV) {
-			glBindTexture(TEXTURE_TYPE, ctx->txid[2] );
-#if !defined(GPAC_GL_NO_STRIDE)
-			if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, stride_chroma/ctx->bytes_per_pix);
-#endif
-			glTexSubImage2D(TEXTURE_TYPE, 0, 0, 0, ctx->uv_w, ctx->uv_h, ctx->pixel_format, ctx->memory_format, pV);
-			glBindTexture(TEXTURE_TYPE, 0);
-		}
-
-#if !defined(GPAC_GL_NO_STRIDE)
-		if (use_stride) glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-#endif
-
-	}
 	//and draw
 	vout_draw_gl_quad(ctx, GF_FALSE);
-
 }
 #endif
 
@@ -1892,16 +1134,17 @@ static GF_Err vout_process(GF_Filter *filter)
 				ctx->last_pck_dur_us = 0;
 				return GF_OK;
 			}
-			return GF_EOS;
+			//fallthrough
 		}
-		//check if we have a clock hint from an audio output
+		//check if all sinks are done - if not keep requesting a process to pump window event loop
 		if (!gf_filter_all_sinks_done(filter)) {
 			gf_filter_ask_rt_reschedule(filter, 100000);
 			if (ctx->display_changed) goto draw_frame;
 			return GF_OK;
 		}
-		return GF_OK;
+		return ctx->aborted ? GF_EOS : GF_OK;
 	}
+	
 	if (!ctx->width || !ctx->height) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] pid display wsize unknown, discarding packet\n"));
 		gf_filter_pid_drop_packet(ctx->pid);
@@ -1971,7 +1214,7 @@ static GF_Err vout_process(GF_Filter *filter)
 		u64 cts = gf_filter_pck_get_cts(pck);
 		u64 clock_us, now = gf_sys_clock_high_res();
 		Bool check_clock = GF_FALSE;
-		Double media_ts;
+		GF_Fraction64 media_ts;
 		s64 delay;
 
 		if (ctx->dur.num) {
@@ -1990,12 +1233,20 @@ static GF_Err vout_process(GF_Filter *filter)
 		}
 
 		delay = ctx->pid_delay;
-		if (ctx->delay.den)
-			delay += ctx->delay.num * (s32)ctx->timescale / (s32)ctx->delay.den;
+		if (ctx->vdelay.den)
+			delay += ctx->vdelay.num * (s32)ctx->timescale / (s32)ctx->vdelay.den;
 
-		if (delay>0) {
+		if (delay>=0) {
 			cts += delay;
 		} else if (cts < (u64) (-delay) ) {
+			if (ctx->vsync) {
+				if (ctx->last_pck) {
+					gf_filter_pck_unref(ctx->last_pck);
+					ctx->last_pck = NULL;
+				}
+				gf_filter_pid_drop_packet(ctx->pid);
+				return GF_OK;
+			}
 			cts = 0;
 		} else {
 			cts -= (u64) -delay;
@@ -2003,9 +1254,11 @@ static GF_Err vout_process(GF_Filter *filter)
 
 		//check if we have a clock hint from an audio output
 		gf_filter_get_clock_hint(filter, &clock_us, &media_ts);
-		if (clock_us) {
+		if (clock_us && media_ts.den) {
+			u32 safety;
 			//ref frame TS in video stream timescale
-			s64 ref_ts = (s64) (media_ts * ctx->timescale);
+			s64 ref_ts = (s64) (media_ts.num * ctx->timescale);
+			ref_ts /= media_ts.den;
 			//compute time ellapsed since last clock ref in timescale
 			s64 diff = now;
 			diff -= (s64) clock_us;
@@ -2017,23 +1270,21 @@ static GF_Err vout_process(GF_Filter *filter)
 			//ref stream hypothetical timestamp at now
 			ref_ts += diff;
 			ctx->first_cts_plus_one = cts + 1;
-			cts *= 1000;
-			cts/=ctx->timescale;
-			ref_ts *= 1000;
-			ref_ts /= ctx->timescale;
 
 			//allow 10ms video advance
-#define DEF_VIDEO_AUDIO_ADVANCE_MS	15
-			if (!ctx->raw_grab && ((s64) cts > ref_ts + DEF_VIDEO_AUDIO_ADVANCE_MS)) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] At %d ms display frame "LLU" ms greater than reference clock "LLU" ms, waiting\n", gf_sys_clock(), cts, ref_ts));
+			#define DEF_VIDEO_AUDIO_ADVANCE_MS	15
+			safety = DEF_VIDEO_AUDIO_ADVANCE_MS * ctx->timescale / 1000;
+			if (!ctx->raw_grab && ((s64) cts > ref_ts + safety)) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] At %d ms display frame CTS "LLU" CTS greater than reference clock CTS "LLU" (%g sec), waiting\n", gf_sys_clock(), cts, ref_ts, ((Double)media_ts.num)/media_ts.den));
 				//the clock is not updated continuously, only when audio sound card writes. We therefore
 				//cannot know if the sampling was recent or old, so ask for a short reschedule time
-				gf_filter_ask_rt_reschedule(filter, (u32) ((cts-ref_ts) * 1000 - DEF_VIDEO_AUDIO_ADVANCE_MS*1000) );
+				gf_filter_ask_rt_reschedule(filter, (u32) ((cts-ref_ts - safety) * 1000000 / ctx->timescale) );
 				//not ready yet
 				return GF_OK;
 			}
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] At %d ms frame "LLU" ms latest reference clock "LLU" ms\n", gf_sys_clock(), cts, ref_ts));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] At %d ms frame CTS "LLU" latest reference clock CTS "LLU" (%g sec)\n", gf_sys_clock(), cts, ref_ts, ((Double)media_ts.num)/media_ts.den));
 			ref_clock = ref_ts;
+			check_clock = GF_TRUE;
 		} else if (!ctx->first_cts_plus_one) {
 			//init clock on second frame, first frame likely will have large rendering time
 			//due to GPU config. While this is not important for recorded media, it may impact
@@ -2145,8 +1396,10 @@ static GF_Err vout_process(GF_Filter *filter)
 		gf_filter_pid_drop_packet(ctx->pid);
 
 #ifndef GPAC_DISABLE_LOG
+#ifdef VOUT_USE_OPENGL
 		u64 cts = gf_filter_pck_get_cts(pck);
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] At %d ms display frame cts "LLU"/%d  "LLU" ms\n", gf_sys_clock(), cts, ctx->timescale, (1000*cts)/ctx->timescale));
+#endif
 #endif
 
 	}
@@ -2182,7 +1435,7 @@ static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx)
 {
 	ctx->force_release = GF_TRUE;
 	if (ctx->pfmt && ctx->last_pck) {
-#ifndef GPAC_DISABLE_3D
+#ifdef VOUT_USE_OPENGL
 		if (ctx->disp < MODE_2D) {
 			gf_rmt_begin_gl(vout_draw_gl);
 			glGetError();
@@ -2218,6 +1471,14 @@ static Bool vout_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 		vout_set_caption(ctx);
 		return GF_TRUE;
 	}
+	if (!fevt->base.on_pid && (fevt->base.type==GF_FEVT_USER)) {
+		GF_VideoOutCtx *ctx = (GF_VideoOutCtx *) gf_filter_get_udta(filter);
+		GF_Err e;
+		if (!ctx->video_out) return GF_FALSE;
+		e = ctx->video_out->ProcessEvent(ctx->video_out, (GF_Event *) &fevt->user_event.event);
+		if (e) return GF_FALSE;
+		return GF_TRUE;
+	}
 	//cancel
 	return GF_TRUE;
 }
@@ -2242,12 +1503,12 @@ static const GF_FilterArgs VideoOutArgs[] =
 	{ OFFS(back), "back color for transparent images", GF_PROP_UINT, "0x808080", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(wsize), "default init window size. 0x0 holds the window size of the first frame. Negative values indicate video media size", GF_PROP_VEC2I, "-1x-1", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(wpos), "default position (0,0 top-left)", GF_PROP_VEC2I, "-1x-1", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(delay), "set delay, positive value displays after audio clock", GF_PROP_FRACTION, "0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
+	{ OFFS(vdelay), "set delay in sec, positive value displays after audio clock", GF_PROP_FRACTION, "0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(hide), "hide output window", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(fullscreen), "use fullcreen", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(buffer), "set buffer in ms", GF_PROP_UINT, "100", NULL, 0},
-	{ OFFS(dumpframes), "ordered list of frames to dump, 1 being first frame - see filter help. Special value 0 means dump all frames.", GF_PROP_UINT_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(out), "radical of dump frame filenames. If no extension is provided, frames are exported as $OUT_%d.PFMT.", GF_PROP_STRING, "dump", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(dumpframes), "ordered list of frames to dump, 1 being first frame - see filter help. Special value 0 means dump all frames", GF_PROP_UINT_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(out), "radical of dump frame filenames. If no extension is provided, frames are exported as $OUT_%d.PFMT", GF_PROP_STRING, "dump", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -2285,3 +1546,9 @@ const GF_FilterRegister *vout_register(GF_FilterSession *session)
 {
 	return &VideoOutRegister;
 }
+#else
+const GF_FilterRegister *vout_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif // GPAC_DISABLE_PLAYER

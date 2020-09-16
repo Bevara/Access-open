@@ -156,9 +156,10 @@ struct __xhr_context
 
 	/* dom graph in which the XHR is created */
 	GF_SceneGraph *owning_graph;
+#ifndef GPAC_DISABLE_SVG
 	/* dom graph used to parse XML into */
 	GF_SceneGraph *document;
-
+#endif
 	Bool js_dom_loaded;
 };
 
@@ -326,13 +327,14 @@ static void xml_http_reset(XMLHTTPContext *ctx)
 		gf_list_del(ctx->node_stack);
 		ctx->node_stack = NULL;
 	}
+#ifndef GPAC_DISABLE_SVG
 	if (ctx->document) {
 		if (ctx->js_dom_loaded) {
 			dom_js_unload();
 			ctx->js_dom_loaded = GF_FALSE;
 		}
-
 		gf_node_unregister(ctx->document->RootNode, NULL);
+
 		/*we're sure the graph is a "nomade" one since we initially put the refcount to 1 ourselves*/
 		ctx->document->reference_count--;
 		if (!ctx->document->reference_count) {
@@ -341,6 +343,7 @@ static void xml_http_reset(XMLHTTPContext *ctx)
 		}
 	}
 	ctx->document = NULL;
+#endif
 	ctx->size = 0;
 	ctx->async = GF_FALSE;
 	ctx->readyState = XHR_READYSTATE_UNSENT;
@@ -360,8 +363,10 @@ static void xml_http_finalize(JSRuntime *rt, JSValue obj)
 	JS_FreeValueRT(rt, ctx->onreadystatechange);
 	JS_FreeValueRT(rt, ctx->ontimeout);
 	xml_http_reset(ctx);
+#ifndef GPAC_DISABLE_SVG
 	if (ctx->event_target)
 		gf_dom_event_target_del(ctx->event_target);
+#endif
 
 	gf_free(ctx);
 }
@@ -375,6 +380,7 @@ static GFINLINE GF_SceneGraph *xml_get_scenegraph(JSContext *c)
 	return scene;
 }
 
+#ifndef GPAC_DISABLE_SVG
 void xhr_get_event_target(JSContext *c, JSValue obj, GF_SceneGraph **sg, GF_DOMEventTarget **target)
 {
 	if (c) {
@@ -385,8 +391,8 @@ void xhr_get_event_target(JSContext *c, JSValue obj, GF_SceneGraph **sg, GF_DOME
 		*sg = xml_get_scenegraph(c);
 		*target = ctx->event_target;
 	}
-
 }
+#endif
 
 static JSValue xml_http_constructor(JSContext *c, JSValueConst new_target, int argc, JSValueConst *argv)
 {
@@ -402,8 +408,10 @@ static JSValue xml_http_constructor(JSContext *c, JSValueConst new_target, int a
 	p->c = c;
 	p->_this = obj;
 	p->owning_graph = xml_get_scenegraph(c);
+#ifndef GPAC_DISABLE_SVG
 	if (p->owning_graph)
 		p->event_target = gf_dom_event_target_new(GF_DOM_EVENT_TARGET_XHR, p);
+#endif
 
 	p->onabort = JS_NULL;
 	p->onerror = JS_NULL;
@@ -420,6 +428,7 @@ static JSValue xml_http_constructor(JSContext *c, JSValueConst new_target, int a
 
 static void xml_http_fire_event(XMLHTTPContext *ctx, GF_EventType evtType)
 {
+#ifndef GPAC_DISABLE_SVG
 	GF_DOM_Event xhr_evt;
 	if (!ctx->event_target)
 		return;
@@ -429,7 +438,9 @@ static void xml_http_fire_event(XMLHTTPContext *ctx, GF_EventType evtType)
 	xhr_evt.target = ctx->event_target->ptr;
 	xhr_evt.target_type = ctx->event_target->ptr_type;
 	gf_sg_fire_dom_event(ctx->event_target, &xhr_evt, ctx->owning_graph, NULL);
+#endif
 }
+
 
 static void xml_http_state_change(XMLHTTPContext *ctx)
 {
@@ -556,6 +567,9 @@ static JSValue xml_http_set_header(JSContext *c, JSValueConst obj, int argc, JSV
 	JS_FreeCString(c, val);
 	return JS_TRUE;
 }
+
+#ifndef GPAC_DISABLE_SVG
+
 static void xml_http_sax_start(void *sax_cbck, const char *node_name, const char *name_space, const GF_XMLAttribute *attributes, u32 nb_attributes)
 {
 	u32 i;
@@ -627,6 +641,7 @@ static void xml_http_sax_text(void *sax_cbck, const char *content, Bool is_cdata
 		txt->type = is_cdata ? GF_DOM_TEXT_CDATA : GF_DOM_TEXT_REGULAR;
 	}
 }
+#endif // GPAC_DISABLE_SVG
 
 static void xml_http_terminate(XMLHTTPContext *ctx, GF_Err error)
 {
@@ -681,10 +696,10 @@ static void xml_http_on_data(void *usr_cbk, GF_NETIO_Parameter *parameter)
 	switch (parameter->msg_type) {
 	case GF_NETIO_SETUP:
 		/*nothing to do*/
-		return;
+		goto exit;
 	case GF_NETIO_CONNECTED:
 		/*nothing to do*/
-		return;
+		goto exit;
 	case GF_NETIO_WAIT_FOR_REPLY:
 		/*reset send() state (data, current header) and prepare recv headers*/
 		xml_http_reset_partial(ctx);
@@ -696,7 +711,7 @@ static void xml_http_on_data(void *usr_cbk, GF_NETIO_Parameter *parameter)
 			if (JS_IsException(rval)) js_dump_error(ctx->c);
 			JS_FreeValue(ctx->c, rval);
 		}
-		return;
+		goto exit;
 	/*this is signaled sent AFTER headers*/
 	case GF_NETIO_PARSE_REPLY:
 		ctx->html_status = parameter->reply;
@@ -713,29 +728,31 @@ static void xml_http_on_data(void *usr_cbk, GF_NETIO_Parameter *parameter)
 			if (JS_IsException(rval)) js_dump_error(ctx->c);
 			JS_FreeValue(ctx->c, rval);
 		}
-		return;
+		goto exit;
 
 	case GF_NETIO_GET_METHOD:
 		parameter->name = ctx->method;
-		return;
+		goto exit;
 	case GF_NETIO_GET_HEADER:
 		if (ctx->headers && ctx->headers[2*ctx->cur_header]) {
 			parameter->name = ctx->headers[2*ctx->cur_header];
 			parameter->value = ctx->headers[2*ctx->cur_header+1];
 			ctx->cur_header++;
 		}
-		return;
+		goto exit;
 	case GF_NETIO_GET_CONTENT:
 		if (ctx->data) {
 			parameter->data = ctx->data;
 			parameter->size = (u32) strlen(ctx->data);
 		}
-		return;
+		goto exit;
 	case GF_NETIO_PARSE_HEADER:
 		xml_http_append_recv_header(ctx, parameter->name, parameter->value);
 		/*prepare SAX parser*/
-		if (ctx->responseType != XHR_RESPONSETYPE_SAX) return;
-		if (strcmp(parameter->name, "Content-Type")) return;
+		if (ctx->responseType != XHR_RESPONSETYPE_SAX) goto exit;
+		if (strcmp(parameter->name, "Content-Type")) goto exit;
+
+#ifndef GPAC_DISABLE_SVG
 		if (!strncmp(parameter->value, "application/xml", 15)
 		        || !strncmp(parameter->value, "text/xml", 8)
 		        || strstr(parameter->value, "+xml")
@@ -749,7 +766,9 @@ static void xml_http_on_data(void *usr_cbk, GF_NETIO_Parameter *parameter)
 			/*mark this doc as "nomade", and let it leave until all references to it are destroyed*/
 			ctx->document->reference_count = 1;
 		}
-		return;
+#endif
+
+		goto exit;
 	case GF_NETIO_DATA_EXCHANGE:
 		if (parameter->data && parameter->size) {
 			if (ctx->sax) {
@@ -760,7 +779,7 @@ static void xml_http_on_data(void *usr_cbk, GF_NETIO_Parameter *parameter)
 					gf_xml_sax_del(ctx->sax);
 					ctx->sax = NULL;
 				}
-				return;
+				goto exit;
 			}
 
 			/*detach arraybuffer if any*/
@@ -801,12 +820,12 @@ static void xml_http_on_data(void *usr_cbk, GF_NETIO_Parameter *parameter)
 				JS_FreeValue(ctx->c, prog_evt);
 			}
 		}
-		return;
+		goto exit;
 	case GF_NETIO_DATA_TRANSFERED:
 		/* No return, go till the end of the function */
 		break;
 	case GF_NETIO_DISCONNECTED:
-		return;
+		goto exit;
 	case GF_NETIO_STATE_ERROR:
 		ctx->ret_code = parameter->error;
 		/* No return, go till the end of the function */
@@ -815,6 +834,11 @@ static void xml_http_on_data(void *usr_cbk, GF_NETIO_Parameter *parameter)
 	}
 	if (ctx->async) {
 		xml_http_terminate(ctx, parameter->error);
+	}
+
+exit:
+	if (locked) {
+		gf_js_lock(ctx->c, GF_FALSE);
 	}
 }
 
@@ -914,7 +938,7 @@ static JSValue xml_http_send(JSContext *c, JSValueConst obj, int argc, JSValueCo
 	scene = xml_get_scenegraph(c);
 	if (scene) {
 		par.dnld_man = NULL;
-		if (scene && scene->script_action)
+		if (scene->script_action)
 			scene->script_action(scene->script_action_cbck, GF_JSAPI_OP_GET_DOWNLOAD_MANAGER, NULL, &par);
 	} else {
 		par.dnld_man = jsf_get_download_manager(c);
@@ -1062,87 +1086,19 @@ static JSValue xml_http_get_header(JSContext *c, JSValueConst obj, int argc, JSV
 	return res;
 }
 
-static GF_Err xml_http_load_dom_node(XMLHTTPContext *ctx, GF_XMLNode *n, GF_DOMFullNode *par)
-{
-	u32 i, count;
-	GF_DOMFullAttribute *prev = NULL;
-	GF_DOMFullNode *node;
-
-	if (!n) return GF_OK;
-	if (!par && ctx->document->RootNode) {
-		return GF_NON_COMPLIANT_BITSTREAM;
-	}
-	/*construct text / cdata node*/
-	if (n->type != GF_XML_NODE_TYPE) {
-		u32 i, len;
-		GF_DOMText *txt;
-		/*basic check, remove all empty text nodes*/
-		len = (u32) strlen(n->name);
-		for (i=0; i<len; i++) {
-			if (!strchr(" \n\r\t", n->name[i])) break;
-		}
-		if (i==len) return GF_OK;
-		txt = gf_dom_add_text_node((GF_Node *)par, gf_strdup(n->name) );
-		txt->type = (n->type==GF_XML_CDATA_TYPE) ? GF_DOM_TEXT_CDATA : GF_DOM_TEXT_REGULAR;
-		return GF_OK;
-	}
-	/*construct DOM node*/
-	node = (GF_DOMFullNode *) gf_node_new(ctx->document, TAG_DOMFullNode);
-	node->name = gf_strdup(n->name);
-	if (n->ns)
-		node->ns = gf_sg_get_namespace_code(ctx->document, n->ns);
-
-	count = gf_list_count(n->attributes);
-	for (i=0; i<count; i++) {
-		GF_XMLAttribute *src_att = gf_list_get(n->attributes, i);
-		/* special case for 'xml:id' to be parsed as an ID
-		NOTE: we do not test for the 'id' attribute because without DTD we are not sure that it's an ID */
-		if (!stricmp(src_att->name, "xml:id")) {
-			u32 id = gf_sg_get_max_node_id(ctx->document) + 1;
-			gf_node_set_id((GF_Node *)node, id, src_att->value);
-		} else {
-			GF_DOMFullAttribute *att;
-			GF_SAFEALLOC(att, GF_DOMFullAttribute);
-			if (!att) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[XHR] Fail to allocate DOM attribute\n"));
-				continue;
-			}
-			att->tag = TAG_DOM_ATT_any;
-			att->name = gf_strdup(src_att->name);
-			att->data_type = (u16) DOM_String_datatype;
-			att->data = gf_svg_create_attribute_value(att->data_type);
-			*((char **)att->data) = gf_strdup(src_att->value);
-			if (prev) prev->next = (GF_DOMAttribute*)att;
-			else node->attributes = (GF_DOMAttribute*)att;
-			prev = att;
-		}
-	}
-	gf_node_register((GF_Node*)node, (GF_Node*)par);
-	if (par) {
-		gf_node_list_add_child(&par->children, (GF_Node*)node);
-	} else {
-		ctx->document->RootNode = (GF_Node*)node;
-	}
-	count = gf_list_count(n->content);
-	for (i=0; i<count; i++) {
-		GF_XMLNode *child = gf_list_get(n->content, i);
-		GF_Err e = xml_http_load_dom_node(ctx, child, node);
-		if (e) return e;
-	}
-	return GF_OK;
-}
-
+#ifndef GPAC_DISABLE_SVG
 static GF_Err xml_http_load_dom(XMLHTTPContext *ctx)
 {
 	GF_Err e;
 	GF_DOMParser *parser = gf_xml_dom_new();
 	e = gf_xml_dom_parse_string(parser, ctx->data);
 	if (!e) {
-		e = xml_http_load_dom_node(ctx, gf_xml_dom_get_root(parser), NULL);
+		e = gf_sg_init_from_xml_node(ctx->document, gf_xml_dom_get_root(parser));
 	}
 	gf_xml_dom_del(parser);
 	return e;
 }
+#endif //GPAC_DISABLE_SVG
 
 
 static JSValue xml_http_overrideMimeType(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv)
@@ -1154,7 +1110,6 @@ static JSValue xml_http_overrideMimeType(JSContext *c, JSValueConst obj, int arg
 	if (!JS_CHECK_STRING(argv[0])) return JS_EXCEPTION;
 	mime = JS_ToCString(c, argv[0]);
 	if (ctx->mime) gf_free(ctx->mime);
-	ctx->mime = NULL;
 	ctx->mime = gf_strdup(mime);
 	JS_FreeCString(c, mime);
 	return JS_TRUE;
@@ -1185,6 +1140,7 @@ static JSValue xml_http_getProperty(JSContext *c, JSValueConst obj, int magic)
 
 	case XHR_RESPONSEXML:
 		if (ctx->readyState<XHR_READYSTATE_LOADING) return JS_NULL;
+#ifndef GPAC_DISABLE_SVG
 		if (ctx->data) {
 			if (!ctx->document) {
 				ctx->document = gf_sg_new();
@@ -1200,6 +1156,9 @@ static JSValue xml_http_getProperty(JSContext *c, JSValueConst obj, int magic)
 		} else {
 			return JS_NULL;
 		}
+#else
+		return js_throw_err_msg(c, GF_NOT_SUPPORTED, "DOM support not included in buil");
+#endif
 
 	case XHR_RESPONSE:
 		if (ctx->readyState<XHR_READYSTATE_LOADING) return JS_NULL;
@@ -1218,6 +1177,7 @@ static JSValue xml_http_getProperty(JSContext *c, JSValueConst obj, int magic)
 				return JS_DupValue(c, ctx->arraybuffer);
 				break;
 			case XHR_RESPONSETYPE_DOCUMENT:
+#ifndef GPAC_DISABLE_SVG
 				if (ctx->data) {
 					if (!ctx->document) {
 						ctx->document = gf_sg_new();
@@ -1232,6 +1192,9 @@ static JSValue xml_http_getProperty(JSContext *c, JSValueConst obj, int magic)
 					return dom_document_construct_external(c, ctx->document);
 				}
 				return JS_NULL;
+#else
+				return js_throw_err_msg(c, GF_NOT_SUPPORTED, "DOM support not included in buil");
+#endif
 			case XHR_RESPONSETYPE_JSON:
 				return JS_ParseJSON(c, ctx->data, ctx->size, "responseJSON");
 			case XHR_RESPONSETYPE_PUSH:
@@ -1412,6 +1375,7 @@ static const JSCFunctionListEntry xhr_Funcs[] =
 	JS_CFUNC_DEF("send", 0, xml_http_send),
 	JS_CFUNC_DEF("setRequestHeader", 2, xml_http_set_header),
 	JS_CFUNC_DEF("wait", 0, xml_http_wait),
+
 	/*eventTarget interface*/
 	JS_DOM3_EVENT_TARGET_INTERFACE
 };
@@ -1440,9 +1404,7 @@ static JSValue xhr_load_class(JSContext *c)
 		xhrClass.class.gc_mark = xml_http_gc_mark;
 		JS_NewClass(JS_GetRuntime(c), xhrClass.class_id, &xhrClass.class);
 	}
-	JSValue proto = JS_UNDEFINED;
-
-	proto = JS_NewObjectClass(c, xhrClass.class_id);
+	JSValue proto = JS_NewObjectClass(c, xhrClass.class_id);
 	JS_SetPropertyFunctionList(c, proto, xhr_Funcs, countof(xhr_Funcs));
 	JS_SetClassProto(c, xhrClass.class_id, proto);
 	JS_SetPropertyStr(c, proto, "UNSENT",	JS_NewInt32(c, XHR_STATIC_UNSENT));

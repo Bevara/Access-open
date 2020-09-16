@@ -32,7 +32,7 @@
 
 #include <gpac/setup.h>
 
-#ifdef GPAC_HAS_QJS
+#if defined(GPAC_HAS_QJS)
 
 /*base SVG type*/
 #include <gpac/nodes_svg.h>
@@ -1003,7 +1003,7 @@ static JSValue canvas3d_set_matrix(JSContext *c, JSValueConst obj, int argc, JSV
 			if (len < 16) return JS_EXCEPTION;
 			for (i=0; i<16; i++) {
 				Double val=0;
-				JSValue v = JS_GetPropertyUint32(c, argv[0], i);
+				v = JS_GetPropertyUint32(c, argv[0], i);
 				s32 res = JS_ToFloat64(c, &val, v);
 				JS_FreeValue(c, v);
 				if (res) return JS_EXCEPTION;
@@ -1272,10 +1272,16 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 {
 	u32 op_idx, dim;
 	GF_Vec4 tmpl, tmpr;
-	GF_Vec4 *left_val=NULL, *right_val, *right2_val;
+	GF_Vec4 *left_val, *right_val, *right2_val;
 	u32 if_level=0;
 	u32 nif_level=0;
 	Bool cond_res;
+
+	//assign to dummy values, this will prevent any badly formated shader to assign a value to a NULL left-val or read a null right-val
+	tmpl.x = tmpl.y = tmpl.z = tmpl.q = 0;
+	left_val = &tmpl;
+	tmpr.x = tmpr.y = tmpr.z = tmpr.q = 0;
+	right_val = &tmpr;
 
 	for (op_idx=0; op_idx<shader->nb_ops; op_idx++) {
 		u32 next_idx, idx, var_idx;
@@ -1357,10 +1363,10 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 			left_val_type = COMP_V4;
 			norm_result = op->vai.vai->normalize;
 		} else if (op->left_value) {
-			u32 var_idx = op->left_value - EVG_FIRST_VAR_ID-1;
-			left_val = &shader->vars[var_idx].vecval;
-			left_val_type = shader->vars[var_idx].value_type;
-			left_val_type_ptr = & shader->vars[var_idx].value_type;
+			u32 l_var_idx = op->left_value - EVG_FIRST_VAR_ID-1;
+			left_val = &shader->vars[l_var_idx].vecval;
+			left_val_type = shader->vars[l_var_idx].value_type;
+			left_val_type_ptr = & shader->vars[l_var_idx].value_type;
 		}
 
 		if (op->right_value>EVG_FIRST_VAR_ID) {
@@ -1394,7 +1400,8 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 				return GF_FALSE;
 
 			right_val = &tmpr;
-			right_val->y = right_val->z = right_val->q = 0;
+			right_val->x = right_val->y = right_val->z = right_val->q = 0;
+			assert(va->nb_comp<=4);
 			for (j=0; j<va->nb_comp; j++) {
 				((Float *)right_val)[j] = va->values[va_idx+j];
 			}
@@ -1705,6 +1712,7 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 			else if (op->cond_type==EVG_OP_GREATER_EQUAL) { BASE_COND(>=) }
 			else if (op->cond_type==EVG_OP_EQUAL) { BASE_COND(==) }
 			else if (op->cond_type==EVG_OP_NOT_EQUAL) { BASE_COND(!=) }
+			else break;
 
 			if (cond_res) if_level++;
 			else nif_level++;
@@ -2597,6 +2605,8 @@ static JSValue canvas3d_new_shader(JSContext *ctx, JSValueConst obj, int argc, J
 	if (!argc) return JS_EXCEPTION;
 	JS_ToInt32(ctx, &mode, argv[0]);
 	GF_SAFEALLOC(shader, EVGShader);
+	if (!shader)
+		return js_throw_err(ctx, GF_OUT_OF_MEM);
 	shader->mode = mode;
 	res = JS_NewObjectClass(ctx, shader_class_id);
 	JS_SetOpaque(res, shader);
@@ -3382,7 +3392,8 @@ static JSValue mx2d_copy(JSContext *c, JSValueConst obj, int argc, JSValueConst 
 	GF_Matrix2D *mx = JS_GetOpaque(obj, mx2d_class_id);
 	if (!mx) return JS_EXCEPTION;
 	GF_SAFEALLOC(nmx, GF_Matrix2D);
-	if (!nmx) return JS_EXCEPTION;
+	if (!nmx)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	gf_mx2d_copy(*nmx, *mx);
 	nobj = JS_NewObjectClass(c, mx2d_class_id);
 	JS_SetOpaque(nobj, nmx);
@@ -3458,7 +3469,8 @@ static JSValue mx2d_constructor(JSContext *c, JSValueConst new_target, int argc,
 	JSValue obj;
 	GF_Matrix2D *mx;
 	GF_SAFEALLOC(mx, GF_Matrix2D);
-	if (!mx) return JS_EXCEPTION;
+	if (!mx)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	mx->m[MX2D_XX] = mx->m[MX2D_YY] = FIX_ONE;
 	obj = JS_NewObjectClass(c, mx2d_class_id);
 	JS_SetOpaque(obj, mx);
@@ -3493,7 +3505,8 @@ static JSValue colmx_constructor(JSContext *c, JSValueConst new_target, int argc
 	JSValue obj;
 	GF_ColorMatrix *cmx;
 	GF_SAFEALLOC(cmx, GF_ColorMatrix);
-	if (!cmx) return JS_EXCEPTION;
+	if (!cmx)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	gf_cmx_init(cmx);
 	obj = JS_NewObjectClass(c, colmx_class_id);
 	JS_SetOpaque(obj, cmx);
@@ -4096,13 +4109,12 @@ static JSValue path_outline(JSContext *c, JSValueConst obj, int argc, JSValueCon
 	dash.dashes = NULL;
 	dashes = JS_GetPropertyStr(c, argv[0], "dashes");
 	if (JS_IsArray(c, dashes) && !JS_IsNull(v)) {
-		u32 i;
 		v = JS_GetPropertyStr(c, dashes, "length");
 		JS_ToInt32(c, &dash.num_dash, v);
 		JS_FreeValue(c, v);
 		pen.dash_set = &dash;
 		dash.dashes = gf_malloc(sizeof(Fixed)*dash.num_dash);
-		for (i=0; i<dash.num_dash; i++) {
+		for (i=0; i<(int) dash.num_dash; i++) {
 			v = JS_GetPropertyUint32(c, dashes, i);
 			JS_ToFloat64(c, &d, v);
 			dash.dashes[i] = FLT2FIX(d);
@@ -4263,7 +4275,6 @@ static JSValue stencil_set_linear(JSContext *c, GF_EVGStencil *stencil, int argc
 	} else if (JS_IsObject(argv[idx])) {
 		GETIT(argv[idx], "x", end_x)
 		GETIT(argv[idx], "y", end_y)
-		idx=1;
 	} else if (argc>idx+1) {
 		if (JS_ToFloat64(c, &d, argv[idx])) return JS_EXCEPTION;
 		end_x = FLT2FIX(d);
@@ -4318,13 +4329,11 @@ static JSValue stencil_set_radial(JSContext *c, GF_EVGStencil *stencil, int argc
 	if (JS_IsObject(argv[idx])) {
 		GETIT(argv[idx], "x", rx)
 		GETIT(argv[idx], "y", ry)
-		idx+=1;
 	} else if (argc>idx+1) {
 		if (JS_ToFloat64(c, &d, argv[idx])) return JS_EXCEPTION;
 		rx = FLT2FIX(d);
 		if (JS_ToFloat64(c, &d, argv[idx+1])) return JS_EXCEPTION;
 		ry = FLT2FIX(d);
-		idx+=2;
 	}
 #undef GETIT
 	gf_evg_stencil_set_radial_gradient(stencil, cx, cy, fx, fy, rx, ry);
@@ -4804,6 +4813,8 @@ static JSValue texture_convert(JSContext *c, JSValueConst obj, int argc, JSValue
 	}
 
 	GF_SAFEALLOC(tx_hsv, GF_JSTexture);
+	if (!tx_hsv)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	tx_hsv->width = tx->width;
 	tx_hsv->height = tx->height;
 	tx_hsv->pf = dst_pf;
@@ -4912,6 +4923,8 @@ static JSValue texture_split(JSContext *c, JSValueConst obj, int argc, JSValueCo
 	}
 
 	GF_SAFEALLOC(tx_split, GF_JSTexture);
+	if (!tx_split)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	tx_split->width = src.width;
 	tx_split->height = src.height;
 	tx_split->pf = GF_PIXEL_GREYSCALE;
@@ -4947,7 +4960,7 @@ static JSValue texture_split(JSContext *c, JSValueConst obj, int argc, JSValueCo
 }
 static JSValue texture_convolution(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv)
 {
-	JSValue v, k, nobj;
+	JSValue v, kernv, nobj;
 	u32 i, j, kw=0, kh=0, kl=0, hkh, hkw;
 	s32 *kdata;
 	s32 knorm=0;
@@ -4972,15 +4985,15 @@ static JSValue texture_convolution(JSContext *c, JSValueConst obj, int argc, JSV
 		return JS_EXCEPTION;
 	if (!(kh%2) || !(kw%2))
 		return JS_EXCEPTION;
-	k = JS_GetPropertyStr(c, argv[0], "k");
-	if (JS_IsUndefined(k))
+	kernv = JS_GetPropertyStr(c, argv[0], "k");
+	if (JS_IsUndefined(kernv))
 		return JS_EXCEPTION;
 
-	v = JS_GetPropertyStr(c, k, "length");
+	v = JS_GetPropertyStr(c, kernv, "length");
 	JS_ToInt32(c, &kl, v);
 	JS_FreeValue(c, v);
 	if (kl < kw * kh) {
-		JS_FreeValue(c, k);
+		JS_FreeValue(c, kernv);
 		return JS_EXCEPTION;
 	}
 	kl = kw*kh;
@@ -4988,14 +5001,16 @@ static JSValue texture_convolution(JSContext *c, JSValueConst obj, int argc, JSV
 	for (j=0; j<kh; j++) {
 		for (i=0; i<kw; i++) {
 			u32 idx = j*kw + i;
-			v = JS_GetPropertyUint32(c, k, idx);
+			v = JS_GetPropertyUint32(c, kernv, idx);
 			JS_ToInt32(c, &kdata[idx] , v);
 			JS_FreeValue(c, v);
 		}
 	}
-	JS_FreeValue(c, k);
+	JS_FreeValue(c, kernv);
 
 	GF_SAFEALLOC(tx_conv, GF_JSTexture);
+	if (!tx_conv)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	tx_conv->width = tx->width;
 	tx_conv->height = tx->height;
 	tx_conv->pf = GF_PIXEL_RGB;
@@ -5034,9 +5049,10 @@ static JSValue texture_convolution(JSContext *c, JSValueConst obj, int argc, JSV
 
 			if (nb_pix!=kl) {
 				u32 n = knorm ? knorm : 1;
-				kr = (kr * kl / n / nb_pix);
-				kg = (kg * kl / n / nb_pix);
-				kb = (kb * kl / n / nb_pix);
+				if (nb_pix) n *= nb_pix;
+				kr = (kr * kl / n);
+				kg = (kg * kl / n);
+				kb = (kb * kl / n);
 			} else if (knorm) {
 				kr /= knorm;
 				kg /= knorm;
@@ -5089,7 +5105,7 @@ static JSValue texture_update(JSContext *c, JSValueConst obj, int argc, JSValueC
 		}
 		//create from filter packet
 		else if (jsf_is_packet(c, argv[0])) {
-			GF_Err e = jsf_get_filter_packet_planes(c, argv[0], &width, &height, &pf, &stride, &stride_uv, (const u8 **)&data, (const u8 **)&p_u, (const u8 **)&p_v, (const u8 **)&p_a);
+			e = jsf_get_filter_packet_planes(c, argv[0], &width, &height, &pf, &stride, &stride_uv, (const u8 **)&data, (const u8 **)&p_u, (const u8 **)&p_v, (const u8 **)&p_a);
 			if (e) return js_throw_err(c, e);
 		} else {
 			return js_throw_err(c, GF_BAD_PARAM);
@@ -5320,7 +5336,8 @@ static JSValue texture_constructor(JSContext *c, JSValueConst new_target, int ar
 	u8 *p_a=NULL;
 	GF_JSTexture *tx;
 	GF_SAFEALLOC(tx, GF_JSTexture);
-	if (!tx) return JS_EXCEPTION;
+	if (!tx)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	tx->stencil = gf_evg_stencil_new(GF_STENCIL_TEXTURE);
 	if (!tx->stencil) {
 		gf_free(tx);
@@ -5358,6 +5375,10 @@ static JSValue texture_constructor(JSContext *c, JSValueConst new_target, int ar
 		else if (jsf_is_packet(c, argv[0])) {
 			GF_Err e = jsf_get_filter_packet_planes(c, argv[0], &width, &height, &pf, &stride, &stride_uv, (const u8 **)&data, (const u8 **)&p_u, (const u8 **)&p_v, (const u8 **)&p_a);
 			if (e) goto error;
+
+			if (!stride) {
+				gf_pixel_get_size_info(pf, width, height, NULL, &stride, &stride_uv, NULL, NULL);
+			}
 		} else {
 			data = JS_GetArrayBuffer(c, &data_size, argv[0]);
 			if (data) {
@@ -5438,7 +5459,7 @@ done:
 error:
 	if (tx->stencil) gf_evg_stencil_delete(tx->stencil);
 	gf_free(tx);
-	return JS_EXCEPTION;
+	return js_throw_err_msg(c, GF_BAD_PARAM, "Failed to create texture");
 }
 
 Bool js_evg_is_texture(JSContext *ctx, JSValue this_obj)
@@ -5836,7 +5857,8 @@ static JSValue text_constructor(JSContext *c, JSValueConst new_target, int argc,
 	JSValue obj;
 	GF_JSText *txt;
 	GF_SAFEALLOC(txt, GF_JSText);
-	if (!txt) return JS_EXCEPTION;
+	if (!txt)
+		return js_throw_err(c, GF_OUT_OF_MEM);
 	txt->fm = jsf_get_font_manager(c);
 
 	if (!txt->fm) {
@@ -6292,6 +6314,8 @@ static JSValue mx_constructor(JSContext *ctx, JSValueConst new_target, int argc,
 	JSValue res;
 	GF_Matrix *mx;
 	GF_SAFEALLOC(mx, GF_Matrix);
+	if (!mx)
+		return js_throw_err(ctx, GF_OUT_OF_MEM);
 	gf_mx_init(*mx);
 	res = JS_NewObjectClass(ctx, matrix_class_id);
 	JS_SetOpaque(res, mx);
@@ -6602,6 +6626,10 @@ void qjs_module_init_evg(JSContext *ctx)
     return;
 }
 
+#else
+void qjs_module_init_evg(void *ctx)
+{
 
+}
 #endif
 

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018
+ *			Copyright (c) Telecom ParisTech 2018-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / video cropping filter
@@ -183,6 +183,7 @@ static GF_Err vcrop_process(GF_Filter *filter)
 		GF_VCropFrame *vframe = gf_list_pop_back(ctx->frames_res);
 		if (!vframe) {
 			GF_SAFEALLOC(vframe, GF_VCropFrame);
+			if (!vframe) return GF_OUT_OF_MEM;
 		}
 		vframe->ctx = ctx;
 		memcpy(vframe->stride, ctx->src_stride, sizeof(vframe->stride));
@@ -237,6 +238,9 @@ static GF_Err vcrop_process(GF_Filter *filter)
 		dst_planes[1] = output + ctx->dst_stride[0] * ctx->dst_height;
 		dst_planes[2] = dst_planes[1] + ctx->dst_stride[1]*ctx->dst_uv_height;
 		dst_planes[3] = dst_planes[2] + ctx->dst_stride[2]*ctx->dst_uv_height;
+	} else {
+		gf_filter_pid_drop_packet(ctx->ipid);
+		return GF_NOT_SUPPORTED;
 	}
 
 	if (do_memset) {
@@ -274,7 +278,7 @@ static GF_Err vcrop_process(GF_Filter *filter)
 			src += ctx->src_stride[1];
 			dst += ctx->dst_stride[1];
 		}
-	} else if (ctx->nb_planes>=3) {
+	} else if ((ctx->nb_planes==3) || (ctx->nb_planes==4)) {
 		u32 div_x, div_y;
 		//alpha/depth/other plane, treat as luma plane
 		if (ctx->nb_planes==4) {
@@ -585,7 +589,7 @@ static GF_FilterArgs VCropArgs[] =
 {
 	{ OFFS(wnd), "size of output to crop, indicated as TxLxWxH. If % is indicated after a number, the value is in percent of the source width (for L and W) or height (for T and H). An absolute offset (+x, -x) can be added after percent", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(copy), "copy the source pixels. By default the filter will try to forward crop frames by adjusting offsets and strides of the source if possible (window contained in frame)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(round), "adjust dimension to be a multiple of 2.\n"
+	{ OFFS(round), "adjust dimension to be a multiple of 2\n"
 	"- up: up rounding\n"
 	"- down: down rounding\n"
 	"- allup: up rounding on formats that do not require it (RGB, YUV444)\n"

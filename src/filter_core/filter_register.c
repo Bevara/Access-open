@@ -88,6 +88,7 @@ const GF_FilterRegister *avidmx_register(GF_FilterSession *session);
 const GF_FilterRegister *txtin_register(GF_FilterSession *session);
 const GF_FilterRegister *ttxtdec_register(GF_FilterSession *session);
 const GF_FilterRegister *vttdec_register(GF_FilterSession *session);
+const GF_FilterRegister *ttmldec_register(GF_FilterSession *session);
 const GF_FilterRegister *rtpin_register(GF_FilterSession *session);
 const GF_FilterRegister *fileout_register(GF_FilterSession *session);
 const GF_FilterRegister *adtsmx_register(GF_FilterSession *session);
@@ -140,16 +141,17 @@ const GF_FilterRegister *jsfilter_register(GF_FilterSession *session);
 const GF_FilterRegister *m2tssplit_register(GF_FilterSession *session);
 const GF_FilterRegister *httpout_register(GF_FilterSession *session);
 
-#ifdef GPAC_HAVE_DTAPI
-const GF_FilterRegister *dtout_register(GF_FilterSession *session)
+#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
+const GF_FilterRegister *dtout_register(GF_FilterSession *session);
 #endif
 
-#ifdef GPAC_CONFIG_ANDROID
+#if !defined(GPAC_CONFIG_IOS)
 const GF_FilterRegister *mcdec_register(GF_FilterSession *session);
 #endif
 
 const GF_FilterRegister *flac_dmx_register(GF_FilterSession *session);
 const GF_FilterRegister *proresdmx_register(GF_FilterSession *session);
+const GF_FilterRegister *bsrw_register(GF_FilterSession *session);
 
 void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 {
@@ -184,7 +186,7 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, osvcdec_register(a_sess) );
 	gf_fs_add_filter_register(fsess, vtbdec_register(a_sess) );
 
-#ifdef GPAC_CONFIG_ANDROID
+#if !defined(GPAC_CONFIG_IOS)
 	gf_fs_add_filter_register(fsess, mcdec_register(a_sess) );
 #endif
 
@@ -208,6 +210,7 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, txtin_register(a_sess) );
 	gf_fs_add_filter_register(fsess, ttxtdec_register(a_sess) );
 	gf_fs_add_filter_register(fsess, vttdec_register(a_sess) );
+	gf_fs_add_filter_register(fsess, ttmldec_register(a_sess) );
 	gf_fs_add_filter_register(fsess, rtpin_register(a_sess) );
 	gf_fs_add_filter_register(fsess, fileout_register(a_sess) );
 	gf_fs_add_filter_register(fsess, latm_mx_register(a_sess) );
@@ -261,6 +264,7 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, flac_dmx_register(a_sess));
 	gf_fs_add_filter_register(fsess, proresdmx_register(a_sess));
 	gf_fs_add_filter_register(fsess, m2tssplit_register(a_sess));
+	gf_fs_add_filter_register(fsess, bsrw_register(a_sess));
 
 	gf_fs_add_filter_register(fsess, ffdmx_register(a_sess) );
 	gf_fs_add_filter_register(fsess, ffdec_register(a_sess) );
@@ -271,6 +275,10 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, ffavf_register(a_sess) );
 
 	gf_fs_add_filter_register(fsess, jsfilter_register(a_sess) );
+
+#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
+	gf_fs_add_filter_register(fsess, dtout_register(a_sess) );
+#endif
 }
 
 GF_EXPORT

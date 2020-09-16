@@ -90,7 +90,7 @@ static GF_Err gf_dump_to_ogg(GF_MediaExporter *dumper, char *szName, u32 track)
 	if (gf_sys_is_test_mode()) {
 		ogg_stream_init(&os, 1);
 	} else {
-		gf_rand_init(1);
+		gf_rand_init(GF_TRUE);
 		ogg_stream_init(&os, gf_rand());
 	}
 
@@ -231,8 +231,12 @@ static GF_Err gf_dump_to_vobsub(GF_MediaExporter *dumper, char *szName, u32 trac
 	GF_ISOSample *samp;
 	char *lang = NULL;
 
+	if (!szName) {
+		szName = gf_file_basename(gf_isom_get_filename(dumper->file));
+		if (!szName) return GF_BAD_PARAM;
+	}
 	/* Check decoder specific information (palette) size - should be 64 */
-	if (dsiSize != 64) {
+	if (!dsi || (dsiSize != 64)) {
 		return gf_export_message(dumper, GF_CORRUPTED_DATA, "Invalid decoder specific info size - must be 64 but is %d", dsiSize);
 	}
 
@@ -540,7 +544,7 @@ GF_Err gf_media_export_isom(GF_MediaExporter *dumper)
 		dumper->flags |= GF_EXPORT_MERGE;
 		return GF_OK;
 	}
-	if (gf_file_ext_start(dumper->out_name)) {
+	if (dumper->out_name && gf_file_ext_start(dumper->out_name)) {
 		strcpy(szName, dumper->out_name);
 	} else {
 		char *ext = (char *) gf_isom_get_filename(dumper->file);
@@ -829,7 +833,9 @@ GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 	FILE *media, *six;
 	u32 track, i, di, count, pos, header_size;
 	//u32 mtype;
+#if !defined(GPAC_DISABLE_TTXT) && !defined(GPAC_DISABLE_VTT)
 	u32 mstype;
+#endif
 	const char *szRootName;
 	//Bool isText;
 
@@ -844,7 +850,7 @@ GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 		return GF_OK;
 	}
 	esd = gf_isom_get_esd(dumper->file, track, 1);
-	media = NULL;
+
 	sprintf(szMedia, "%s.media", dumper->out_name);
 	media = gf_fopen(szMedia, "wb");
 	if (!media) {
@@ -869,7 +875,9 @@ GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 			isText = GF_FALSE;
 		}
 	*/
+#if !defined(GPAC_DISABLE_TTXT) && !defined(GPAC_DISABLE_VTT)
 	mstype = gf_isom_get_media_subtype(dumper->file, track, 1);
+#endif
 
 	/*write header*/
 	gf_fprintf(six, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
@@ -1163,13 +1171,13 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 
 		}
 		if (codec_id==GF_CODECID_SUBPIC) {
+#ifndef GPAC_DISABLE_AV_PARSERS
 			char *dsi = NULL;
 			u32 dsi_size = 0;
 			if (esd && esd->decoderConfig && esd->decoderConfig->decoderSpecificInfo) {
 				dsi = esd->decoderConfig->decoderSpecificInfo->data;
 				dsi_size = esd->decoderConfig->decoderSpecificInfo->dataLength;
 			}
-#ifndef GPAC_DISABLE_AV_PARSERS
 			e = gf_dump_to_vobsub(dumper, dumper->out_name, track_num, dsi, dsi_size);
 #else
 			e = GF_NOT_SUPPORTED;
@@ -1286,7 +1294,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 		e = gf_dynstrcat(&args, "nhmlw:exporter:name=", NULL);
 		e |= gf_dynstrcat(&args, dumper->out_name, NULL);
 		if (dumper->flags & GF_EXPORT_NHML_FULL)
-			e |= gf_dynstrcat(&args, ":full", NULL);
+			e |= gf_dynstrcat(&args, ":pckp", NULL);
 		if (dumper->dump_file) {
 			sprintf(szSubArgs, ":nhmlonly:filep=%p", dumper->dump_file);
 			e |= gf_dynstrcat(&args, szSubArgs, NULL);
@@ -1349,9 +1357,11 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 	if (dumper->file) {
 		//we want to expose every track
 		e = gf_dynstrcat(&args, "mp4dmx:FID=1:noedit:alltk:allt", NULL);
-		sprintf(szSubArgs, ":mov=%p", dumper->file);
-		e = gf_dynstrcat(&args, szSubArgs, NULL);
-
+		if (!e) {
+			sprintf(szSubArgs, ":mov=%p", dumper->file);
+			e = gf_dynstrcat(&args, szSubArgs, NULL);
+		}
+		
 		//we want to expose every track
 		src_filter = gf_fs_load_filter(fsess, args, &e);
 

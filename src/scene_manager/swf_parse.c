@@ -98,7 +98,7 @@ static void swf_init_decompress(SWFReader *read)
 	uLongf destLen;
 	char *src, *dst;
 
-	assert(gf_bs_get_size(read->bs)-8 < 0x80000000); /*must fit within 32 bits*/
+	assert(gf_bs_get_size(read->bs)-8 < (u64)1<<31); /*must fit within 32 bits*/
 	size = (u32) gf_bs_get_size(read->bs)-8;
 	dst_size = read->length;
 	src = gf_malloc(sizeof(char)*size);
@@ -646,6 +646,7 @@ static void swf_resort_path(SWFPath *a, SWFReader *read)
 			break;
 		case 0:
 			GF_SAFEALLOC(sorted , SWFPath);
+			if (!sorted) return;
 			swf_path_realloc_pts(sorted, 1);
 			sorted->pts[sorted->nbPts] = a->pts[idx];
 			sorted->nbPts++;
@@ -1056,6 +1057,7 @@ static DispShape *swf_get_depth_entry(SWFReader *read, u32 Depth, Bool create)
 	}
 	if (!create) return NULL;
 	GF_SAFEALLOC(tmp , DispShape);
+	if (!tmp) return NULL;
 	tmp->depth = Depth;
 	tmp->char_id = 0;
 	gf_list_add(read->display_list, tmp);
@@ -1087,13 +1089,13 @@ static GF_Err swf_actions(SWFReader *read, u32 mask, u32 key)
 {
 	u32 skip_actions = 0;
 	u8 action_code = swf_read_int(read, 8);
-	u16 length = 0;
 	read->has_interact = 1;
 
 
 #define DO_ACT(_code) { act.type = _code; read->action(read, &act); break; }
 
 	while (action_code) {
+		u16 length;
 		if (action_code > 0x80) length = swf_get_16(read);
 		else length = 0;
 
@@ -1827,7 +1829,7 @@ static GF_Err swf_def_sound(SWFReader *read)
 
 		alloc_size = 4096;
 		frame = (char*)gf_malloc(sizeof(char)*4096);
-		snd->frame_delay_ms = swf_get_16(read);
+		/*snd->frame_delay_ms =*/ swf_get_16(read);
 		snd->frame_delay_ms = read->current_frame*1000;
 		snd->frame_delay_ms /= read->frame_rate;
 		tot_size = 9;
@@ -2056,15 +2058,19 @@ static GF_Err swf_def_bits_jpeg(SWFReader *read, u32 version)
 	char szName[1024];
 	u8 *buf;
 	u32 skip = 0;
+#ifndef GPAC_DISABLE_AV_PARSERS
 	u32 AlphaPlaneSize = 0;
+#endif
 	u32 size = read->size;
 
 	ID = swf_get_16(read);
 	size -= 2;
 	if (version==3) {
-		u32 offset =  swf_get_32(read);
+		u32 offset = swf_get_32(read);
+#ifndef GPAC_DISABLE_AV_PARSERS
 		size -= 4;
 		AlphaPlaneSize = size - offset;
+#endif
 		size = offset;
 	}
 
@@ -2646,10 +2652,11 @@ GF_Err gf_sm_load_init_swf(GF_SceneLoader *load)
 		read->no_as = 1;
 	}
 
-	e = GF_NOT_SUPPORTED;
 	if (!(load->swf_import_flags & GF_SM_SWF_USE_SVG)) {
 #ifndef GPAC_DISABLE_VRML
 		e = swf_to_bifs_init(read);
+#else
+		e = GF_NOT_SUPPORTED;
 #endif
 	} else {
 #ifndef GPAC_DISABLE_SVG
@@ -2669,6 +2676,8 @@ GF_Err gf_sm_load_init_swf(GF_SceneLoader *load)
 		}
 		gf_swf_reader_set_user_mode(read, svgFile, swf_svg_write_text_sample, swf_svg_write_text_header);
 		e = swf_to_svg_init(read, read->flags, load->swf_flatten_limit);
+#else
+		e = GF_NOT_SUPPORTED;
 #endif
 	}
 	if (e) goto exit;
@@ -2689,4 +2698,3 @@ exit:
 }
 
 #endif /*GPAC_DISABLE_SWF_IMPORT*/
-

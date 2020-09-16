@@ -273,6 +273,8 @@ static GF_Err WAV_Configure(GF_AudioOutput *dr, u32 *SampleRate, u32 *NbChannels
 		retry--;
 	}
 	if (hr != MMSYSERR_NOERROR) return GF_IO_ERR;
+	ctx->fmt.nBlockAlign = fmt->nBlockAlign;
+	ctx->fmt.nAvgBytesPerSec = fmt->nAvgBytesPerSec;
 
 	if (!ctx->force_config) {
 		/*one wave buffer size*/
@@ -310,7 +312,6 @@ static GF_Err WAV_Configure(GF_AudioOutput *dr, u32 *SampleRate, u32 *NbChannels
 static void WAV_WriteAudio(GF_AudioOutput *dr)
 {
 	LPWAVEHDR hdr;
-	HRESULT hr;
 	u32 i;
 	WAVCTX();
 
@@ -333,7 +334,7 @@ static void WAV_WriteAudio(GF_AudioOutput *dr)
 			/*fill it*/
 			hdr->dwBufferLength = dr->FillBuffer(dr->audio_renderer, hdr->lpData, ctx->buffer_size);
 			hdr->dwFlags = 0;
-			hr = waveOutPrepareHeader(ctx->hwo, hdr, sizeof(WAVEHDR));
+			waveOutPrepareHeader(ctx->hwo, hdr, sizeof(WAVEHDR));
 			/*write it*/
 			waveOutWrite(ctx->hwo, hdr, sizeof(WAVEHDR));
 		}

@@ -41,6 +41,8 @@ static u32 cryptinfo_get_crypt_type(char *cr_type)
 		return GF_CRYPT_TYPE_ISMA;
 	else if (!stricmp(cr_type, "CENC AES-CTR") || !stricmp(cr_type, "cenc"))
 		return GF_CRYPT_TYPE_CENC;
+	else if (!stricmp(cr_type, "piff"))
+		return GF_CRYPT_TYPE_PIFF;
 	else if (!stricmp(cr_type, "CENC AES-CBC") || !stricmp(cr_type, "cbc1"))
 		return GF_CRYPT_TYPE_CBC1;
 	else if (!stricmp(cr_type, "ADOBE") || !stricmp(cr_type, "adkm"))
@@ -280,7 +282,9 @@ static void cryptinfo_node_start(void *sax_cbck, const char *node_name, const ch
 				else tkc->block_align = 0;
 			}
 		}
-
+		if (tkc->scheme_type==GF_CRYPT_TYPE_PIFF) {
+			tkc->sai_saved_box_type = GF_ISOM_BOX_UUID_PSEC;
+		}
 		if (has_common_key) info->has_common_key = 1;
 
 		if ((tkc->IV_size != 0) && (tkc->IV_size != 8) && (tkc->IV_size != 16)) {
@@ -424,7 +428,11 @@ static Bool on_decrypt_event(void *_udta, GF_Event *evt)
 		return GF_FALSE;
 
 	*prev_progress = (u32) progress;
+#ifndef GPAC_DISABLE_LOG
 	GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("Decrypting: % 2.2f %%\r", progress));
+#else
+	fprintf(stderr, "Decrypting: % 2.2f %%\r", progress);
+#endif
 	return GF_FALSE;
 }
 
@@ -481,8 +489,12 @@ static GF_Err gf_decrypt_file_ex(GF_ISOFile *mp4, const char *drm_file, const ch
 		return GF_FILTER_NOT_FOUND;
 	}
 
+	if (!gf_sys_is_test_mode()
 #ifndef GPAC_DISABLE_LOG
-	if (!gf_sys_is_test_mode() && (gf_log_get_tool_level(GF_LOG_APP)!=GF_LOG_QUIET) && !gf_sys_is_quiet() ) {
+		&& (gf_log_get_tool_level(GF_LOG_APP)!=GF_LOG_QUIET)
+#endif
+		&& !gf_sys_is_quiet()
+	) {
 		gf_fs_enable_reporting(fsess, GF_TRUE);
 		gf_fs_set_ui_callback(fsess, on_decrypt_event, &progress);
 	}
@@ -491,7 +503,6 @@ static GF_Err gf_decrypt_file_ex(GF_ISOFile *mp4, const char *drm_file, const ch
 		on_decrypt_event(NULL, NULL);
 	}
 #endif //GPAC_ENABLE_COVERAGE
-#endif
 
 	e = gf_fs_run(fsess);
 	if (e>GF_OK) e = GF_OK;
@@ -528,7 +539,11 @@ static Bool on_crypt_event(void *_udta, GF_Event *evt)
 		return GF_FALSE;
 
 	*prev_progress = (u32) progress;
+#ifndef GPAC_DISABLE_LOG
 	GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("Encrypting: % 2.2f %%\r", progress));
+#else
+	fprintf(stderr, "Encrypting: % 2.2f %%\r", progress);
+#endif
 	return GF_FALSE;
 }
 
@@ -605,8 +620,12 @@ static GF_Err gf_crypt_file_ex(GF_ISOFile *mp4, const char *drm_file, const char
 		return GF_FILTER_NOT_FOUND;
 	}
 
+	if (!gf_sys_is_test_mode()
 #ifndef GPAC_DISABLE_LOG
-	if (!gf_sys_is_test_mode() && (gf_log_get_tool_level(GF_LOG_APP)!=GF_LOG_QUIET) && !gf_sys_is_quiet() ) {
+		&& (gf_log_get_tool_level(GF_LOG_APP)!=GF_LOG_QUIET)
+#endif
+		&& !gf_sys_is_quiet()
+	) {
 		gf_fs_enable_reporting(fsess, GF_TRUE);
 		gf_fs_set_ui_callback(fsess, on_crypt_event, &progress);
 	}
@@ -615,7 +634,6 @@ static GF_Err gf_crypt_file_ex(GF_ISOFile *mp4, const char *drm_file, const char
 		on_crypt_event(NULL, NULL);
 	}
 #endif //GPAC_ENABLE_COVERAGE
-#endif
 	e = gf_fs_run(fsess);
 	if (e>GF_OK) e = GF_OK;
 	if (!e) e = gf_fs_get_last_connect_error(fsess);

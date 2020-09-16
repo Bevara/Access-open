@@ -45,12 +45,23 @@ typedef struct
 	AVRational in_scale;
 	Bool in_seg_flush;
 	u32 cts_shift;
+
+	Bool suspended;
 } GF_FFMuxStream;
+
+enum{
+	FFMX_STATE_ALLOC=0,
+	FFMX_STATE_AVIO_OPEN,
+	FFMX_STATE_HDR_DONE,
+	FFMX_STATE_TRAILER_DONE,
+	FFMX_STATE_EOS,
+	FFMX_STATE_ERROR
+};
 
 typedef struct
 {
 	//options
-	char *dst, *mime;
+	char *dst, *mime, *ffmt;
 	Double start, speed;
 	u32 block_size;
 	Bool interleave, nodisc, ffiles, noinit;
@@ -72,27 +83,27 @@ typedef struct
 	u8 *avio_ctx_buffer;
 	AVIOContext *avio_ctx;
 	FILE *gfio;
+
+
+	u32 cur_file_idx_plus_one;
 } GF_FFMuxCtx;
+
+static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove);
 
 static GF_Err ffmx_init_mux(GF_Filter *filter, GF_FFMuxCtx *ctx)
 {
 	u32 i, nb_pids;
 	int res;
 
-	ctx->status = 1;
+	assert(ctx->status==FFMX_STATE_AVIO_OPEN);
+
+	ctx->status = FFMX_STATE_HDR_DONE;
 	res = avformat_init_output(ctx->muxer, &ctx->options);
 
 	if (res<0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to open %s - error %s\n", ctx->dst, av_err2str(res) ));
-		ctx->status=4;
+		ctx->status = FFMX_STATE_ERROR;
 		return GF_NOT_SUPPORTED;
-	}
-
-	AVDictionaryEntry *prev_e = NULL;
-	while (1) {
-		prev_e = av_dict_get(ctx->options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
-		if (!prev_e) break;
-		gf_filter_report_unused_meta_option(filter, prev_e->key);
 	}
 
 	nb_pids = gf_filter_get_ipid_count(filter);
@@ -108,12 +119,15 @@ static GF_Err ffmx_init_mux(GF_Filter *filter, GF_FFMuxCtx *ctx)
 		}
 	}
 
-	res = avformat_write_header(ctx->muxer, NULL);
+	res = avformat_write_header(ctx->muxer, &ctx->options);
 	if (res<0) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to write %s header - error %s\n", ctx->dst, av_err2str(res) ));
-		ctx->status = 4;
-		return GF_NON_COMPLIANT_BITSTREAM;
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to write header for %s - error %s\n", ctx->dst, av_err2str(res) ));
+		ctx->status = FFMX_STATE_ERROR;
+		return GF_SERVICE_ERROR;
 	}
+
+	ffmpeg_report_unused_options(filter, ctx->options);
+
 	return GF_OK;
 }
 
@@ -130,40 +144,27 @@ static int64_t ffavio_seek(void *opaque, int64_t offset, int whence)
 	return (int64_t) gf_fseek(ctx->gfio, offset, whence);
 }
 
-static GF_Err ffmx_initialize(GF_Filter *filter)
+static GF_Err ffmx_open_url(GF_FFMuxCtx *ctx, char *final_name)
 {
-	const char *url;
+	const char *dst;
 	Bool use_gfio=GF_FALSE;
-	AVOutputFormat *ofmt;
-	GF_FFMuxCtx *ctx = (GF_FFMuxCtx *) gf_filter_get_udta(filter);
+	AVOutputFormat *ofmt = ctx->muxer->oformat;
 
-	ffmpeg_setup_logs(GF_LOG_CONTAINER);
-
-	ctx->muxer = avformat_alloc_context();
-	if (!ctx->muxer) return GF_OUT_OF_MEM;
-
-	url = ctx->dst;
-	if (!strncmp(ctx->dst, "gfio://", 7)) {
-		url = gf_fileio_translate_url(ctx->dst);
+	dst = final_name ? final_name : ctx->dst;
+	if (!strncmp(dst, "gfio://", 7)) {
 		use_gfio = GF_TRUE;
 	}
-	ofmt = av_guess_format(NULL, url, ctx->mime);
-	if (!ofmt) return GF_FILTER_NOT_SUPPORTED;
 
-	ctx->muxer->oformat = ofmt;
-	ctx->streams = gf_list_new();
-
-	if (ofmt->flags & AVFMT_NOFILE) return GF_OK;
-
-
-	//handle local urls some_dir/some_other_dir/file.ext, ffmpeg doesn't create the dirs for us
-	if (gf_url_is_local(ctx->dst)) {
-		FILE *f = gf_fopen(ctx->dst, "wb");
-		gf_fclose(f);
+	if (ofmt) {
+		//handle local urls some_dir/some_other_dir/file.ext, ffmpeg doesn't create the dirs for us
+		if (! (ofmt->flags & AVFMT_NOFILE) && gf_url_is_local(dst)) {
+			FILE *f = gf_fopen(dst, "wb");
+			gf_fclose(f);
+		}
 	}
 
 	if (use_gfio) {
-		ctx->gfio = gf_fopen(ctx->dst, "wb");
+		ctx->gfio = gf_fopen(dst, "wb");
 		if (!ctx->gfio) return GF_URL_ERROR;
 		ctx->avio_ctx_buffer = av_malloc(ctx->block_size);
 		if (!ctx->avio_ctx_buffer) return GF_OUT_OF_MEM;
@@ -172,18 +173,79 @@ static GF_Err ffmx_initialize(GF_Filter *filter)
 									  1, ctx, NULL, &ffavio_write_packet, &ffavio_seek);
 
 		if (!ctx->avio_ctx) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Failed to create AVIO context for %s\n", ctx->dst));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Failed to create AVIO context for %s\n", dst));
 			return GF_OUT_OF_MEM;
 		}
 		ctx->muxer->pb = ctx->avio_ctx;
-	} else {
-		avio_open(&ctx->muxer->pb, ctx->dst, AVIO_FLAG_WRITE);
+	} else if (!ofmt || !(ofmt->flags & AVFMT_NOFILE) ) {
+		int res = avio_open2(&ctx->muxer->pb, dst, AVIO_FLAG_WRITE, NULL, &ctx->options);
+		if (res<0) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to open AVIO context for %s - error %s\n", dst, av_err2str(res) ));
+			return GF_FILTER_NOT_SUPPORTED;
+		}
 	}
-
+	ctx->status = FFMX_STATE_AVIO_OPEN;
 	return GF_OK;
 }
+static GF_Err ffmx_initialize_ex(GF_Filter *filter, Bool use_templates)
+{
+	const char *url, *sep;
+	AVOutputFormat *ofmt;
+	GF_FFMuxCtx *ctx = (GF_FFMuxCtx *) gf_filter_get_udta(filter);
 
+	ffmpeg_setup_logs(GF_LOG_CONTAINER);
 
+	ctx->muxer = avformat_alloc_context();
+	if (!ctx->muxer) return GF_OUT_OF_MEM;
+
+	if (!ctx->streams)
+		ctx->streams = gf_list_new();
+
+	url = ctx->dst;
+
+	if (!strncmp(ctx->dst, "gfio://", 7)) {
+		url = gf_fileio_translate_url(ctx->dst);
+	}
+	sep = strchr(url, '$');
+	if (sep && strchr(sep+1, '$'))
+		use_templates = GF_TRUE;
+
+	ofmt = av_guess_format(ctx->ffmt, url, ctx->mime);
+	//if protocol is present, we may fail at guessing the format
+	if (!ofmt && !ctx->ffmt) {
+		u32 len;
+		char szProto[20];
+		char *proto = strstr(url, "://");
+		if (!proto)
+			return GF_FILTER_NOT_SUPPORTED;
+		szProto[19] = 0;
+		len = (u32) (proto - url);
+		if (len>19) len=19;
+		strncpy(szProto, url, len);
+		szProto[len] = 0;
+		ofmt = av_guess_format(szProto, url, ctx->mime);
+	}
+	if (!ofmt) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Failed to guess output format for %s, cannot run\n", ctx->dst));
+		if (!ctx->ffmt) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Try specifying the format through :ffmt option\n"));
+		}
+		return GF_SERVICE_ERROR;
+	}
+	ctx->muxer->oformat = ofmt;
+
+	ctx->status = FFMX_STATE_ALLOC;
+	//templates are used, we need to postpone opening the url until we have a PID and a first packet
+	if (use_templates)
+		return GF_OK;
+
+	return ffmx_open_url(ctx, NULL);
+}
+
+static GF_Err ffmx_initialize(GF_Filter *filter)
+{
+	return ffmx_initialize_ex(filter, GF_FALSE);
+}
 static GF_Err ffmx_start_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, const char *seg_name)
 {
 	int i;
@@ -251,6 +313,7 @@ static GF_Err ffmx_start_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, const char *se
 //	av_freep(&ctx->muxer->url);
 //	ctx->muxer->url = av_strdup(seg_name);
 	strncpy(ctx->muxer->filename, seg_name, 1023);
+	ctx->muxer->filename[1023]=0;
 	ctx->offset_at_seg_start = 0;
 
 	if (!(ctx->muxer->oformat->flags & AVFMT_NOFILE)) {
@@ -282,7 +345,7 @@ static GF_Err ffmx_start_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, const char *se
 			return GF_IO_ERR;
 		}
     }
-	ctx->status = 1;
+	ctx->status = FFMX_STATE_HDR_DONE;
 	return GF_OK;
 }
 
@@ -298,7 +361,7 @@ static GF_Err ffmx_close_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, Bool send_evt_
 		int res=0;
 
 		if (ctx->ffiles) {
-			if (ctx->status==1) {
+			if (ctx->status==FFMX_STATE_HDR_DONE) {
 				res = av_write_trailer(ctx->muxer);
 			} else {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Invalid state %d for segment %s close\n", ctx->status, /*ctx->muxer->url*/ctx->muxer->filename));
@@ -310,7 +373,7 @@ static GF_Err ffmx_close_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, Bool send_evt_
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to flush segment %s - error %s\n", /*ctx->muxer->url*/ctx->muxer->filename, av_err2str(res) ));
 			return GF_SERVICE_ERROR;
 		}
-		ctx->status = 2;
+		ctx->status = FFMX_STATE_TRAILER_DONE;
 	}
 	ctx->nb_pck_in_seg = 0;
 
@@ -337,14 +400,25 @@ static GF_Err ffmx_process(GF_Filter *filter)
 {
 	GF_Err e = GF_OK;
 	GF_FFMuxCtx *ctx = (GF_FFMuxCtx *) gf_filter_get_udta(filter);
-	u32 nb_done, nb_segs_done, i, nb_pids = gf_filter_get_ipid_count(filter);
+	u32 nb_done, nb_segs_done, nb_suspended, i, nb_pids = gf_filter_get_ipid_count(filter);
 
-	if (!ctx->status) {
+	if (ctx->status<FFMX_STATE_HDR_DONE) {
+		Bool all_ready = GF_TRUE;
+		Bool needs_reinit = (ctx->status==FFMX_STATE_ALLOC) ? GF_TRUE : GF_FALSE;
+
 		for (i=0; i<nb_pids; i++) {
 			GF_FilterPid *ipid = gf_filter_get_ipid(filter, i);
 			GF_FFMuxStream *st = gf_filter_pid_get_udta(ipid);
 			GF_FilterPacket *ipck = gf_filter_pid_get_packet(ipid);
-			if (!ipck) return GF_OK;
+
+			if (needs_reinit) {
+				e = ffmx_configure_pid(filter, ipid, GF_FALSE);
+				if (e) return e;
+			}
+			if (!ipck) {
+				all_ready = GF_FALSE;
+				continue;
+			}
 
 			if (st->stream->codecpar->codec_type==AVMEDIA_TYPE_VIDEO) {
 				u8 ilced = gf_filter_pck_get_interlaced(ipck);
@@ -356,20 +430,27 @@ static GF_Err ffmx_process(GF_Filter *filter)
 				st->stream->codecpar->seek_preroll = gf_filter_pck_get_roll_info(ipck);
 			}
 		}
+		if (!all_ready || (ctx->status==FFMX_STATE_ALLOC)) return GF_OK;
+
 		//good to go, finalize mux
 		ffmx_init_mux(filter, ctx);
 	}
-	if (ctx->status==3) return GF_EOS;
-	else if (ctx->status==4) return GF_SERVICE_ERROR;
+	if (ctx->status==FFMX_STATE_EOS) return GF_EOS;
+	else if (ctx->status==FFMX_STATE_ERROR) return GF_SERVICE_ERROR;
 
 	nb_segs_done = 0;
 	nb_done = 0;
+	nb_suspended = 0;
 	for (i=0; i<nb_pids; i++) {
 		GF_FilterPid *ipid = gf_filter_get_ipid(filter, i);
 		GF_FFMuxStream *st = gf_filter_pid_get_udta(ipid);
 		if (!st) continue;
 		if (st->in_seg_flush) {
 			nb_segs_done ++;
+			continue;
+		}
+		if (st->suspended) {
+			nb_suspended++;
 			continue;
 		}
 
@@ -402,8 +483,8 @@ static GF_Err ffmx_process(GF_Filter *filter)
 				continue;
 			}
 
+			p = gf_filter_pck_get_property(ipck, GF_PROP_PCK_FILENUM);
 			if (ctx->dash_mode) {
-				p = gf_filter_pck_get_property(ipck, GF_PROP_PCK_FILENUM);
 				if (p) {
 					//flush segment
 					if (ctx->dash_seg_num && (p->value.uint != ctx->dash_seg_num)) {
@@ -421,6 +502,13 @@ static GF_Err ffmx_process(GF_Filter *filter)
 					//otherwise close segment for event processing only
 					else
 						ffmx_close_seg(filter, ctx, GF_TRUE);
+				}
+			} else if (p) {
+				if (ctx->cur_file_idx_plus_one == p->value.uint+1) {
+				} else if (!st->suspended) {
+					st->suspended = GF_TRUE;
+					nb_suspended++;
+					break;
 				}
 			}
 
@@ -459,6 +547,24 @@ static GF_Err ffmx_process(GF_Filter *filter)
 		}
 	}
 
+	//done writing file
+	if (nb_suspended && (nb_suspended==nb_pids)) {
+		av_write_trailer(ctx->muxer);
+		if (ctx->muxer)	avformat_free_context(ctx->muxer);
+		ctx->muxer = NULL;
+		ctx->status = FFMX_STATE_ALLOC;
+		ffmx_initialize_ex(filter, GF_TRUE);
+		for (i=0; i<nb_pids; i++) {
+			GF_FilterPid *ipid = gf_filter_get_ipid(filter, i);
+			GF_FFMuxStream *st = gf_filter_pid_get_udta(ipid);
+			if (!st) continue;
+			st->suspended = GF_FALSE;
+			st->stream = 0;
+			ffmx_configure_pid(filter, ipid, GF_FALSE);
+		}
+		nb_done = 0;
+	}
+
 	//done writing segment
 	if (nb_segs_done==nb_pids) {
 		ctx->dash_seg_num = 0;
@@ -473,13 +579,13 @@ static GF_Err ffmx_process(GF_Filter *filter)
 	if (e) return e;
 
 	if (nb_done==nb_pids) {
-		if (ctx->status==1) {
+		if (ctx->status==FFMX_STATE_HDR_DONE) {
 			if (ctx->dash_mode) {
 				ffmx_close_seg(filter, ctx, GF_FALSE);
 			} else {
 				av_write_trailer(ctx->muxer);
 			}
-			ctx->status = 3;
+			ctx->status = FFMX_STATE_EOS;
 		}
 		return GF_EOS;
 	}
@@ -504,10 +610,10 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	}
 	st = gf_filter_pid_get_udta(pid);
 	if (st) {
-		if (ctx->status)
+		if (ctx->status>FFMX_STATE_HDR_DONE)
 			check_disc = GF_TRUE;
 	} else {
-		if (ctx->status) {
+		if (ctx->status>FFMX_STATE_HDR_DONE) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Cannot dynamically add new stream to %s, not supported\n", ctx->dst ));
 			return GF_NOT_SUPPORTED;
 		}
@@ -515,6 +621,12 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_STREAM_TYPE);
 	if (!p) return GF_NOT_SUPPORTED;
 	streamtype = p->value.uint;
+
+	//not supported yet
+	if (streamtype==GF_STREAM_ENCRYPTED) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Cannot import protected stream, not supported\n"));
+		return GF_NOT_SUPPORTED;
+	}
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CODECID);
 	if (!p) return GF_NOT_SUPPORTED;
@@ -565,7 +677,7 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ff_codec_id = ffmpeg_codecid_from_gpac(codec_id, &ff_codec_tag);
 	}
 
-	if (ctx->muxer->oformat->query_codec) {
+	if (ctx->muxer->oformat && ctx->muxer->oformat->query_codec) {
 		res = ctx->muxer->oformat->query_codec(ff_codec_id, 1);
 		if (!res) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Codec %s not supported in container %s\n", gf_codecid_name(codec_id), ctx->muxer->oformat->name));
@@ -580,13 +692,37 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 		GF_SAFEALLOC(st, GF_FFMuxStream);
 		if (!st) return GF_OUT_OF_MEM;
-		st->stream = avformat_new_stream(ctx->muxer, c);
-		if (!st->stream) return GF_NOT_SUPPORTED;
 		gf_filter_pid_set_udta(pid, st);
 		gf_list_add(ctx->streams, st);
 
 		gf_filter_pid_init_play_event(pid, &evt, ctx->start, ctx->speed, "FFMux");
 		gf_filter_pid_send_event(pid, &evt);
+	}
+
+	if (ctx->status==FFMX_STATE_ALLOC) {
+		char szPath[GF_MAX_PATH];
+		const GF_PropertyValue *p;
+		const char *file_suffix = NULL;
+		GF_FilterPacket *pck = gf_filter_pid_get_packet(pid);
+		if (!pck) {
+			if (gf_filter_pid_is_eos(pid))
+				return GF_SERVICE_ERROR;
+			return GF_OK;
+		}
+		p = gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENUM);
+		ctx->cur_file_idx_plus_one = p ? (p->value.uint + 1) : 1;
+
+		p = gf_filter_pck_get_property(pck, GF_PROP_PCK_FILESUF);
+		if (p && p->value.string) file_suffix = p->value.string;
+
+		gf_filter_pid_resolve_file_template(pid, ctx->dst, szPath, ctx->cur_file_idx_plus_one-1, file_suffix);
+		ffmx_open_url(ctx, szPath);
+	}
+
+
+	if (!st->stream) {
+		st->stream = avformat_new_stream(ctx->muxer, c);
+		if (!st->stream) return GF_NOT_SUPPORTED;
 	}
 	avst = st->stream;
 
@@ -613,12 +749,14 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	avst->codecpar->codec_type = ff_st;
 	avst->codecpar->codec_tag = ff_codec_tag;
 
-	if (dsi) {
+	if (dsi && dsi->value.data.ptr) {
 		if (avst->codecpar->extradata) av_free(avst->codecpar->extradata);
 		avst->codecpar->extradata_size = dsi->value.data.size;
 		avst->codecpar->extradata = av_malloc(avst->codecpar->extradata_size+ AV_INPUT_BUFFER_PADDING_SIZE);
-		memcpy(avst->codecpar->extradata, dsi->value.data.ptr, avst->codecpar->extradata_size);
-		memset(avst->codecpar->extradata + dsi->value.data.size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+		if (avst->codecpar->extradata) {
+			memcpy(avst->codecpar->extradata, dsi->value.data.ptr, avst->codecpar->extradata_size);
+			memset(avst->codecpar->extradata + dsi->value.data.size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+		}
 	}
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_ID);
 	if (p) avst->id = p->value.uint;
@@ -633,7 +771,7 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	avst->start_time = 0;
 	avst->duration = 0;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DURATION);
-	if (p) {
+	if (p && p->value.lfrac.den) {
 		avst->duration = p->value.lfrac.num;
 		avst->duration *= avst->time_base.den;
 		avst->duration /= p->value.lfrac.den;
@@ -746,13 +884,13 @@ static void ffmx_finalize(GF_Filter *filter)
 {
 	GF_FFMuxCtx *ctx = (GF_FFMuxCtx *) gf_filter_get_udta(filter);
 
-	if (ctx->status==1) {
+	if (ctx->status==FFMX_STATE_HDR_DONE) {
 		if (ctx->dash_mode) {
 			ffmx_close_seg(filter, ctx, GF_FALSE);
 		} else {
 			av_write_trailer(ctx->muxer);
 		}
-		ctx->status = 2;
+		ctx->status = FFMX_STATE_TRAILER_DONE;
 	}
 
 	if (ctx->options) av_dict_free(&ctx->options);
@@ -796,15 +934,28 @@ static GF_Err ffmx_update_arg(GF_Filter *filter, const char *arg_name, const GF_
 
 static GF_FilterProbeScore ffmx_probe_url(const char *url, const char *mime)
 {
-	if (!strncmp(url, "gfio://", 7))
+	const char *proto;
+	if (url && !strncmp(url, "gfio://", 7)) {
 		url = gf_fileio_translate_url(url);
+	}
+	if (!url)
+		return GF_FPROBE_NOT_SUPPORTED;
+
 
 	AVOutputFormat *ofmt = av_guess_format(NULL, url, mime);
 	if (!ofmt && mime) ofmt = av_guess_format(NULL, NULL, mime);
 	if (!ofmt && url) ofmt = av_guess_format(NULL, url, NULL);
 
-	if (!ofmt) return GF_FPROBE_NOT_SUPPORTED;
-	return GF_FPROBE_SUPPORTED;
+	if (ofmt) return GF_FPROBE_SUPPORTED;
+
+	proto = strstr(url, "://");
+	if (!proto)
+		return GF_FPROBE_NOT_SUPPORTED;
+
+	proto = avio_find_protocol_name(url);
+	if (proto)
+		return GF_FPROBE_MAYBE_SUPPORTED;
+	return GF_FPROBE_NOT_SUPPORTED;
 }
 
 static const GF_FilterCapability FFMuxCaps[] =
@@ -825,7 +976,15 @@ GF_FilterRegister FFMuxRegister = {
 	.name = "ffmx",
 	.version = LIBAVFORMAT_IDENT,
 	GF_FS_SET_DESCRIPTION("FFMPEG muxer")
-	GF_FS_SET_HELP("See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details")
+	GF_FS_SET_HELP("FFMPEG output for files and streamers.\n"
+		"See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details\n"
+		"\n"
+		"Note: Some URL formats may not be sufficient to derive the multiplexing format, you must then use [-ffmt]() to specify the desired format.\n"
+		"\n"
+		"Unlike other multiplexing filters in GPAC, this filter is a sink filter and does not produce any PID to be redirected in the graph.\n"
+		"The filter can however use template names for its output, using the first input PID to resolve the final name.\n"
+		"The filter watches the property `FileNumber` on incoming packets to create new files.\n"
+	)
 	.private_size = sizeof(GF_FFMuxCtx),
 	SETCAPS(FFMuxCaps),
 	.initialize = ffmx_initialize,
@@ -854,6 +1013,7 @@ static const GF_FilterArgs FFMuxArgs[] =
 	{ OFFS(nodisc), "ignore stream configuration changes while muxing, may result in broken streams", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(mime), "set mime type for graph resolution", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(ffiles), "force complete files to be created for each segment in DASH modes", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(ffmt), "force ffmpeg output format for the given URL", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(block_size), "block size used to read file when using avio context", GF_PROP_UINT, "4096", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ "*", -1, "any possible options defined for AVFormatContext and sub-classes. See `gpac -hx ffmx` and `gpac -hx ffmx:*`", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
 	{0}

@@ -128,15 +128,14 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 	FILE *f;
 	char szPath[GF_MAX_PATH];
 
-	wchar_t wtmp_file_path[GF_MAX_PATH];
-	char* tmp_file_path;
-
-
 #ifdef _WIN32_WCE
 	TCHAR w_szPath[GF_MAX_PATH];
 	GetModuleFileName(NULL, w_szPath, GF_MAX_PATH);
 	CE_WideToChar((u16 *) w_szPath, file_path);
 #else
+	wchar_t wtmp_file_path[GF_MAX_PATH];
+	char* tmp_file_path;
+
 	GetModuleFileNameA(NULL, file_path, GF_MAX_PATH);
 #endif
 
@@ -218,6 +217,7 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 	SHGetSpecialFolderPathW(NULL, wtmp_file_path, CSIDL_APPDATA, 1);
 	tmp_file_path = gf_wcs_to_utf8(wtmp_file_path);
 	strncpy(file_path, tmp_file_path, GF_MAX_PATH);
+	file_path[GF_MAX_PATH-1] = 0;
 	gf_free(tmp_file_path);
 
 	if (file_path[strlen(file_path)-1] != '\\') strcat(file_path, "\\");
@@ -241,6 +241,8 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 
 static Bool get_default_install_path(char *file_path, u32 path_type)
 {
+	if (!file_path) return 0;
+
 	if (path_type==GF_PATH_APP) {
 		strcpy(file_path, DEFAULT_ANDROID_PATH_APP);
 		return 1;
@@ -290,7 +292,9 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 {
 	char app_path[GF_MAX_PATH];
 	char *sep;
-	u32 size = GF_MAX_PATH;
+#if (defined(__DARWIN__) || defined(__APPLE__) || defined(GPAC_CONFIG_LINUX))
+	u32 size;
+#endif
 
 	/*on OSX, Linux & co, user home is where we store the cfg file*/
 	if (path_type==GF_PATH_CFG) {
@@ -330,6 +334,7 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 
 	if (path_type==GF_PATH_APP) {
 #if (defined(__DARWIN__) || defined(__APPLE__) )
+		size = GF_MAX_PATH-1;
 		if (_NSGetExecutablePath(app_path, &size) ==0) {
 			realpath(app_path, file_path);
 			sep = strrchr(file_path, '/');
@@ -377,7 +382,6 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Couldn't find GPAC binaries install directory\n"));
 		return 0;
 	}
-
 	/*installed or symlink on system, user user home directory*/
 	if (!strnicmp(app_path, "/usr/", 5) || !strnicmp(app_path, "/opt/", 5)) {
 		if (path_type==GF_PATH_SHARE) {
@@ -407,10 +411,13 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 
 		/*GUI not found, look in gpac distribution if any */
 		if (get_default_install_path(app_path, GF_PATH_APP)) {
+			strcat(app_path, "/");
 			sep = strstr(app_path, "/bin/");
 			if (sep) {
 				sep[0] = 0;
 				strcat(app_path, "/share");
+				if (check_file_exists("gui/gui.bt", app_path, file_path)) return 1;
+				strcat(app_path, "/gpac");
 				if (check_file_exists("gui/gui.bt", app_path, file_path)) return 1;
 			}
 			sep = strstr(app_path, "/build/");
@@ -430,9 +437,22 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 			/*on OSX check modules subdirectory */
 			strcat(app_path, "/modules");
 			if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
+
 			/*modules not found*/
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Couldn't find any modules in standard path (app path %s)\n", app_path));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("Couldn't find any modules in standard path (app path %s)\n", app_path));
 		}
+
+		/* look in distrib tree */
+		if (get_default_install_path(app_path, GF_PATH_APP)) {
+			strcat(app_path, "/");
+			sep = strstr(app_path, "/bin/");
+			if (sep) {
+				sep[0] = 0;
+				strcat(app_path, "/lib/gpac");
+				if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
+			}
+		}
+
 		/*modules not found, look in ~/.gpac/modules/ */
 		if (get_default_install_path(app_path, GF_PATH_CFG)) {
 			strcpy(app_path, file_path);
@@ -440,7 +460,7 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 			if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
 		}
 		/*modules not found, failure*/
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Couldn't find any modules in HOME path (app path %s)\n", app_path));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("Couldn't find any modules in HOME path (app path %s)\n", app_path));
 		return 0;
 	}
 
@@ -505,7 +525,7 @@ static void gf_ios_refresh_cache_directory( GF_Config *cfg, const char *file_pat
 
 static GF_Config *create_default_config(char *file_path, const char *profile)
 {
-	FILE *f;
+	Bool moddir_found;
 	GF_Config *cfg;
 	char szProfilePath[GF_MAX_PATH];
 	char szPath[GF_MAX_PATH];
@@ -523,7 +543,7 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	if (profile && !strcmp(profile, "0")) {
 		cfg = gf_cfg_new(NULL, NULL);
 	} else {
-		f = gf_fopen(szPath, "wt");
+		FILE *f = gf_fopen(szPath, "wt");
 		if (!f) return NULL;
 		gf_fclose(f);
 
@@ -534,27 +554,26 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	strcpy(szProfilePath, szPath);
 
 
-#if !defined(GPAC_CONFIG_IOS) && !defined(__EMSCRIPTEN__)
-	if (! get_default_install_path(szPath, GF_PATH_MODULES)) {
-		gf_file_delete(szPath);
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] default modules not found\n"));
-		return NULL;
-	}
+#ifndef GPAC_CONFIG_IOS && !defined(__EMSCRIPTEN__)
+	moddir_found = get_default_install_path(szPath, GF_PATH_MODULES);
 #else
-	get_default_install_path(szPath, GF_PATH_APP);
+	moddir_found = get_default_install_path(szPath, GF_PATH_APP);
 #endif
 
 #if defined(GPAC_CONFIG_IOS)
-	gf_cfg_set_key(cfg, "General", "DeviceType", "iOS");
+	gf_cfg_set_key(cfg, "core", "devclass", "ios");
 #elif defined(GPAC_CONFIG_ANDROID)
-	gf_cfg_set_key(cfg, "General", "DeviceType", "Android");
+	gf_cfg_set_key(cfg, "core", "devclass", "android");
 #else
-	gf_cfg_set_key(cfg, "General", "DeviceType", "Desktop");
+	gf_cfg_set_key(cfg, "core", "devclass", "desktop");
 #endif
 
 
-
-	gf_cfg_set_key(cfg, "core", "mod-dirs", szPath);
+	if (!moddir_found) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] default modules not found\n"));
+	} else {
+		gf_cfg_set_key(cfg, "core", "mod-dirs", szPath);
+	}
 
 #if defined(GPAC_CONFIG_IOS)
 	gf_ios_refresh_cache_directory(cfg, file_path);
@@ -595,7 +614,8 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 #elif defined(GPAC_CONFIG_ANDROID)
 	strcpy(szPath, "/system/fonts/");
 #else
-	strcpy(szPath, "/usr/share/fonts/truetype/");
+	//scan all /usr/share/fonts, not just /usr/share/fonts/truetype/ which does not exist in some distrros
+	strcpy(szPath, "/usr/share/fonts/");
 #endif
 	gf_cfg_set_key(cfg, "core", "font-dirs", szPath);
 
@@ -765,31 +785,50 @@ static void check_modules_dir(GF_Config *cfg)
 \param profile name or path to existing config file
 \return the configuration file object, NULL if the file could not be created
  */
+ #include <gpac/network.h>
+
 static GF_Config *gf_cfg_init(const char *profile)
 {
-	GF_Config *cfg;
+	GF_Config *cfg=NULL;
+	u32 prof_len=0;
+	Bool force_new_cfg=GF_FALSE;
 	char szPath[GF_MAX_PATH];
+	char *prof_opt = NULL;
 
-	if (profile && !strlen(profile))
+	if (profile) {
+		prof_len = (u32) strlen(profile);
+		prof_opt = gf_url_colon_suffix(profile);
+		if (prof_opt) {
+			prof_len -= (u32) strlen(prof_opt);
+			if (strstr(prof_opt, "reload")) force_new_cfg = GF_TRUE;
+
+			prof_opt[0] = 0;
+		}
+	}
+	if (profile && !prof_len)
 		profile = NULL;
 
 	if (profile && (strchr(profile, '/') || strchr(profile, '\\')) ) {
 		if (!gf_file_exists(profile)) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[core] Config file %s does not exist\n", profile));
-			return NULL;
+			goto exit;
 		}
 		cfg = gf_cfg_new(NULL, profile);
 		if (!cfg) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[core] Failed to load existing config file %s\n", profile));
-			return NULL;
+			goto exit;
+		}
+		if (force_new_cfg) {
+			gf_cfg_del(cfg);
+			cfg = create_default_config(NULL, profile);
 		}
 		check_modules_dir(cfg);
-		return cfg;
+		goto exit;
 	}
 
 	if (!get_default_install_path(szPath, GF_PATH_CFG)) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[core] Fatal error: Cannot create global config file in application or user home directory - no write access\n"));
-		return NULL;
+		goto exit;
 	}
 
 	if (profile) {
@@ -808,8 +847,8 @@ static GF_Config *gf_cfg_init(const char *profile)
 		if (! gf_cfg_get_key_count(cfg, "core"))
 			nb_old_sec += 1;
 
-		if (nb_old_sec) {
-			if (!profile || strcmp(profile, "0")) {
+		if (nb_old_sec || force_new_cfg) {
+			if (nb_old_sec && (!profile || strcmp(profile, "0"))) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[core] Incompatible (0.8.0 or older) config file %s found in %s - creating new file\n", CFG_FILE_NAME, szPath ));
 			}
 			gf_cfg_del(cfg);
@@ -825,7 +864,7 @@ static GF_Config *gf_cfg_init(const char *profile)
 	}
 	if (!cfg) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[core] Cannot create config file %s in %s directory\n", CFG_FILE_NAME, szPath));
-		return NULL;
+		goto exit;
 	}
 
 #ifndef GPAC_CONFIG_IOS
@@ -844,6 +883,9 @@ static GF_Config *gf_cfg_init(const char *profile)
 		if (!gf_dir_exists(szPath)) gf_mkdir(szPath);
 		gf_cfg_set_key(cfg, "core", "store-dir", szPath);
 	}
+
+exit:
+	if (prof_opt) prof_opt[0] = ':';
 	return cfg;
 }
 
@@ -882,9 +924,10 @@ void gf_uninit_global_config(Bool discard_config)
 	}
 }
 
+GF_Err gf_cfg_set_key_internal(GF_Config *iniFile, const char *secName, const char *keyName, const char *keyValue, Bool is_restrict);
+
 void gf_cfg_load_restrict()
 {
-	GF_Err gf_cfg_set_key_internal(GF_Config *iniFile, const char *secName, const char *keyName, const char *keyValue, Bool is_restrict);
 	char szPath[GF_MAX_PATH];
 	if (get_default_install_path(szPath, GF_PATH_SHARE)) {
 		strcat(szPath, "/");
@@ -989,8 +1032,8 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("log-utc", "lu", "log UTC time in ms before each log line", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("logs", NULL, "set log tools and levels.  \n"\
 			"  \n"\
-			"You can independently log different tools involved in a session.\n"\
-			"log_args is formatted as a ':'-separated list of `toolX[:toolZ]@levelX`\n"\
+			"You can independently log different tools involved in a session.  \n"\
+			"log_args is formatted as a ':'-separated list of `toolX[:toolZ]@levelX`  \n"\
 	        "`levelX` can be one of:\n"\
 	        "- quiet: skip logs\n"\
 	        "- error: logs only error messages\n"\
@@ -1049,16 +1092,21 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("mod-reload", NULL, "unload / reload module shared libs when no longer used", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("for-test", NULL, "disable all creation/modif dates and GPAC versions in files", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("old-arch", NULL, "enable compatibility with pre-filters versions of GPAC", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("ntp-shift", NULL, "shift NTP clock by given amount in seconds", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("devclass", NULL, "set device class\n"
+ "- ios: iOS-based mobile device\n"
+ "- android: Android-based mobile device\n"
+ "- desktop: desktop device", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_CORE),
+
  GF_DEF_ARG("bs-cache-size", NULL, "cache size for bitstream read and write from file (0 disable cache, slower IOs)", "512", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("cache", NULL, "cache directory location", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
-
  GF_DEF_ARG("proxy-on", NULL, "enable HTTP proxy", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-name", NULL, "set HTTP proxy address", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-port", NULL, "set HTTP proxy port", "80", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("maxrate", NULL, "set max HTTP download rate in bits per sec. 0 means unlimited", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("no-cache", NULL, "disable HTTP caching", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("offline-cache", NULL, "enable offline HTTP caching (no revalidation of existing resource in cache)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
- GF_DEF_ARG("clean-cache", NULL, "indicate if HTTP cache should be clean upon launch/exit", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("clean-cache", NULL, "indicate if HTTP cache should be clean upon launch/exit", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("cache-size", NULL, "specify cache size in bytes", "100M", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("head-timeout", NULL, "set HTTP head request timeout in milliseconds", "5000", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("req-timeout", NULL, "set HTTP/RTSP request timeout in milliseconds", "20000", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
@@ -1072,7 +1120,10 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("dbg-edges", NULL, "log edges status in filter graph before dijkstra resolution (for debug). Edges are logged as edge_source(status, weight, src_cap_idx, dst_cap_idx)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot be linked", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 
- GF_DEF_ARG("no-block", NULL, "disable blocking mode of filters", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
+ GF_DEF_ARG("no-block", NULL, "disable blocking mode of filters\n"
+			"- no: enable blocking mode\n"
+			"- fanout: disable blocking on fanout, unblocking the PID as soon as one of its destinations requires a packet\n"
+			"- all: disable blocking", "no", "no|fanout|all", GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-reg", NULL, "disable regulation (no sleep) in session", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-reassign", NULL, "disable source filter reassignment in pid graph resolution", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("sched", NULL, "set scheduler mode\n"\
@@ -1092,12 +1143,12 @@ GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot
  GF_DEF_ARG("no-reservoir", NULL, "disable memory recycling for packets and properties. This uses much less memory but stresses the system memory allocator much more", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 
  GF_DEF_ARG("switch-vres", NULL, "select smallest video resolution larger than scene size, otherwise use current video resolution", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
- GF_DEF_ARG("hwvmem", NULL, "specify (2D rendering only) memory type of main video backbuffer. Depending on the scene type, this may drastically change the playback speed.\n"
+ GF_DEF_ARG("hwvmem", NULL, "specify (2D rendering only) memory type of main video backbuffer. Depending on the scene type, this may drastically change the playback speed\n"
  "- always: always on hardware\n"
  "- never: always on system memory\n"
  "- auto: selected by GPAC based on content type (graphics or video)", "auto", "auto|always|never", GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("pref-yuv4cc", NULL, "set prefered YUV 4CC for overlays (used by DirectX only)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
- GF_DEF_ARG("yuv-overlay", NULL, "indicate YUV overlay is possible on the video card. Always overriden by video output module", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_VIDEO),
+ GF_DEF_ARG("yuv-overlay", NULL, "indicate YUV overlay is possible on the video card. Always overridden by video output module", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("offscreen-yuv", NULL, "indicate if offscreen yuv->rgb is enabled. can be set to false to force disabling", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("overlay-color-key", NULL, "color to use for overlay keying, hex format", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("gl-bits-comp", NULL, "number of bits per color component in openGL", "8", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
@@ -1302,7 +1353,10 @@ Bool gf_opts_load_option(const char *arg_name, const char *val, Bool *consumed_n
 		}
 	} else {
 		*consumed_next = GF_TRUE;
-		gf_opts_set_key("temp", arg->name, val);
+		if (!val && (arg->type==GF_ARG_BOOL))
+			gf_opts_set_key("temp", arg->name, "true");
+		else
+			gf_opts_set_key("temp", arg->name, val);
 	}
 	return GF_TRUE;
 }
@@ -1373,11 +1427,18 @@ void gf_sys_print_arg(FILE *helpout, u32 flags, const GF_GPACArg *arg, const cha
 			fprintf(stderr, "\nWARNING: arg %s bad description format \"%s\", should not use tab\n", arg->name, arg->description);
 			exit(1);
 		}
+
 		u8 achar = arg->description[strlen(arg->description)-1];
 		if (achar == '.') {
 			fprintf(stderr, "\nWARNING: arg %s bad description format \"%s\", should not end with .\n", arg->name, arg->description);
 			exit(1);
 		}
+		sep = strstr(arg->description, ".\n");
+		if (sep) {
+			fprintf(stderr, "\nWARNING: arg %s bad description format \"%s\", should not contain .\\n", arg->name, arg->description);
+			exit(1);
+		}
+
 		sep = strchr(arg->description, ' ');
 		if (sep) {
 			sep--;
@@ -1401,18 +1462,26 @@ void gf_sys_print_arg(FILE *helpout, u32 flags, const GF_GPACArg *arg, const cha
 	}
 
 	if (flags & GF_PRINTARG_MAN) {
-		fprintf(helpout, ".TP\n.B \\-%s", arg_name ? arg_name : arg->name);
+		fprintf(helpout, ".TP\n.B %s%s", (flags&GF_PRINTARG_NO_DASH) ? "" : "\\-", arg_name ? arg_name : arg->name);
 	}
 	else if (gen_doc==1) {
-		gf_sys_format_help(helpout, flags, "<a id=\"%s\">", arg_name ? arg_name : arg->name);
-		gf_sys_format_help(helpout, flags | GF_PRINTARG_HIGHLIGHT_FIRST, "-%s", arg_name ? arg_name : arg->name);
-		gf_sys_format_help(helpout, flags, "</a>");
+		if (flags&GF_PRINTARG_NO_DASH) {
+			gf_sys_format_help(helpout, flags | GF_PRINTARG_HIGHLIGHT_FIRST, "%s", arg_name ? arg_name : arg->name);
+		} else {
+			gf_sys_format_help(helpout, flags, "<a id=\"%s\">", arg_name ? arg_name : arg->name);
+			gf_sys_format_help(helpout, flags | GF_PRINTARG_HIGHLIGHT_FIRST, "-%s", arg_name ? arg_name : arg->name);
+			gf_sys_format_help(helpout, flags, "</a>");
+		}
 	} else {
-		gf_sys_format_help(helpout, flags | GF_PRINTARG_HIGHLIGHT_FIRST, "-%s", arg_name ? arg_name : arg->name);
+		gf_sys_format_help(helpout, flags | GF_PRINTARG_HIGHLIGHT_FIRST, "%s%s%s",
+			(flags&GF_PRINTARG_ADD_DASH) ? "-" : "",
+			(flags&GF_PRINTARG_NO_DASH) ? "" : ((flags&GF_PRINTARG_COLON) ? ":" : "-"),
+			arg_name ? arg_name : arg->name
+		);
 	}
 	if (arg->altname) {
 		gf_sys_format_help(helpout, flags, ",");
-		gf_sys_format_help(helpout, flags | GF_PRINTARG_HIGHLIGHT_FIRST, "-%s", arg->altname);
+		gf_sys_format_help(helpout, flags | GF_PRINTARG_HIGHLIGHT_FIRST, "%s-%s", (flags&GF_PRINTARG_ADD_DASH) ? "-" : "", arg->altname);
 	}
 	if (syntax) {
 		gf_sys_format_help(helpout, flags, " %s", syntax);
@@ -1479,7 +1548,7 @@ void gf_sys_print_core_help(FILE *helpout, u32 flags, GF_SysArgMode mode, u32 su
 }
 
 
-#define LINE_OFFSET_DESCR 40
+#define LINE_OFFSET_DESCR 30
 
 static char *help_buf = NULL;
 static u32 help_buf_size=0;
@@ -1717,6 +1786,7 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 				}
 
 				if (i == TOK_LINKSTART) {
+					if (tid == TOK_OPTLINK) continue;
 					if (gen_doc!=1) {
 						char *link_end;
 						skip_url = strstr(tok, "](");
@@ -1937,6 +2007,89 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 			fprintf(helpout, (line[0] && (flags & GF_PRINTARG_NL_TO_BR)) ? "<br/>" : "\n");
 		line_pos=0;
 	}
+}
+
+
+GF_EXPORT
+Bool gf_sys_word_match(const char *orig, const char *dst)
+{
+	s32 dist = 0;
+	u32 match = 0;
+	u32 i;
+	u32 olen = (u32) strlen(orig);
+	u32 dlen = (u32) strlen(dst);
+	u32 *run;
+
+	if ((olen>=3) && (olen<dlen) && !strncmp(orig, dst, olen))
+		return GF_TRUE;
+	if ((dlen>=3) && (dlen<olen) && !strncmp(orig, dst, dlen))
+		return GF_TRUE;
+		
+	if (olen*2 < dlen) {
+		char *s1 = strchr(orig, ':');
+		char *s2 = strchr(dst, ':');
+		if (s1 && !s2) return GF_FALSE;
+		if (!s1 && s2) return GF_FALSE;
+
+		if (strstr(dst, orig))
+			return GF_TRUE;
+		return GF_FALSE;
+	}
+	run = gf_malloc(sizeof(u32) * olen);
+	memset(run, 0, sizeof(u32) * olen);
+
+	for (i=0; i<dlen; i++) {
+		u32 dist_char;
+		u32 offset=0;
+		char *pos;
+
+retry_char:
+		pos = strchr(orig+offset, dst[i]);
+		if (!pos) continue;
+		dist_char = (u32) (pos - orig);
+		if (!run[dist_char]) {
+			run[dist_char] = i+1;
+			match++;
+		} else if (run[dist_char] > i) {
+			run[dist_char] = i+1;
+			match++;
+		} else {
+			//this can be a repeated character
+			offset++;
+			goto retry_char;
+
+		}
+	}
+	if (match*2<olen) {
+		gf_free(run);
+		return GF_FALSE;
+	}
+	//if 4/5 of characters are matched, suggest it
+	if (match * 5 >= 4 * dlen ) {
+		gf_free(run);
+		return GF_TRUE;
+	}
+/*	if ((olen<=4) && (match>=3) && (dlen*2<olen*3) ) {
+		gf_free(run);
+		return GF_TRUE;
+	}
+*/
+	for (i=0; i<olen; i++) {
+		if (!i) {
+			if (run[0]==1)
+				dist++;
+		} else if (run[i-1] + 1 == run[i]) {
+			dist++;
+		}
+	}
+	gf_free(run);
+	//if half the characters are in order, consider a match
+	//if arg is small only check dst
+	if ((olen<=4) && (dist >= 2))
+		return GF_TRUE;
+	if ((dist*2 >= (s32) olen) && (dist*2 >= (s32) dlen))
+		return GF_TRUE;
+	return GF_FALSE;
 }
 
 #endif

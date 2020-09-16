@@ -43,7 +43,8 @@ typedef struct
 	//opts
 	char *script;
 	char *color, *font;
-	Float fontSize, lineSpacing, x, y;
+	Float fontSize, lineSpacing, txtx, txty;
+	u32 txtw, txth;
 
 	GF_FilterPid *ipid, *opid;
 
@@ -88,8 +89,8 @@ void vttd_update_size_info(GF_VTTDec *ctx)
 		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_HEIGHT);
 		if (p) h = p->value.uint;
 
-		if (!w) w = 1280;
-		if (!h) h = 720;
+		if (!w) w = ctx->txtw;
+		if (!h) h = ctx->txth;
 
 		gf_sg_set_scene_size_info(ctx->scenegraph, w, h, GF_TRUE);
 		gf_scene_force_size(ctx->scene, w, h);
@@ -280,8 +281,8 @@ JSContext *vtt_script_get_context(GF_VTTDec *ctx, GF_SceneGraph *sg)
 		JS_SetPropertyStr(c, global, "fontFamily", JS_NewString(c, ctx->font));
 		JS_SetPropertyStr(c, global, "textColor", JS_NewString(c, ctx->color));
 		JS_SetPropertyStr(c, global, "lineSpaceFactor", JS_NewFloat64(c, ctx->lineSpacing));
-		JS_SetPropertyStr(c, global, "xOffset", JS_NewFloat64(c, ctx->x));
-		JS_SetPropertyStr(c, global, "yOffset", JS_NewFloat64(c, ctx->y));
+		JS_SetPropertyStr(c, global, "xOffset", JS_NewFloat64(c, ctx->txtx));
+		JS_SetPropertyStr(c, global, "yOffset", JS_NewFloat64(c, ctx->txty));
 
 		JS_FreeValue(c, global);
 		ctx->update_args = GF_FALSE;
@@ -362,7 +363,6 @@ static GF_Err vttd_process(GF_Filter *filter)
 {
 	GF_Err e = GF_OK;
 	GF_FilterPacket *pck;
-	char start[100], end[100];
 	GF_List *cues;
 	const char *pck_data;
 	u64 cts;
@@ -408,6 +408,7 @@ static GF_Err vttd_process(GF_Filter *filter)
 	vttd_js_remove_cues(ctx, ctx->scenegraph->RootNode);
 	if (gf_list_count(cues)) {
 		while (gf_list_count(cues)) {
+			char start[100], end[100];
 			GF_WebVTTCue *cue = (GF_WebVTTCue *)gf_list_get(cues, 0);
 			gf_list_rem(cues, 0);
 			sprintf(start, "%02d:%02d:%02d.%03d", cue->start.hour, cue->start.min, cue->start.sec, cue->start.ms);
@@ -463,8 +464,10 @@ static const GF_FilterArgs VTTDecArgs[] =
 	{ OFFS(fontSize), "font size to use", GF_PROP_FLOAT, "20", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(color), "color to use", GF_PROP_STRING, "white", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(lineSpacing), "line spacing as scaling factor to font size", GF_PROP_FLOAT, "1.0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
-	{ OFFS(x), "horizontal offset", GF_PROP_FLOAT, "5", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
-	{ OFFS(y), "vertical offset", GF_PROP_FLOAT, "5", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
+	{ OFFS(txtx), "horizontal offset", GF_PROP_FLOAT, "5", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
+	{ OFFS(txty), "vertical offset", GF_PROP_FLOAT, "5", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
+	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, 0},
+	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, 0},
 	{0}
 };
 
@@ -480,8 +483,8 @@ static const GF_FilterCapability VTTDecCaps[] =
 GF_FilterRegister VTTDecRegister = {
 	.name = "vttdec",
 	GF_FS_SET_DESCRIPTION("WebVTT decoder")
-	GF_FS_SET_HELP("This filter decodes WebVTT streams into a javascript context of the compositor.\n"
-		"Warning: It cannot be used to dump WebVTT content.\n"
+	GF_FS_SET_HELP("This filter decodes WebVTT streams into a SVG scene graph of the compositor filter.\n"
+		"The scene graph creation is done through JavaScript.\n"
 		"The filter options are used to override the JS global variables of the WebVTT renderer.")
 	.private_size = sizeof(GF_VTTDec),
 	.flags = GF_FS_REG_MAIN_THREAD,

@@ -32,7 +32,7 @@
 #include <gpac/internal/media_dev.h>
 #include <math.h>
 
-#ifndef GPAC_DISABLE_AV_PARSERS
+#if !defined(GPAC_DISABLE_HEVC) && !defined(GPAC_DISABLE_AV_PARSERS)
 
 typedef struct
 {
@@ -307,7 +307,6 @@ u32 hevcmerge_rewrite_slice(GF_HEVCMergeCtx *ctx, HEVCTilePidCtx *tile_pid, char
 	pps = &hevc->pps[pps_id];
 	sps = &hevc->sps[pps->sps_id];
 
-	dependent_slice_segment_flag = 0;
 	if (!first_slice_segment_in_pic_flag && pps->dependent_slice_segments_enabled_flag) {
 		dependent_slice_segment_flag = gf_bs_read_int(ctx->bs_nal_in, 1);
 	} else {
@@ -396,17 +395,15 @@ static GF_Err hevcmerge_rewrite_config(GF_HEVCMergeCtx *ctx, GF_FilterPid *opid,
 	u32 i, j;
 	u8 *new_dsi;
 	u32 new_size;
-	GF_HEVCConfig *hvcc = NULL;
-	// Profile, tier and level syntax ( nal class: Reserved and unspecified)
-	hvcc = gf_odf_hevc_cfg_read(data, size, GF_FALSE);
+	GF_HEVCConfig *hvcc = gf_odf_hevc_cfg_read(data, size, GF_FALSE);
 	if (!hvcc) return GF_NON_COMPLIANT_BITSTREAM;
 
 	// for all the list objects in param_array
 	for (i = 0; i < gf_list_count(hvcc->param_array); i++) { // hvcc->param_array:list object
-		GF_HEVCParamArray *ar = (GF_HEVCParamArray *) gf_list_get(hvcc->param_array, i); // ar contains the i-th item in param_array
+		GF_NALUFFParamArray *ar = (GF_NALUFFParamArray *) gf_list_get(hvcc->param_array, i); // ar contains the i-th item in param_array
 		for (j = 0; j < gf_list_count(ar->nalus); j++) { // for all the nalus the i-th param got
 			/*! used for storing AVC sequenceParameterSetNALUnit and pictureParameterSetNALUnit*/
-			GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *)gf_list_get(ar->nalus, j); // store j-th nalus in *sl
+			GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_list_get(ar->nalus, j); // store j-th nalus in *sl
 
 			if (ar->type == GF_HEVC_NALU_SEQ_PARAM) {
 				char *outSPS=NULL;
@@ -616,9 +613,7 @@ static GF_Err hevcmerge_rebuild_grid(GF_HEVCMergeCtx *ctx,  GF_FilterPid *pid)
 	ctx->grid = NULL;
 
 	if (min_rel_pos_x == (u32)-1) min_rel_pos_x=0;
-	if (min_rel_pos_y == (u32)-1) min_rel_pos_y=0;
 
-	max_cols = nb_pids;
 	if (nb_has_pos) {
 		max_cols = 0;
 		for (i=0; i<nb_pids; i++) {
@@ -633,9 +628,6 @@ static GF_Err hevcmerge_rebuild_grid(GF_HEVCMergeCtx *ctx,  GF_FilterPid *pid)
 
 				//for relative positioning, only check we don't have the same indexes
 				if (nb_rel_pos) {
-					if ((tile1->pos_x==tile2->pos_x) && (tile1->pos_y == tile2->pos_y)) {
-						overlap = GF_TRUE;
-					}
 					continue;
 				}
 
@@ -717,6 +709,9 @@ static GF_Err hevcmerge_rebuild_grid(GF_HEVCMergeCtx *ctx,  GF_FilterPid *pid)
 					//insert
 					else {
 						for (j=0; j<max_cols; j++) {
+							if (ctx->grid[j].pos_x == (u32) tile1->pos_x) {
+								break;
+							}
 							if (ctx->grid[j].pos_x > (u32) tile1->pos_x) {
 								ctx->grid = gf_realloc(ctx->grid, sizeof(HEVCGridInfo) * (max_cols+1) );
 								memmove(&ctx->grid[j+1], &ctx->grid[j], sizeof(HEVCGridInfo) * (max_cols-j));
@@ -731,8 +726,12 @@ static GF_Err hevcmerge_rebuild_grid(GF_HEVCMergeCtx *ctx,  GF_FilterPid *pid)
 				}
 			}
 		}
+		if (!ctx->grid) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[HEVCMerge] Failed to create grid\n"));
+			return GF_OUT_OF_MEM;
+		}
 		// pass on the grid to insert empty columns
-		if (!nb_rel_pos) {
+		if (!nb_rel_pos && ctx->grid) {
 			for (j=0; j<max_cols-1; j++) {
 				assert(ctx->grid[j].pos_x + ctx->grid[j].width <= ctx->grid[j+1].pos_x);
 				if (ctx->grid[j].pos_x + ctx->grid[j].width != ctx->grid[j+1].pos_x) {
@@ -813,7 +812,6 @@ static GF_Err hevcmerge_rebuild_grid(GF_HEVCMergeCtx *ctx,  GF_FilterPid *pid)
 		memset(ctx->grid, 0, sizeof(HEVCGridInfo)*nb_pids);
 
 		nb_cols=0;
-		nb_rows=0;
 		for (i=0; i<nb_pids; i++) {
 			Bool found = GF_FALSE;
 			HEVCTilePidCtx *apidctx = gf_list_get(ctx->pids, i);
@@ -1165,10 +1163,6 @@ static GF_Err hevcmerge_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool
 	GF_HEVCMergeCtx *ctx = (GF_HEVCMergeCtx*)gf_filter_get_udta(filter);
 	HEVCTilePidCtx *tile_pid;
 
-	pid_width = sizeof(HEVCState);
-	pid_width = sizeof(HEVC_SPS);
-	pid_width = sizeof(HEVC_PPS);
-
 	if (ctx->in_error)
 		return GF_BAD_PARAM;
 
@@ -1203,6 +1197,8 @@ static GF_Err hevcmerge_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool
 	//not set, first time we see this pid
 	if (!tile_pid) {
 		GF_SAFEALLOC(tile_pid, HEVCTilePidCtx);
+		if (!tile_pid) return GF_OUT_OF_MEM;
+		
 		gf_filter_pid_set_udta(pid, tile_pid);
 		tile_pid->pid = pid;
 		tile_pid->hevc_state.full_slice_header_parse = GF_TRUE;
@@ -1226,16 +1222,15 @@ static GF_Err hevcmerge_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool
 	tile_pid->dsi_crc = cfg_crc;
 
 	//update this pid's config by parsing sps/vps/pps and check if we need to change anything
-	GF_HEVCConfig *hvcc = NULL;
-	hvcc = gf_odf_hevc_cfg_read(dsi->value.data.ptr, dsi->value.data.size, GF_FALSE);
+	GF_HEVCConfig *hvcc = gf_odf_hevc_cfg_read(dsi->value.data.ptr, dsi->value.data.size, GF_FALSE);
 	if (!hvcc) return GF_NON_COMPLIANT_BITSTREAM;
 	tile_pid->nalu_size_length = hvcc->nal_unit_size;
 	ctx->hevc_nalu_size_length = 4;
 	e = GF_OK;
 	for (i = 0; i < gf_list_count(hvcc->param_array); i++) {
-		GF_HEVCParamArray *ar = (GF_HEVCParamArray *) gf_list_get(hvcc->param_array, i);
+		GF_NALUFFParamArray *ar = (GF_NALUFFParamArray *) gf_list_get(hvcc->param_array, i);
 		for (j = 0; j < gf_list_count(ar->nalus); j++) {
-			GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *)gf_list_get(ar->nalus, j);
+			GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_list_get(ar->nalus, j);
 			s32 idx = 0;
 
 			if (ar->type == GF_HEVC_NALU_SEQ_PARAM) {
@@ -1276,6 +1271,16 @@ static GF_Err hevcmerge_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool
 	if (!ctx->opid) {
 		ctx->opid = gf_filter_pid_new(filter);
 		gf_filter_pid_copy_properties(ctx->opid, pid);
+		//remove all SRD related properties
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SRD, NULL);
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SRD_REF, NULL);
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SRD_MAP, NULL);
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CROP_POS, NULL);
+		//TODO, we might want to compute a cumulate of these properties on the output ?
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_ORIG_SIZE, NULL);
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DOWN_SIZE, NULL);
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DOWN_RATE, NULL);
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DOWN_BYTES, NULL);
 	}
 
 	if ((pid_width != tile_pid->width) || (pid_height != tile_pid->height)) {

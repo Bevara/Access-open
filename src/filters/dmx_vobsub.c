@@ -88,13 +88,12 @@ GF_Err vobsubdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_rem
 	if (! gf_filter_pid_check_caps(pid))
 		return GF_NOT_SUPPORTED;
 
-	if (!ctx->idx_pid)
+	if (!ctx->idx_pid) {
 		ctx->idx_pid = pid;
-	else if (ctx->idx_pid == pid)
-		ctx->idx_pid = pid;
-	else
+	} else if (ctx->idx_pid != pid) {
 		ctx->sub_pid = pid;
-
+	}
+	
 	gf_filter_pid_set_framing_mode(pid, GF_TRUE);
 
 	if (ctx->idx_pid==pid) {
@@ -127,7 +126,7 @@ GF_Err vobsubdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_rem
 			}
 		}
 
-		ctx->sub_filter = gf_filter_connect_source(filter, sURL, NULL, &e);
+		ctx->sub_filter = gf_filter_connect_source(filter, sURL, NULL, GF_TRUE, &e);
 		if (e) return e;
 		if (ctx->mdia) gf_fclose(ctx->mdia);
 		ctx->mdia = NULL;

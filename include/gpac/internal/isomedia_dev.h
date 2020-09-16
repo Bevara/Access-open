@@ -129,7 +129,10 @@ enum
 	GF_ISOM_BOX_TYPE_TRAF	= GF_4CC( 't', 'r', 'a', 'f' ),
 	GF_ISOM_BOX_TYPE_TFHD	= GF_4CC( 't', 'f', 'h', 'd' ),
 	GF_ISOM_BOX_TYPE_TRUN	= GF_4CC( 't', 'r', 'u', 'n' ),
+#ifdef GF_ENABLE_CTRN
 	GF_ISOM_BOX_TYPE_CTRN	= GF_4CC( 'c', 't', 'r', 'n' ),
+#endif
+
 #endif
 
 
@@ -187,6 +190,10 @@ enum
 	GF_ISOM_BOX_TYPE_LHT1	= GF_4CC( 'l', 'h', 't', '1' ),
 
 	GF_ISOM_BOX_TYPE_LHVC	= GF_4CC( 'l', 'h', 'v', 'C' ),
+
+	GF_ISOM_BOX_TYPE_VVC1	= GF_4CC( 'v', 'v', 'c', '1' ),
+	GF_ISOM_BOX_TYPE_VVI1	= GF_4CC( 'v', 'v', 'i', '1' ),
+	GF_ISOM_BOX_TYPE_VVCC	= GF_4CC( 'v', 'v', 'c', 'C' ),
 
 	GF_ISOM_BOX_TYPE_AV1C = GF_4CC('a', 'v', '1', 'C'),
 	GF_ISOM_BOX_TYPE_AV01 = GF_4CC('a', 'v', '0', '1'),
@@ -464,6 +471,7 @@ enum
 
 	/* apple QT box */
 	GF_QT_BOX_TYPE_ALIS = GF_4CC('a','l','i','s'),
+	GF_QT_BOX_TYPE_LOAD = GF_4CC('l','o','a','d'),
 	GF_QT_BOX_TYPE_WIDE = GF_4CC('w','i','d','e'),
 	GF_QT_BOX_TYPE_GMIN	= GF_4CC( 'g', 'm', 'i', 'n' ),
 	GF_QT_BOX_TYPE_TAPT	= GF_4CC( 't', 'a', 'p', 't' ),
@@ -485,8 +493,6 @@ enum
 	/* from drm_sample.c */
 	GF_ISOM_BOX_TYPE_264B 	= GF_4CC('2','6','4','b'),
 	GF_ISOM_BOX_TYPE_265B 	= GF_4CC('2','6','5','b'),
-	GF_ISOM_BOX_TYPE_AV1B 	= GF_4CC('a','v','1','b'),
-	GF_ISOM_BOX_TYPE_VP9B   = GF_4CC('v','p','9','b'),
 
 	/*MPEG-H 3D audio*/
 	GF_ISOM_BOX_TYPE_MHA1 	= GF_4CC('m','h','a','1'),
@@ -517,14 +523,18 @@ enum
 {
 	GF_ISOM_SAMPLE_ENTRY_UNKN = 0,
 	GF_ISOM_SAMPLE_ENTRY_VIDEO = GF_4CC('v','i','d','e'),
-	GF_ISOM_SAMPLE_ENTRY_AUDIO = GF_4CC('a','u','d','i')
+	GF_ISOM_SAMPLE_ENTRY_AUDIO = GF_4CC('a','u','d','i'),
+	GF_ISOM_SAMPLE_ENTRY_MP4S = GF_4CC('m','p','4','s')
+
 };
 
 
 /* bitstream cookies used by isobmff lib*/
 #define GF_ISOM_BS_COOKIE_NO_LOGS		1
-#define GF_ISOM_BS_COOKIE_VISUAL_TRACK	2
-#define GF_ISOM_BS_COOKIE_QT_CONV		4
+#define GF_ISOM_BS_COOKIE_VISUAL_TRACK	(1<<1)
+#define GF_ISOM_BS_COOKIE_QT_CONV		(1<<2)
+#define GF_ISOM_BS_COOKIE_CLONE_TRACK	(1<<3)
+
 
 #ifndef GPAC_DISABLE_ISOM
 
@@ -586,7 +596,7 @@ typedef struct
 	tmp->type = __4cc;
 
 #define ISOM_DECREASE_SIZE(__ptr, bytes)	if (__ptr->size < (bytes) ) {\
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isom] not enough bytes in box %s: %d left, reading %d (file %s, line %d)\n", gf_4cc_to_str(__ptr->type), __ptr->size, (bytes), __FILE__, __LINE__ )); \
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isom] not enough bytes in box %s: %d left, reading %d (file %s, line %d)\n", gf_4cc_to_str(__ptr->type), (u32) __ptr->size, (bytes), __FILE__, __LINE__ )); \
 			return GF_ISOM_INVALID_FILE; \
 		}\
 		__ptr->size -= bytes; \
@@ -801,6 +811,7 @@ typedef struct
 	u16 reserved3;
 	s32 matrix[9];
 	u32 width, height;
+	u64 initial_duration;
 } GF_TrackHeaderBox;
 
 typedef struct
@@ -867,6 +878,7 @@ typedef struct
 	u32 sample_count_at_seg_start;
 	Bool first_traf_merged;
 	Bool present_in_scalable_segment;
+	u32 current_traf_stsd_idx;
 #endif
 } GF_TrackBox;
 
@@ -1170,7 +1182,21 @@ typedef struct
     u32 bitmap;
     u32 num_audio_description;
     GF_AudioChannelDescription *audio_descs;
+    u8 *ext_data;
+    u32 ext_data_size;
 } GF_ChannelLayoutInfoBox;
+
+
+typedef struct
+{
+	GF_ISOM_BOX
+
+    u32 preload_start_time;
+    u32 preload_duration;
+    u32 preload_flags;
+    u32 default_hints;
+} GF_TrackLoadBox;
+
 
 typedef struct
 {
@@ -1353,6 +1379,13 @@ typedef struct
 typedef struct
 {
 	GF_ISOM_BOX
+	GF_VVCConfig *config;
+} GF_VVCConfigurationBox;
+
+
+typedef struct
+{
+	GF_ISOM_BOX
 	GF_AV1Config *config;
 } GF_AV1ConfigurationBox;
 
@@ -1382,17 +1415,6 @@ typedef struct {
 		u16 maxCLL;
 	u16 maxFALL;
 } GF_VPContentLightLevelBox;
-
-typedef struct {
-	u8 dv_version_major;
-	u8 dv_version_minor;
-	u8 dv_profile; //7 bits
-	u8 dv_level;   //6 bits
-	Bool rpu_present_flag;
-	Bool el_present_flag;
-	Bool bl_present_flag;
-	//const unsigned int (32)[5] reserved = 0;
-} GF_DOVIDecoderConfigurationRecord;
 
 typedef struct {
 	GF_ISOM_BOX
@@ -1445,12 +1467,16 @@ typedef struct
 	/*hevc extension*/
 	GF_HEVCConfigurationBox *hevc_config;
 	GF_HEVCConfigurationBox *lhvc_config;
+	/*vvc extension*/
+	GF_VVCConfigurationBox *vvc_config;
 	/*av1 extension*/
 	GF_AV1ConfigurationBox *av1_config;
 	/*vp8-9 extension*/
 	GF_VPConfigurationBox *vp_config;
-	/*vp8-9 extension*/
+	/*jp2k extension*/
 	GF_J2KHeaderBox *jp2h;
+	/*dolbyvision extension*/
+	GF_DOVIConfigurationBox *dovi_config;
 
 	/*internally emulated esd*/
 	GF_ESD *emul_esd;
@@ -1805,7 +1831,7 @@ typedef struct
 typedef struct
 {
 	GF_ISOM_FULL_BOX
-	u32 sampleCount;
+	u32 sampleCount, sample_alloc;
 	/*each dep type is packed on 1 byte*/
 	u8 *sample_info;
 } GF_SampleDependencyTypeBox;
@@ -1935,10 +1961,11 @@ typedef struct
 	u32 currentEntryIndex;
 
 	Bool no_sync_found;
-	Bool skip_sample_groups;
+
+	u32 r_last_chunk_num, r_last_sample_num, r_last_offset_in_chunk;
 } GF_SampleTableBox;
 
-void stbl_AppendTrafMap(GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end);
+GF_Err stbl_AppendTrafMap(GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end);
 
 typedef struct __tag_media_info_box
 {
@@ -1953,7 +1980,6 @@ typedef struct __tag_media_info_box
 
 GF_Err stbl_SetDependencyType(GF_SampleTableBox *stbl, u32 sampleNumber, u32 isLeading, u32 dependsOn, u32 dependedOn, u32 redundant);
 GF_Err stbl_AppendDependencyType(GF_SampleTableBox *stbl, u32 isLeading, u32 dependsOn, u32 dependedOn, u32 redundant);
-GF_Err stbl_AddDependencyType(GF_SampleTableBox *stbl, u32 sampleNumber, u32 isLeading, u32 dependsOn, u32 dependedOn, u32 redundant);
 
 typedef struct
 {
@@ -2240,6 +2266,8 @@ typedef struct
 	char *full_path;
 	// if not 0, full_path is actually the data to write.
 	u32 data_len;
+
+	u32 tk_id, sample_num;
 } GF_ItemInfoEntryBox;
 
 typedef struct
@@ -2361,6 +2389,8 @@ typedef struct __tag_meta_box
 	GF_IPMPControlBox *IPMP_control;
 	GF_ItemPropertiesBox *item_props;
 	GF_ItemReferenceBox *item_refs;
+
+	Bool use_item_sample_sharing;
 } GF_MetaBox;
 
 typedef struct
@@ -2504,8 +2534,10 @@ typedef struct
 	GF_TFBaseMediaDecodeTimeBox *tfdt;
 
 	u64 moof_start_in_bs;
+#ifdef GF_ENABLE_CTRN
 	Bool use_ctrn;
 	Bool use_inherit;
+#endif
 
 	u32 interleave_id;
 	u8 merge_sample_interleave;
@@ -2528,6 +2560,8 @@ enum
 	GF_ISOM_TRUN_SIZE			= 0x200,
 	GF_ISOM_TRUN_FLAGS			= 0x400,
 	GF_ISOM_TRUN_CTS_OFFSET		= 0x800,
+
+#ifdef GF_ENABLE_CTRN
 	/*compact trun flags (not all of them, field indices are stored in trun box)*/
 	GF_ISOM_CTRN_FIRST_SAMPLE = 1<<1, //0x00000002
 	GF_ISOM_CTRN_DATAOFFSET_16 = 1<<2, //0x00000004
@@ -2537,43 +2571,9 @@ enum
 	GF_ISOM_CTRN_INHERIT_FLAGS = 1<<5,
 	GF_ISOM_CTRN_INHERIT_SIZE = 1<<6,
 	GF_ISOM_CTRN_INHERIT_DUR = 1<<7
+#endif
+
 };
-
-typedef struct
-{
-	GF_ISOM_FULL_BOX
-	u32 sample_count;
-	/*the following are optional fields */
-	/* unsigned for version 0 */
-	s32 data_offset;
-	/*can be empty*/
-	GF_List *entries;
-
-	/*only for trun, ignored for ctrn*/
-	u32 first_sample_flags;
-
-	/*in write mode with data caching*/
-	GF_BitStream *cache;
-
-	/*the remaining is internal for compact trun*/
-	/*use compact mode*/
-	Bool use_ctrn;
-	/*we store the ctrn box flags here rather than in flags and swap when writing/dumping. This avoids overwriting the flags
-	set by the fragment writer*/
-	u32 ctrn_flags;
-	/*set to default sample duration when writing, parsed from box otherwise. If 0, not used*/
-	u32 ctso_multiplier;
-	u8 ctrn_first_dur, ctrn_first_size, ctrn_first_sample_flags, ctrn_first_ctts;
-	u8 ctrn_dur, ctrn_size, ctrn_sample_flags, ctrn_ctts;
-	/*use inherit in write mode- in the current version, only size will be set and all other fields inherited*/
-	Bool use_inherit;
-
-	u32 interleave_id;
-	u32 first_sample_idx;
-	u32 *sample_order;
-} GF_TrackFragmentRunBox;
-
-u32 gf_isom_ctrn_field_size_bits(u32 field_idx);
 
 typedef struct
 {
@@ -2587,6 +2587,49 @@ typedef struct
 	u64 dts;
 	u32 nb_pack;
 } GF_TrunEntry;
+
+
+typedef struct
+{
+	GF_ISOM_FULL_BOX
+	u32 sample_count;
+	/*the following are optional fields */
+	/* unsigned for version 0 */
+	s32 data_offset;
+
+	u32 nb_samples, sample_alloc;
+	/*can be empty*/
+	GF_TrunEntry *samples;
+
+	/*only for trun, ignored for ctrn*/
+	u32 first_sample_flags;
+
+	/*in write mode with data caching*/
+	GF_BitStream *cache;
+
+#ifdef GF_ENABLE_CTRN
+	/*the remaining is internal for compact trun*/
+	/*use compact mode*/
+	Bool use_ctrn;
+	/*we store the ctrn box flags here rather than in flags and swap when writing/dumping. This avoids overwriting the flags
+	set by the fragment writer*/
+	u32 ctrn_flags;
+	/*set to default sample duration when writing, parsed from box otherwise. If 0, not used*/
+	u32 ctso_multiplier;
+	u8 ctrn_first_dur, ctrn_first_size, ctrn_first_sample_flags, ctrn_first_ctts;
+	u8 ctrn_dur, ctrn_size, ctrn_sample_flags, ctrn_ctts;
+	/*use inherit in write mode- in the current version, only size will be set and all other fields inherited*/
+	Bool use_inherit;
+#endif
+
+	u32 interleave_id;
+	u32 first_sample_idx;
+	u32 *sample_order;
+} GF_TrackFragmentRunBox;
+
+#ifdef GF_ENABLE_CTRN
+u32 gf_isom_ctrn_field_size_bits(u32 field_idx);
+#endif
 
 #endif /*GPAC_DISABLE_ISOM_FRAGMENTS*/
 
@@ -2991,6 +3034,21 @@ typedef struct __pcrInfo_box
 	u32	subsegment_count;
 	u64 *pcr_values;
 } GF_PcrInfoBox;
+
+
+typedef struct
+{
+	GF_ISOM_FULL_BOX
+	char *scheme_id_uri;
+	char *value;
+	u32 timescale;
+	u64 presentation_time_delta;
+	u32 event_duration;
+	u32 event_id;
+	u8 *message_data;
+	u32 message_data_size;
+} GF_EventMessageBox;
+
 
 #ifndef GPAC_DISABLE_ISOM_ADOBE
 
@@ -3569,8 +3627,6 @@ typedef struct
 
 /*regular file IO*/
 #define GF_ISOM_DATA_FILE         0x01
-/*File Mapping object, read-only mode on complete files (no download)*/
-#define GF_ISOM_DATA_FILE_MAPPING 0x02
 /*External file object. Needs implementation*/
 #define GF_ISOM_DATA_FILE_EXTERN  0x03
 /*regular memory IO*/
@@ -3642,11 +3698,6 @@ u32 gf_isom_fdm_get_data(GF_FileDataMap *ptr, u8 *buffer, u32 bufferLength, u64 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 GF_DataMap *gf_isom_fdm_new_temp(const char *sTempPath);
 #endif
-
-/*file-mapping, read only*/
-GF_DataMap *gf_isom_fmo_new(const char *sPath, u8 mode);
-void gf_isom_fmo_del(GF_FileMappingDataMap *ptr);
-u32 gf_isom_fmo_get_data(GF_FileMappingDataMap *ptr, u8 *buffer, u32 bufferLength, u64 fileOffset);
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 u64 gf_isom_datamap_get_offset(GF_DataMap *map);
@@ -3729,7 +3780,10 @@ struct __tag_isom {
 	/*meta box if any*/
 	GF_MetaBox *meta;
 
-	u64 read_byte_offset;
+	s64 read_byte_offset;
+	u64 bytes_removed;
+
+	Bool disable_odf_translate;
 
 	GF_ISOCompressMode compress_mode;
 	Bool force_compress;
@@ -3778,6 +3832,9 @@ struct __tag_isom {
 	u32 sidx_pts_store_alloc, sidx_pts_store_count;
 	u64 *sidx_pts_store, *sidx_pts_next_store;
 
+	GF_SegmentIndexBox *main_sidx;
+	u64 main_sidx_end_pos;
+
 #endif
 	GF_ProducerReferenceTimeBox *last_producer_ref_time;
 
@@ -3806,7 +3863,7 @@ struct __tag_isom {
 u64 gf_isom_get_mp4time();
 /*set the last error of the file. if file is NULL, set the static error (used for IO errors*/
 void gf_isom_set_last_error(GF_ISOFile *the_file, GF_Err error);
-GF_Err gf_isom_parse_movie_boxes(GF_ISOFile *mov, u64 *bytesMissing, Bool progressive_mode);
+GF_Err gf_isom_parse_movie_boxes(GF_ISOFile *mov, u32 *boxType, u64 *bytesMissing, Bool progressive_mode);
 GF_ISOFile *gf_isom_new_movie();
 /*Movie and Track access functions*/
 GF_TrackBox *gf_isom_get_track_from_file(GF_ISOFile *the_file, u32 trackNumber);
@@ -3818,6 +3875,7 @@ u32 gf_isom_get_tracknum_from_id(GF_MovieBox *moov, GF_ISOTrackID trackID);
 GF_ISOFile *gf_isom_open_file(const char *fileName, GF_ISOOpenMode OpenMode, const char *tmp_dir);
 /*close and delete a movie*/
 void gf_isom_delete_movie(GF_ISOFile *mov);
+void gf_isom_meta_restore_items_ref(GF_ISOFile *file, GF_MetaBox *meta);
 
 /*StreamDescription reconstruction Functions*/
 GF_Err GetESD(GF_MovieBox *moov, GF_ISOTrackID trackID, u32 StreamDescIndex, GF_ESD **outESD);
@@ -3892,7 +3950,7 @@ GF_UserDataMap *udta_getEntry(GF_UserDataBox *ptr, u32 box_type, bin128 *uuid);
 GF_Err FlushCaptureMode(GF_ISOFile *movie);
 GF_Err CanAccessMovie(GF_ISOFile *movie, GF_ISOOpenMode Mode);
 GF_ISOFile *gf_isom_create_movie(const char *fileName, GF_ISOOpenMode OpenMode, const char *tmp_dir);
-void gf_isom_insert_moov(GF_ISOFile *file);
+GF_Err gf_isom_insert_moov(GF_ISOFile *file);
 
 GF_Err WriteToFile(GF_ISOFile *movie, Bool for_fragments);
 GF_Err Track_SetStreamDescriptor(GF_TrackBox *trak, u32 StreamDescriptionIndex, u32 DataReferenceIndex, GF_ESD *esd, u32 *outStreamIndex);
@@ -3937,15 +3995,14 @@ GF_Err stbl_SetRedundant(GF_SampleTableBox *stbl, u32 sampleNumber);
 GF_Err stbl_AddRedundant(GF_SampleTableBox *stbl, u32 sampleNumber);
 
 /*REMOVE functions*/
-GF_Err stbl_RemoveDTS(GF_SampleTableBox *stbl, u32 sampleNumber, u32 LastAUDefDuration);
-GF_Err stbl_RemoveCTS(GF_SampleTableBox *stbl, u32 sampleNumber);
-GF_Err stbl_RemoveSize(GF_SampleSizeBox *stsz, u32 sampleNumber);
-GF_Err stbl_RemoveChunk(GF_SampleTableBox *stbl, u32 sampleNumber);
+GF_Err stbl_RemoveDTS(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples, u32 LastAUDefDuration);
+GF_Err stbl_RemoveCTS(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples);
+GF_Err stbl_RemoveSize(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples);
+GF_Err stbl_RemoveChunk(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples);
 GF_Err stbl_RemoveRAP(GF_SampleTableBox *stbl, u32 sampleNumber);
-GF_Err stbl_RemoveShadow(GF_ShadowSyncBox *stsh, u32 sampleNumber);
+GF_Err stbl_RemoveShadow(GF_SampleTableBox *stbl, u32 sampleNumber);
 GF_Err stbl_RemovePaddingBits(GF_SampleTableBox *stbl, u32 SampleNumber);
-GF_Err stbl_RemoveSampleFragments(GF_SampleTableBox *stbl, u32 sampleNumber);
-GF_Err stbl_RemoveRedundant(GF_SampleTableBox *stbl, u32 SampleNumber);
+GF_Err stbl_RemoveRedundant(GF_SampleTableBox *stbl, u32 SampleNumber, u32 nb_samples);
 GF_Err stbl_RemoveSubSample(GF_SampleTableBox *stbl, u32 SampleNumber);
 GF_Err stbl_RemoveSampleGroup(GF_SampleTableBox *stbl, u32 SampleNumber);
 
@@ -3953,7 +4010,7 @@ GF_Err stbl_RemoveSampleGroup(GF_SampleTableBox *stbl, u32 SampleNumber);
 GF_Err gf_isom_close_fragments(GF_ISOFile *movie);
 #endif
 
-GF_Err gf_isom_flush_sidx(GF_ISOFile *movie, u32 sidx_max_size);
+GF_Err gf_isom_flush_sidx(GF_ISOFile *movie, u32 sidx_max_size, Bool exact_range);
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
@@ -3997,14 +4054,13 @@ void VP9_RewriteESDescriptor(GF_MPEGVisualSampleEntryBox *vp9);
 void AV1_RewriteESDescriptorEx(GF_MPEGVisualSampleEntryBox *av1, GF_MediaBox *mdia);
 void AV1_RewriteESDescriptor(GF_MPEGVisualSampleEntryBox *av1);
 GF_Err reftype_AddRefTrack(GF_TrackReferenceTypeBox *ref, GF_ISOTrackID trackID, u16 *outRefIndex);
-GF_XMLBox *gf_isom_get_meta_xml(GF_ISOFile *file, Bool root_meta, u32 track_num, Bool *is_binary);
 Bool gf_isom_cenc_has_saiz_saio_track(GF_SampleTableBox *stbl, u32 scheme_type);
 
 #ifndef GPAC_DISABLE_ISOM_FRAGMENTS
 Bool gf_isom_cenc_has_saiz_saio_traf(GF_TrackFragmentBox *traf, u32 scheme_type);
 void gf_isom_cenc_set_saiz_saio(GF_SampleEncryptionBox *senc, GF_SampleTableBox *stbl, GF_TrackFragmentBox  *traf, u32 len, Bool saio_32bits);
 #endif
-void gf_isom_cenc_merge_saiz_saio(GF_SampleEncryptionBox *senc, GF_SampleTableBox *stbl, u64 offset, u32 len);
+GF_Err gf_isom_cenc_merge_saiz_saio(GF_SampleEncryptionBox *senc, GF_SampleTableBox *stbl, u64 offset, u32 len);
 
 void gf_isom_parse_trif_info(const u8 *data, u32 size, u32 *id, u32 *independent, Bool *full_picture, u32 *x, u32 *y, u32 *w, u32 *h);
 
@@ -4253,7 +4309,6 @@ struct _3gpp_text_sample
 };
 
 GF_TextSample *gf_isom_parse_text_sample(GF_BitStream *bs);
-GF_TextSample *gf_isom_parse_text_sample_from_data(u8 *data, u32 dataLength);
 
 struct _generic_subtitle_sample
 {
@@ -4276,7 +4331,6 @@ GF_GenericSubtitleSample *gf_isom_parse_generic_subtitle_sample_from_data(u8 *da
 
 #ifndef GPAC_DISABLE_VTT
 
-GF_Err gf_isom_update_webvtt_description(GF_ISOFile *movie, u32 trackNumber, u32 descriptionIndex, const char *config);
 GF_ISOSample *gf_isom_webvtt_to_sample(void *samp);
 
 typedef struct
@@ -4326,9 +4380,6 @@ GF_Err gf_isom_read_null_terminated_string(GF_Box *s, GF_BitStream *bs, u64 size
 
 GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragmentBox *moof, u64 moof_offset, s32 compresed_diff, u64 *cumulated_offset, Bool is_first_merge);
 
-//experimental flags
-//#define COMP_SIGNAL_SIZE_TYPE
-//#define COMP_SIGNAL_SIZE
 
 #endif //GPAC_DISABLE_ISOM
 

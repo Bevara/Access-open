@@ -31,31 +31,8 @@
 #include <gpac/filters.h>
 #include <gpac/user.h>
 
-
- //atomic ref_count++ / ref_count--
-#if defined(WIN32) || defined(_WIN32_WCE)
-#include <Windows.h>
-#include <WinBase.h>
-
-#define safe_int_inc(__v) InterlockedIncrement((int *) (__v))
-#define safe_int_dec(__v) InterlockedDecrement((int *) (__v))
-
-#define safe_int_add(__v, inc_val) InterlockedAdd((int *) (__v), inc_val)
-#define safe_int_sub(__v, dec_val) InterlockedAdd((int *) (__v), -dec_val)
-
-#define safe_int64_add(__v, inc_val) InterlockedAdd64((LONG64 *) (__v), inc_val)
-#define safe_int64_sub(__v, dec_val) InterlockedAdd64((LONG64 *) (__v), -dec_val)
-
-#else
-
-#define safe_int_inc(__v) __sync_add_and_fetch((int *) (__v), 1)
-#define safe_int_dec(__v) __sync_sub_and_fetch((int *) (__v), 1)
-
-#define safe_int_add(__v, inc_val) __sync_add_and_fetch((int *) (__v), inc_val)
-#define safe_int_sub(__v, dec_val) __sync_sub_and_fetch((int *) (__v), dec_val)
-
-#define safe_int64_add(__v, inc_val) __sync_add_and_fetch((int64_t *) (__v), inc_val)
-#define safe_int64_sub(__v, dec_val) __sync_sub_and_fetch((int64_t *) (__v), dec_val)
+#ifdef GPAC_HAS_QJS
+#include "../scenegraph/qjs_common.h"
 #endif
 
 
@@ -319,6 +296,13 @@ typedef struct
 
 void gf_fs_push_arg(GF_FilterSession *session, const char *szArg, Bool was_found, u32 type);
 
+enum
+{
+	GF_FS_BLOCK_ALL=0,
+	GF_FS_NOBLOCK_FANOUT,
+	GF_FS_NOBLOCK
+};
+
 struct __gf_filter_session
 {
 	u32 flags;
@@ -381,7 +365,7 @@ struct __gf_filter_session
 
 	u32 nb_threads_stopped;
 	GF_Err run_status;
-	Bool disable_blocking;
+	u32 blocking_mode;
 	Bool in_final_flush;
 
 	Bool reporting_on;
@@ -413,7 +397,7 @@ struct __gf_filter_session
 	GF_FilterSessionCaps caps;
 
 	u64 hint_clock_us;
-	Double hint_timestamp;
+	GF_Fraction64 hint_timestamp;
 
 	//max filter chain allowed in the link resolution process
 	u32 max_resolve_chain_len;
@@ -438,7 +422,19 @@ struct __gf_filter_session
 #endif
 	//internal video output to hidden window for GL context
 	struct _video_out *gl_driver;
+
+#ifdef GPAC_HAS_QJS
+	struct JSContext *js_ctx;
+	GF_List *jstasks;
+	struct __jsfs_task *new_f_task, *del_f_task, *on_evt_task;
+#endif
 };
+
+#ifdef GPAC_HAS_QJS
+void jsfs_on_filter_created(GF_Filter *new_filter);
+void jsfs_on_filter_destroyed(GF_Filter *del_filter);
+Bool jsfs_on_event(GF_FilterSession *session, GF_Event *evt);
+#endif
 
 void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess);
 
@@ -554,6 +550,7 @@ struct __gf_filter
 	volatile u32 stream_reset_pending;
 	volatile u32 num_events_queued;
 	volatile u32 detach_pid_tasks_pending;
+	volatile u32 nb_shared_packets_out;
 	GF_List *postponed_packets;
 
 	//list of blacklisted filtered registries
@@ -603,6 +600,8 @@ struct __gf_filter
 	volatile u32 would_block; //concurrent inc/dec
 	//sets once broken blocking mode has been detected
 	Bool blockmode_broken;
+	//requested by a filter to disable blocking
+	Bool prevent_blocking;
 
 	//filter destroy task has been posted
 	Bool finalized;
@@ -613,6 +612,11 @@ struct __gf_filter
 	Bool setup_notified;
 	//filter loaded to solve a filter chain
 	Bool dynamic_filter;
+	//filter block EOS queries
+	Bool block_eos;
+	//set when one input pid of the filter has been marked for removal through gf_filter_remove_src
+	//this prevents dispatching pid_remove as packets that would no longer be consumed
+	Bool marked_for_removal;
 	//sticky filters won't unload if all inputs are deconnected. Useful for sink filters
 	//2 means temporary sticky, used when reconfiguring filter chain
 	u32 sticky;
@@ -695,9 +699,15 @@ struct __gf_filter
 
 	GF_Filter *multi_sink_target;
 
+	Bool event_target;
+
+#ifdef GPAC_HAS_QJS
+	char *iname;
+	JSValue jsval;
+#endif
 };
 
-GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg, const char *args, const char *dst_args, GF_FilterArgType arg_type, GF_Err *err, GF_Filter *multi_sink_target);
+GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg, const char *args, const char *dst_args, GF_FilterArgType arg_type, GF_Err *err, GF_Filter *multi_sink_target, Bool dynamic_filter);
 GF_Filter *gf_filter_clone(GF_Filter *filter);
 void gf_filter_del(GF_Filter *filter);
 
@@ -792,6 +802,9 @@ struct __gf_filter_pid_inst
 	GF_FilterClockType last_clock_type;
 
 	GF_Filter *alias_orig;
+
+	GF_Fraction64 last_ts_drop;
+
 };
 
 struct __gf_filter_pid
@@ -850,6 +863,8 @@ struct __gf_filter_pid
 	//1000x speed value
 	u32 playback_speed_scaler;
 
+	GF_Fraction64 last_ts_sent;
+	
 	Bool initial_play_done;
 	Bool is_playing;
 	void *udta;
@@ -864,6 +879,7 @@ struct __gf_filter_pid
 	Bool require_source_id;
 	//only used in filter_check_caps
 	GF_PropertyMap *local_props;
+	volatile u32 num_pidinst_del_pending;
 };
 
 
@@ -884,8 +900,6 @@ void gf_filter_update_arg_task(GF_FSTask *task);
 void gf_filter_pid_disconnect_task(GF_FSTask *task);
 void gf_filter_remove_task(GF_FSTask *task);
 void gf_filter_pid_detach_task(GF_FSTask *task);
-
-Bool filter_in_parent_chain(GF_Filter *parent, GF_Filter *filter);
 
 u32 gf_filter_caps_bundle_count(const GF_FilterCapability *caps, u32 nb_caps);
 
@@ -990,6 +1004,10 @@ void gf_filter_post_process_task_internal(GF_Filter *filter, Bool use_direct_dis
 const char *gf_fs_path_escape_colon(GF_FilterSession *sess, const char *path);
 
 void gf_fs_check_graph_load(GF_FilterSession *fsess, Bool for_load);
+
+void gf_filter_renegociate_output_task(GF_FSTask *task);
+
+void gf_fs_unload_script(GF_FilterSession *fs, void *js_ctx);
 
 #endif //_GF_FILTER_SESSION_H_
 

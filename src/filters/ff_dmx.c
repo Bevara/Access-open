@@ -280,14 +280,17 @@ static GF_Err ffdmx_update_arg(GF_Filter *filter, const char *arg_name, const GF
 GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, Bool is_grab)
 {
 	u32 i;
-	u32 nb_a, nb_v, nb_t;
+	u32 nb_a, nb_v;
+#ifdef FF_SUB_SUPPORT
+	u32 nb_t = 0;
+#endif
 	char szName[50];
 
 
 	ctx->pids = gf_malloc(sizeof(GF_FilterPid *)*ctx->demuxer->nb_streams);
 	memset(ctx->pids, 0, sizeof(GF_FilterPid *)*ctx->demuxer->nb_streams);
 
-	nb_t = nb_a = nb_v = 0;
+	nb_a = nb_v = 0;
 	for (i = 0; i < ctx->demuxer->nb_streams; i++) {
 		GF_FilterPid *pid=NULL;
 		Bool force_reframer = GF_FALSE;
@@ -402,8 +405,10 @@ GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, Bool is_grab)
 		} else if (codec->extradata_size) {
 
 			//avc/hevc read by ffmpeg is still in annex B format
-			if (!strcmp(ctx->demuxer->iformat->name, "h264") || !strcmp(ctx->demuxer->iformat->name, "hevc")) {
-				force_reframer = GF_TRUE;
+			if (ctx->demuxer->iformat) {
+				if (!strcmp(ctx->demuxer->iformat->name, "h264") || !strcmp(ctx->demuxer->iformat->name, "hevc")) {
+					force_reframer = GF_TRUE;
+				}
 			}
 
 			if (!force_reframer) {
@@ -498,7 +503,11 @@ GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, Bool is_grab)
 		gf_filter_pid_set_property(pid, GF_PROP_PID_URL, &PROP_STRING(ctx->demuxer->filename));
 	}
 
-	if (!nb_t && !nb_a && !nb_v)
+	if (!nb_a && !nb_v
+#ifdef FF_SUB_SUPPORT
+		&& !nb_t
+#endif
+	)
 		return GF_NOT_SUPPORTED;
 
 	return GF_OK;
@@ -531,7 +540,9 @@ static GF_Err ffdmx_initialize(GF_Filter *filter)
 
 	ctx->initialized = GF_TRUE;
 #ifdef GPAC_ENABLE_COVERAGE
-	ffdmx_update_arg(filter, NULL, NULL);
+	if (gf_sys_is_cov_mode()) {
+		ffdmx_update_arg(filter, NULL, NULL);
+	}
 #endif
 	if (!ctx->src) {
 		GF_LOG(GF_LOG_ERROR, ctx->log_class, ("[%s] Missing file name, cannot open\n", ctx->fname));
@@ -598,12 +609,7 @@ static GF_Err ffdmx_initialize(GF_Filter *filter)
 	}
 
 
-	AVDictionaryEntry *prev_e = NULL;
-	while (1) {
-		prev_e = av_dict_get(ctx->options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
-		if (!prev_e) break;
-		gf_filter_report_unused_meta_option(filter, prev_e->key);
-	}
+	ffmpeg_report_unused_options(filter, ctx->options);
 
 	res = avformat_find_stream_info(ctx->demuxer, ctx->options ? &ctx->options : NULL);
 	if (res <0) {
@@ -873,12 +879,7 @@ static GF_Err ffavin_initialize(GF_Filter *filter)
 		return -1;
 	}
 
-	AVDictionaryEntry *prev_e = NULL;
-	while (1) {
-		prev_e = av_dict_get(ctx->options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
-		if (!prev_e) break;
-		gf_filter_report_unused_meta_option(filter, prev_e->key);
-	}
+	ffmpeg_report_unused_options(filter, ctx->options);
 
 	av_dump_format(ctx->demuxer, 0, ctx->dev, 0);
 	ctx->raw_data = GF_TRUE;

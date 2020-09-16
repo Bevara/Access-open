@@ -247,6 +247,7 @@
     <ClCompile Include="..\..\src\compositor\visual_manager_3d.c" />
     <ClCompile Include="..\..\src\compositor\visual_manager_3d_gl.c" />
     <ClCompile Include="..\..\src\compositor\x3d_geometry.c" />
+    <ClCompile Include="..\..\src\filters\bsrw.c" />
     <ClCompile Include="..\..\src\filters\compose.c" />
     <ClCompile Include="..\..\src\filters\dasher.c" />
     <ClCompile Include="..\..\src\filters\decrypt_cenc_isma.c" />
@@ -261,10 +262,12 @@
     <ClCompile Include="..\..\src\filters\dec_j2k.c" />
     <ClCompile Include="..\..\src\filters\dec_laser.c" />
     <ClCompile Include="..\..\src\filters\dec_mad.c" />
+    <ClCompile Include="..\..\src\filters\dec_mediacodec.c" />
     <ClCompile Include="..\..\src\filters\dec_odf.c" />
     <ClCompile Include="..\..\src\filters\dec_openhevc.c" />
     <ClCompile Include="..\..\src\filters\dec_opensvc.c" />
     <ClCompile Include="..\..\src\filters\dec_theora.c" />
+    <ClCompile Include="..\..\src\filters\dec_ttml.c" />
     <ClCompile Include="..\..\src\filters\dec_ttxt.c" />
     <ClCompile Include="..\..\src\filters\dec_vorbis.c" />
     <ClCompile Include="..\..\src\filters\dec_vtb.c" />
@@ -361,6 +364,7 @@
     <ClCompile Include="..\..\src\filter_core\filter_queue.c" />
     <ClCompile Include="..\..\src\filter_core\filter_register.c" />
     <ClCompile Include="..\..\src\filter_core\filter_session.c" />
+    <ClCompile Include="..\..\src\filter_core\filter_session_js.c" />
     <ClCompile Include="..\..\src\ietf\rtcp.c" />
     <ClCompile Include="..\..\src\ietf\rtp.c" />
     <ClCompile Include="..\..\src\ietf\rtp_depacketizer.c" />
@@ -401,13 +405,13 @@
     <ClCompile Include="..\..\src\isomedia\stbl_write.c" />
     <ClCompile Include="..\..\src\isomedia\track.c" />
     <ClCompile Include="..\..\src\isomedia\tx3g.c" />
+    <ClCompile Include="..\..\src\jsmods\core.c" />
     <ClCompile Include="..\..\src\jsmods\evg.c" />
     <ClCompile Include="..\..\src\jsmods\scene_js.c" />
     <ClCompile Include="..\..\src\jsmods\storage.c" />
     <ClCompile Include="..\..\src\jsmods\webgl.c">
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">OnlyExplicitInline</InlineFunctionExpansion>
     </ClCompile>
-    <ClCompile Include="..\..\src\jsmods\webgl_pixfmt.c" />
     <ClCompile Include="..\..\src\jsmods\xhr.c" />
     <ClCompile Include="..\..\src\laser\lsr_dec.c" />
     <ClCompile Include="..\..\src\laser\lsr_enc.c" />

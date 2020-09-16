@@ -268,6 +268,8 @@ static void lg_fill_run(GF_EVGStencil *p, GF_EVGSurface *surf, s32 x, s32 y, u32
 	u64 *data_wide = surf->not_8bits ? surf->stencil_pix_run : NULL;
 	EVG_LinearGradient *_this = (EVG_LinearGradient *) p;
 
+	assert(data);
+
 	/*no need to move x & y to fixed*/
 	_res = (Fixed) (x * _this->smat.m[0] + y * _this->smat.m[1] + _this->smat.m[2]);
 	while (count) {
@@ -345,6 +347,8 @@ static void rg_fill_run(GF_EVGStencil *p, GF_EVGSurface *surf, s32 _x, s32 _y, u
 	u64 *data_wide = surf->not_8bits ? surf->stencil_pix_run : NULL;
 	EVG_RadialGradient *_this = (EVG_RadialGradient *) p;
 
+	assert(data);
+	
 	x = INT2FIX(_x);
 	y = INT2FIX(_y);
 	gf_mx2d_apply_coords(&_this->smat, &x, &y);
@@ -427,8 +431,6 @@ void evg_gradient_precompute(EVG_BaseGradient *grad, GF_EVGSurface *surf)
 	u32 i, nb_col;
 
 	has_changed = grad->updated;
-
-	do_yuv = GF_FALSE;
 
 	if (surf->yuv_type) {
 		if (grad->yuv_prof != surf->yuv_prof) {
@@ -782,7 +784,7 @@ static void tex_fill_run(GF_EVGStencil *p, GF_EVGSurface *surf, s32 _x, s32 _y, 
 			}
 		}
 		//texture is RGB
-		else if (!_this->is_yuv) {
+		else {
 			//apply cmat
 			if (has_cmat)
 				pix = gf_cmx_apply(&_this->cmat, pix);
@@ -1027,7 +1029,7 @@ static void tex_fill_run_wide(GF_EVGStencil *p, GF_EVGSurface *surf, s32 _x, s32
 			}
 		}
 		//texture is RGB
-		else if (!_this->is_yuv) {
+		else {
 			//apply cmat
 			if (has_cmat)
 				pix = gf_cmx_apply_wide(&_this->cmat, pix);
@@ -1621,7 +1623,7 @@ static void texture_set_callbacks(EVG_Texture *_this)
 static GF_Err gf_evg_stencil_set_texture_internal(GF_EVGStencil * st, u32 width, u32 height, GF_PixelFormat pixelFormat, const char *pixels, u32 stride, const char *u_plane, const char *v_plane, u32 uv_stride, const char *alpha_plane, u32 alpha_stride)
 {
 	EVG_Texture *_this = (EVG_Texture *) st;
-	if (!_this || (_this->type != GF_STENCIL_TEXTURE) || !pixels || !width || !height || !stride || _this->owns_texture)
+	if (!_this || (_this->type != GF_STENCIL_TEXTURE) || !pixels || !width || !height || _this->owns_texture)
 		return GF_BAD_PARAM;
 
 	_this->pixels = NULL;
@@ -1676,10 +1678,15 @@ static GF_Err gf_evg_stencil_set_texture_internal(GF_EVGStencil * st, u32 width,
 	case GF_PIXEL_VYUY:
 		_this->is_yuv = GF_TRUE;
 		_this->Bpp = 1;
+		if (!stride)
+			stride = 4 * width;
 		break;
 	default:
 		return GF_NOT_SUPPORTED;
 	}
+	if (!stride)
+		stride = _this->Bpp * width;
+		
 	_this->pixel_format = pixelFormat;
 	_this->width = width;
 	_this->height = height;

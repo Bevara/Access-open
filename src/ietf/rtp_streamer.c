@@ -63,9 +63,13 @@ static void rtp_stream_on_packet_done(void *cbk, GF_RTPHeader *header)
 
 #ifndef GPAC_DISABLE_LOG
 	if (e) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("Error %s sending RTP packet\n", gf_error_to_string(e)));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTP] Error %s sending RTP packet SN %u - TS %u\n", gf_error_to_string(e), header->SequenceNumber, header->TimeStamp));
 	} else {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_RTP, ("RTP SN %u - TS %u - M %u - Size %u\n", header->SequenceNumber, header->TimeStamp, header->Marker, rtp->payload_len + 12));
+	}
+#else
+	if (e) {
+		fprintf(stderr, "Error %s sending RTP packet SN %u - TS %u\n", gf_error_to_string(e), header->SequenceNumber, header->TimeStamp);
 	}
 #endif
 	rtp->payload_len = 0;
@@ -575,7 +579,7 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 				strcat(sdpLine, "; sprop-parameter-sets=");
 				count = gf_list_count(avcc->sequenceParameterSets);
 				for (i=0; i<count; i++) {
-					GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *)gf_list_get(avcc->sequenceParameterSets, i);
+					GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_list_get(avcc->sequenceParameterSets, i);
 					b64s = gf_base64_encode(sl->data, sl->size, b64, 200);
 					b64[b64s]=0;
 					strcat(sdpLine, b64);
@@ -584,7 +588,7 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 				if (i) strcat(sdpLine, ",");
 				count = gf_list_count(avcc->pictureParameterSets);
 				for (i=0; i<count; i++) {
-					GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *)gf_list_get(avcc->pictureParameterSets, i);
+					GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_list_get(avcc->pictureParameterSets, i);
 					b64s = gf_base64_encode(sl->data, sl->size, b64, 200);
 					b64[b64s]=0;
 					strcat(sdpLine, b64);
@@ -604,7 +608,7 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 			sprintf(sdpLine, "a=fmtp:%d", rtp->packetizer->PayloadType);
 			count = gf_list_count(hevcc->param_array);
 			for (i = 0; i < count; i++) {
-				GF_HEVCParamArray *ar = (GF_HEVCParamArray *)gf_list_get(hevcc->param_array, i);
+				GF_NALUFFParamArray *ar = (GF_NALUFFParamArray *)gf_list_get(hevcc->param_array, i);
 				if (ar->type==GF_HEVC_NALU_SEQ_PARAM) {
 					strcat(sdpLine, "; sprop-sps=");
 				} else if (ar->type==GF_HEVC_NALU_PIC_PARAM) {
@@ -613,7 +617,7 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 					strcat(sdpLine, "; sprop-vps=");
 				}
 				for (j = 0; j < gf_list_count(ar->nalus); j++) {
-					GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *)gf_list_get(ar->nalus, j);
+					GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_list_get(ar->nalus, j);
 					b64s = gf_base64_encode(sl->data, sl->size, b64, 200);
 					b64[b64s]=0;
 					if (j) strcat(sdpLine, ", ");
@@ -739,7 +743,6 @@ GF_Err gf_rtp_streamer_send_data(GF_RTPStreamer *rtp, u8 *data, u32 size, u32 fu
 	rtp->packetizer->sl_header.randomAccessPointFlag = is_rap;
 	rtp->packetizer->sl_header.accessUnitStartFlag = au_start;
 	rtp->packetizer->sl_header.accessUnitEndFlag = au_end;
-	rtp->packetizer->sl_header.randomAccessPointFlag = is_rap;
 	rtp->packetizer->sl_header.AU_sequenceNumber = au_sn;
 	sampleDuration = (u32) (sampleDuration * rtp->ts_scale);
 	if (au_start && size) rtp->packetizer->nb_aus++;

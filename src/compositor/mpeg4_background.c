@@ -132,14 +132,15 @@ static void back_build_dome(GF_Mesh *mesh, MFFloat *angles, MFColor *color, Bool
 	mesh_reset(mesh);
 
 	start_col.red = start_col.green = start_col.blue = 0;
+	start_col.alpha = FIX_ONE;
 	end_col = start_col;
+
 	if (color->count) {
 		COL_TO_RGBA(start_col, color->vals[0]);
 		end_col = start_col;
 		if (color->count>1) COL_TO_RGBA(end_col, color->vals[1]);
 	}
 
-	start_col.alpha = end_col.alpha = FIX_ONE;
 	vx.texcoords.x = vx.texcoords.y = 0;
 	vx.color = MESH_MAKE_COL(start_col);
 	vx.pos.x = vx.pos.z = 0;
@@ -278,6 +279,8 @@ static void TraverseBackground(GF_Node *node, void *rs, Bool is_destroy)
 		DestroyBackground(node);
 		return;
 	}
+	if (tr_state->visual->compositor->noback)
+		return;
 
 	gf_node_dirty_clear(node, 0);
 	bck = (M_Background *)node;

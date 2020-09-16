@@ -364,6 +364,10 @@ static void svg_traverse_svg(GF_Node *node, void *rs, Bool is_destroy)
 			vp_fill = tr_state->svg_props->viewport_fill;
 			vp_opacity = tr_state->svg_props->viewport_fill_opacity ? tr_state->svg_props->viewport_fill_opacity->value : FIX_ONE;
 		}
+		if (tr_state->visual->compositor->noback) {
+			vp_fill = NULL;
+			vp_opacity = 0;
+		}
 
 		if (vp_fill && (vp_fill->type != SVG_PAINT_NONE) && vp_opacity) {
 			Bool col_dirty = 0;
@@ -684,6 +688,7 @@ void compositor_init_svg_g(GF_Compositor *compositor, GF_Node *node)
 {
 	SVGgStack *stack;
 	GF_SAFEALLOC(stack, SVGgStack);
+	if (!stack) return;
 	gf_node_set_private(node, stack);
 
 	gf_node_set_callback_function(node, svg_traverse_g);
@@ -778,7 +783,7 @@ static void svg_traverse_switch(GF_Node *node, void *rs, Bool is_destroy)
 		compositor_svg_apply_local_transformation(tr_state, &all_atts, &backup_matrix, &mx_3d);
 		if (tr_state->traversing_mode == TRAVERSE_GET_BOUNDS) {
 			gf_sc_get_nodes_bounds(node, ((SVG_Element *)node)->children, tr_state, selected_idx);
-		} else if (*selected_idx >= 0) {
+		} else {
 			GF_Node *child = gf_node_list_get_child(((SVG_Element *)node)->children, *selected_idx);
 			gf_node_traverse(child, tr_state);
 
@@ -1034,7 +1039,7 @@ static void svg_traverse_resource(GF_Node *node, void *rs, Bool is_destroy, Bool
 			is_fragment = 1;
 		} else if (stack->resource) {
 			stack->inline_sg = gf_mo_get_scenegraph(stack->resource);
-			if (!is_foreign_object) {
+			if (!is_foreign_object && all_atts.xlink_href->string) {
 				stack->fragment_id = strchr(all_atts.xlink_href->string, '#');
 			}
 		}
@@ -1121,6 +1126,7 @@ void compositor_init_svg_use(GF_Compositor *compositor, GF_Node *node)
 {
 	SVGlinkStack *stack;
 	GF_SAFEALLOC(stack, SVGlinkStack);
+	if (!stack) return;
 	gf_node_set_private(node, stack);
 	gf_node_set_callback_function(node, svg_traverse_use);
 	/*force first processing of xlink-href*/
@@ -1329,6 +1335,7 @@ void compositor_init_svg_animation(GF_Compositor *compositor, GF_Node *node)
 	SVGlinkStack *stack;
 
 	GF_SAFEALLOC(stack, SVGlinkStack);
+	if (!stack) return;
 	gf_node_set_private(node, stack);
 	gf_node_set_callback_function(node, svg_traverse_animation);
 
@@ -1355,6 +1362,7 @@ void compositor_init_svg_foreign_object(GF_Compositor *compositor, GF_Node *node
 {
 	SVGlinkStack *stack;
 	GF_SAFEALLOC(stack, SVGlinkStack);
+	if (!stack) return;
 	gf_node_set_private(node, stack);
 	gf_node_set_callback_function(node, svg_traverse_foreign_object);
 	/*force first processing of xlink-href*/

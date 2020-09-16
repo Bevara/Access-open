@@ -243,6 +243,8 @@ GF_EXPORT
 Bool gf_file_exists_ex(const char *fileName, const char *par_name)
 {
 	u32 gfio_type = 0;
+	if (!fileName) return GF_FALSE;
+
 	if (!strncmp(fileName, "gfio://", 7))
 		gfio_type = 1;
 	else if (par_name && !strncmp(par_name, "gfio://", 7))
@@ -272,14 +274,29 @@ Bool gf_file_exists_ex(const char *fileName, const char *par_name)
 	wchar_t* wname = gf_utf8_to_wcs(fileName);
 	if (!wname) return GF_FALSE;
  	res = (_waccess(wname, 4) == -1) ? GF_FALSE : GF_TRUE;
+	if (res == GF_TRUE) {
+		DWORD att;
+		att = GetFileAttributesW(wname);
+		if (att != INVALID_FILE_ATTRIBUTES && (att & FILE_ATTRIBUTE_DIRECTORY))
+			res = GF_FALSE;
+	}
 	gf_free(wname);
 	return res;
 #elif defined(GPAC_CONFIG_LINUX)
- 	return (access(fileName, 4) == -1) ? GF_FALSE : GF_TRUE;
+	Bool res = (access(fileName, 4) == -1) ? GF_FALSE : GF_TRUE;
+	if (res && gf_dir_exists(fileName))
+		res = GF_FALSE;
+	return res;
 #elif defined(__DARWIN__) || defined(__APPLE__)
- 	return (access(fileName, 4) == -1) ? GF_FALSE : GF_TRUE;
+ 	Bool res = (access(fileName, 4) == -1) ? GF_FALSE : GF_TRUE;
+	if (res && gf_dir_exists(fileName))
+		res = GF_FALSE;
+	return res;
 #elif defined(GPAC_CONFIG_IOS) || defined(GPAC_CONFIG_ANDROID)
- 	return (access(fileName, 4) == -1) ? GF_FALSE : GF_TRUE;
+ 	Bool res = (access(fileName, 4) == -1) ? GF_FALSE : GF_TRUE;
+	if (res && gf_dir_exists(fileName))
+		res = GF_FALSE;
+	return res;
 #else
 	FILE *f = gf_fopen(fileName, "r");
 	if (f) {
@@ -299,8 +316,8 @@ Bool gf_file_exists(const char *fileName)
 GF_EXPORT
 GF_Err gf_file_move(const char *fileName, const char *newFileName)
 {
-	GF_Err e = GF_OK;
 #if defined(_WIN32_WCE)
+	GF_Err e = GF_OK;
 	TCHAR swzName[MAX_PATH];
 	TCHAR swzNewName[MAX_PATH];
 	CE_CharToWide((char*)fileName, swzName);
@@ -308,6 +325,7 @@ GF_Err gf_file_move(const char *fileName, const char *newFileName)
 	if (MoveFile(swzName, swzNewName) == 0 )
 		e = GF_IO_ERR;
 #elif defined(WIN32)
+	GF_Err e = GF_OK;
 	/* success if != 0 */
 	BOOL op_result;
 	wchar_t* wcsFileName = gf_utf8_to_wcs(fileName);
@@ -324,7 +342,7 @@ GF_Err gf_file_move(const char *fileName, const char *newFileName)
 			e = GF_IO_ERR;
 	}
 #else
-	e = GF_IO_ERR;
+	GF_Err e = GF_IO_ERR;
 	char cmd[1024], *arg1, *arg2;
 	if (!fileName || !newFileName) {
 		e = GF_IO_ERR;
@@ -441,9 +459,11 @@ static void gf_register_file_handle(const char *filename, FILE *ptr)
 		GF_FileHandle *h;
 		if (!gpac_open_files) gpac_open_files = gf_list_new();
 		GF_SAFEALLOC(h, GF_FileHandle);
-		h->ptr = ptr;
-		h->url = gf_strdup(filename);
-		gf_list_add(gpac_open_files, h);
+		if (h) {
+			h->ptr = ptr;
+			h->url = gf_strdup(filename);
+			gf_list_add(gpac_open_files, h);
+		}
 	}
 #endif
 	gpac_file_handles++;
@@ -483,10 +503,11 @@ static void gf_unregister_file_handle(FILE *ptr)
 GF_EXPORT
 FILE *gf_file_temp(char ** const fileName)
 {
-	FILE *res = NULL;
+	FILE *res;
 #if defined(_WIN32_WCE)
 	TCHAR pPath[MAX_PATH+1];
 	TCHAR pTemp[MAX_PATH+1];
+	res = NULL;
 	if (!GetTempPath(MAX_PATH, pPath)) {
 		pPath[0] = '.';
 		pPath[1] = '.';
@@ -553,8 +574,9 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 #elif defined(WIN32)
 	wchar_t path[GF_MAX_PATH], *file;
 	wchar_t w_filter[GF_MAX_PATH];
-	wchar_t w_dir[GF_MAX_PATH];
 	char *mbs_file, *mbs_item_path;
+	char _path[GF_MAX_PATH];
+	const char* tmpdir;
 #else
 	char path[GF_MAX_PATH], *file;
 #endif
@@ -610,6 +632,11 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 		iFs.Close();
 		FlushItemList();
 		return GF_OK;
+#elif defined(GPAC_CONFIG_ANDROID)
+		dir = getenv("EXTERNAL_STORAGE");
+		if (!dir) dir = "/sdcard";
+#elif defined(GPAC_CONFIG_IOS)
+		dir = (char *) gf_opts_get_key("General", "iOSDocumentsDir");
 #endif
 	}
 
@@ -627,23 +654,29 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 	CE_CharToWide(_path, path);
 	CE_CharToWide((char *)filter, w_filter);
 #elif defined(WIN32)
-	{
-		const char* tmpdir = dir;
-		gf_utf8_mbstowcs(w_dir, sizeof(w_dir), &tmpdir);
-	}
-	switch (w_dir[wcslen(w_dir) - 1]) {
+
+	strcpy(_path, dir);
+	switch (dir[strlen(dir)] - 1) {
 	case '/':
 	case '\\':
-		swprintf(path, MAX_PATH, L"%s*", w_dir);
+		snprintf(_path, MAX_PATH, "%s*", dir);
 		break;
 	default:
-		swprintf(path, MAX_PATH, L"%s%c*", w_dir, GF_PATH_SEPARATOR);
+		snprintf(_path, MAX_PATH, "%s%c*", dir, GF_PATH_SEPARATOR);
 		break;
 	}
-	{
-		const char* tmpfilter = filter;
-		gf_utf8_mbstowcs(w_filter, sizeof(w_filter), &tmpfilter);
+
+	tmpdir = _path;
+	if (gf_utf8_mbstowcs(path, GF_MAX_PATH, &tmpdir) == (size_t)-1) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot convert %s to UTF16: broken string\n", dir));
+		return GF_BAD_PARAM;
 	}
+	tmpdir  = filter;
+	if (gf_utf8_mbstowcs(w_filter, sizeof(w_filter), &tmpdir) == (size_t)-1) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot convert %s to UTF16: broken string\n", filter));
+		return GF_BAD_PARAM;
+	}
+
 #else
 	strcpy(path, dir);
 	if (path[strlen(path)-1] != '/') strcat(path, "/");
@@ -873,6 +906,56 @@ Bool gf_fileio_check(FILE *fp)
 	return GF_FALSE;
 }
 
+typedef struct
+{
+	u8 *data;
+	u32 size;
+	u32 pos;
+} GF_FileIOBlob;
+
+static GF_FileIO *gfio_blob_open(GF_FileIO *fileio_ref, const char *url, const char *mode, GF_Err *out_error)
+{
+	GF_FileIOBlob *blob = gf_fileio_get_udta(fileio_ref);
+	if (!url) {
+		gf_free(blob);
+		gf_fileio_del(fileio_ref);
+	}
+	return NULL;
+}
+
+static GF_Err gfio_blob_seek(GF_FileIO *fileio, u64 offset, s32 whence)
+{
+	GF_FileIOBlob *blob = gf_fileio_get_udta(fileio);
+	if (whence==SEEK_END) blob->pos = blob->size;
+	else if (whence==SEEK_SET) blob->pos = 0;
+	else {
+		if (blob->pos + offset > blob->size) return GF_BAD_PARAM;
+		blob->pos += (u32) offset;
+	}
+	return GF_OK;
+}
+static u32 gfio_blob_read(GF_FileIO *fileio, u8 *buffer, u32 bytes)
+{
+	GF_FileIOBlob *blob = gf_fileio_get_udta(fileio);
+	if (bytes + blob->pos > blob->size)
+		bytes = blob->size - blob->pos;
+	if (bytes) {
+		memcpy(buffer, blob->data+blob->pos, bytes);
+		blob->pos += bytes;
+	}
+	return bytes;
+}
+static s64 gfio_blob_tell(GF_FileIO *fileio)
+{
+	GF_FileIOBlob *blob = gf_fileio_get_udta(fileio);
+	return (s64) blob->pos;
+}
+static Bool gfio_blob_eof(GF_FileIO *fileio)
+{
+	GF_FileIOBlob *blob = gf_fileio_get_udta(fileio);
+	if (blob->pos==blob->size) return GF_TRUE;
+	return GF_FALSE;
+}
 
 GF_EXPORT
 GF_FileIO *gf_fileio_new(char *url, void *udta,
@@ -972,7 +1055,7 @@ int gf_fileio_printf(GF_FileIO *gfio, const char *format, va_list args)
 {
 	va_list args_copy;
 	if (!gfio) return -1;
-	if (!gfio->printf) return gfio->printf(gfio, format, args);
+	if (gfio->printf) return gfio->printf(gfio, format, args);
 
 	if (!gfio->write) return -1;
 
@@ -980,7 +1063,7 @@ int gf_fileio_printf(GF_FileIO *gfio, const char *format, va_list args)
 	u32 len=vsnprintf(NULL, 0, format, args_copy);
 	va_end(args_copy);
 
-	if (len<=gfio->printf_alloc) {
+	if (len>=gfio->printf_alloc) {
 		gfio->printf_alloc = len+1;
 		gfio->printf_buf = gf_realloc(gfio->printf_buf, gfio->printf_alloc);
 	}
@@ -1006,6 +1089,8 @@ GF_FileIO *gf_fileio_from_url(const char *url)
 {
 	char szURL[100];
 	GF_FileIO *ptr=NULL;
+	if (!url) return NULL;
+	
 	sscanf(url, "gfio://%p", &ptr);
 	sprintf(szURL, "gfio://%p", ptr);
 	if (strcmp(url, szURL))
@@ -1088,7 +1173,7 @@ u64 gf_ftell(FILE *fp)
 #if (_FILE_OFFSET_BITS >= 64)
 	return (u64) ftello64(fp);
 #else
-	return (u64) gf_ftell(fp);
+	return (u64) ftell(fp);
 #endif
 #elif defined(WIN32)
 	return (u64) _ftelli64(fp);
@@ -1097,7 +1182,7 @@ u64 gf_ftell(FILE *fp)
 #elif (defined(GPAC_CONFIG_FREEBSD) || defined(GPAC_CONFIG_DARWIN))
 	return (u64) ftello(fp);
 #else
-	return (u64) gf_ftell(fp);
+	return (u64) ftell(fp);
 #endif
 }
 
@@ -1134,6 +1219,21 @@ s32 gf_fseek(FILE *fp, s64 offset, s32 whence)
 #endif
 }
 
+
+static GF_FileIO *gf_fileio_from_blob(const char *file_name)
+{
+	u8 *blob_data;
+	u32 blob_size;
+	GF_FileIOBlob *gfio_blob;
+	GF_Err e = gf_blob_get_data(file_name, &blob_data, &blob_size);
+	if (e || !blob_data) return NULL;
+
+	GF_SAFEALLOC(gfio_blob, GF_FileIOBlob);
+	if (!gfio_blob) return NULL;
+	gfio_blob->data = blob_data;
+	gfio_blob->size = blob_size;
+	return gf_fileio_new((char *) file_name, gfio_blob, gfio_blob_open, gfio_blob_seek, gfio_blob_read, NULL, gfio_blob_tell, gfio_blob_eof, NULL);
+}
 GF_EXPORT
 FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mode)
 {
@@ -1141,6 +1241,17 @@ FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mo
 	u32 gfio_type = 0;
 
 	if (!file_name) return NULL;
+
+	if (!strncmp(file_name, "gmem://", 7)) {
+		GF_FileIO *new_gfio;
+		if (strstr(mode, "w"))
+			return NULL;
+		new_gfio = gf_fileio_from_blob(file_name);
+		if (new_gfio)
+			gf_register_file_handle(file_name, (FILE *) new_gfio);
+		return (FILE *) new_gfio;
+
+	}
 
 	if (!strncmp(file_name, "gfio://", 7))
 		gfio_type = 1;
@@ -1151,6 +1262,7 @@ FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mo
 		GF_FileIO *gfio_ref;
 		GF_FileIO *new_gfio;
 		GF_Err e;
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] Open GFIO %s in mode %s\n", file_name, mode));
 
 		if (gfio_type==1)
 			gfio_ref = gf_fileio_from_url(file_name);
@@ -1175,6 +1287,7 @@ FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mo
 		return (FILE *) new_gfio;
 	}
 
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] Open file %s in mode %s\n", file_name, mode));
 	if (strchr(mode, 'w')) {
 		char *fname = gf_strdup(file_name);
 		char *sep = strchr(fname, '/');
@@ -1271,13 +1384,14 @@ s32 gf_fclose(FILE *file)
 GF_EXPORT
 size_t gf_fwrite(const void *ptr, size_t nb_bytes, FILE *stream)
 {
-	size_t result;
+	size_t result=0;
 
 	if (gf_fileio_check(stream)) {
 		return(size_t) gf_fileio_write((GF_FileIO *)stream, (u8 *) ptr, (u32) nb_bytes);
 	}
 
-	result = fwrite(ptr, 1, nb_bytes, stream);
+	if (ptr)
+		result = fwrite(ptr, 1, nb_bytes, stream);
 	if (result != nb_bytes) {
 #ifdef _WIN32_WCE
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Error writing data: %d blocks to write but %d blocks written\n", nb_bytes, result));
@@ -1300,7 +1414,13 @@ size_t gf_fwrite(const void *ptr, size_t nb_bytes, FILE *stream)
 #else
 			char *errstr = (char*)strerror(errno_save);
 #endif
+
+#ifndef GPAC_DISABLE_LOG
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Error writing data (%s): %d blocks to write but %d blocks written\n", errstr, nb_bytes, result));
+#else
+			fprintf(stderr, "Error writing data (%s): %d blocks to write but %d blocks written\n", errstr, (u32) nb_bytes, (u32) result);
+#endif
+
 		}
 #endif
 	}
@@ -1477,7 +1597,7 @@ char* gf_file_ext_start(const char* filename)
 {
 	char* basename;
 
-	if (!strncmp(filename, "gfio://", 7)) {
+	if (filename && !strncmp(filename, "gfio://", 7)) {
 		GF_FileIO *gfio = gf_fileio_from_url(filename);
 		filename = gf_fileio_resource_url(gfio);
 	}

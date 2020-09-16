@@ -64,7 +64,9 @@ enum
 	/*! CENC CBC-128 pattern encryption*/
 	GF_CRYPT_TYPE_CBCS	= GF_4CC('c','b','c','s'),
 	/*! Adobe CBC-128 encryption*/
-	GF_CRYPT_TYPE_ADOBE	= GF_4CC('a','d','k','m')
+	GF_CRYPT_TYPE_ADOBE	= GF_4CC('a','d','k','m'),
+	/*! PIFF CTR-128 encryption*/
+	GF_CRYPT_TYPE_PIFF	= GF_4CC('p','i','f','f'),
 };
 
 /*! Selective encryption modes */
@@ -174,7 +176,7 @@ typedef struct
 {
 	/*! list of track infos*/
 	GF_List *tcis;
-	/*! global for all tracks unless overriden*/
+	/*! global for all tracks unless overridden*/
 	u32 def_crypt_type;
 	/*! indicates a common key is used*/
 	Bool has_common_key;

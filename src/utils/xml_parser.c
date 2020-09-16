@@ -66,6 +66,7 @@ static char *xml_translate_xml_string(char *str)
 				u32 val;
 				const unsigned short *srcp;
 				strncpy(szChar, str+i, 10);
+				szChar[10] = 0;
 				end = strchr(szChar, ';');
 				if (!end) break;
 				end[1] = 0;
@@ -1490,7 +1491,7 @@ retry:
 			CPYCAT_ALLOC(start, 1);
 			sep = strstr(szLine, att_name);
 		}
-		sep = strchr(sep, '=');
+		sep = sep ? strchr(sep, '=') : NULL;
 		if (!sep) {
 			state = 0;
 			CPYCAT_ALLOC(cur_line, 1);
@@ -2197,14 +2198,16 @@ GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, const char *parent_url, 
 			remain = size;
 			gf_fseek(_tmp, offset, SEEK_SET);
 			while (remain) {
-				read = (u32) gf_fread(block, (remain>1024) ? 1024 : remain, _tmp);
+				u32 bsize = remain;
+				if (bsize>1024) bsize=1024;
+				read = (u32) gf_fread(block, bsize, _tmp);
 				if ((s32) read < 0) {
 					gf_fclose(_tmp);
 					return GF_IO_ERR;
 				}
 
 				gf_bs_write_data(bs, block, read);
-				remain -= size;
+				remain -= bsize;
 			}
 			gf_fclose(_tmp);
 		} else if (use_word128) {
@@ -2250,15 +2253,15 @@ GF_Err gf_xml_get_element_check_namespace(const GF_XMLNode *n, const char *expec
 	while ( (att = (GF_XMLAttribute*)gf_list_enum(n->attributes, &i)) ) {
 		const char *ns;
 		ns = strstr(att->name, ":");
-		if (ns) {
-			if (!strncmp(att->name, "xmlns", 5)) {
-				if (!strcmp(ns+1, n->ns)) {
-					return GF_OK;
-				}
-			} else if (ns) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[XML] Unsupported attribute namespace \"%s\": ignoring\n", att->name));
-				continue;
+		if (!ns) continue;
+		
+		if (!strncmp(att->name, "xmlns", 5)) {
+			if (!strcmp(ns+1, n->ns)) {
+				return GF_OK;
 			}
+		} else {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[XML] Unsupported attribute namespace \"%s\": ignoring\n", att->name));
+			continue;
 		}
 	}
 

@@ -1,12 +1,15 @@
 /////////////////////////////////////////////////////////////////////////////////
 //
 //	Authors:	
-//					Jean Le Feuvre, Telecom ParisTech
+//          Jean Le Feuvre, (c) 2010-2020 Telecom Paris
 //
 /////////////////////////////////////////////////////////////////////////////////
-import {gpac} from 'scenejs'
+import {scene} from 'scenejs'
 import {Storage} from 'storage'
-globalThis.gpac = gpac;
+import {Sys} from 'gpaccore'
+
+globalThis.scene = scene;
+globalThis.Sys = Sys;
 
 let all_extensions = [];
 
@@ -64,7 +67,7 @@ function extension_option_getter(_ext) {
 
 function setup_extension_storage(extension) {
     var storage_name = 'config:' + extension.path + '' + extension.name;
-    gwlog(l_inf, 'loading storage for extension ' + storage_name);
+    gwlog(l_deb, 'loading storage for extension ' + storage_name);
 
     extension.jsobj.__gpac_storage = new Storage(storage_name);
 
@@ -82,19 +85,19 @@ globalThis.initialize = function () {
     //var icon;
     var i, count, wid;
 
-    gpac.caption = 'Osmo4';
+    scene.caption = 'Osmo4';
 
-    gw_display_width = parseInt(gpac.get_option('General', 'LastWidth'));
-    gw_display_height = parseInt(gpac.get_option('General', 'LastHeight'));
-    if (!gpac.fullscreen && (!gw_display_width || !gw_display_height)) {
+    gw_display_width = parseInt(scene.get_option('General', 'LastWidth'));
+    gw_display_height = parseInt(scene.get_option('General', 'LastHeight'));
+    if (!scene.fullscreen && (!gw_display_width || !gw_display_height)) {
         gw_display_width = 320;
         gw_display_height = 240;
     }
-    if (!gpac.fullscreen && gw_display_width && gw_display_height) {
-        gpac.set_size(gw_display_width, gw_display_height);
+    if (!scene.fullscreen && gw_display_width && gw_display_height) {
+        scene.set_size(gw_display_width, gw_display_height);
     } else {
-        gw_display_width = gpac.screen_width;
-        gw_display_height = gpac.screen_height;
+        gw_display_width = scene.screen_width;
+        gw_display_height = scene.screen_height;
     }
     //request event listeners on the window - GPAC specific BIFS extensions !!! We don't allow using the event proc for size events
     root.addEventListener('resize', on_resize, 0);
@@ -104,6 +107,7 @@ globalThis.initialize = function () {
     Browser.loadScript('gwlib.js', false);
     gwlib_init(ui_root);
 
+    gwskin.enable_focus(false);    
 	  gwskin.enable_background(true);
 
     //what do we do with tooltips ?
@@ -125,7 +129,8 @@ globalThis.initialize = function () {
 
 
     /*init all extensions*/
-    var list = gpac.enum_directory('extensions', '*', 0);
+    let path = scene.current_path;
+    var list = Sys.enum_directory(path + 'extensions', '*', 0);
 
     for (i=0; i<list.length; i++) {
         if (!list[i].directory) continue;
@@ -178,7 +183,6 @@ globalThis.initialize = function () {
                       Browser.loadScript(extension.path + extension.execjs[i]);
                   }
               }
-
           }
           if (!extension.compatible) {
               var w = gw_new_message(null, 'Error', 'Extension ' + extension.name + ' is not compatible');
@@ -190,6 +194,17 @@ globalThis.initialize = function () {
 
           if (extension.jsobj && (typeof extension.jsobj.start != 'undefined')) extension.jsobj.start();
       } 
+    }
+
+    var i;
+          
+    for (i = 1; i < Sys.args.length; i++) {
+      var arg = Sys.args[i];
+      if (arg=='-h') {
+          print_help();
+          scene.exit();                    
+          return;
+        }
     }
 
     dock.set_size(gw_display_width, gw_display_height);
@@ -207,7 +222,46 @@ globalThis.initialize = function () {
 
      //let's do the layout   
     layout();
+    gwskin.enable_focus(true);    
+
 }
+
+function print_help()
+{
+    globalThis._gpac_log_name = "";
+    print(-2, "GPAC GUI Help\nOptions are specified as '-opt' or '-opt=value'.\n");
+
+    //launch all default ext
+    var i;
+    for (i=0; i<all_extensions.length; i++) {
+      if ((typeof all_extensions[i].icon.ext_description.autostart != 'undefined')
+          && (typeof all_extensions[i].clopts != 'undefined')
+          && all_extensions[i].icon.ext_description.autostart) {
+         
+        print(-2, '' + all_extensions[i].icon.ext_description.name + ' extension');
+
+        if (typeof all_extensions[i].clusage != 'undefined')
+          print(-2, 'Usage: ' + all_extensions[i].clusage);
+
+        print(-2, 'Options: ');
+
+        all_extensions[i].clopts.forEach( (opt) => {
+          var s = "" + opt.name;
+          if (opt.type.length)
+            s += " (" + opt.type + ")";
+          s += ": ";
+          let olen = s.length;
+          while (olen<=30) {
+            olen++;
+            s+= ' ';
+          }
+          s += opt.description;
+          print(-1, s);
+        });
+      }
+    }
+    globalThis._gpac_log_name = null;
+} 
 
 //performs layout on all contents
 function layout() 
@@ -219,19 +273,19 @@ function layout()
 function on_resize(evt) {
     if ((gw_display_width == evt.width) && (gw_display_height == evt.height)) return;
     if (evt.width <=100) {
-        gpac.set_size(100, gw_display_height);
+        scene.set_size(100, gw_display_height);
         return;
     }
     if (evt.height <=80) {
-        gpac.set_size(gw_display_width, 40);
+        scene.set_size(gw_display_width, 40);
         return;
     }
 
     gw_display_width = evt.width;
     gw_display_height = evt.height;
-    if (!gpac.fullscreen) {
-        gpac.set_option('General', 'LastWidth', '' + gw_display_width);
-        gpac.set_option('General', 'LastHeight', '' + gw_display_height);
+    if (!scene.fullscreen) {
+        scene.set_option('General', 'LastWidth', '' + gw_display_width);
+        scene.set_option('General', 'LastHeight', '' + gw_display_height);
     }
 /*
     var v = 12;

@@ -542,7 +542,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		sep_ext[0] = 0;
 	}
 
-	sprintf(szArg, "dur=%g", dasher->segment_duration);
+	sprintf(szArg, "segdur=%g", dasher->segment_duration);
 	e = gf_dynstrcat(&args, szArg, ":");
 
 	if (sep_ext)
@@ -643,7 +643,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 	if (dasher->dash_mode >= GF_DASH_DYNAMIC) {
 		if (dasher->time_shift_depth<0) e |= gf_dynstrcat(&args, "tsb=-1", ":");
 		else {
-			sprintf(szArg, "tsb=%g", ((Double)dasher->time_shift_depth)/1000);
+			sprintf(szArg, "tsb=%u", (u32) dasher->time_shift_depth);
 			e |= gf_dynstrcat(&args, szArg, ":");
 		}
 
@@ -1013,7 +1013,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		if (frag) frag[0] = '#';
 
 		if (!src) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to load source filer for %s\n", di->file_name));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to load source filter for %s\n", di->file_name));
 			return e;
 		}
 
@@ -1030,7 +1030,6 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		GF_Filter *prev_filter=src;
 		char *fargs = (char *) di->filter_chain;
 		while (fargs) {
-			GF_Err e;
 			GF_Filter *f;
 			char *sep = strstr(fargs, "@@");
 			if (sep) sep[0] = 0;

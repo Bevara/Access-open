@@ -46,7 +46,7 @@ typedef struct
 typedef struct
 {
 	//options
-	Bool full;
+	Bool dvb;
 	s32 mux_id;
 	Bool avonly;
 	u32 nb_pack;
@@ -184,7 +184,6 @@ void m2tssplit_on_event(struct tag_m2ts_demux *ts, u32 evt_type, void *par)
 			u32 j, pck_size, tot_len=188, crc, offset=5, mux_id;
 			u8 *buffer;
 			Bool first_pck=GF_FALSE;
-			GF_FilterPacket *pck;
 			GF_M2TS_Program *prog = gf_list_get(ctx->dmx->programs, i);
 			assert(prog->pmt_pid);
 
@@ -196,6 +195,7 @@ void m2tssplit_on_event(struct tag_m2ts_demux *ts, u32 evt_type, void *par)
 			}
 			if (!stream) {
 				GF_SAFEALLOC(stream, GF_M2TSSplit_SPTS);
+				if (!stream) return;
 				stream->pmt_pid = prog->pmt_pid;
 				first_pck = GF_TRUE;
 				prog->user = stream;
@@ -268,7 +268,7 @@ void m2tssplit_on_event(struct tag_m2ts_demux *ts, u32 evt_type, void *par)
 
 			//output new PAT
 			if (stream->opid) {
-				pck = gf_filter_pck_new_alloc(stream->opid, tot_len, &buffer);
+				GF_FilterPacket *pck = gf_filter_pck_new_alloc(stream->opid, tot_len, &buffer);
 				gf_filter_pck_set_framing(pck, first_pck, GF_FALSE);
 				memcpy(buffer, ctx->tsbuf, tot_len);
 				gf_filter_pck_send(pck);
@@ -370,7 +370,7 @@ void m2tssplit_on_event(struct tag_m2ts_demux *ts, u32 evt_type, void *par)
 			return;
 		}
 
-		if (!ctx->full) return;
+		if (!ctx->dvb) return;
 
 		do_fwd = GF_FALSE;
 		switch (tspck->pid) {
@@ -390,15 +390,15 @@ void m2tssplit_on_event(struct tag_m2ts_demux *ts, u32 evt_type, void *par)
 			do_fwd = GF_TRUE;
 		}
 		if (do_fwd) {
-			u32 i, count = gf_list_count(ctx->streams);
+			u32 count = gf_list_count(ctx->streams);
 			for (i=0; i<count; i++) {
-				GF_M2TSSplit_SPTS *stream = gf_list_get(ctx->streams, i);
+				stream = gf_list_get(ctx->streams, i);
 				if (!stream->opid) continue;
 
 				if (ctx->dmx->prefix_present) {
 					u8 *data = tspck->data;
 					data -= 4;
-					m2tssplit_send_packet(ctx, stream, tspck->data, 192);
+					m2tssplit_send_packet(ctx, stream, data, 192);
 				} else {
 					m2tssplit_send_packet(ctx, stream, tspck->data, 188);
 				}
@@ -446,7 +446,7 @@ static const GF_FilterCapability M2TSSplitCaps[] =
 #define OFFS(_n)	#_n, offsetof(GF_M2TSSplitCtx, _n)
 static const GF_FilterArgs M2TSSplitArgs[] =
 {
-	{ OFFS(full), "forward all packets from global DVB PIDs", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(dvb), "forward all packets from global DVB PIDs", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(mux_id), "set initial ID of output mux; the first program will use mux_id, the second mux_id+1, etc. If not set, this value will be set to sourceMuxId*255", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(avonly), "do not forward programs with no AV component", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(nb_pack), "pack N packets before sending", GF_PROP_UINT, "10", NULL, GF_FS_ARG_HINT_ADVANCED},

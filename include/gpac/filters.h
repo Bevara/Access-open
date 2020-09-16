@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2019
+ *			Copyright (c) Telecom ParisTech 2017-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -485,11 +485,20 @@ typedef enum
 	GF_FS_STATS_FILTER_MUX,
 	/*! raw output (file, socket, pipe) filter type*/
 	GF_FS_STATS_FILTER_RAWOUT,
+	/*! media sink (video out, audio out, ...) filter type*/
+	GF_FS_STATS_FILTER_MEDIA_SINK,
+	/*! media source (capture audio or video ...) filter type*/
+	GF_FS_STATS_FILTER_MEDIA_SOURCE,
 } GF_FSFilterType;
 
 /*! Filter statistics object*/
 typedef struct
 {
+	/*!filter object*/
+	const GF_Filter *filter;
+	/*!set if filter is only an alias, in which case all remaining fields of the structure are not set*/
+	const GF_Filter *filter_alias;
+
 	/*!number of tasks executed by this filter*/
 	u64 nb_tasks_done;
 	/*!number of packets processed by this filter*/
@@ -517,6 +526,8 @@ typedef struct
 	const char *name;
 	/*!filter register name*/
 	const char *reg_name;
+	/*!filter register ID*/
+	const char *filter_id;
 	/*!set to GF_TRUE if filter is done processing*/
 	Bool done;
 	/*!number of input PIDs*/
@@ -531,13 +542,17 @@ typedef struct
 	Bool in_eos;
 	/*!set to GF_TRUE if filter has seen end of stream*/
 	GF_FSFilterType type;
-	/*!set to streamtype of output PID if this is not a demux*/
+	/*!set to streamtype of output PID if single output, GF_STREAM_UNKNOWN otherwise*/
 	u32 stream_type;
-	/*!set to codecid of output PID*/
+	/*!set to codecid of output PID if single output, GF_CODECID_NONE otherwise*/
 	u32 codecid;
+	/*! timestamp and timescale of last packet emitted on output pids*/
+	GF_Fraction64 last_ts_sent;
+	/*! timestamp and timescale of last packet droped on input pids*/
+	GF_Fraction64 last_ts_drop;
 } GF_FilterStats;
 
-/*! Gets number of active filters in the session
+/*! Gets statistics for a given filter index in the session
 \param session filter session
 \param idx index of filter to query
 \param stats statistics for filter
@@ -574,8 +589,15 @@ typedef enum
 \param val value of filter option to update
 \param propagate_mask propagation flags - 0 means no propagation
 */
-
 void gf_fs_send_update(GF_FilterSession *session, const char *fid, GF_Filter *filter, const char *name, const char *val, GF_EventPropagateType propagate_mask);
+
+
+/*! Loads JS script for filter session
+\param session filter session
+\param jsfile path to local JS script file to use
+\return error if any
+*/
+GF_Err gf_fs_load_script(GF_FilterSession *session, const char *jsfile);
 
 /*! @} */
 
@@ -811,6 +833,8 @@ enum
 	GF_PROP_PID_ID = GF_4CC('P','I','D','I'),
 	GF_PROP_PID_ESID = GF_4CC('E','S','I','D'),
 	GF_PROP_PID_ITEM_ID = GF_4CC('I','T','I','D'),
+	GF_PROP_PID_ITEM_NUM = GF_4CC('I','T','I','X'),
+	GF_PROP_PID_TRACK_NUM = GF_4CC('P','I','D','X'),
 	GF_PROP_PID_SERVICE_ID = GF_4CC('P','S','I','D'),
 	GF_PROP_PID_CLOCK_ID = GF_4CC('C','K','I','D'),
 	GF_PROP_PID_DEPENDENCY_ID = GF_4CC('D','P','I','D'),
@@ -853,6 +877,7 @@ enum
 	GF_PROP_PID_WIDTH = GF_4CC('W','I','D','T'),
 	GF_PROP_PID_HEIGHT = GF_4CC('H','E','I','G'),
 	GF_PROP_PID_PIXFMT = GF_4CC('P','F','M','T'),
+	GF_PROP_PID_PIXFMT_WRAPPED = GF_4CC('P','F','M','W'),
 	GF_PROP_PID_STRIDE = GF_4CC('V','S','T','Y'),
 	GF_PROP_PID_STRIDE_UV = GF_4CC('V','S','T','C'),
 	GF_PROP_PID_BIT_DEPTH_Y = GF_4CC('Y','B','P','S'),
@@ -873,6 +898,7 @@ enum
 	GF_PROP_PID_SRD_REF = GF_4CC('S','R','D','R'),
 	GF_PROP_PID_SRD_MAP = GF_4CC('S','R','D','M'),
 	GF_PROP_PID_ALPHA = GF_4CC('V','A','L','P'),
+	GF_PROP_PID_DOLBY_VISION = GF_4CC('D','O','V','I'),
 	GF_PROP_PID_BITRATE = GF_4CC('R','A','T','E'),
 	GF_PROP_PID_MAXRATE = GF_4CC('M','R','A','T'),
 	GF_PROP_PID_DBSIZE = GF_4CC('D','B','S','Z'),
@@ -918,6 +944,7 @@ enum
 	GF_PROP_PID_CRYPT_INFO = GF_4CC('E','C','R','I'),
 	GF_PROP_PID_DECRYPT_INFO = GF_4CC('E','D','R','I'),
 	GF_PROP_PCK_SENDER_NTP = GF_4CC('N','T','P','S'),
+	GF_PROP_PCK_RECEIVER_NTP = GF_4CC('N','T','P','R'),
 	GF_PROP_PID_ADOBE_CRYPT_META = GF_4CC('A','M','E','T'),
 	GF_PROP_PID_ENCRYPTED = GF_4CC('E','P','C','K'),
 	GF_PROP_PID_OMA_PREVIEW_RANGE = GF_4CC('O','D','P','R'),
@@ -935,6 +962,7 @@ enum
 	GF_PROP_PCK_FILENUM = GF_4CC('F','N','U','M'),
 	GF_PROP_PCK_FILENAME = GF_4CC('F','N','A','M'),
 	GF_PROP_PCK_IDXFILENAME = GF_4CC('I','N','A','M'),
+	GF_PROP_PCK_FILESUF = GF_4CC('F','S','U','F'),
 	GF_PROP_PCK_EODS = GF_4CC('E','O','D','S'),
 	GF_PROP_PID_MAX_FRAME_SIZE = GF_4CC('M','F','R','S'),
 	GF_PROP_PID_AVG_FRAME_SIZE = GF_4CC('A','F','R','S'),
@@ -970,7 +998,10 @@ enum
 	GF_PROP_PID_XLINK = GF_4CC('X','L','N','K'),
 	GF_PROP_PID_CLAMP_DUR = GF_4CC('D','C','M','D'),
 	GF_PROP_PID_HLS_PLAYLIST = GF_4CC('H','L','V','P'),
+	GF_PROP_PID_HLS_GROUPID = GF_4CC('H','L','G','I'),
 	GF_PROP_PID_DASH_CUE = GF_4CC('D','C','U','E'),
+	GF_PROP_PID_DASH_SEGMENTS = GF_4CC('D','C','N','S'),
+	GF_PROP_PID_CODEC = GF_4CC('C','O','D','S'),
 	GF_PROP_PID_SINGLE_SCALE = GF_4CC('D','S','T','S'),
 	GF_PROP_PID_UDP = GF_4CC('P','U','D','P'),
 
@@ -983,7 +1014,7 @@ enum
 	GF_PROP_PID_COLR_CHROMALOC = GF_4CC('C','L','O','C'),
 	GF_PROP_PID_COLR_SPACE = GF_4CC('C','S','P','C'),
 	GF_PROP_PID_SRC_MAGIC = GF_4CC('P','S','M','G'),
-	GF_PROP_PID_TRACK_INDEX = GF_4CC('T','I','D','X'),
+	GF_PROP_PID_MUX_INDEX = GF_4CC('T','I','D','X'),
 	GF_PROP_NO_TS_LOOP = GF_4CC('N','T','S','L'),
 	GF_PROP_PCK_FRAG_START = GF_4CC('P','F','R','B'),
 	GF_PROP_PCK_FRAG_RANGE = GF_4CC('P','F','R','R'),
@@ -991,7 +1022,9 @@ enum
 	GF_PROP_PCK_MOOF_TEMPLATE = GF_4CC('M','F','T','P'),
 	GF_PROP_PID_RAWGRAB = GF_4CC('P','G','R','B'),
 	GF_PROP_PID_KEEP_AFTER_EOS = GF_4CC('P','K','A','E'),
-
+	GF_PROP_PID_COVER_ART = GF_4CC('P','C','O','V'),
+	//internal property indicating pointer to associated GF_DownloadSession
+	GF_PROP_PID_DOWNLOAD_SESSION = GF_4CC('G','H','T','T')
 };
 
 /*! Block patching requirements for FILE pids, as signaled by GF_PROP_PID_DISABLE_PROGRESSIVE
@@ -1273,6 +1306,9 @@ typedef struct
 	/*! params for GF_NET_CHAN_PLAY and GF_NET_CHAN_SPEED*/
 	Double speed;
 
+	/*! indicates playback should start from given packet number - used by dasher when reloading sources*/
+	u32 from_pck;
+
 	/*! set when PLAY event is sent upstream to audio out, indicates HW buffer reset*/
 	u8 hw_buffer_reset;
 	/*! params for GF_FEVT_PLAY only: indicates this is the first PLAY on an element inserted from bcast*/
@@ -1287,9 +1323,11 @@ typedef struct
 	u8 full_file_only;
 	/*! indicates any current download should be aborted*/
 	u8 forced_dash_segment_switch;
-
-	/*! indicates playback should start from given packet number - used by dasher when reloading sources*/
-	u32 from_pck;
+	/*! indicates non ref frames should be drawn for faster processing*/
+	u8 drop_non_ref;
+	/*! indicates  that a demuxer must not forward this event as a source seek because seek has already been done
+	(typically this play request is a segment play and byte range access within the file has already been performed by DASH client)*/
+	u8 no_byterange_forward;
 } GF_FEVT_Play;
 
 /*! Event structure for GF_FEVT_SOURCE_SEEK and GF_FEVT_SOURCE_SWITCH*/
@@ -1677,8 +1715,7 @@ typedef enum
 	GF_FS_REG_CONFIGURE_MAIN_THREAD = 1<<2,
 	/*! when set indicates the filter does not take part of dynamic filter chain resolution and can only be used by explicitly loading the filter*/
 	GF_FS_REG_EXPLICIT_ONLY = 1<<3,
-	/*! when set ignores the filter weight during link resolution - this is typically needed by decoders requiring a specific reframing
-	e.g. nvdec wants annex B format, so that the weight of the reframer+decoder is the same as the weight of other decoders*/
+	/*! when set ignores the filter weight during link resolution - this is typically needed by decoders requiring a specific reframing so that the weight of the reframer+decoder is the same as the weight of other decoders*/
 	GF_FS_REG_HIDE_WEIGHT = 1<<4,
 	/*! Usually set for filters acting as sources but without exposing an src argument. This prevents throwing warnings on arguments not handled by the filter*/
 	GF_FS_REG_ACT_AS_SOURCE = 1<<5,
@@ -1697,6 +1734,8 @@ typedef enum
 		This is typically used by mux filters
 	*/
 	GF_FS_REG_DYNAMIC_REDIRECT = 1<<10,
+	/*! Indicates the filter requires graph resolver (typically because it creates new destinations/sinks at run time)*/
+	GF_FS_REG_REQUIRES_RESOLVER = 1<<11,
 
 	/*! flag dynamically set at runtime for registries loaded through shared libraries*/
 	GF_FS_REG_DYNLIB = 0x80000000
@@ -1734,6 +1773,8 @@ struct __gf_filter_register
 	A filter must signal this using \ref gf_filter_ask_rt_reschedule, possibly with no timeout.
 
 	A filter may return GF_EOS to indicate no more data is expected to be produced by this filter
+
+	A filter may return GF_PROFILE_NOT_SUPPORTED to indicate that the filter is not supported (when unable to detect this at configure) and trigger a relink of the filter graph unless disabled at session level.
 	*/
 	GF_Err (*process)(GF_Filter *filter);
 
@@ -1745,10 +1786,11 @@ struct __gf_filter_register
 	\param filter the target filter
 	\param PID the input PID to configure
 	\param is_remove indicates the input PID is removed
-	\return error if any. A filter returning an error will trigger a reconfigure of the chain to find another filter.
-	a filter may return GF_REQUIRES_NEW_INSTANCE to indicate the PID cannot be processed
-	in this instance but could be in a clone of the filter.
-	a filter may return GF_FILTER_NOT_SUPPORTED to indicate the PID cannot be processed and no alternate chain resolution would help
+	\return error if any.
+	a return error of GF_REQUIRES_NEW_INSTANCE indicates the PID cannot be processed in this instance but could be in a clone of the filter.
+	a return error of GF_FILTER_NOT_SUPPORTED indicates the PID cannot be processed and no alternate chain resolution would help
+	a return error of GF_BAD_PARAM indicates the PID cannot be processed and no alternate chain resolution would help, and throws a log error message
+	ano other return error will trigger a reconfigure of the chain to find another filter unless disabled at session level.
 	*/
 	GF_Err (*configure_pid)(GF_Filter *filter, GF_FilterPid *PID, Bool is_remove);
 
@@ -1848,7 +1890,9 @@ struct __gf_filter_register
 	Bool (*use_alias)(GF_Filter *filter, const char *url, const char *mime);
 
 
-	/*! version of the filter, usually only for external libs*/
+	/*! version of the filter, usually only for external libs
+		Note: If this strings starts with "! " it indicates an error message at load time of the registry. This should only be set when \code gf_opts_get_bool("temp", "gendoc"); \endcode returns true, indicating the filter session is only loaded for documentation purposes (man/md generation and command line help).
+	*/
 	const char *version;
 #ifndef GPAC_DISABLE_DOC
 	/*! short description of the filter. Conventions:
@@ -1980,6 +2024,11 @@ void gf_filter_notification_failure(GF_Filter *filter, GF_Err reason, Bool force
 */
 void gf_filter_remove_src(GF_Filter *filter, GF_Filter *src_filter);
 
+/*! Disconnects a filter from fthe chain
+\param filter the filter to remove
+*/
+void gf_filter_remove(GF_Filter *filter);
+
 /*! Sets the number of additional input PID a filter can accept. This overrides the default value of the filter register
 \param filter the target filter
 \param max_extra_pids the number of additional PIDs this filter can accept
@@ -1999,6 +2048,12 @@ u32 gf_filter_get_max_extra_input_pids(GF_Filter *filter);
 */
 Bool gf_filter_block_enabled(GF_Filter *filter);
 
+/*! Indicates the EOS status on input PIDs of this filter shall not be checked when probing for end of stream in the chain
+\param filter the target filter
+\param do_block if GF_TRUE, prevents EOS checking on input stream, otherwise enables it (default is FALSE upon creation)
+*/
+void gf_filter_block_eos(GF_Filter *filter, Bool do_block);
+
 
 /*! Connects a source to this filter.
 Note:
@@ -2007,10 +2062,11 @@ Any filter loaded between the source and the calling filter will not use argumen
 \param filter the target filter
 \param url url of source to connect to, with optional arguments.
 \param parent_url url of parent if any
+\param inherit_args if GF_TRUE, the source to connect will inherit arguments of the target filter's destination
 \param err return code - can be NULL
 \return the new source filter instance or NULL if error
 */
-GF_Filter *gf_filter_connect_source(GF_Filter *filter, const char *url, const char *parent_url, GF_Err *err);
+GF_Filter *gf_filter_connect_source(GF_Filter *filter, const char *url, const char *parent_url, Bool inherit_args, GF_Err *err);
 
 /*! Connects a destination to this filter
 \param filter the target filter
@@ -2076,14 +2132,14 @@ void gf_filter_get_output_buffer_max(GF_Filter *filter, u32 *max_buf, u32 *max_p
 \param time_in_us the system time in us, see \ref gf_sys_clock_high_res
 \param media_timestamp the media timestamp associated with this time.
 */
-void gf_filter_hint_single_clock(GF_Filter *filter, u64 time_in_us, Double media_timestamp);
+void gf_filter_hint_single_clock(GF_Filter *filter, u64 time_in_us, GF_Fraction64 media_timestamp);
 
 /*! Retrieves the clock state at session level, as set by \ref gf_filter_hint_single_clock
 \param filter the target filter
 \param time_in_us will be set to the system time in us, see \ref gf_sys_clock_high_res - may be NULL
 \param media_timestamp will be set to the media timestamp associated with this time - may be NULL.
 */
-void gf_filter_get_clock_hint(GF_Filter *filter, u64 *time_in_us, Double *media_timestamp);
+void gf_filter_get_clock_hint(GF_Filter *filter, u64 *time_in_us, GF_Fraction64 *media_timestamp);
 
 /*! Explicitly assigns a source ID to a filter. This shall be called before connecting the link_from filter
 If no ID is assigned to the linked filter, a dynamic one in the form of _%08X_ (using the filter mem address) will be used
@@ -2171,6 +2227,21 @@ char *gf_filter_get_dst_name(GF_Filter *filter);
 \param upstream send the even upstream
 */
 void gf_filter_send_event(GF_Filter *filter, GF_FilterEvent *evt, Bool upstream);
+
+/*! Trigger reconnection of output PIDs of a filter. This is needed when inserting a filter in the chain while the session is running
+\param filter the target filter
+\return error if any
+*/
+GF_Err gf_filter_reconnect_output(GF_Filter *filter);
+
+
+/*! Indicates that the filter accept and can process events coming from outside the filter chain, typically used by application firing events.
+ The event is sent on the process_event function with no associated PID.
+\param filter the target filter
+\param enable_events if GF_TRUE, the filter is considered an event target
+\return error if any
+*/
+GF_Err gf_filter_set_event_target(GF_Filter *filter, Bool enable_events);
 
 /*! Looks for a built-in property value marked as informative on a filter on all PIDs (inputs and output)
 This is a recursive call on both input and ouput chain.
@@ -2384,6 +2455,22 @@ This can be needed by some filters needing to make sure all their inputs are kno
 */
 Bool gf_filter_connections_pending(GF_Filter *filter);
 
+/*! Disables blocking check for a given filter
+
+This can be needed by some filters internally managing their blocking state because one of their output is not managed by the filter session.
+
+\param filter target filter
+\param prevent_blocking_enabled if GF_TRUE, filter will still be called even if one of its output is in blocking mode
+\return error if any
+*/
+GF_Err gf_filter_prevent_blocking(GF_Filter *filter, Bool prevent_blocking_enabled);
+
+/*! Checks if filter was loaded as part of a link resolution or explicitly loaded by application
+\param filter target filter
+\return GF_TRUE if filter was loaded for link resolution, GF_FALSE if filter was explicitly loaded by the application
+*/
+Bool gf_filter_is_dynamic(GF_Filter *filter);
+
 /*! Checks if reporting is turned on at session level.
 \param filter target filter
 \return GF_TRUE if reporting is enabled, GF_FALSE otherwise
@@ -2494,6 +2581,21 @@ const char *gf_filter_probe_data(GF_Filter *filter, u8 *data, u32 size);
 \return GF_TRUE if this is an alias  filter created by a multiple sink filter, GF_FALSE otherwise
 */
 Bool gf_filter_is_alias(GF_Filter *filter);
+
+/*! checks if the given filter is in the chain ending up at parent
+\param parent end of filter chain to check
+\param filter target filter to check
+\return GF_TRUE if filter is present in the parent chain, GF_FALSE otherwise
+*/
+Bool gf_filter_in_parent_chain(GF_Filter *parent, GF_Filter *filter);
+
+
+/*! Gets statistics for filter
+\param filter filter session
+\param stats statistics for filter
+\return error code if any
+*/
+GF_Err gf_filter_get_stats(GF_Filter *filter, GF_FilterStats *stats);
 
 /*! @} */
 
@@ -2836,8 +2938,7 @@ typedef Bool (*gf_filter_prop_filter)(void *cbk, u32 prop_4cc, const char *prop_
 */
 GF_Err gf_filter_pid_copy_properties(GF_FilterPid *dst_pid, GF_FilterPid *src_pid);
 
-/*! Push a new set of properties on destination PID, using all properties from source PID.
-Old properties of the destination are first copied to the new property set before copying the ones from the source PID, potentially filtering them.
+/*! Push a new set of properties on destination PID, using all properties from source PID, potentially filtering them. Currently defined properties are not reseted.
 \param dst_pid the destination filter PID
 \param src_pid the source filter PID
 \param filter_prop callback filtering function
@@ -2926,8 +3027,8 @@ const GF_PropertyValue *gf_filter_pid_get_info_str(GF_FilterPid *PID, const char
 */
 void gf_filter_pid_set_eos(GF_FilterPid *PID);
 
-/*! Checks for end of stream signaling on a PID input chain.
-This is a recursive call on input chain
+/*! Checks for end of stream has been signaled a PID input chain.
+This is a recursive call on input chain. The function is typically used to abort buffering or synchronisation init in muxers.
 \param PID the target filter PID
 \return GF_TRUE if end of stream was signaled on the input chain
 */
@@ -3422,8 +3523,10 @@ typedef enum
 	GF_FILTER_SAP_2,
 	/*! open gop */
 	GF_FILTER_SAP_3,
-	/*! GDR */
+	/*! roll period (GDR or audio roll) - roll distance must be indicated in packet */
 	GF_FILTER_SAP_4,
+	/*! Audio preroll period - roll distance must be indicated in packet */
+	GF_FILTER_SAP_4_PROL
 } GF_FilterSAPType;
 
 /*! Sets packet SAP type
@@ -3660,8 +3763,7 @@ typedef struct _gf_filter_frame_interface
 	\param plane_idx plane index, 0: Y or full plane, 1: U or UV plane, 2: V plane
 	\param gl_tex_format GL texture format used
 	\param gl_tex_id GL texture ID used
-	\param texcoordmatrix texture transform
-	\return error code if any
+	\param texcoordmatrix texture transform to fill. The texture is expected to be layed out as an image (first pixel is top-first). If not the case, add a vertical flip (eg dispatching an OpenGL FBO). 	\return error code if any
 	*/
 	GF_Err (*get_gl_texture)(struct _gf_filter_frame_interface *frame, u32 plane_idx, u32 *gl_tex_format, u32 *gl_tex_id, GF_Matrix_unexposed * texcoordmatrix);
 

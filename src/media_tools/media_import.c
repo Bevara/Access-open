@@ -30,6 +30,7 @@
 #include <gpac/internal/media_dev.h>
 
 #include <gpac/xml.h>
+#include <gpac/network.h>
 
 
 #ifndef GPAC_DISABLE_MEDIA_IMPORT
@@ -54,12 +55,12 @@ static void gf_media_update_bitrate_ex(GF_ISOFile *file, u32 track, Bool use_esd
 {
 #ifndef GPAC_DISABLE_ISOM_WRITE
 	u32 i, count, timescale, db_size, cdur, csize;
-	u64 time_wnd, rate, max_rate, avg_rate, bitrate;
+	u64 time_wnd, max_rate, avg_rate, bitrate;
 	Double br;
 	GF_ISOSample sample;
 
 	db_size = 0;
-	rate = max_rate = avg_rate = time_wnd = bitrate = 0;
+	max_rate = avg_rate = time_wnd = bitrate = 0;
 
 	csize = 0;
 	cdur = 0;
@@ -76,8 +77,9 @@ static void gf_media_update_bitrate_ex(GF_ISOFile *file, u32 track, Bool use_esd
 	if (csize && cdur) {
 		db_size = 0;
 		avg_rate = 8 * csize * timescale / cdur;
-		bitrate = rate = avg_rate;
+		bitrate = avg_rate;
 	} else {
+		u32 rate = 0;
 		for (i=0; i<count; i++) {
 			u32 di;
 			GF_ISOSample *samp = gf_isom_get_sample_info_ex(file, track, i+1, &di, NULL, &sample);
@@ -118,7 +120,6 @@ static void gf_media_update_bitrate_ex(GF_ISOFile *file, u32 track, Bool use_esd
 		}
 		if (esd) gf_odf_desc_del((GF_Descriptor *)esd);
 	}
-	
 #endif
 }
 
@@ -326,6 +327,7 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 	ps = GF_FALSE;
 	sbr = GF_FALSE;
 	sbr_sr = 0;
+	w = h = 0;
 	cur_extract_mode = gf_isom_get_nalu_extract_mode(import->orig, track_in);
 	iod = (GF_InitialObjectDescriptor *) gf_isom_get_root_od(import->orig);
 	if (iod && (iod->tag != GF_ODF_IOD_TAG)) {
@@ -335,7 +337,6 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 	mtype = gf_isom_get_media_type(import->orig, track_in);
 	if (mtype==GF_ISOM_MEDIA_VISUAL) {
 		u8 PL = iod ? iod->visual_profileAndLevel : 0xFE;
-		w = h = 0;
 		gf_isom_get_visual_info(import->orig, track_in, 1, &w, &h);
 #ifndef GPAC_DISABLE_AV_PARSERS
 		/*for MPEG-4 visual, always check size (don't trust input file)*/
@@ -389,8 +390,13 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 		gf_isom_set_timescale(import->dest, timescale);
 	}
 	clone_flags = GF_ISOM_CLONE_TRACK_NO_QT;
-	if (import->asemode == GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF)
+	if (import->asemode == GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF) {
 		clone_flags = 0;
+	} else {
+		const char *dst = gf_isom_get_filename(import->dest);
+		if (dst && strstr(dst, ".mov"))
+			clone_flags = 0;
+	}
 
 	if (import->flags & GF_IMPORT_USE_DATAREF) clone_flags |= GF_ISOM_CLONE_TRACK_KEEP_DREF;
 	e = gf_isom_clone_track(import->orig, track_in, import->dest, clone_flags, &track);
@@ -496,6 +502,10 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 				gf_isom_set_nalu_extract_mode(import->orig, track_in, GF_ISOM_NALU_EXTRACT_INSPECT | GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG);
 				gf_isom_hevc_set_inband_config(import->dest, track, 1, (import->xps_inband==2) ? GF_TRUE : GF_FALSE);
 				break;
+			case GF_ISOM_SUBTYPE_VVC1:
+				gf_isom_set_nalu_extract_mode(import->orig, track_in, GF_ISOM_NALU_EXTRACT_INSPECT | GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG);
+				//gf_isom_vvc_set_inband_config(import->dest, track, 1, (import->xps_inband==2) ? GF_TRUE : GF_FALSE);
+				break;
 			}
 		}
 	}
@@ -511,6 +521,8 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 	case GF_ISOM_SUBTYPE_LHE1:
 	case GF_ISOM_SUBTYPE_LHV1:
 	case GF_ISOM_SUBTYPE_HVT1:
+	case GF_ISOM_SUBTYPE_VVC1:
+	case GF_ISOM_SUBTYPE_VVI1:
 		is_nalu_video = GF_TRUE;
 		break;
 	}
@@ -894,7 +906,8 @@ GF_Err gf_media_import_chapters_file(GF_MediaImporter *import)
 			}
 			else {
 				char szTS[20], *tok;
-				strncpy(szTS, sL, 18);
+				strncpy(szTS, sL, 19);
+				szTS[19]=0;
 				tok = strrchr(szTS, ' ');
 				if (tok) {
 					title = strchr(sL, ' ') + 1;
@@ -932,6 +945,7 @@ GF_Err gf_media_import_chapters_file(GF_MediaImporter *import)
 			u32 idx;
 			char szTemp[20], *str;
 			strncpy(szTemp, sL, 19);
+			szTemp[19] = 0;
 			str = strrchr(szTemp, '=');
 			if (!str) continue;
 			str[0] = 0;
@@ -1119,7 +1133,6 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 		if (!fsess) {
 			return gf_import_message(importer, GF_BAD_PARAM, "[Importer] Cannot load filter session for import");
 		}
-
 		prober = gf_fs_load_filter(fsess, "probe", &e);
 		src_filter = gf_fs_load_source(fsess, importer->in_name, "index=0", NULL, &e);
 		if (e) {
@@ -1190,7 +1203,9 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 				p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLES_PER_FRAME);
 				if (p) tki->audio_info.samples_per_frame = p->value.uint;
 			}
-			p = gf_filter_pid_get_property(pid, GF_PROP_PID_CAN_DATAREF);
+/*			p = gf_filter_pid_get_property(pid, GF_PROP_PID_CAN_DATAREF);
+			if (p) importer->flags |= GF_IMPORT_USE_DATAREF;
+*/
 			p = gf_filter_pid_get_property(pid, GF_PROP_PID_SUBTYPE);
 			if (p) tki->media_subtype = p->value.uint;
 
@@ -1244,9 +1259,11 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 	else if (importer->xps_inband==2)
 		e |= gf_dynstrcat(&args, "xps_inband=both", ":");
 	if (importer->esd && importer->esd->ESID) {
-		sprintf(szSubArg, "tkid=%d", importer->esd->ESID);
+		sprintf(szSubArg, "trackid=%d", importer->esd->ESID);
 		e |= gf_dynstrcat(&args, szSubArg, ":");
 	}
+	if (importer->flags & GF_IMPORT_FORCE_SYNC)
+		e |= gf_dynstrcat(&args, ":forcesync", NULL);
 
 	if (importer->duration.den) {
 		sprintf(szSubArg, "idur=%d/%d", importer->duration.num, importer->duration.den);
@@ -1365,7 +1382,7 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 		e |= gf_dynstrcat(&args, szSubArg, ":");
 	}
 	if (importer->track_index) {
-		sprintf(szSubArg, "#TrackIndex=%d", importer->track_index);
+		sprintf(szSubArg, "#MuxIndex=%d", importer->track_index);
 		e |= gf_dynstrcat(&args, szSubArg, ":");
 	}
 
@@ -1417,7 +1434,13 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 			importer->esd->slConfig = esd->slConfig;
 			esd->slConfig = NULL;
 		}
-		if (esd) gf_odf_desc_del((GF_Descriptor *) esd);
+		if (esd) {
+			gf_odf_desc_del((GF_Descriptor *) esd);
+		}
+
+		if (!importer->esd->ESID) {
+			importer->esd->ESID = importer->final_trackID;
+		}
 	}
 
 	if (importer->print_stats_graph & 1) gf_fs_print_stats(fsess);

@@ -788,13 +788,14 @@ GF_Err gf_cache_delete_entry ( const DownloadedCacheEntry entry )
 		if (entry->deletableFilesOnDelete)
 			propfile = gf_cfg_get_filename(entry->properties);
 
-		gf_cfg_del ( entry->properties );
-		entry->properties = NULL;
 		if (propfile) {
 			//this may fail because the prop file is not yet flushed to disk
 			gf_file_delete( propfile );
 		}
-	}
+
+        gf_cfg_del ( entry->properties );
+        entry->properties = NULL;
+    }
 	entry->dm = NULL;
 	if (entry->sessions) {
 		assert( gf_list_count(entry->sessions) == 0);
@@ -808,7 +809,10 @@ GF_Err gf_cache_delete_entry ( const DownloadedCacheEntry entry )
 
 Bool gf_cache_check_if_cache_file_is_corrupted(const DownloadedCacheEntry entry)
 {
-	FILE *the_cache = gf_fopen ( entry->cache_filename, "rb" );
+	FILE *the_cache = NULL;
+	if (entry->cache_filename && strncmp(entry->cache_filename, "gmem://", 7))
+		the_cache = gf_fopen ( entry->cache_filename, "rb" );
+
 	if ( the_cache ) {
 		char * endPtr;
 		const char * keyValue = gf_cfg_get_key ( entry->properties, CACHE_SECTION_NAME, CACHE_SECTION_NAME_CONTENT_SIZE );
@@ -919,6 +923,7 @@ Bool gf_cache_set_range(const DownloadedCacheEntry entry, u64 size, u64 start_ra
 	entry->range_start = start_range;
 	entry->range_end = end_range;
 	entry->contentLength = (u32) size;
+	entry->continue_file = GF_FALSE;
 	return GF_TRUE;
 }
 

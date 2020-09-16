@@ -499,6 +499,7 @@ static GF_Err gf_atsc3_dmx_process_slt(GF_ATSCDmx *atscd, GF_XMLNode *root)
 	return GF_OK;
 }
 
+#ifndef GPAC_DISABLE_LOG
 static const char *get_lct_obj_status_name(GF_LCTObjectStatus status)
 {
 	switch (status) {
@@ -510,6 +511,7 @@ static const char *get_lct_obj_status_name(GF_LCTObjectStatus status)
 	}
 	return "unknown";
 }
+#endif // GPAC_DISABLE_LOG
 
 static void gf_atsc3_obj_to_reservoir(GF_ATSCDmx *atscd, GF_ATSCService *s, GF_LCTObject *obj)
 {
@@ -702,23 +704,22 @@ static GF_Err gf_atsc3_dmx_process_object(GF_ATSCDmx *atscd, GF_ATSCService *s, 
 	nb_objs -= atscd->max_seg_store;
 
 	for (i=0; i<count; i++) {
+		char szFileName[1024];
 		GF_LCTObject *o;
 		if (!nb_objs) break;
 		o = gf_list_get(s->objects, i);
 		if (o->tsi != obj->tsi) continue;
 		if (o==obj) break;
 		if (o->toi==obj->rlct->init_toi) continue;
-		if (nb_objs) {
-			char szFileName[1024];
-			sprintf(szFileName, o->rlct->toi_template, o->toi);
-			sprintf(szPath, "%s/%s", s->output_dir, szFileName);
-			GF_LOG(GF_LOG_INFO, GF_LOG_ATSC, ("[ATSC3] Service %d deleting file %s (TSI %u TOI %u)\n", s->service_id, szPath, o->tsi, o->toi));
-			gf_file_delete(szPath);
-			i--;
-			count--;
-			gf_atsc3_obj_to_reservoir(atscd, s, o);
-			nb_objs--;
-		}
+
+		sprintf(szFileName, o->rlct->toi_template, o->toi);
+		sprintf(szPath, "%s/%s", s->output_dir, szFileName);
+		GF_LOG(GF_LOG_INFO, GF_LOG_ATSC, ("[ATSC3] Service %d deleting file %s (TSI %u TOI %u)\n", s->service_id, szPath, o->tsi, o->toi));
+		gf_file_delete(szPath);
+		i--;
+		count--;
+		gf_atsc3_obj_to_reservoir(atscd, s, o);
+		nb_objs--;
 	}
 	return GF_OK;
 }
@@ -1088,6 +1089,8 @@ static GF_Err gf_atsc3_service_setup_stsid(GF_ATSCDmx *atscd, GF_ATSCService *s,
 		}
 
 		GF_SAFEALLOC(rsess, GF_ATSCRouteSession);
+		if (!rsess) return GF_OUT_OF_MEM;
+
 		rsess->channels = gf_list_new();
 
 		//need a new socket for the session
@@ -1148,8 +1151,8 @@ static GF_Err gf_atsc3_service_setup_stsid(GF_ATSCDmx *atscd, GF_ATSCService *s,
 				if (node->type != GF_XML_NODE_TYPE) continue;
 				//Korean version
 				if (!strcmp(node->name, "FileTemplate")) {
-					GF_XMLNode *content = gf_list_get(node->content, 0);
-					if (content->type==GF_XML_TEXT_TYPE) file_template = content->name;
+					GF_XMLNode *cnode = gf_list_get(node->content, 0);
+					if (cnode->type==GF_XML_TEXT_TYPE) file_template = cnode->name;
 				}
 				else if (!strcmp(node->name, "FDTParameters")) {
 					u32 l=0;
@@ -1207,6 +1210,8 @@ static GF_Err gf_atsc3_service_setup_stsid(GF_ATSCDmx *atscd, GF_ATSCService *s,
 
 			//OK setup LCT channel for route
 			GF_SAFEALLOC(rlct, GF_ATSCLCTChannel);
+			if (!rlct) return GF_OUT_OF_MEM;
+			
 			rlct->init_toi = init_file_toi;
 			rlct->tsi = tsi;
 			rlct->init_filename = init_file_name ? gf_strdup(init_file_name) : NULL;
@@ -1301,7 +1306,7 @@ static GF_Err gf_atsc3_dmx_process_service_signaling(GF_ATSCDmx *atscd, GF_ATSCS
 			GF_LOG(GF_LOG_ERROR, GF_LOG_ATSC, ("[ATSC3] Service %d cannot find multipart boundary in package:\n%s\n", s->service_id, payload ));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
-		if (sep) payload = sep + 10;
+		payload = sep + 10;
 		sep = strstr(payload, "\"");
 		if (!sep) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_ATSC, ("[ATSC3] Service %d multipart boundary not properly formatted in package:\n%s\n", s->service_id, payload ));

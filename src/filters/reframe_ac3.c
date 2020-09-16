@@ -133,8 +133,9 @@ static void ac3dmx_check_dur(GF_Filter *filter, GF_AC3DmxCtx *ctx)
 	}
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILEPATH);
-	if (!p || !p->value.string) {
+	if (!p || !p->value.string || !strncmp(p->value.string, "gmem://", 7)) {
 		ctx->is_file = GF_FALSE;
+		ctx->file_loaded = GF_TRUE;
 		return;
 	}
 	ctx->is_file = GF_TRUE;
@@ -342,7 +343,7 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 {
 	GF_AC3DmxCtx *ctx = gf_filter_get_udta(filter);
 	GF_FilterPacket *pck, *dst_pck;
-	u8 *data, *output;
+	u8 *output;
 	u8 *start;
 	u32 pck_size, remain, prev_pck_size;
 	u64 cts = GF_FILTER_NO_TS;
@@ -371,7 +372,7 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 
 	prev_pck_size = ctx->ac3_buffer_size;
 	if (pck && !ctx->resume_from) {
-		data = (char *) gf_filter_pck_get_data(pck, &pck_size);
+		const u8 *data = gf_filter_pck_get_data(pck, &pck_size);
 		if (!pck_size) {
 			gf_filter_pid_drop_packet(ctx->ipid);
 			return GF_OK;
@@ -457,7 +458,9 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 
 		bytes_to_drop = sync_pos + ctx->hdr.framesize;
 		if (ctx->timescale && !prev_pck_size &&  (cts != GF_FILTER_NO_TS) ) {
-			ctx->cts = cts;
+			//trust input CTS if diff is more than one sec
+			if ((cts > ctx->cts + ctx->timescale) || (ctx->cts > cts + ctx->timescale))
+				ctx->cts = cts;
 			cts = GF_FILTER_NO_TS;
 		}
 
@@ -531,13 +534,17 @@ static void ac3dmx_finalize(GF_Filter *filter)
 static const char *ac3dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeScore *score)
 {
 	u32 nb_frames=0;
+	Bool has_broken_frames = GF_FALSE;
 	u32 pos=0;
 	while (1) {
 		GF_AC3Header ahdr;
 		if (! gf_ac3_parser((u8 *) data, size, &pos, &ahdr, GF_FALSE) )
 		 	break;
 		u32 fsize = ahdr.framesize;
-		if (pos) nb_frames=0;
+		if (pos) {
+			nb_frames=0;
+			has_broken_frames = GF_TRUE;
+		}
 		nb_frames++;
 		if (fsize > size+pos) break;
 		if (nb_frames>4) break;
@@ -546,7 +553,7 @@ static const char *ac3dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSco
 		data += fsize+pos;
 	}
 	if (nb_frames>2) {
-		*score = GF_FPROBE_SUPPORTED;
+		*score = has_broken_frames ? GF_FPROBE_MAYBE_SUPPORTED : GF_FPROBE_SUPPORTED;
 		return "audio/ac3";
 	}
 	return NULL;

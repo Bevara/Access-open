@@ -57,6 +57,7 @@ typedef struct
 	char *block;
 	u32 is_random;
 	Bool cached_set;
+	Bool no_failure;
 } GF_FileInCtx;
 
 
@@ -145,6 +146,12 @@ static GF_Err filein_initialize(GF_Filter *filter)
 		if (frag_par) frag_par[0] = '#';
 		if (cgi_par) cgi_par[0] = '?';
 
+		if (ctx->no_failure) {
+			gf_filter_notification_failure(filter, GF_URL_ERROR, GF_FALSE);
+			ctx->is_end = GF_TRUE;
+			return GF_OK;
+		}
+
 		gf_filter_setup_failure(filter, GF_URL_ERROR);
 #ifdef GPAC_ENABLE_COVERAGE
 		if (gf_sys_is_cov_mode() && !strcmp(src, "blob"))
@@ -156,7 +163,7 @@ static GF_Err filein_initialize(GF_Filter *filter)
 	ctx->file_size = gf_fsize(ctx->file);
 
 	ctx->cached_set = GF_FALSE;
-
+	ctx->full_file_only = GF_FALSE;
 
 	if (ctx->do_reconfigure && gf_fileio_check(ctx->file)) {
 		GF_FileIO *gfio = (GF_FileIO *)ctx->file;
@@ -203,6 +210,9 @@ static GF_FilterProbeScore filein_probe_url(const char *url, const char *mime_ty
 	char *cgi_par = NULL;
 	char *src = (char *) url;
 	Bool res;
+
+	if (!strcmp(url, "-") || !strcmp(url, "stdin")) return GF_FPROBE_NOT_SUPPORTED;
+
 	if (!strnicmp(url, "file://", 7)) src += 7;
 	else if (!strnicmp(url, "file:", 5)) src += 5;
 
@@ -284,7 +294,6 @@ static Bool filein_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	case GF_FEVT_SOURCE_SWITCH:
 		if (ctx->is_random)
 			return GF_TRUE;
-
 		GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileIn] Asked to switch source to %s (range "LLU"-"LLU")\n", evt->seek.source_switch ? evt->seek.source_switch : "self", evt->seek.start_offset, evt->seek.end_offset));
 		assert(ctx->is_end);
 		ctx->range.num = evt->seek.start_offset;
@@ -296,6 +305,8 @@ static Bool filein_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			}
 			ctx->do_reconfigure = GF_TRUE;
 		}
+		//don't send a setup failure on source switch (this would destroy ourselves which we don't want in DASH)
+		ctx->no_failure = GF_TRUE;
 		filein_initialize(filter);
 		gf_filter_post_process_task(filter);
 		break;
@@ -318,6 +329,7 @@ static GF_Err filein_process(GF_Filter *filter)
 {
 	GF_Err e;
 	u32 nb_read, to_read;
+	u64 lto_read;
 	GF_FilterPacket *pck;
 	GF_FileInCtx *ctx = (GF_FileInCtx *) gf_filter_get_udta(filter);
 
@@ -340,6 +352,14 @@ static GF_Err filein_process(GF_Filter *filter)
 		ctx->pck_out = GF_TRUE;
 		gf_filter_pck_send(pck);
 		gf_filter_pid_set_eos(ctx->pid);
+
+		if (ctx->file_size && gf_filter_reporting_enabled(filter)) {
+			char szStatus[1024], *szSrc;
+			szSrc = gf_file_basename(ctx->src);
+
+			sprintf(szStatus, "%s: EOS (dispatch canceled after "LLD" b, file size "LLD" b)", szSrc, (s64) ctx->file_pos, (s64) ctx->file_size);
+			gf_filter_update_status(filter, 10000, szStatus);
+		}
 		return GF_OK;
 	}
 	if (ctx->is_random) {
@@ -406,22 +426,43 @@ static GF_Err filein_process(GF_Filter *filter)
 		return GF_OK;
 	}
 
-
+	//compute size to read as u64 (large file)
 	if (ctx->end_pos > ctx->file_pos)
-		to_read = (u32) (ctx->end_pos - ctx->file_pos);
+		lto_read = ctx->end_pos - ctx->file_pos;
 	else if (ctx->file_size)
-		to_read = (u32) (ctx->file_size - ctx->file_pos);
+		lto_read = ctx->file_size - ctx->file_pos;
 	else
-		to_read = ctx->block_size;
-	
-	if (to_read > ctx->block_size)
-		to_read = ctx->block_size;
+		lto_read = ctx->block_size;
+
+	//and clamp based on blocksize as u32
+	if (lto_read > (u64) ctx->block_size)
+		to_read = (u64) ctx->block_size;
+	else
+		to_read = (u32) lto_read;
 
 	nb_read = (u32) gf_fread(ctx->block, to_read, ctx->file);
-	if (!nb_read) ctx->file_size = ctx->file_pos;
+	if (!nb_read)
+		ctx->file_size = ctx->file_pos;
 
 	ctx->block[nb_read] = 0;
 	if (!ctx->pid || ctx->do_reconfigure) {
+		//quick hack for ID3v2: if detected, increase block size to have the full id3v2 + some frames in the initial block
+		//to avoid relying on file extension for demux
+		if (!ctx->pid && (nb_read>10)
+			&& (ctx->block[0] == 'I' && ctx->block[1] == 'D' && ctx->block[2] == '3')
+		) {
+			u32 tag_size = ((ctx->block[9] & 0x7f) + ((ctx->block[8] & 0x7f) << 7) + ((ctx->block[7] & 0x7f) << 14) + ((ctx->block[6] & 0x7f) << 21));
+			if (tag_size > nb_read) {
+				u32 probe_size = tag_size + ctx->block_size;
+				if (probe_size>ctx->file_size)
+					probe_size = (u32) ctx->file_size;
+
+				ctx->block_size = probe_size;
+				ctx->block = gf_realloc(ctx->block, ctx->block_size+1);
+				nb_read += (u32) gf_fread(ctx->block + nb_read, probe_size-nb_read, ctx->file);
+			}
+		}
+
 		ctx->do_reconfigure = GF_FALSE;
 		e = gf_filter_pid_raw_new(filter, ctx->src, ctx->src, ctx->mime, ctx->ext, ctx->block, nb_read, GF_TRUE, &ctx->pid);
 		if (e) return e;
@@ -466,7 +507,7 @@ static GF_Err filein_process(GF_Filter *filter)
 		gf_filter_pid_set_info(ctx->pid, GF_PROP_PID_DOWN_BYTES, &PROP_LONGUINT(ctx->file_size) );
 	} else {
 		if (nb_read < to_read) {
-			Bool is_eof=GF_FALSE;
+			Bool is_eof;
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[FileIn] Asked to read %d but got only %d\n", to_read, nb_read));
 
 			is_eof = gf_feof(ctx->file);
@@ -509,7 +550,7 @@ static GF_Err filein_process(GF_Filter *filter)
 static const GF_FilterArgs FileInArgs[] =
 {
 	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
-	{ OFFS(block_size), "block size used to read file. 0 means 5000 if file less than 500m, 1M otherwise.", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(block_size), "block size used to read file. 0 means 5000 if file less than 500m, 1M otherwise", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(range), "byte range", GF_PROP_FRACTION64, "0-0", NULL, 0},
 	{ OFFS(ext), "override file extension", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(mime), "set file mime type", GF_PROP_NAME, NULL, NULL, 0},

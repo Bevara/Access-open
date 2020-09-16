@@ -62,6 +62,62 @@ The thread object allows executing some code independently of the main process o
 
 #include <gpac/tools.h>
 
+
+ //atomic ref_count++ / ref_count--
+#if defined(WIN32) || defined(_WIN32_WCE)
+#include <windows.h>
+#include <winbase.h>
+
+/*! atomic integer increment */
+#define safe_int_inc(__v) InterlockedIncrement((int *) (__v))
+/*! atomic integer decrement */
+#define safe_int_dec(__v) InterlockedDecrement((int *) (__v))
+/*! atomic integer addition */
+#define safe_int_add(__v, inc_val) InterlockedAdd((int *) (__v), inc_val)
+/*! atomic integer substraction */
+#define safe_int_sub(__v, dec_val) InterlockedAdd((int *) (__v), -dec_val)
+/*! atomic large integer addition */
+#define safe_int64_add(__v, inc_val) InterlockedAdd64((LONG64 *) (__v), inc_val)
+/*! atomic large integer substraction */
+#define safe_int64_sub(__v, dec_val) InterlockedAdd64((LONG64 *) (__v), -dec_val)
+
+#else
+
+#ifdef GPAC_NEED_LIBATOMIC
+
+/*! atomic integer increment */
+#define safe_int_inc(__v) __atomic_add_fetch((int *) (__v), 1, __ATOMIC_SEQ_CST)
+/*! atomic integer decrement */
+#define safe_int_dec(__v) __atomic_sub_fetch((int *) (__v), 1, __ATOMIC_SEQ_CST)
+/*! atomic integer addition */
+#define safe_int_add(__v, inc_val) __atomic_add_fetch((int *) (__v), inc_val, __ATOMIC_SEQ_CST)
+/*! atomic integer substraction */
+#define safe_int_sub(__v, dec_val) __atomic_sub_fetch((int *) (__v), dec_val, __ATOMIC_SEQ_CST)
+/*! atomic large integer addition */
+#define safe_int64_add(__v, inc_val) __atomic_add_fetch((int64_t *) (__v), inc_val, __ATOMIC_SEQ_CST)
+/*! atomic large integer substraction */
+#define safe_int64_sub(__v, dec_val) __atomic_sub_fetch((int64_t *) (__v), dec_val, __ATOMIC_SEQ_CST)
+
+#else
+
+/*! atomic integer increment */
+#define safe_int_inc(__v) __sync_add_and_fetch((int *) (__v), 1)
+/*! atomic integer decrement */
+#define safe_int_dec(__v) __sync_sub_and_fetch((int *) (__v), 1)
+/*! atomic integer addition */
+#define safe_int_add(__v, inc_val) __sync_add_and_fetch((int *) (__v), inc_val)
+/*! atomic integer substraction */
+#define safe_int_sub(__v, dec_val) __sync_sub_and_fetch((int *) (__v), dec_val)
+/*! atomic large integer addition */
+#define safe_int64_add(__v, inc_val) __sync_add_and_fetch((int64_t *) (__v), inc_val)
+/*! atomic large integer substraction */
+#define safe_int64_sub(__v, dec_val) __sync_sub_and_fetch((int64_t *) (__v), dec_val)
+
+#endif //GPAC_NEED_LIBATOMIC
+
+#endif
+
+
 /*!
 \brief Thread states
  *
@@ -320,4 +376,3 @@ Bool gf_sema_wait_for(GF_Semaphore *sm, u32 time_out);
 
 
 #endif		/*_GF_THREAD_H_*/
-

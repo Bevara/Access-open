@@ -281,7 +281,7 @@ static void gf_rtp_parse_mpeg12_audio(GF_RTPDepacketizer *rtp, GF_RTPHeader *hdr
 		/*new frame, store size*/
 		rtp->sl_hdr.compositionTimeStampFlag = 0;
 		if (rtp->sl_hdr.accessUnitStartFlag) {
-			mp3hdr = GF_4CC((u8) payload[0], (u8) payload[1], (u8) payload[2], (u8) payload[3]);
+			mp3hdr = GF_4CC((u32) payload[0], (u8) payload[1], (u8) payload[2], (u8) payload[3]);
 			rtp->sl_hdr.accessUnitLength = gf_mp3_frame_size(mp3hdr);
 			rtp->sl_hdr.channels = gf_mp3_num_channels(mp3hdr);
 			rtp->sl_hdr.samplerate = gf_mp3_sampling_rate(mp3hdr);
@@ -1023,12 +1023,12 @@ static void gf_rtp_parse_ac3(GF_RTPDepacketizer *rtp, GF_RTPHeader *hdr, u8 *pay
 	size -= 2;
 
 	if (!ft) {
-		GF_AC3Header hdr;
-		memset(&hdr, 0, sizeof(GF_AC3Header));
+		GF_AC3Header ac3hdr;
+		memset(&ac3hdr, 0, sizeof(GF_AC3Header));
 		rtp->sl_hdr.accessUnitStartFlag = rtp->sl_hdr.accessUnitEndFlag = 1;
 		while (size) {
 			u32 offset;
-			if (!gf_ac3_parser((u8*)payload, size, &offset, &hdr, GF_FALSE)) {
+			if (!gf_ac3_parser((u8*)payload, size, &offset, &ac3hdr, GF_FALSE)) {
 				return;
 			}
 			if (offset) {
@@ -1036,10 +1036,10 @@ static void gf_rtp_parse_ac3(GF_RTPDepacketizer *rtp, GF_RTPHeader *hdr, u8 *pay
 				payload+=offset;
 				size-=offset;
 			}
-			rtp->on_sl_packet(rtp->udta, payload, hdr.framesize, &rtp->sl_hdr, GF_OK);
-			if (size < hdr.framesize) return;
-			size -= hdr.framesize;
-			payload += hdr.framesize;
+			rtp->on_sl_packet(rtp->udta, payload, ac3hdr.framesize, &rtp->sl_hdr, GF_OK);
+			if (size < ac3hdr.framesize) return;
+			size -= ac3hdr.framesize;
+			payload += ac3hdr.framesize;
 			rtp->sl_hdr.compositionTimeStamp += 1536;
 		}
 		rtp->flags |= GF_RTP_NEW_AU;
@@ -1338,18 +1338,16 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 			rtp->flags |= GF_RTP_M4V_CHECK_RAP;
 		}
 #ifndef GPAC_DISABLE_AV_PARSERS
-		if ((rtp->sl_map.CodecID == GF_CODECID_AAC_MPEG4) && !rtp->sl_map.config) {
+		if ((rtp->sl_map.CodecID == GF_CODECID_AAC_MPEG4) && !rtp->sl_map.config && media) {
 			GF_M4ADecSpecInfo cfg;
-			GF_RTPMap*map = (GF_RTPMap*)gf_list_get(media->RTPMaps, 0);
+			GF_RTPMap *a_map = (GF_RTPMap*)gf_list_get(media->RTPMaps, 0);
 
 			memset(&cfg, 0, sizeof(GF_M4ADecSpecInfo));
 			cfg.audioPL = rtp->sl_map.PL_ID;
-			cfg.nb_chan = map->AudioChannels;
-			cfg.nb_chan = 1;
-			cfg.base_sr = map->ClockRate/2;
-			cfg.sbr_sr = map->ClockRate;
-			cfg.base_object_type = GF_M4A_AAC_LC;
-			cfg.base_object_type = 5;
+			cfg.nb_chan = a_map->AudioChannels ? a_map->AudioChannels : 1;
+			cfg.base_sr = a_map->ClockRate/2;
+			cfg.sbr_sr = a_map->ClockRate;
+			cfg.base_object_type = GF_M4A_AAC_SBR;
 			cfg.sbr_object_type = GF_M4A_AAC_MAIN;
 			gf_m4a_write_config(&cfg, &rtp->sl_map.config, &rtp->sl_map.configSize);
 		}
@@ -1377,24 +1375,21 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 		break;
 	case GF_RTP_PAYT_AMR:
 	case GF_RTP_PAYT_AMR_WB:
-	{
 		rtp->sl_map.StreamType = GF_STREAM_AUDIO;
 		rtp->sl_map.CodecID = (rtp->payt == GF_RTP_PAYT_AMR) ? GF_CODECID_AMR : GF_CODECID_AMR_WB;
 		/*assign depacketizer*/
 		rtp->depacketize = gf_rtp_parse_amr;
-	}
-	break;
+		break;
 	case GF_RTP_PAYT_H263:
-	{
-		GF_X_Attribute *att;
-
-		j=0;
-		while ((att = (GF_X_Attribute *)gf_list_enum(media->Attributes, &j))) {
-			if (stricmp(att->Name, "cliprect")) continue;
-			/*only get the display area*/
-			sscanf(att->Value, "%u,%u,%u,%u", &rtp->y, &rtp->x, &rtp->h, &rtp->w);
+		if (media) {
+			GF_X_Attribute *att;
+			j=0;
+			while ((att = (GF_X_Attribute *)gf_list_enum(media->Attributes, &j))) {
+				if (stricmp(att->Name, "cliprect")) continue;
+				/*only get the display area*/
+				sscanf(att->Value, "%u,%u,%u,%u", &rtp->y, &rtp->x, &rtp->h, &rtp->w);
+			}
 		}
-
 		rtp->sl_map.StreamType = GF_STREAM_VISUAL;
 		rtp->sl_map.CodecID = GF_CODECID_H263;
 
@@ -1403,8 +1398,8 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 
 		/*assign depacketizer*/
 		rtp->depacketize = gf_rtp_parse_h263;
-	}
-	break;
+		break;
+
 	case GF_RTP_PAYT_3GPP_TEXT:
 	{
 		char *tx3g, *a_tx3g;
@@ -1416,7 +1411,7 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 		tcfg.Base3GPPFormat = 0x10;
 		tcfg.MPEGExtendedFormat = 0x10;
 		tcfg.profileLevel = 0x10;
-		if (!map) {
+		if (!map || !media) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTP] Missing required payload map\n"));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
@@ -1501,7 +1496,7 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 	case GF_RTP_PAYT_H264_SVC:
 	{
 		GF_AVCConfig *avcc;
-		if (!map) {
+		if (!map || !media) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTP] Missing required payload map\n"));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
@@ -1541,7 +1536,7 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 
 					nalt = b64_d[0] & 0x1F;
 					if (/*SPS*/(nalt==0x07) || /*PPS*/(nalt==0x08) || /*SSPS*/(nalt==0x0F)) {
-						GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *)gf_malloc(sizeof(GF_AVCConfigSlot));
+						GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_malloc(sizeof(GF_NALUFFParam));
 						sl->size = ret;
 						sl->data = (char*)gf_malloc(sizeof(char)*sl->size);
 						memcpy(sl->data, b64_d, sizeof(char)*sl->size);
@@ -1577,7 +1572,7 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 #ifndef GPAC_DISABLE_HEVC
 	{
 		GF_HEVCConfig *hevcc;
-		if (!map) {
+		if (!map || !media) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTP] Missing required payload map\n"));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
@@ -1595,21 +1590,21 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 			j=0;
 			while ((att = (GF_X_Attribute *)gf_list_enum(fmtp->Attributes, &j))) {
 				char *nal_ptr, *sep;
-				GF_HEVCParamArray *ar;
+				GF_NALUFFParamArray *ar;
 				if (!stricmp(att->Name, "sprop-vps")) {
-					GF_SAFEALLOC(ar, GF_HEVCParamArray);
+					GF_SAFEALLOC(ar, GF_NALUFFParamArray);
 					if (!ar) return GF_OUT_OF_MEM;
 					ar->nalus = gf_list_new();
 					ar->type = GF_HEVC_NALU_VID_PARAM;
 				}
 				else if (!stricmp(att->Name, "sprop-sps")) {
-					GF_SAFEALLOC(ar, GF_HEVCParamArray);
+					GF_SAFEALLOC(ar, GF_NALUFFParamArray);
 					if (!ar) return GF_OUT_OF_MEM;
 					ar->nalus = gf_list_new();
 					ar->type = GF_HEVC_NALU_SEQ_PARAM;
 				}
 				else if (!stricmp(att->Name, "sprop-pps")) {
-					GF_SAFEALLOC(ar, GF_HEVCParamArray);
+					GF_SAFEALLOC(ar, GF_NALUFFParamArray);
 					if (!ar) return GF_OUT_OF_MEM;
 					ar->nalus = gf_list_new();
 					ar->type = GF_HEVC_NALU_PIC_PARAM;
@@ -1620,7 +1615,7 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 				while (nal_ptr) {
 					u32 b64size, ret;
 					char *b64_d;
-					GF_AVCConfigSlot *sl;
+					GF_NALUFFParam *sl;
 
 					sep = strchr(nal_ptr, ',');
 					if (sep) sep[0] = 0;
@@ -1630,7 +1625,7 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 					ret = gf_base64_decode(nal_ptr, b64size, b64_d, b64size);
 					b64_d[ret] = 0;
 
-					sl = (GF_AVCConfigSlot *)gf_malloc(sizeof(GF_AVCConfigSlot));
+					sl = (GF_NALUFFParam *)gf_malloc(sizeof(GF_NALUFFParam));
 					sl->size = ret;
 					sl->data = (char*)gf_malloc(sizeof(char)*sl->size);
 					memcpy(sl->data, b64_d, sizeof(char)*sl->size);

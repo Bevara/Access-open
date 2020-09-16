@@ -40,9 +40,6 @@
 #include <gpac/terminal.h>
 #include <gpac/scene_manager.h>
 
-//void gf_filter_reconnect_output(GF_Filter *filter);
-
-
 u32 gf_term_sample_clocks(GF_Terminal *term);
 
 
@@ -51,7 +48,7 @@ struct _tag_terminal
 	GF_User *user;
 	GF_Compositor *compositor;
 	GF_FilterSession *fsess;
-
+	Bool in_destroy;
 	u32 reload_state;
 	char *reload_url;
 };
@@ -346,9 +343,9 @@ GF_Terminal *gf_term_new(GF_User *user)
 	def_h = opt ? atoi(opt) : 0;
 
 	if (def_w && def_h) {
-		sprintf(szArgs, "compositor:FID=compose:player:size=%dx%d", def_w, def_h);
+		sprintf(szArgs, "compositor:FID=compose:player=base:size=%dx%d", def_w, def_h);
 	} else {
-		strcpy(szArgs, "compositor:FID=compose:player");
+		strcpy(szArgs, "compositor:FID=compose:player=base");
 	}
 
 	comp_filter = gf_fs_load_filter(tmp->fsess, szArgs, &e);
@@ -359,20 +356,8 @@ GF_Terminal *gf_term_new(GF_User *user)
 		gf_free(tmp);
 		return NULL;
 	}
-	gf_filter_make_sticky(comp_filter);
 
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] compositor loaded\n"));
-
-	//load audio filter chain
-	if (! (user->init_flags & (GF_TERM_NO_AUDIO|GF_TERM_NO_DEF_AUDIO_OUT)) ) {
-		GF_Filter *audio_out = gf_fs_load_filter(tmp->fsess, "aout:SID=compose#audio", &e);
-		tmp->compositor->audio_renderer->non_rt_output = GF_FALSE;
-		if (!audio_out) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to load audio output filter (%s) - audio disabled\n", gf_error_to_string(e) ));
-//		} else {
-//			gf_filter_reconnect_output(tmp->compositor->filter);
-		}
-	}
 
 #ifdef FILTER_FIXME
 	gf_dm_set_auth_callback(tmp->downloader, gf_term_get_user_pass, tmp);
@@ -384,8 +369,6 @@ GF_Terminal *gf_term_new(GF_User *user)
 #endif
 
 	gf_term_refresh_cache();
-
-	gf_filter_post_process_task(comp_filter);
 	gf_fs_run(tmp->fsess);
 
 	return tmp;
@@ -401,6 +384,7 @@ GF_Err gf_term_del(GF_Terminal * term)
 	gf_term_disconnect(term);
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] main service disconnected\n"));
 
+	term->in_destroy = GF_TRUE;
 	/*stop the media manager */
 	gf_fs_del(term->fsess);
 
@@ -630,7 +614,7 @@ u32 gf_term_play_from_time(GF_Terminal *term, u64 from_time, u32 pause_at_first_
 GF_EXPORT
 Bool gf_term_user_event(GF_Terminal * term, GF_Event *evt)
 {
-	if (term) return gf_sc_user_event(term->compositor, evt);
+	if (term && !term->in_destroy) return gf_sc_user_event(term->compositor, evt);
 	return GF_FALSE;
 }
 
@@ -658,18 +642,16 @@ GF_EXPORT
 u32 gf_term_get_elapsed_time_in_ms(GF_Terminal *term)
 {
 	u32 i, count;
-	GF_Clock *ck;
 	GF_Compositor *compositor = term ? term->compositor : NULL;
 	if (!term || !compositor->root_scene) return 0;
+
 	count = gf_list_count(compositor->root_scene->namespaces);
 	for (i=0; i<count; i++) {
 		GF_SceneNamespace *sns = gf_list_get(compositor->root_scene->namespaces, i);
-		ck = gf_list_get(sns->clocks, 0);
-		if (ck) break;
+		GF_Clock *ck = gf_list_get(sns->clocks, 0);
+		if (ck) return gf_clock_elapsed_time(ck);
 	}
-	if (!ck) return 0;
-
-	return gf_clock_elapsed_time(ck);
+	return 0;
 }
 
 GF_EXPORT
@@ -737,8 +719,8 @@ GF_Err gf_term_add_object(GF_Terminal *term, const char *url, Bool auto_play)
 GF_EXPORT
 GF_Err gf_term_scene_update(GF_Terminal *term, char *type, char *com)
 {
-	GF_Compositor *compositor = term ? term->compositor : NULL;
 #ifndef GPAC_DISABLE_SMGR
+	GF_Compositor *compositor = term ? term->compositor : NULL;
 	GF_Err e;
 	GF_StreamContext *sc;
 	Bool is_xml = 0;
@@ -806,7 +788,6 @@ GF_Err gf_term_scene_update(GF_Terminal *term, char *type, char *com)
 			addon_info.is_splicing = GF_TRUE;
 			addon_info.timeline_id = -100;
 			addon_info.splice_start_time = start;
-			addon_info.splice_end_time = end;
 			addon_info.splice_end_time = end;
 			addon_info.splice_time_pts = is_pts;
 			gf_scene_register_associated_media(term->root_scene, &addon_info);
@@ -1252,6 +1233,7 @@ void gf_term_load_shortcuts(GF_Terminal *term)
 		if (!name || !val) continue;
 
 		strncpy(szVal, val, 50);
+		szVal[50] = 0;
 		strlwr(szVal);
 		val = szVal;
 
@@ -1540,7 +1522,7 @@ Bool gf_term_get_download_info(GF_Terminal *term, GF_ObjectManager *odm, u32 *d_
 	if (p && bytes_done) *bytes_done = (u32) p->value.longuint;
 
 	p = gf_filter_pid_get_info(pid, GF_PROP_PID_DOWN_SIZE, &pe);
-	if (p && total_bytes) *bytes_done = (u32) p->value.longuint;
+	if (p && total_bytes) *total_bytes = (u32) p->value.longuint;
 
 	p = gf_filter_pid_get_info(pid, GF_PROP_PID_URL, &pe);
 	if (p && url) *url = p->value.string;

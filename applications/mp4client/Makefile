@@ -2,21 +2,21 @@ include ../../config.mak
 
 vpath %.c $(SRC_PATH)/applications/mp4client
 
-CFLAGS= $(OPTFLAGS) -I"$(SRC_PATH)/include" -I../../
+CFLAGS=-I"$(SRC_PATH)/include" $(OPTFLAGS)
 
 LINKFLAGS=$(GPAC_SH_FLAGS)
 
-ifeq ($(DEBUGBUILD), yes)
+ifeq ($(DEBUGBUILD),yes)
 CFLAGS+=-g
 LDFLAGS+=-g
 endif
 
-ifeq ($(GPROFBUILD), yes)
+ifeq ($(GPROFBUILD),yes)
 CFLAGS+=-pg
 LDFLAGS+=-pg
 endif
 
-ifeq ($(GPACREADONLY), yes)
+ifeq ($(GPACREADONLY),yes)
 CFLAGS+=-DGPAC_READ_ONLY
 endif
 

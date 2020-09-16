@@ -685,9 +685,8 @@ void descriptorLocation(GF_M2TS_IP_Stream *ip_str , u8 * data)
 
 void gf_m2ts_target_ip(GF_M2TS_IP_Stream* ip_str, u8 * data)
 {
-	u32 i,j;
+	u32 i;
 	u8 length;
-	i=j=0;
 	ip_str->targets = gf_list_new();
 	length = data[1];
 	for(i=0; i<length; i= i+5)
@@ -781,7 +780,7 @@ void gf_m2ts_gather_ipdatagram_information(MPE_FEC_FRAME *mff,GF_M2TS_Demuxer *t
 {
 	GF_M2TS_IP_Packet *ip_packet;
 	u8* ip_datagram;
-	u32 i, i_holes,i_streams, i_targets,k,j,l;
+	u32 i, i_holes,i_streams,k,j,l;
 	MPE_Error_Holes *mff_holes;
 	u32 offset; /* offset to get through the datagram */
 	//GF_TSImport *tsimp = (GF_TSImport *) ts->user;
@@ -823,11 +822,6 @@ void gf_m2ts_gather_ipdatagram_information(MPE_FEC_FRAME *mff,GF_M2TS_Demuxer *t
 
 			if(ip_platform->all_info_gathered != 1)
 			{
-
-				i_streams = 0;
-				i_targets = 0;
-
-
 				assert( ip_platform->ip_streams );
 				i_streams = gf_list_count(ip_platform->ip_streams);
 				for(k=0; k<i_streams; k++)
@@ -840,8 +834,7 @@ void gf_m2ts_gather_ipdatagram_information(MPE_FEC_FRAME *mff,GF_M2TS_Demuxer *t
 					}
 					else
 					{
-						i_targets = gf_list_count(ip_stream_buff->targets);
-						l=0;
+						u32 i_targets = gf_list_count(ip_stream_buff->targets);
 						for(j=0; j<i_targets; j++)
 						{
 							ip_targets = gf_list_get(ip_stream_buff->targets, j);
@@ -883,7 +876,7 @@ next :
 GF_EXPORT
 void gf_m2ts_print_mpe_info(GF_M2TS_Demuxer *ts)
 {
-	u32 i_streams, i_targets,i,j,l;
+	u32 i_streams,i,j,l;
 	GF_M2TS_IP_Target *ip_targets;
 	u8 *ip_address;
 	GF_M2TS_IP_PLATFORM * ip_platform = ts->ip_platform;
@@ -893,17 +886,13 @@ void gf_m2ts_print_mpe_info(GF_M2TS_Demuxer *ts)
 	/* provider and ip platform name */
 	GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, (" IP Platform : %s provided by %s \n",ip_platform->name,ip_platform->provider_name));
 
-	i_streams = 0;
-	i_targets = 0;
-
-
 	assert(ip_platform->ip_streams);
 	i_streams = gf_list_count(ip_platform->ip_streams);
 	for(i=0; i<i_streams; i++) {
 		GF_M2TS_IP_Stream *ip_stream_buff = gf_list_get(ip_platform->ip_streams, i);
 		GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("PID:%d - Target IP adress: \n", ip_stream_buff->PID));
 		/*Print the target IP address  */
-		i_targets = gf_list_count(ip_stream_buff->targets);
+		u32 i_targets = gf_list_count(ip_stream_buff->targets);
 		for(j=0; j<i_targets; j++)
 		{
 			ip_targets = gf_list_get(ip_stream_buff->targets, j);

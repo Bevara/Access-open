@@ -822,8 +822,7 @@ static void gf_memory_log(unsigned int level, const char *fmt, ...)
 /*prints allocations sum-up*/
 static void print_memory_size()
 {
-	unsigned int level = gpac_nb_alloc_blocs ? GF_MEMORY_ERROR : GF_MEMORY_INFO;
-	GF_LOG(level, GF_LOG_MEMORY, ("[MemTracker] Total: %d bytes allocated in %d blocks\n", (u32) gpac_allocated_memory,  (u32) gpac_nb_alloc_blocs ));
+	GF_LOG(gpac_nb_alloc_blocs ? GF_MEMORY_ERROR : GF_MEMORY_INFO, GF_LOG_MEMORY, ("[MemTracker] Total: %d bytes allocated in %d blocks\n", (u32) gpac_allocated_memory,  (u32) gpac_nb_alloc_blocs ));
 }
 
 GF_EXPORT
@@ -855,14 +854,21 @@ void gf_memory_print()
 			memory_element *curr_element = memory_add[i], *next_element;
 			while (curr_element) {
 				char szVal[51];
-				u32 size;
+				char szHexVal[101];
+				u32 size, j;
 				next_element = curr_element->next;
 				size = curr_element->size>=50 ? 50 : curr_element->size;
-				memcpy(szVal, curr_element->ptr, sizeof(char)*size);
+				for (j=0 ; j<size ; j++) {
+					unsigned char byte = *((unsigned char*)(curr_element->ptr) + j);
+					szVal[j] = (byte > 31 && byte < 127) ? byte : '.';
+					sprintf(szHexVal+2*j, "%02X", byte);
+				}
 				szVal[size] = 0;
+				szHexVal[2*size] = 0;
 				gf_memory_log(GF_MEMORY_INFO, "[MemTracker] Memory Block %p (size %d) allocated in:\n", curr_element->ptr, curr_element->size);
 				log_backtrace(GF_MEMORY_INFO, curr_element);
 				gf_memory_log(GF_MEMORY_INFO, "             string dump: %s\n", szVal);
+				gf_memory_log(GF_MEMORY_INFO, "             hex dump: %s\n", szHexVal);
 				curr_element = next_element;
 			}
 		}

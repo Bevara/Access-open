@@ -159,6 +159,8 @@ GF_Err ilst_item_box_read(GF_Box *s,GF_BitStream *bs)
 		gf_bs_read_u16(bs);
 
 		ptr->data->data = (char *) gf_malloc(sizeof(char)*(ptr->data->dataSize + 1));
+		if (!ptr->data->data) return GF_OUT_OF_MEM;
+
 		gf_bs_read_data(bs, ptr->data->data, ptr->data->dataSize);
 		ptr->data->data[ptr->data->dataSize] = 0;
 		ISOM_DECREASE_SIZE(ptr, ptr->data->dataSize);
@@ -242,13 +244,13 @@ GF_Err databox_box_read(GF_Box *s,GF_BitStream *bs)
 {
 	GF_DataBox *ptr = (GF_DataBox *)s;
 
-	ptr->reserved = gf_bs_read_int(bs, 32);
 	ISOM_DECREASE_SIZE(ptr, 4);
+	ptr->reserved = gf_bs_read_u32(bs);
 
 	if (ptr->size) {
 		ptr->dataSize = (u32) ptr->size;
 		ptr->data = (char*)gf_malloc(ptr->dataSize * sizeof(ptr->data[0]) + 1);
-		if (ptr->data == NULL) return GF_OUT_OF_MEM;
+		if (!ptr->data) return GF_OUT_OF_MEM;
 		ptr->data[ptr->dataSize] = 0;
 		gf_bs_read_data(bs, ptr->data, ptr->dataSize);
 	}
@@ -610,7 +612,8 @@ GF_Err tcmi_box_read(GF_Box *s, GF_BitStream *bs)
 	u32 len;
 	GF_TimeCodeMediaInformationBox *ptr = (GF_TimeCodeMediaInformationBox *)s;
 
-	ISOM_DECREASE_SIZE(s, 21);
+	//don't remove font name len field, some writers just skip it if no font ...
+	ISOM_DECREASE_SIZE(s, 20);
 
 	ptr->text_font = gf_bs_read_u16(bs);
 	ptr->text_face = gf_bs_read_u16(bs);
@@ -622,11 +625,18 @@ GF_Err tcmi_box_read(GF_Box *s, GF_BitStream *bs)
 	ptr->back_color_red = gf_bs_read_u16(bs);
 	ptr->back_color_green = gf_bs_read_u16(bs);
 	ptr->back_color_blue = gf_bs_read_u16(bs);
+	if (!ptr->size) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] broken tmci box, missing font name length field\n" ));
+		return GF_OK;
+	}
+	ISOM_DECREASE_SIZE(s, 1);
+
 	len = gf_bs_read_u8(bs);
 	if (len > ptr->size)
 		len = (u32) ptr->size;
 	if (len) {
 		ptr->font = gf_malloc(len+1);
+		if (!ptr->font) return GF_OUT_OF_MEM;
 		gf_bs_read_data(bs, ptr->font, len);
 		ptr->size -= len;
 		ptr->font[len]=0;
@@ -821,6 +831,7 @@ void chan_box_del(GF_Box *s)
 {
 	GF_ChannelLayoutInfoBox *ptr = (GF_ChannelLayoutInfoBox *)s;
 	if (ptr->audio_descs) gf_free(ptr->audio_descs);
+	if (ptr->ext_data) gf_free(ptr->ext_data);
 	gf_free(s);
 }
 
@@ -835,9 +846,12 @@ GF_Err chan_box_read(GF_Box *s, GF_BitStream *bs)
 	ptr->bitmap = gf_bs_read_u32(bs);
 	ptr->num_audio_description = gf_bs_read_u32(bs);
 
+	if (ptr->size < ptr->num_audio_description*20)
+		return GF_ISOM_INVALID_FILE;
+
 	ptr->audio_descs = gf_malloc(sizeof(GF_AudioChannelDescription) * ptr->num_audio_description);
-	if (!ptr->audio_descs)
-	    return GF_OUT_OF_MEM;
+	if (!ptr->audio_descs) return GF_OUT_OF_MEM;
+	
 	for (i=0; i<ptr->num_audio_description; i++) {
 		GF_AudioChannelDescription *adesc = &ptr->audio_descs[i];
 		ISOM_DECREASE_SIZE(s, 20);
@@ -851,6 +865,13 @@ GF_Err chan_box_read(GF_Box *s, GF_BitStream *bs)
 	if (ptr->size==20) {
 		ptr->size=0;
 		gf_bs_skip_bytes(bs, 20);
+	}
+	if (ptr->size<10000) {
+		ptr->ext_data_size = (u32) ptr->size;
+		ptr->ext_data = gf_malloc(sizeof(u8) * ptr->ext_data_size);
+		if (!ptr->ext_data) return GF_OUT_OF_MEM;
+		gf_bs_read_data(bs, (char *)ptr->ext_data, (u32) ptr->size);
+		ptr->size = 0;
 	}
 	return GF_OK;
 }
@@ -885,7 +906,9 @@ GF_Err chan_box_write(GF_Box *s, GF_BitStream *bs)
 		gf_bs_write_float(bs, adesc->coordinates[1]);
 		gf_bs_write_float(bs, adesc->coordinates[2]);
 	}
-
+	if (ptr->ext_data) {
+		gf_bs_write_data(bs, ptr->ext_data, ptr->ext_data_size);
+	}
 	return GF_OK;
 }
 
@@ -893,11 +916,63 @@ GF_Err chan_box_size(GF_Box *s)
 {
 	GF_ChannelLayoutInfoBox *ptr = (GF_ChannelLayoutInfoBox *)s;
 	s->size += 12 + 20 * ptr->num_audio_description;
+	if (ptr->ext_data) {
+		s->size += ptr->ext_data_size;
+	}
 	return GF_OK;
 }
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
+
+
+void load_box_del(GF_Box *s)
+{
+	gf_free(s);
+}
+
+
+GF_Err load_box_read(GF_Box *s, GF_BitStream *bs)
+{
+	GF_TrackLoadBox *ptr = (GF_TrackLoadBox *)s;
+	ISOM_DECREASE_SIZE(s, 16);
+	ptr->preload_start_time = gf_bs_read_u32(bs);
+	ptr->preload_duration = gf_bs_read_u32(bs);
+	ptr->preload_flags = gf_bs_read_u32(bs);
+	ptr->default_hints = gf_bs_read_u32(bs);
+	return GF_OK;
+}
+
+GF_Box *load_box_new()
+{
+	ISOM_DECL_BOX_ALLOC(GF_TrackLoadBox, GF_QT_BOX_TYPE_LOAD);
+	return (GF_Box *)tmp;
+}
+
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+
+GF_Err load_box_write(GF_Box *s, GF_BitStream *bs)
+{
+	GF_TrackLoadBox *ptr = (GF_TrackLoadBox *)s;
+
+	GF_Err e = gf_isom_box_write_header(s, bs);
+	if (e) return e;
+
+	gf_bs_write_u32(bs, ptr->preload_start_time);
+	gf_bs_write_u32(bs, ptr->preload_duration);
+	gf_bs_write_u32(bs, ptr->preload_flags);
+	gf_bs_write_u32(bs, ptr->default_hints);
+	return GF_OK;
+}
+
+GF_Err load_box_size(GF_Box *s)
+{
+	s->size += 16;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
 
 
 #endif /*GPAC_DISABLE_ISOM*/

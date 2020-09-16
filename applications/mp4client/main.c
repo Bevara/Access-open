@@ -91,7 +91,6 @@ static u32 bench_mode_start = 0;
 static u32 bench_buffer = 0;
 static Bool eos_seen = GF_FALSE;
 static Bool addon_visible = GF_TRUE;
-
 Bool is_connected = GF_FALSE;
 Bool startup_file = GF_FALSE;
 GF_User user;
@@ -128,20 +127,84 @@ Float scale = 1;
 static Bool shell_visible = GF_TRUE;
 #if defined(WIN32) && !defined(_WIN32_WCE)
 
-void w32_hide_shell(u32 cmd_type)
+static HWND console_hwnd = NULL;
+static Bool owns_wnd = GF_FALSE;
+#include <tlhelp32.h>
+#include <Psapi.h>
+static DWORD getParentPID(DWORD pid)
+{
+	DWORD ppid = 0;
+	HANDLE h = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (h) {
+		PROCESSENTRY32 pe = { 0 };
+		pe.dwSize = sizeof(PROCESSENTRY32);
+		if (Process32First(h, &pe)) {
+			do {
+				if (pe.th32ProcessID == pid) {
+					ppid = pe.th32ParentProcessID;
+					break;
+				}
+			} while (Process32Next(h, &pe));
+		}
+		CloseHandle(h);
+	}
+	return (ppid);
+}
+
+static void getProcessName(DWORD pid, PUCHAR fname, DWORD sz)
+{
+	HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+	if (h) {
+		GetModuleFileNameEx(h, NULL, fname, sz);
+		CloseHandle(h);
+	}
+}
+static void w32_hide_shell(u32 cmd_type)
 {
 	typedef HWND (WINAPI *GetConsoleWindowT)(void);
 	HMODULE hk32 = GetModuleHandle("kernel32.dll");
-	GetConsoleWindowT GetConsoleWindow = (GetConsoleWindowT ) GetProcAddress(hk32,"GetConsoleWindow");
+	if (!console_hwnd) {
+		char parentName[GF_MAX_PATH];
+		DWORD dwProcessId = 0;
+		DWORD dwParentProcessId = 0;
+		DWORD dwParentParentProcessId = 0;
+		GetConsoleWindowT GetConsoleWindow = (GetConsoleWindowT)GetProcAddress(hk32, "GetConsoleWindow");
+		console_hwnd = GetConsoleWindow();
+		dwProcessId = GetCurrentProcessId();
+		dwParentProcessId = getParentPID(dwProcessId);
+		if (dwParentProcessId)
+				dwParentParentProcessId = getParentPID(dwParentProcessId);
+		//get parent process name, check for explorer
+		parentName[0] = 0;
+		getProcessName(dwParentProcessId, parentName, GF_MAX_PATH);
+		if (strstr(parentName, "explorer")) {
+			owns_wnd = GF_TRUE;
+		}
+		//get parent parent process name, check for devenv (or any other ide name ...)
+		else if (dwParentParentProcessId) {
+			owns_wnd = GF_FALSE;
+			parentName[0] = 0;
+			getProcessName(dwParentParentProcessId, parentName, GF_MAX_PATH);
+			if (strstr(parentName, "devenv")) {
+				owns_wnd = GF_TRUE;
+			}
+		} else {
+			owns_wnd = GF_FALSE;
+		}
+	}
+	if (!owns_wnd || !console_hwnd) return;
+
 	if (cmd_type==0) {
-		ShowWindow( GetConsoleWindow(), SW_SHOW);
+		ShowWindow(console_hwnd, SW_SHOW);
 		shell_visible = GF_TRUE;
 	}
 	else if (cmd_type==1) {
-		ShowWindow( GetConsoleWindow(), SW_HIDE);
+		ShowWindow(console_hwnd, SW_HIDE);
 		shell_visible = GF_FALSE;
 	}
-	else if (cmd_type==2) PostMessage(GetConsoleWindow(), WM_CLOSE, 0, 0);
+	else if (cmd_type == 2) {
+		PostMessage(GetConsoleWindow(), WM_CLOSE, 0, 0);
+	}
 }
 
 #define hide_shell w32_hide_shell
@@ -169,7 +232,8 @@ GF_GPACArg mp4client_args[] =
 #endif
 	 GF_DEF_ARG("rti", NULL, "log run-time info (FPS, CPU, Mem usage) to given file", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
 	 GF_DEF_ARG("rtix", NULL, "same as -rti but driven by GPAC logs", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
-	 GF_DEF_ARG("size", NULL, "specifie visual size WxH? If not set, scene size or video size is used", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
+	 GF_DEF_ARG("size", NULL, "specify visual size WxH. If not set, scene size or video size is used", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
+	 GF_DEF_ARG("rti-refresh", NULL, "set refresh time in ms between two runt-time counters queries (default is 200)", NULL, NULL, GF_ARG_INT, 0),
 
  	GF_DEF_ARG("no-thread", NULL, "disable thread usage (except for depending on driver audio)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
  	GF_DEF_ARG("no-audio", NULL, "disable audio", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED),
@@ -200,7 +264,6 @@ GF_GPACArg mp4client_args[] =
 	GF_DEF_ARG("no-save", NULL, "do not save configuration file on exit", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("no-addon", NULL, "disable automatic loading of media addons declared in source URL", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("gui", NULL, "start in GUI mode. The GUI is indicated in the [configuration](core_config) file __[General]StartupFile__", NULL, NULL, GF_ARG_BOOL, 0),
-	GF_DEF_ARG("ntp-shift", NULL, "shift NTP clock of the given amount of milliseconds", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("p", NULL, "use indicated profile for the global GPAC config. If not found, config file is created. If a file path is indicated, this will load profile from that file. Otherwise, this will create a directory of the specified name and store new config there. Reserved name `0` means a new profile, not stored to disk. Works using -p=NAME or -p NAME", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
 	GF_DEF_ARG("stats", NULL, "dump filter session stats after playback", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("graph", NULL, "dump filter session graph after playback", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
@@ -227,8 +290,8 @@ void PrintUsage(Bool show_all)
 			"%s\n"
 			"For more info on GPAC configuration, use `gpac ` [-h](GPAC) `bin`  \n  \n"
 			"# Options  \n  \n",
-			gf_gpac_version(),
-			gf_gpac_copyright()
+			(help_flags == GF_PRINTARG_MD) ? GPAC_VERSION : gf_gpac_version(),
+			gf_gpac_copyright_cite()
 		);
 	}
 
@@ -395,6 +458,7 @@ static void UpdateRTInfo(const char *legend)
 	GF_SystemRTInfo rti;
 
 	/*refresh every second*/
+	if (!Run) return;
 	if (!display_rti && !rti_logs) return;
 	if (!gf_sys_get_rti(rti_update_time_ms, &rti, 0) && !legend)
 		return;
@@ -886,11 +950,6 @@ Bool GPAC_EventProc(void *ptr, GF_Event *evt)
 	case GF_EVENT_METADATA:
 		ResetCaption();
 		break;
-
-	case GF_EVENT_RELOAD:
-		if (is_connected)
-			reload = 1;
-		break;
 	case GF_EVENT_DROPFILE:
 	{
 		u32 i, pos;
@@ -952,12 +1011,13 @@ Bool GPAC_EventProc(void *ptr, GF_Event *evt)
 		break;
 	case GF_EVENT_AUTHORIZATION:
 	{
-		int maxTries = 1;
+		u32 nb_retry = 4;
 		assert( evt->type == GF_EVENT_AUTHORIZATION);
 		assert( evt->auth.user);
 		assert( evt->auth.password);
 		assert( evt->auth.site_url);
-		while ((!strlen(evt->auth.user) || !strlen(evt->auth.password)) && (maxTries--) >= 0) {
+		while ((!strlen(evt->auth.user) || !strlen(evt->auth.password)) && (nb_retry > 0) ) {
+			nb_retry--;
 			fprintf(stderr, "**** Authorization required for site %s ****\n", evt->auth.site_url);
 			fprintf(stderr, "login   : ");
 			if (!read_line_input(evt->auth.user, 50, 1))
@@ -967,7 +1027,7 @@ Bool GPAC_EventProc(void *ptr, GF_Event *evt)
 				continue;
 			fprintf(stderr, "*********\n");
 		}
-		if (maxTries < 0) {
+		if (nb_retry == 0) {
 			fprintf(stderr, "**** No User or password has been filled, aborting ***\n");
 			return 0;
 		}
@@ -1088,7 +1148,7 @@ int mp4client_main(int argc, char **argv)
     GF_MemTrackerType mem_track = GF_MemTrackerNone;
 #endif
 	Bool has_command;
-	char *url_arg, *out_arg, *gpac_profile, *rti_file;
+	char *url_arg, *gpac_profile, *rti_file;
 	FILE *logfile = NULL;
 #ifndef WIN32
 	dlopen(NULL, RTLD_NOW|RTLD_GLOBAL);
@@ -1102,7 +1162,7 @@ int mp4client_main(int argc, char **argv)
 	memset(&user, 0, sizeof(GF_User));
 
 	has_command = GF_FALSE;
-	url_arg = out_arg = gpac_profile = rti_file = NULL;
+	url_arg = gpac_profile = rti_file = NULL;
 
 	/*first identify profile and mem tracking */
 	for (i=1; i<(u32) argc; i++) {
@@ -1132,7 +1192,7 @@ int mp4client_main(int argc, char **argv)
 			PrintHelp();
 			return 0;
 		} else if (!strcmp(arg, "-hc")) {
-			fprintf(stderr, "libgpac options:\n");
+			fprintf(helpout, "libgpac options:\n");
 			gf_sys_print_core_help(helpout, help_flags, GF_ARGMODE_ALL, 0);
 			return 0;
 		}
@@ -1206,6 +1266,9 @@ int mp4client_main(int argc, char **argv)
 			rti_file = argv[i+1];
 			i++;
 			use_rtix = GF_TRUE;
+		} else if (!strcmp(arg, "-rti-refresh")) {
+			rti_update_time_ms = atoi(argv[i+1]);
+			i++;
 		} else if (!stricmp(arg, "-size")) {
 			/*usage of %ud breaks sscanf on MSVC*/
 			if (sscanf(argv[i+1], "%dx%d", &forced_width, &forced_height) != 2) {
@@ -1228,20 +1291,10 @@ int mp4client_main(int argc, char **argv)
 		else if (!stricmp(arg, "-no-save") || !stricmp(arg, "--no-save") /*old versions used --n-save ...*/) {
 			no_cfg_save=1;
 		}
-		else if (!stricmp(arg, "-ntp-shift")) {
-			s32 shift = atoi(argv[i+1]);
-			i++;
-			gf_net_set_ntp_shift(shift);
-		}
 		else if (!stricmp(arg, "-run-for")) {
 			simulation_time_in_ms = (u32) (atof(argv[i+1]) * 1000);
 			if (!simulation_time_in_ms)
 				simulation_time_in_ms = 1; /*1ms*/
-			i++;
-		}
-
-		else if (!strcmp(arg, "-out")) {
-			out_arg = argv[i+1];
 			i++;
 		} else if (!stricmp(arg, "-scale")) {
 			sscanf(argv[i+1], "%f", &scale);
@@ -1256,7 +1309,9 @@ int mp4client_main(int argc, char **argv)
 			i++;
 		}
 		/* already parsed */
-		else if (!strcmp(arg, "-mem-track") || !strcmp(arg, "-mem-track-stack") || !strcmp(arg, "-gui") || !strcmp(arg, "-guid")) {
+		else if (!strcmp(arg, "-mem-track") || !strcmp(arg, "-mem-track-stack") || !strcmp(arg, "-gui") || !strcmp(arg, "-guid")
+			 || !strncmp(arg, "-p=", 3)
+		) {
 		}
 
 		/*arguments only used in non-gui mode*/
@@ -1418,11 +1473,6 @@ int mp4client_main(int argc, char **argv)
 	}
 
 	if (rti_file) {
-		rti_update_time_ms = gf_opts_get_int("General", "RTIRefreshPeriod");
-		if (!rti_update_time_ms) {
-			rti_update_time_ms = 200;
-			gf_opts_set_key("General", "RTIRefreshPeriod", "200");
-		}
 		UpdateRTInfo("At GPAC load time\n");
 	}
 
@@ -1982,7 +2032,7 @@ force_input:
 	}
 
 	if (print_graph || print_stats) {
-		u32 ll = gf_log_get_tool_level(GF_LOG_APP);
+		ll = gf_log_get_tool_level(GF_LOG_APP);
 		gf_log_set_tool_level(GF_LOG_APP, GF_LOG_INFO);
 		if (print_graph)
 			gf_term_print_graph(term);
@@ -2012,6 +2062,8 @@ force_input:
 		gf_term_toggle_addons(term, GF_FALSE);
 		set_navigation();
 		get_cmd('v');
+
+		gf_term_play_from_time(term, 0, 0);
 
 		memset(&evt, 0, sizeof(GF_Event));
 		evt.type = GF_EVENT_MOUSEUP;
@@ -2044,8 +2096,6 @@ force_input:
 
 		gf_term_scene_update(term, NULL, "REPLACE DYN_TRANS.translation BY 10 10");
 		gf_term_add_object(term, NULL, GF_TRUE);
-
-		gf_term_play_from_time(term, 1000, GF_TRUE);
 
 		gf_term_get_viewpoint(term, 1, &outName, &is_bound);
 		gf_term_set_viewpoint(term, 1, "testvp");
@@ -2097,13 +2147,19 @@ force_input:
 	gf_term_disconnect(term);
 	if (rti_file) UpdateRTInfo("Disconnected\n");
 
-	fprintf(stderr, "Deleting terminal... ");
 	if (playlist) gf_fclose(playlist);
 
 #if defined(__DARWIN__) || defined(__APPLE__)
 	carbon_uninit();
 #endif
 
+	//special condition for immediate exit without terminal deletion
+	if (ret_val==3) {
+		fprintf(stderr, "Exit forced, no cleanup\n");
+		exit(0);
+	}
+
+	fprintf(stderr, "Deleting terminal... ");
 	gf_term_del(term);
 	fprintf(stderr, "done (in %d ms) - ran for %d ms\n", gf_sys_clock() - i, gf_sys_clock());
 
@@ -2214,8 +2270,8 @@ static u32 last_odm_count = 0;
 static void PrintAVInfo(Bool final)
 {
 	GF_MediaInfo a_odi, v_odi, s_odi;
-	Double avg_dec_time=0;
-	u32 tot_time=0;
+	Double avg_dec_time;
+	u32 tot_time;
 
 	if (scene_odm) {
 		GF_ObjectManager *root_odm = gf_term_get_root_object(term);

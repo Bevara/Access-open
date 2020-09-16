@@ -327,9 +327,14 @@ static GF_Err IS_ProcessData(GF_InputSensorCtx *is_ctx, const char *inBuffer, u3
 
 				if ( ((SFString *)field->far_ptr)->buffer ) gf_free( ((SFString *)field->far_ptr)->buffer);
 				((SFString *)field->far_ptr)->buffer = (char*)gf_malloc(sizeof(char)*(length+1));
-				memset(((SFString *)field->far_ptr)->buffer , 0, length+1);
-				for (j=0; j<length; j++) {
-					((SFString *)field->far_ptr)->buffer[j] = gf_bs_read_int(bs, 8);
+				if ( ((SFString *)field->far_ptr)->buffer) {
+					for (j=0; j<length; j++) {
+						((SFString *)field->far_ptr)->buffer[j] = gf_bs_read_int(bs, 8);
+					}
+					((SFString *)field->far_ptr)->buffer[length] = 0;
+				} else {
+					gf_bs_del(bs);
+					return GF_OUT_OF_MEM;
 				}
 			}
 			break;
@@ -370,10 +375,8 @@ static GF_Err IS_ProcessData(GF_InputSensorCtx *is_ctx, const char *inBuffer, u3
 				if ((len>1) && (is_ctx->enteredText[len-1] == is_ctx->delChar)) {
 					is_ctx->enteredText[len-1] = (short) '\0';
 					len--;
-					if (len) {
-						is_ctx->enteredText[len-1] = (short) '\0';
-						len--;
-					}
+					is_ctx->enteredText[len-1] = (short) '\0';
+					len--;
 				}
 			}
 			is_ctx->text_len = len;

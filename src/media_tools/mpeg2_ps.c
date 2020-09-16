@@ -269,7 +269,7 @@ int MPEG12_ParseSeqHdr(unsigned char *pbuffer, u32 buflen, s32 *have_mpeg2, u32 
 	buflen -= 6;
 	bitrate_int = 0;
 	for (ix = 0; ix < buflen; ix++, pbuffer++) {
-		scode = (pbuffer[0] << 24) | (pbuffer[1] << 16) | (pbuffer[2] << 8) |
+		scode = ((u32)pbuffer[0] << 24) | (pbuffer[1] << 16) | (pbuffer[2] << 8) |
 		        pbuffer[3];
 
 		if (scode == MPEG12_SEQUENCE_START_CODE) {
@@ -590,7 +590,7 @@ static Bool read_pes_header_data (FILE *fd,
 
 	ts->have_pts = 0;
 	ts->have_dts = 0;
-	*have_ts = 0;
+	if (have_ts) *have_ts = 0;
 	if (file_read_bytes(fd, local, 1) == 0) {
 		return 0;
 	}
@@ -1003,7 +1003,7 @@ static void get_info_from_frame (mpeg2ps_stream_t *sptr,
 
 	if (sptr->m_stream_id >= 0xc0) {
 		// mpeg audio
-		u32 hdr = GF_4CC(buffer[0],buffer[1],buffer[2],buffer[3]);
+		u32 hdr = GF_4CC((u32)buffer[0],buffer[1],buffer[2],buffer[3]);
 
 		sptr->channels = gf_mp3_num_channels(hdr);
 		sptr->freq = gf_mp3_sampling_rate(hdr);
@@ -1058,7 +1058,7 @@ static u64 convert_ts (mpeg2ps_stream_t *sptr,
 	if (sptr->is_video) {
 		// video
 		ret += frames_since_ts * sptr->ticks_per_frame;
-	} else {
+	} else if (sptr->freq) {
 		// audio
 		calc = (frames_since_ts * 90000 * sptr->samples_per_frame) / sptr->freq;
 		ret += calc;
@@ -1285,8 +1285,7 @@ static void mpeg2ps_scan_file (mpeg2ps_t *ps)
 				        (substream >= 0xa0 && substream < 0xb0)) {
 					valid_stream = 1;
 				}
-			} else if (stream_id >= 0xc0 &&
-			           stream_id <= 0xef) {
+			} else if (stream_id >= 0xc0) {
 				// audio and video
 				valid_stream = 1;
 			}

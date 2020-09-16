@@ -915,15 +915,21 @@ typedef struct {
 	u8 profileLevelIndicationIndex;
 } GF_PL_IDX;
 
-/*! used for storing AVC sequenceParameterSetNALUnit and pictureParameterSetNALUnit*/
+/*! used for storing NALU-based parameter set in AVC/HEVC/VVC configuration record*/
 typedef struct
 {
+	/*! size of nal*/
 	u16 size;
+	/*! nal data*/
 	u8 *data;
-	/* used of AVC/SVC detection */
+	/*! ID of param set, used by some importers but not written in file*/
 	s32 id;
+	/*! CRC of nal, used by some importers but not written in file*/
 	u32 crc;
-} GF_AVCConfigSlot;
+} GF_NALUFFParam;
+
+/*! pre v1.1 naming of NALU config record*/
+typedef GF_NALUFFParam GF_AVCConfigSlot;
 
 /*! AVC config record - not a real MPEG-4 descriptor
 */
@@ -959,7 +965,10 @@ typedef struct
 	u8 type;
 	u8 array_completeness;
 	GF_List *nalus;
-} GF_HEVCParamArray;
+} GF_NALUFFParamArray;
+
+/*! pre v1.1 naming of NALU param array*/
+typedef GF_NALUFFParamArray GF_HEVCParamArray;
 
 /*! HEVC config record - not a real MPEG-4 descriptor*/
 typedef struct
@@ -1001,6 +1010,41 @@ typedef struct
 	Bool write_annex_b;
 
 } GF_HEVCConfig;
+
+
+
+/*! VVC config record - not a real MPEG-4 descriptor*/
+typedef struct
+{
+	u8 configurationVersion;
+	u8 general_profile_idc;
+	u8 general_tier_flag;
+	u8 general_sub_profile_idc;
+	u8 num_constraint_info;
+	u8 *general_constraint_info;
+	u8 general_level_idc;
+
+	u8 ptl_sublayer_present_mask;
+	u8 sublayer_level_idc[8];
+
+	u8 chromaformat_plus_one;
+	u8 bit_depth_plus_one;
+	u16 avgFrameRate;
+	u8 constantFrameRate;
+	u8 numTemporalLayers;
+
+	Bool ptl_present, ptl_frame_only_constraint, ptl_multilayer_enabled;
+	u8 num_sub_profiles;
+	u32 *sub_profiles_idc;
+
+	u16 ols_idx;
+	u8 nal_unit_size;
+
+	GF_List *param_array;
+
+	Bool write_annex_b;
+} GF_VVCConfig;
+
 
 /*! used for storing AV1 OBUs*/
 typedef struct
@@ -1055,6 +1099,18 @@ typedef struct
 	int RefFrameWidth[VP9_NUM_REF_FRAMES];
 	int RefFrameHeight[VP9_NUM_REF_FRAMES];
 } GF_VPConfig;
+
+/*! DolbyVision config dvcC */
+typedef struct {
+	u8 dv_version_major;
+	u8 dv_version_minor;
+	u8 dv_profile; //7 bits
+	u8 dv_level;   //6 bits
+	Bool rpu_present_flag;
+	Bool el_present_flag;
+	Bool bl_present_flag;
+	//const unsigned int (32)[5] reserved = 0;
+} GF_DOVIDecoderConfigurationRecord;
 
 /*! Media Segment Descriptor used for Media Control Extensions*/
 typedef struct
@@ -1368,6 +1424,42 @@ GF_HEVCConfig *gf_odf_hevc_cfg_read_bs(GF_BitStream *bs, Bool is_lhvc);
 GF_HEVCConfig *gf_odf_hevc_cfg_read(u8 *dsi, u32 dsi_size, Bool is_lhvc);
 
 
+/*! VVC config constructor
+\return the created VVC config*/
+GF_VVCConfig *gf_odf_vvc_cfg_new();
+
+/*! VVC config destructor
+\param cfg the VVC config to destroy*/
+void gf_odf_vvc_cfg_del(GF_VVCConfig *cfg);
+
+/*! writes GF_VVCConfig as MPEG-4 DSI in a bitstream object
+\param cfg the VVC config to encode
+\param bs output bitstream object in which the config is written
+\return error if any
+ */
+GF_Err gf_odf_vvc_cfg_write_bs(GF_VVCConfig *cfg, GF_BitStream *bs);
+
+/*! writes GF_VVCConfig as MPEG-4 DSI
+\param cfg the VVC config to encode
+\param outData encoded dsi buffer - it is the caller responsability to free this
+\param outSize  encoded dsi buffer size
+\return error if any
+ */
+GF_Err gf_odf_vvc_cfg_write(GF_VVCConfig *cfg, u8 **outData, u32 *outSize);
+
+/*! gets GF_VVCConfig from bitstream MPEG-4 DSI
+\param bs bitstream containing the encoded VVC decoder specific info
+\return the decoded VVC config
+ */
+GF_VVCConfig *gf_odf_vvc_cfg_read_bs(GF_BitStream *bs);
+
+/*! gets GF_VVCConfig from MPEG-4 DSI
+\param dsi encoded VVC decoder specific info
+\param dsi_size encoded VVC decoder specific info size
+\return the decoded VVC config
+ */
+GF_VVCConfig *gf_odf_vvc_cfg_read(u8 *dsi, u32 dsi_size);
+
 /*! AV1 config constructor
 \return the created AV1 config*/
 GF_AV1Config *gf_odf_av1_cfg_new();
@@ -1446,6 +1538,21 @@ GF_VPConfig *gf_odf_vp_cfg_read_bs(GF_BitStream *bs, Bool is_v0);
 \return the decoded VPx config
 */
 GF_VPConfig *gf_odf_vp_cfg_read(u8 *dsi, u32 dsi_size);
+
+/*! gets DolbyVision config to bitstream
+\param bs bitstream containing the encoded VPx decoder specific info
+\return the decoded DolbyVision config
+*/
+GF_DOVIDecoderConfigurationRecord *gf_odf_dovi_cfg_read_bs(GF_BitStream *bs);
+/*! writes DolbyVision config to buffer
+\param cfg the DolbyVision config to write
+\param bs the bitstream object in which to write the config
+\return error if any
+*/
+GF_Err gf_odf_dovi_cfg_write_bs(GF_DOVIDecoderConfigurationRecord *cfg, GF_BitStream *bs);
+/*! destroys a DolbyVision config
+\param cfg the DolbyVision config to destroy*/
+void gf_odf_dovi_cfg_del(GF_DOVIDecoderConfigurationRecord *cfg);
 
 /*! destroy the descriptors in a list but not the list
 \param descList descriptor list to destroy

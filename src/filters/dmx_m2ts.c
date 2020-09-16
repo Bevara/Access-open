@@ -39,11 +39,27 @@ typedef struct {
 	u32 pid;
 } GF_M2TSDmxCtx_Prog;
 
+typedef struct {
+	u32 timeline_id;
+	Bool is_loc;
+	u32 len;
+	u8 *data;
+} GF_TEMIInfo;
+
+enum
+{
+	DMX_TUNE_DONE=0,
+	DMX_TUNE_INIT,
+	DMX_TUNE_WAIT_PROGS,
+	DMX_TUNE_WAIT_SEEK,
+
+};
+
 typedef struct
 {
 	//opts
 	const char *temi_url;
-	Bool dsmcc;
+	Bool dsmcc, seeksrc;
 
 	GF_Filter *filter;
 	GF_FilterPid *ipid;
@@ -66,6 +82,9 @@ typedef struct
 
 	u32 map_time_on_prog_id;
 	Double media_start_range;
+
+	u32 mux_tune_state;
+	u32 wait_for_progs;
 } GF_M2TSDmxCtx;
 
 
@@ -149,6 +168,8 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 	Bool m4sys_iod_stream = GF_FALSE;
 	Bool has_scal_layer = GF_FALSE;
 	Bool unframed = GF_FALSE;
+	char szName[20];
+	const char *stname;
 	if (stream->user) return;
 
 	if (stream->flags & GF_M2TS_GPAC_CODEC_ID) {
@@ -207,6 +228,13 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 			stype = GF_STREAM_VISUAL;
 			codecid = GF_CODECID_LHVC;
 			has_scal_layer = GF_TRUE;
+			break;
+		case GF_M2TS_VIDEO_VVC:
+		case GF_M2TS_VIDEO_VVC_TEMPORAL:
+			stype = GF_STREAM_VISUAL;
+			codecid = GF_CODECID_VVC;
+			//uncomment once we have VVC parsing
+			unframed = GF_TRUE;
 			break;
 		case GF_M2TS_AUDIO_MPEG1:
 			stype = GF_STREAM_AUDIO;
@@ -270,8 +298,11 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 
 	opid = gf_filter_pid_new(ctx->filter);
 	stream->user = opid;
-	gf_filter_pid_set_udta(opid, stream);
 	stream->flags |= GF_M2TS_ES_ALREADY_DECLARED;
+
+	stname = gf_stream_type_name(stype);
+	sprintf(szName, "P%d%c%d", stream->program->number, stname[0], 1+gf_list_find(stream->program->streams, stream));
+	gf_filter_pid_set_name(opid, szName);
 
 	gf_filter_pid_set_property(opid, GF_PROP_PID_ID, &PROP_UINT(stream->pid) );
 	if (stream->mpeg4_es_id)
@@ -309,9 +340,10 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 
 	gf_filter_pid_set_property(opid, GF_PROP_PID_SERVICE_ID, &PROP_UINT(stream->program->number) );
 
-	if (ctx->duration.num>1)
+	if (ctx->duration.num>1) {
 		gf_filter_pid_set_property(opid, GF_PROP_PID_DURATION, &PROP_FRAC64(ctx->duration) );
-
+		gf_filter_pid_set_property(opid, GF_PROP_PID_PLAYBACK_MODE, &PROP_UINT(GF_PLAYBACK_MODE_SEEK ) );
+	}
 	/*indicate our coding dependencies if any*/
 	if (!m4sys_stream) {
 		if (stream->depends_on_pid) {
@@ -354,12 +386,34 @@ static void m2tsdmx_setup_program(GF_M2TSDmxCtx *ctx, GF_M2TS_Program *prog)
 	}
 
 	for (i=0; i<count; i++) {
+		u32 ncount;
 		GF_M2TS_ES *es = gf_list_get(prog->streams, i);
 		if (es->pid==prog->pmt_pid) continue;
 
 		if (! (es->flags & GF_M2TS_ES_ALREADY_DECLARED)) {
 			m2tsdmx_declare_pid(ctx, (GF_M2TS_PES *)es, NULL);
 		}
+		ncount = gf_list_count(prog->streams);
+		while (ncount<count) {
+			i--;
+			count--;
+		}
+	}
+}
+
+static void m2tdmx_merge_temi(GF_M2TS_ES *stream, GF_FilterPacket *pck)
+{
+	if (stream->props) {
+		char szID[100];
+		while (gf_list_count(stream->props)) {
+			GF_TEMIInfo *t = gf_list_pop_front(stream->props);
+			snprintf(szID, 100, "%s:%d", t->is_loc ? "temi_l" : "temi_t", t->timeline_id);
+
+			gf_filter_pck_set_property_dyn(pck, szID, &PROP_DATA_NO_COPY(t->data, t->len));
+			gf_free(t);
+		}
+		gf_list_del(stream->props);
+		stream->props = NULL;
 	}
 }
 
@@ -386,6 +440,7 @@ static void m2tsdmx_send_packet(GF_M2TSDmxCtx *ctx, GF_M2TS_PES_PCK *pck)
 		}
 		gf_filter_pck_set_sap(dst_pck, (pck->flags & GF_M2TS_PES_PCK_RAP) ? GF_FILTER_SAP_1 : GF_FILTER_SAP_NONE);
 	}
+	m2tdmx_merge_temi((GF_M2TS_ES *)pck->stream, dst_pck);
 	gf_filter_pck_send(dst_pck);
 }
 
@@ -443,6 +498,7 @@ static GFINLINE void m2tsdmx_send_sl_packet(GF_M2TSDmxCtx *ctx, GF_M2TS_SL_PCK *
 
 	gf_filter_pck_set_carousel_version(dst_pck, pck->version_number);
 
+	m2tdmx_merge_temi(pck->stream, dst_pck);
 	gf_filter_pck_send(dst_pck);
 
 	if (pck->version_number + 1 == pck->stream->slcfg->carousel_version)
@@ -521,11 +577,22 @@ static void m2tsdmx_on_event(GF_M2TS_Demuxer *ts, u32 evt_type, void *param)
 	case GF_M2TS_EVT_AIT_FOUND:
 		break;
 	case GF_M2TS_EVT_PAT_FOUND:
+		if (ctx->mux_tune_state==DMX_TUNE_INIT) {
+			ctx->mux_tune_state = DMX_TUNE_WAIT_PROGS;
+			ctx->wait_for_progs = gf_list_count(ts->programs);
+		}
 		break;
 	case GF_M2TS_EVT_DSMCC_FOUND:
 		break;
 	case GF_M2TS_EVT_PMT_FOUND:
 		m2tsdmx_setup_program(ctx, param);
+		if (ctx->mux_tune_state == DMX_TUNE_WAIT_PROGS) {
+			assert(ctx->wait_for_progs);
+			ctx->wait_for_progs--;
+			if (!ctx->wait_for_progs) {
+				ctx->mux_tune_state = DMX_TUNE_WAIT_SEEK;
+			}
+		}
 		break;
 	case GF_M2TS_EVT_PMT_REPEAT:
 		break;
@@ -568,12 +635,15 @@ static void m2tsdmx_on_event(GF_M2TS_Demuxer *ts, u32 evt_type, void *param)
 		}
 		break;
 	case GF_M2TS_EVT_PES_PCK:
+		if (ctx->mux_tune_state) break;
 		m2tsdmx_send_packet(ctx, param);
 		break;
 	case GF_M2TS_EVT_SL_PCK: /* DMB specific */
+		if (ctx->mux_tune_state) break;
 		m2tsdmx_send_sl_packet(ctx, param);
 		break;
 	case GF_M2TS_EVT_PES_PCR:
+		if (ctx->mux_tune_state) break;
 	{
 		u64 pcr;
 		Bool map_time = GF_FALSE;
@@ -614,6 +684,7 @@ static void m2tsdmx_on_event(GF_M2TS_Demuxer *ts, u32 evt_type, void *param)
 		break;
 
 	case GF_M2TS_EVT_TDT:
+		if (ctx->mux_tune_state) break;
 	{
 		GF_M2TS_TDT_TOT *tdt = (GF_M2TS_TDT_TOT *)param;
 		u64 utc_ts = gf_net_get_utc_ts(tdt->year, tdt->month, tdt->day, tdt->hour, tdt->minute, tdt->second);
@@ -624,8 +695,8 @@ static void m2tsdmx_on_event(GF_M2TS_Demuxer *ts, u32 evt_type, void *param)
 			for (j=0; j<count2; j++) {
 				GF_M2TS_ES * stream = gf_list_get(prog->streams, j);
 				if (stream->user) {
-					gf_filter_pid_set_property(stream->user, GF_PROP_PID_UTC_TIME, & PROP_LONGUINT(utc_ts) );
-					gf_filter_pid_set_property(stream->user, GF_PROP_PID_UTC_TIMESTAMP, & PROP_LONGUINT(prog->last_pcr_value / 300) );
+					gf_filter_pid_set_info(stream->user, GF_PROP_PID_UTC_TIME, & PROP_LONGUINT(utc_ts) );
+					gf_filter_pid_set_info(stream->user, GF_PROP_PID_UTC_TIMESTAMP, & PROP_LONGUINT(prog->last_pcr_value / 300) );
 				}
 			}
 			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[M2TS In] Mapping TDT Time %04d/%02d/%02d %02d:%02d:%02d and PCR time "LLD" on program %d\n",
@@ -654,39 +725,86 @@ static void m2tsdmx_on_event(GF_M2TS_Demuxer *ts, u32 evt_type, void *param)
 	}
 	break;
 
-#ifdef FILTER_FIXME
 	case GF_M2TS_EVT_TEMI_LOCATION:
 	{
-		GF_NetworkCommand com;
-		memset(&com, 0, sizeof(com));
-		com.addon_info.command_type = GF_NET_ASSOCIATED_CONTENT_LOCATION;
-		com.addon_info.external_URL = ((GF_M2TS_TemiLocationDescriptor*)param)->external_URL;
-		if (ctx->force_temi_url)
-			com.addon_info.external_URL = ctx->force_temi_url;
-		com.addon_info.is_announce = ((GF_M2TS_TemiLocationDescriptor*)param)->is_announce;
-		com.addon_info.is_splicing = ((GF_M2TS_TemiLocationDescriptor*)param)->is_splicing;
-		com.addon_info.activation_countdown = ((GF_M2TS_TemiLocationDescriptor*)param)->activation_countdown;
-//		com.addon_info.reload_external = ((GF_M2TS_TemiLocationDescriptor*)param)->reload_external;
-		com.addon_info.timeline_id = ((GF_M2TS_TemiLocationDescriptor*)param)->timeline_id;
-		gf_service_command(ctx->service, &com, GF_OK);
+		GF_M2TS_TemiLocationDescriptor *temi_l = (GF_M2TS_TemiLocationDescriptor *)param;
+		const char *url;
+		u32 len;
+		GF_BitStream *bs;
+		GF_M2TS_ES *es=NULL;
+		GF_TEMIInfo *t;
+		if ((temi_l->pid<8192) && (ctx->ts->ess[temi_l->pid])) {
+			es = ctx->ts->ess[temi_l->pid];
+		}
+		if (!es || !es->user) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[M2TSDmx] TEMI location not assigned to a given PID, not supported\n"));
+			break;
+		}
+		GF_SAFEALLOC(t, GF_TEMIInfo);
+		if (!t) break;
+		t->timeline_id = temi_l->timeline_id;
+		t->is_loc = GF_TRUE;
+
+		bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+		if (ctx->temi_url)
+			url = ctx->temi_url;
+		else
+			url = temi_l->external_URL;
+		len = url ? (u32) strlen(url) : 0;
+		gf_bs_write_data(bs, url, len);
+		gf_bs_write_u8(bs, 0);
+		gf_bs_write_int(bs, temi_l->is_announce, 1);
+		gf_bs_write_int(bs, temi_l->is_splicing, 1);
+		gf_bs_write_int(bs, temi_l->reload_external, 1);
+		gf_bs_write_int(bs, 0, 5);
+		gf_bs_write_double(bs, temi_l->activation_countdown);
+		gf_bs_get_content(bs, &t->data, &t->len);
+		gf_bs_del(bs);
+
+		if (!es->props) {
+			es->props = gf_list_new();
+		}
+		gf_list_add(es->props, t);
 	}
 	break;
 	case GF_M2TS_EVT_TEMI_TIMECODE:
 	{
-		GF_NetworkCommand com;
-		memset(&com, 0, sizeof(com));
-		com.addon_time.command_type = GF_NET_ASSOCIATED_CONTENT_TIMING;
-		com.addon_time.timeline_id = ((GF_M2TS_TemiTimecodeDescriptor*)param)->timeline_id;
-		com.addon_time.media_pts = ((GF_M2TS_TemiTimecodeDescriptor*)param)->pes_pts;
-		com.addon_time.media_timescale = ((GF_M2TS_TemiTimecodeDescriptor*)param)->media_timescale;
-		com.addon_time.media_timestamp = ((GF_M2TS_TemiTimecodeDescriptor*)param)->media_timestamp;
-		com.addon_time.force_reload = ((GF_M2TS_TemiTimecodeDescriptor*)param)->force_reload;
-		com.addon_time.is_paused = ((GF_M2TS_TemiTimecodeDescriptor*)param)->is_paused;
-		com.addon_time.ntp = ((GF_M2TS_TemiTimecodeDescriptor*)param)->ntp;
-		gf_service_command(ctx->service, &com, GF_OK);
+		GF_M2TS_TemiTimecodeDescriptor *temi_t = (GF_M2TS_TemiTimecodeDescriptor*)param;
+		GF_BitStream *bs;
+		GF_TEMIInfo *t;
+		GF_M2TS_ES *es=NULL;
+		if ((temi_t->pid<8192) && (ctx->ts->ess[temi_t->pid])) {
+			es = ctx->ts->ess[temi_t->pid];
+		}
+		if (!es || !es->user) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[M2TSDmx] TEMI timing not assigned to a given PID, not supported\n"));
+			break;
+		}
+		GF_SAFEALLOC(t, GF_TEMIInfo);
+		if (!t) break;
+		t->timeline_id = temi_t->timeline_id;
+
+		bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+		gf_bs_write_u32(bs, temi_t->media_timescale);
+		gf_bs_write_u64(bs, temi_t->media_timestamp);
+		gf_bs_write_u64(bs, temi_t->pes_pts);
+		gf_bs_write_int(bs, temi_t->force_reload, 1);
+		gf_bs_write_int(bs, temi_t->is_paused, 1);
+		gf_bs_write_int(bs, temi_t->is_discontinuity, 1);
+		gf_bs_write_int(bs, temi_t->ntp ? 1 : 0, 1);
+		gf_bs_write_int(bs, 0, 4);
+		if (temi_t->ntp)
+			gf_bs_write_u64(bs, temi_t->ntp);
+
+		gf_bs_get_content(bs, &t->data, &t->len);
+		gf_bs_del(bs);
+
+		if (!es->props) {
+			es->props = gf_list_new();
+		}
+		gf_list_add(es->props, t);
 	}
 	break;
-#endif
 	}
 }
 
@@ -704,12 +822,23 @@ static GF_Err m2tsdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	if (! gf_filter_pid_check_caps(pid))
 		return GF_NOT_SUPPORTED;
 
+	//by default for all URLs, send packets as soon as the program is configured
+	ctx->mux_tune_state = DMX_TUNE_DONE;
+
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_FILEPATH);
 	if (p && p->value.string && !ctx->duration.num) {
 		stream = gf_fopen(p->value.string, "rb");
 	}
 
 	if (stream) {
+		if (ctx->seeksrc) {
+			//for local file we will send a seek and stop once all programs are configured, and reparse from start
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_URL);
+			if (p && p->value.string && gf_file_exists(p->value.string)) {
+				ctx->mux_tune_state = DMX_TUNE_INIT;
+			}
+		}
+		
 		ctx->ipid = pid;
 		ctx->is_file = GF_TRUE;
 		ctx->ts->seek_mode = GF_TRUE;
@@ -823,7 +952,7 @@ static Bool m2tsdmx_process_event(GF_Filter *filter, const GF_FilterEvent *com)
 		/*mark pcr as not initialized*/
 		if (pes->program->pcr_pid==pes->pid) pes->program->first_dts=0;
 		gf_m2ts_set_pes_framing(pes, GF_M2TS_PES_FRAMING_DEFAULT);
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[GF_M2TSDmxCtx] Setting default reframing for PID %d\n", pes->pid));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[M2TSDmx] Setting default reframing for PID %d\n", pes->pid));
 
 		/*this is a multplex, only trigger the play command for the first stream activated*/
 		ctx->nb_playing++;
@@ -855,6 +984,8 @@ static Bool m2tsdmx_process_event(GF_Filter *filter, const GF_FilterEvent *com)
 
 		//file and seek, cancel the event and post a seek event to source
 		ctx->in_seek = GF_TRUE;
+		//we seek so consider the mux tuned in
+		ctx->mux_tune_state = DMX_TUNE_DONE;
 
 		//post a seek
 		GF_FEVT_INIT(fevt, GF_FEVT_SOURCE_SEEK, ctx->ipid);
@@ -924,13 +1055,10 @@ static GF_Err m2tsdmx_process(GF_Filter *filter)
 	if (!pck) {
 		if (gf_filter_pid_is_eos(ctx->ipid)) {
 			u32 i, nb_streams = gf_filter_get_opid_count(filter);
+
+			gf_m2ts_flush_all(ctx->ts);
 			for (i=0; i<nb_streams; i++) {
 				GF_FilterPid *opid = gf_filter_get_opid(filter, i);
-				GF_M2TS_PES *stream = gf_filter_pid_get_udta(opid);
-
-				if (stream->flags & GF_M2TS_ES_IS_PES) {
-					gf_m2ts_flush_pes(ctx->ts, (GF_M2TS_PES *) stream);
-				}
 				gf_filter_pid_set_eos(opid);
 			}
 			return GF_EOS;
@@ -956,10 +1084,18 @@ static GF_Err m2tsdmx_process(GF_Filter *filter)
 	}
 
 	data = gf_filter_pck_get_data(pck, &size);
-	if (data)
+	if (data && size)
 		gf_m2ts_process_data(ctx->ts, (char*) data, size);
 
 	gf_filter_pid_drop_packet(ctx->ipid);
+
+	if (ctx->mux_tune_state==DMX_TUNE_WAIT_SEEK) {
+		GF_FilterEvent fevt;
+		GF_FEVT_INIT(fevt, GF_FEVT_SOURCE_SEEK, ctx->ipid);
+		gf_filter_pid_send_event(ctx->ipid, &fevt);
+		ctx->mux_tune_state = DMX_TUNE_DONE;
+		gf_m2ts_reset_parsers(ctx->ts);
+	}
 	return GF_OK;
 }
 
@@ -990,6 +1126,7 @@ static const GF_FilterArgs M2TSDmxArgs[] =
 {
 	{ OFFS(temi_url), "force TEMI URL", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(dsmcc), "enable DSMCC receiver", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(seeksrc), "seek local source file back to origin once all programs are setup", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 

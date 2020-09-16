@@ -141,8 +141,8 @@ typedef struct
 	Bool point_sprite;
 	Bool vbo, pbo, fbo;
 	Bool gles2_unpack;
-	u32 yuv_texture;
 	Bool has_shaders;
+	Bool npot;
 	s32 max_texture_size;
 } GLCaps;
 
@@ -262,7 +262,8 @@ struct __tag_compositor
 	//autofps option
 	Bool vfr;
 	Bool nojs;
-
+	Bool dyn_filter_mode;
+	Bool noback;
 	//frame duration in ms, used to match closest frame in input video streams
 	u32 frame_duration;
 	Bool frame_was_produced;
@@ -288,8 +289,8 @@ struct __tag_compositor
 	
 	Bool amc, async;
 	u32 asr, ach, alayout, afmt, asize, avol, apan, abuf;
-
-	u32 buf, rbuf, mbuf;
+	Double max_aspeed, max_vspeed;
+	u32 buf, rbuf, mbuf, ntpsync;
 	
 	u32 ogl, mode2d;
 
@@ -317,10 +318,10 @@ struct __tag_compositor
 	u32 force_next_frame_redraw;
 	/*freeze_display prevents any screen updates - needed when output driver uses direct video memory access*/
 	Bool is_hidden, freeze_display;
-
+	Bool timed_nodes_valid;
 	//player option, by default disabled. In player mode the video driver is always loaded
 	//and no passthrough checks are done
-	Bool player;
+	u32 player;
 	//output pixel format option for passthrough mode, none by default
 	u32 opfmt;
 	//allocated framebuffer and size for passthrough mode
@@ -591,8 +592,6 @@ struct __tag_compositor
 	u32 bcull;
 	/*polygon atialiasing*/
 	Bool paa;
-	/*disable gluScaleImage*/
-	Bool glus;
 	/*wireframe/solid mode*/
 	u32 wire;
 	/*collision detection mode*/
@@ -601,8 +600,6 @@ struct __tag_compositor
 	Bool gravity_on;
 	/*AABB tree-based culling is disabled*/
 	Bool cull;
-	/*YUV textures in OpenGL are disabled (soft YUV->RGB )*/
-	Bool yuvgl;
 	//use PBO to start pushing textures at the beginning of the render pass
 	Bool pbo;
 
@@ -619,7 +616,7 @@ struct __tag_compositor
 	u32 offscreen_width, offscreen_height;
 
 #if !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
-	Bool shader_only_mode;
+	u32 shader_mode_disabled;
 #endif
 	char *vertshader, *fragshader;
 
@@ -707,6 +704,7 @@ struct __tag_compositor
 	GF_VideoSurface fb;
 
 	Bool dbgpvr;
+	Bool noaudio;
 
 	/*all X3D key/mouse/string sensors*/
 	GF_List *x3d_sensors;
@@ -814,7 +812,7 @@ typedef struct _gf_sc_texture_handler
 	/*image data for natural media*/
 	u8 *data;
 	//we need a local copy of width/height/etc since some textures may be defined without a stream object
-	u32 size, width, height, pixelformat, pixel_ar, stride, stride_chroma, nb_planes, orig_pixelformat;
+	u32 size, width, height, pixelformat, pixel_ar, stride, stride_chroma, nb_planes;
 	Bool is_flipped;
 
 	GF_FilterFrameInterface *frame_ifce;
@@ -1189,6 +1187,7 @@ void gf_mixer_remove_all(GF_AudioMixer *am);
 void gf_mixer_add_input(GF_AudioMixer *am, GF_AudioInterface *src);
 void gf_mixer_remove_input(GF_AudioMixer *am, GF_AudioInterface *src);
 void gf_mixer_lock(GF_AudioMixer *am, Bool lockIt);
+void gf_mixer_set_max_speed(GF_AudioMixer *am, Double max_speed);
 
 /*mix inputs in buffer, return number of bytes written to output*/
 u32 gf_mixer_get_output(GF_AudioMixer *am, void *buffer, u32 buffer_size, u32 delay_ms);
@@ -1344,7 +1343,7 @@ void gf_sc_audio_unregister(GF_AudioInput *ai);
 
 
 #ifndef GPAC_DISABLE_SVG
-GF_Err gf_term_get_mfurl_from_xlink(GF_Node *node, MFURL *mfurl);
+GF_Err gf_sc_get_mfurl_from_xlink(GF_Node *node, MFURL *mfurl);
 Fixed gf_sc_svg_convert_length_to_display(GF_Compositor *sr, SVG_Length *length);
 char *gf_scene_resolve_xlink(GF_Node *node, char *the_url);
 #endif
@@ -1743,7 +1742,11 @@ struct _gf_scene
 
 	/*list of M_KeyNavigator nodes*/
 	GF_List *keynavigators;
+
+	/*list of attached Inline nodes*/
+	GF_List *attached_inlines;
 #endif
+
 
 	Bool disable_hitcoord_notif;
 
@@ -1799,7 +1802,7 @@ void gf_scene_regenerate(GF_Scene *scene);
 /*selects given ODM for dynamic scenes*/
 void gf_scene_select_object(GF_Scene *scene, GF_ObjectManager *odm);
 /*restarts dynamic scene from given time: scene graph is not reseted, objects are just restarted
-instead of closed and reopened. If a media control is present on inline, from_time is overriden by MC range*/
+instead of closed and reopened. If a media control is present on inline, from_time is overridden by MC range*/
 void gf_scene_restart_dynamic(GF_Scene *scene, s64 from_time, Bool restart_only, Bool disable_addon_check);
 
 void gf_scene_insert_pid(GF_Scene *scene, GF_SceneNamespace *sns, GF_FilterPid *pid, Bool is_in_iod);
@@ -1927,7 +1930,7 @@ struct _object_clock
 	Fixed speed;
 	//whenever speed is changed we store the time at this instant
 	u32 speed_set_time;
-	s32 drift;
+	s32 audio_delay;
 
 	u32 last_ts_rendered;
 	u32 service_id;
@@ -1980,8 +1983,10 @@ void gf_clock_buffer_on(GF_Clock *ck);
 void gf_clock_buffer_off(GF_Clock *ck);
 /*set clock speed scaling factor*/
 void gf_clock_set_speed(GF_Clock *ck, Fixed speed);
-/*set clock drift - used to resync audio*/
-void gf_clock_adjust_drift(GF_Clock *ck, s32 ms_drift);
+
+/*set audio delay, i.e. amount of ms to delay non-audio streams
+audio is usually send to the sound card quite ahead of time, depending on the output compositor settings*/
+void gf_clock_set_audio_delay(GF_Clock *ck, s32 ms_delay);
 
 
 /*OD manager*/
@@ -2090,6 +2095,7 @@ struct _od_manager
 	//0 or 1, except for IOD where we may have several BIFS/OD streams
 	u32 nb_buffering, nb_rebuffer;
 	u32 buffer_max_us, buffer_min_us, buffer_playout_us;
+	Bool blocking_media;
 
 	//internal hash for source allowing to distinguish input PIDs sources
 	u32 source_id;
@@ -2122,7 +2128,8 @@ struct _od_manager
 	u32 timeshift_depth;
 
 	u32 action_type;
-
+	s32 delay;
+	
 	Fixed set_speed;
 	Bool disable_buffer_at_next_play;
 
@@ -2151,6 +2158,7 @@ struct _od_manager
 	struct _od_manager *lower_layer_odm;
 
 	s32 last_drawn_frame_ntp_diff;
+	u64 last_drawn_frame_ntp_sender, last_drawn_frame_ntp_receive;
 	u32 ambi_ch_id;
 
 	const char *redirect_url;
@@ -2158,6 +2166,7 @@ struct _od_manager
 	u32 skip_disconnect_state;
 
 	Bool ignore_sys;
+	u64 last_filesize_signaled;
 };
 
 GF_ObjectManager *gf_odm_new();
@@ -2305,7 +2314,7 @@ struct _mediaobj
 	Bool config_changed;
 
 	/*currently valid properties of the object*/
-	u32 width, height, stride, pixel_ar, pixelformat;
+	u32 width, height, stride, pixel_ar, pixelformat, bitrate;
 	Bool is_flipped;
 	u32 sample_rate, num_channels, afmt, bytes_per_sec;
 	u64 channel_config;

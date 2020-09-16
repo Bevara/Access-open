@@ -260,7 +260,6 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 
 GF_Err rtpout_init_streamer(GF_RTPOutStream *stream, const char *ipdest, Bool inject_xps, Bool use_mpeg4_signaling, Bool use_latm, u32 payt, u32 mtu, u32 ttl, const char *ifce, Bool is_rtsp, u32 *base_pid_id, u32 file_mode)
 {
-	GF_Err e = GF_OK;
 	Bool disable_mpeg4 = GF_FALSE;
 	u32 flags, average_size, max_size, max_tsdelta, codecid, const_dur, nb_ch, samplerate, max_cts_offset, bandwidth, IV_length, KI_length, dsi_len, max_ptime, au_sn_len;
 	char *dsi;
@@ -392,10 +391,10 @@ GF_Err rtpout_init_streamer(GF_RTPOutStream *stream, const char *ipdest, Bool in
 				stream->avc_nalu_size = hvcc->nal_unit_size;
 				if (stream->inject_ps) {
 					u32 i, count = gf_list_count(hvcc->param_array);
-					GF_HEVCParamArray *vpsa=NULL, *spsa=NULL;
+					GF_NALUFFParamArray *vpsa=NULL, *spsa=NULL;
 					stream->hvcc = hvcc;
 					for (i=0; i<count; i++) {
-						GF_HEVCParamArray *pa = gf_list_get(hvcc->param_array, i);
+						GF_NALUFFParamArray *pa = gf_list_get(hvcc->param_array, i);
 						if (!vpsa && (pa->type == GF_HEVC_NALU_VID_PARAM)) {
 							vpsa = pa;
 							gf_list_rem(hvcc->param_array, i);
@@ -475,7 +474,7 @@ GF_Err rtpout_init_streamer(GF_RTPOutStream *stream, const char *ipdest, Bool in
 				 average_size, max_size, max_tsdelta, max_cts_offset, const_dur, bandwidth, max_ptime, au_sn_len, is_rtsp);
 
 	if (!stream->rtp) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTPOut] Could not initialize RTP for stream %s: %s\n", gf_filter_pid_get_name(stream->pid), gf_error_to_string(e)));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTPOut] Could not initialize RTP for stream %s:  not supported\n", gf_filter_pid_get_name(stream->pid) ));
 		return GF_NOT_SUPPORTED;
 	}
 
@@ -696,6 +695,7 @@ static GF_Err rtpout_initialize(GF_Filter *filter)
 			ctx->in_caps[1].flags = GF_CAPS_INPUT;
 		} else {
 			strncpy(ctx->szExt, ctx->ext, 9);
+			ctx->szExt[9] = 0;
 			strlwr(ctx->szExt);
 			ctx->in_caps[1].code = GF_PROP_PID_FILE_EXT;
 			ctx->in_caps[1].val = PROP_NAME( ctx->szExt );
@@ -725,7 +725,7 @@ static GF_Err rtpout_send_xps(GF_RTPOutStream *stream, GF_List *pslist, Bool *au
 	GF_Err e;
 	u32 i, count = gf_list_count(pslist);
 	for (i=0; i<count; i++) {
-		GF_AVCConfigSlot *sl = gf_list_get(pslist, i);
+		GF_NALUFFParam *sl = gf_list_get(pslist, i);
 		e = gf_rtp_streamer_send_data(stream->rtp, (char *) sl->data, sl->size, pck_size, cts, dts, stream->current_sap ? 1 : 0, *au_start, GF_FALSE, stream->pck_num, duration, stream->sample_desc_index);
 		if (e) return e;
 		*au_start = GF_FALSE;
@@ -767,7 +767,7 @@ static Bool rtpout_init_clock(GF_RTPOutCtx *ctx)
 	ctx->microsec_ts_init = min_dts;
 	GF_LOG(GF_LOG_INFO, GF_LOG_RTP, ("[RTPOut] RTP clock initialized - time origin set to "LLU" us (sys clock) / "LLU" us (media clock)\n", ctx->sys_clock_at_init, ctx->microsec_ts_init));
 	if (ctx->tso<0) {
-		gf_rand_init(0);
+		gf_rand_init(GF_FALSE);
 		for (i=0; i<count; i++) {
 			GF_RTPOutStream *stream = gf_list_get(ctx->streams, i);
 			stream->rtp_ts_offset = gf_rand();
@@ -1002,21 +1002,27 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 		const char *ptr = pck_data;
 
 		au_start = 1;
+		e = GF_OK;
 
 		if (stream->avcc && stream->current_sap) {
 			e = rtpout_send_xps(stream, stream->avcc->sequenceParameterSets, &au_start, pck_size, cts, dts, duration);
-			e = rtpout_send_xps(stream, stream->avcc->sequenceParameterSetExtensions, &au_start, pck_size, cts, dts, duration);
-			e = rtpout_send_xps(stream, stream->avcc->pictureParameterSets, &au_start, pck_size, cts, dts, duration);
+			if (!e)
+				e = rtpout_send_xps(stream, stream->avcc->sequenceParameterSetExtensions, &au_start, pck_size, cts, dts, duration);
+
+			if (!e)
+				e = rtpout_send_xps(stream, stream->avcc->pictureParameterSets, &au_start, pck_size, cts, dts, duration);
 		}
 		else if (stream->hvcc && stream->current_sap) {
 			u32 nbps = gf_list_count(stream->hvcc->param_array);
 			for (i=0; i<nbps; i++) {
-				GF_HEVCParamArray *pa = gf_list_get(stream->hvcc->param_array, i);
-				e = rtpout_send_xps(stream, pa->nalus, &au_start, pck_size, cts, dts, duration);
+				GF_NALUFFParamArray *pa = gf_list_get(stream->hvcc->param_array, i);
+
+				if (!e)
+					e = rtpout_send_xps(stream, pa->nalus, &au_start, pck_size, cts, dts, duration);
 			}
 		}
 
-		while (remain) {
+		while (!e && remain) {
 			size = 0;
 			v = (*active_stream)->avc_nalu_size;
 			while (v) {
@@ -1125,7 +1131,7 @@ static const GF_FilterArgs RTPOutArgs[] =
 	{ OFFS(mtu), "size of RTP MTU in bytes", GF_PROP_UINT, "1460", NULL, 0},
 	{ OFFS(ttl), "time-to-live for muticast packets", GF_PROP_UINT, "2", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ifce), "default network inteface to use", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(payt), "payload type to use for dynamic configs.", GF_PROP_UINT, "96", "96-127", GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(payt), "payload type to use for dynamic configs", GF_PROP_UINT, "96", "96-127", GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(delay), "send delay for packet (negative means send earlier)", GF_PROP_SINT, "0", NULL, 0},
 	{ OFFS(tt), "time tolerance in microseconds. Whenever schedule time minus realtime is below this value, the packet is sent right away", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(runfor), "run for the given time in ms. Negative value means run for ever (if loop) or source duration, 0 only outputs the sdp", GF_PROP_SINT, "-1", NULL, 0},

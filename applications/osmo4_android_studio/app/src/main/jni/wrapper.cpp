@@ -201,7 +201,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 	allowedVersions[1] = JNI_VERSION_1_4;
 	allowedVersions[2] = JNI_VERSION_1_2;
 	allowedVersions[3] = JNI_VERSION_1_1;
-	JNIEnv * env;
+	JNIEnv * env = NULL;
 	if (!vm)
 		return -1;
 	for (int i = 0 ; i < NUM_JNI_VERSIONS; i++) {
@@ -216,6 +216,10 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 			}
 		}
 
+	}
+	if (! env) {
+		LOGW("Failed to find any supported JNI VERSION");
+		return -1;
 	}
 	javaVM = vm;
 	LOGI("Registering %s natives\n", className);
@@ -242,7 +246,7 @@ CNativeWrapper::CNativeWrapper() {
 	m_mx = NULL;
 	mainJavaEnv = NULL;
 
-	debug_f = 0;
+	log_file = NULL;
 	m_window = NULL;
 	m_session = NULL;
 
@@ -262,6 +266,8 @@ CNativeWrapper::~CNativeWrapper() {
 	JavaEnvTh * env = getEnv();
 	if (env && env->cbk_obj)
 		env->env->DeleteGlobalRef(env->cbk_obj);
+	if (log_file) gf_fclose(log_file);
+	log_file = NULL;
 	Shutdown();
 	debug_log("~CNativeWrapper() : DONE\n");
 }
@@ -432,6 +438,7 @@ void CNativeWrapper::on_gpac_log(void *cbk, GF_LOG_Level ll, GF_LOG_Tool lm, con
 	if (!self)
 		goto displayInAndroidlogs;
 
+#if 0
 	{
 		JavaEnvTh *env = self->getEnv();
 		jstring msg;
@@ -445,6 +452,15 @@ void CNativeWrapper::on_gpac_log(void *cbk, GF_LOG_Level ll, GF_LOG_Tool lm, con
 		env->env->PopLocalFrame(NULL);
 		return;
 	}
+
+#else
+	if (self->log_file) {
+		vfprintf(self->log_file, fmt, list);
+		fflush(self->log_file);
+	}
+#endif
+
+
 displayInAndroidlogs:
 	{
 		/* When no callback is properly set, we use direct logging */
@@ -697,6 +713,7 @@ void CNativeWrapper::SetupLogs() {
 	gf_log_set_callback(this, on_gpac_log);
 	opt = gf_opts_get_key("core", "log-file");
 	if (opt) {
+#if 0
 		JavaEnvTh *env = getEnv();
 		if (env && env->cbk_setLogFile) {
 			env->env->PushLocalFrame(1);
@@ -704,6 +721,9 @@ void CNativeWrapper::SetupLogs() {
 			env->env->CallVoidMethod(env->cbk_obj, env->cbk_setLogFile, js);
 			env->env->PopLocalFrame(NULL);
 		}
+#else
+		log_file = gf_fopen(opt, "wt");
+#endif
 	}
 	gf_mx_v(m_mx);
 
@@ -735,7 +755,6 @@ int CNativeWrapper::init(JNIEnv * env, void * bitmap, jobject * callback, int wi
 	int m_Width = width;
 	int m_Height = height;
 
-	int first_launch = 0;
 	const char *opt;
 
 	m_window = env;
@@ -874,20 +893,11 @@ void CNativeWrapper::disconnect() {
 void CNativeWrapper::step(void * env, void * bitmap) {
 	m_window = env;
 	m_session = bitmap;
-	//debug_log("Step ...");
-	if (!m_term) {
-		debug_log("step(): No m_term found.");
-		return;
-	} else if (!m_term->compositor)
-		debug_log("step(): No compositor found.");
-	else if (!m_term->compositor->video_out)
-		debug_log("step(): No video_out found");
-	else if (!m_term->compositor->video_out->Setup)
-		debug_log("step(): No video_out->Setup found");
-	else {
-		m_term->compositor->frame_draw_type = GF_SC_DRAW_FRAME;
-		gf_term_process_step(m_term);
+	m_term->compositor->frame_draw_type = GF_SC_DRAW_FRAME;
+	while (!gf_term_process_step(m_term)) {
+		debug_log("step(): nothing drawn, retrying\n");
 	}
+	debug_log("step(): frame drawn\n");
 }
 
 //-----------------------------------------------------
@@ -924,7 +934,7 @@ void CNativeWrapper::onMouseDown(float x, float y) {
 	evt.mouse.x = x;
 	evt.mouse.y = y;
 
-	int ret = gf_term_user_event(m_term, &evt);
+	gf_term_user_event(m_term, &evt);
 	debug_log("onMouseDown end");
 }
 //-----------------------------------------------------
@@ -942,7 +952,7 @@ void CNativeWrapper::onMouseUp(float x, float y) {
 	evt.mouse.x = x;
 	evt.mouse.y = y;
 
-	int ret = gf_term_user_event(m_term, &evt);
+	gf_term_user_event(m_term, &evt);
 	debug_log("onMouseUp end");
 }
 //-----------------------------------------------------
@@ -955,7 +965,7 @@ void CNativeWrapper::onMouseMove(float x, float y) {
 	evt.mouse.x = x;
 	evt.mouse.y = y;
 
-	int ret = gf_term_user_event(m_term, &evt);
+	gf_term_user_event(m_term, &evt);
 }
 //-----------------------------------------------------
 void CNativeWrapper::onKeyPress(int keycode, int rawkeycode, int up, int flag, int unicode) {
@@ -972,13 +982,13 @@ void CNativeWrapper::onKeyPress(int keycode, int rawkeycode, int up, int flag, i
 
 	translate_key(keycode, &evt.key);
 	//evt.key.key_code = GF_KEY_A;
-	int ret = gf_term_user_event(m_term, &evt);
+	gf_term_user_event(m_term, &evt);
 
 	if (evt.type == GF_EVENT_KEYUP && unicode) {
 		memset(&evt, 0, sizeof(GF_Event));
 		evt.type = GF_EVENT_TEXTINPUT;
 		evt.character.unicode_char = unicode;
-		ret = gf_term_user_event(m_term, &evt);
+		gf_term_user_event(m_term, &evt);
 	}
 }
 //-----------------------------------------------------
@@ -1103,7 +1113,7 @@ void CNativeWrapper::onOrientationChange(float x, float y, float z) {
 	evt.sensor.z = z;
 	evt.sensor.w = 0;
 
-	int ret = gf_term_user_event(m_term, &evt);
+	gf_term_user_event(m_term, &evt);
 }
 //-----------------------------------------------------
 void CNativeWrapper::setGpacLogs(const char *tools_at_level)

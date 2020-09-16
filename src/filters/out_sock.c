@@ -122,6 +122,11 @@ static GF_Err sockout_initialize(GF_Filter *filter)
 	else {
 		ext = gf_file_ext_start(ctx->dst);
 		if (ext) ext++;
+		if (ext) {
+			const char *szport = strchr(ext, ':');
+			if (szport)
+				ext = gf_file_ext_start(szport);
+		}
 	}
 
 	if (!ext && !ctx->mime) {
@@ -145,6 +150,7 @@ static GF_Err sockout_initialize(GF_Filter *filter)
 		ctx->in_caps[1].flags = GF_CAPS_INPUT;
 	} else {
 		strncpy(ctx->szExt, ext, 9);
+		ctx->szExt[9] = 0;
 		strlwr(ctx->szExt);
 		ctx->in_caps[1].code = GF_PROP_PID_FILE_EXT;
 		ctx->in_caps[1].val = PROP_NAME( ctx->szExt );
@@ -271,9 +277,9 @@ static GF_Err sockout_send_packet(GF_SockOutCtx *ctx, GF_FilterPacket *pck, GF_S
 	h = p ? p->value.uint : 0;
 	p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_PIXFMT);
 	pf = p ? p->value.uint : 0;
-	p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_STRIDE);
-	stride = stride_uv = 0;
 
+	//get stride/stride_uv with no padding
+	stride = stride_uv = 0;
 	if (gf_pixel_get_size_info(pf, w, h, NULL, &stride, &stride_uv, &nb_planes, &uv_height) == GF_TRUE) {
 		u32 i;
 		for (i=0; i<nb_planes; i++) {
@@ -337,6 +343,8 @@ static GF_Err sockout_process(GF_Filter *filter)
 		if ((e==GF_OK) && new_conn) {
 			GF_SockOutClient *sc;
 			GF_SAFEALLOC(sc, GF_SockOutClient);
+			if (!sc) return GF_OUT_OF_MEM;
+			
 			sc->socket = new_conn;
 			strcpy(sc->address, "unknown");
 			gf_sk_get_remote_address(new_conn, sc->address);
@@ -545,6 +553,10 @@ GF_FilterRegister SockOutRegister = {
 #else
 		"Your platform does not supports unix domain sockets"
 #endif
+		"\n"
+		"When ports are specified in the URL and the default option separators are used (see `gpac -h doc`), the URL must either:\n"
+		"- have a trailing '/', eg `udp://localhost:1234/[:opts]`\n"
+		"- use `gpac` '/', eg `udp://localhost:1234[:gpac:opts]\n"
 		"\n"
 		"The socket output can be configured to drop or revert packet order for test purposes.\n"
 		"For both mode, a window size in packets is specified as the drop/revert fraction denominator, and the index of the packet to drop/revert is given as the numerator/\n"

@@ -25,7 +25,7 @@
 
 #include <gpac/setup.h>
 
-#ifdef GPAC_HAS_FFMPEG 
+#ifdef GPAC_HAS_FFMPEG
 
 #include "ff_common.h"
 #include <gpac/network.h>
@@ -33,7 +33,7 @@
 #include <libavfilter/buffersrc.h>
 #include <libavfilter/buffersink.h>
 
-#if (LIBAVFILTER_VERSION_MAJOR <= 5)
+#if (LIBAVFILTER_VERSION_MAJOR < 7)
 #undef GPAC_HAS_FFMPEG
 #endif
 
@@ -154,6 +154,8 @@ static GF_Err ffavf_setup_outputs(GF_Filter *filter, GF_FFAVFilterCtx *ctx)
 		}
 		if (!opid) {
 			GF_SAFEALLOC(opid, GF_FFAVPid);
+			if (!opid) continue;
+
 			gf_list_add(ctx->opids, opid);
 			opid->io_pid = gf_filter_pid_new(filter);
 			opid->is_video = i<ctx->nb_v_out ? GF_TRUE : GF_FALSE;
@@ -246,7 +248,7 @@ static GF_Err ffavf_setup_outputs(GF_Filter *filter, GF_FFAVFilterCtx *ctx)
 static GF_Err ffavf_reconfigure_graph(GF_Filter *filter, GF_FFAVFilterCtx *ctx)
 {
 	u32 i, count;
-	GF_Err e;
+	GF_Err e = GF_OK;
 	ctx->flush_state = 0;
 	ffavf_reset_graph(ctx);
 	ctx->filter_graph = avfilter_graph_alloc();
@@ -371,7 +373,7 @@ static void ffavf_dump_graph(GF_FFAVFilterCtx *ctx, const char *opt)
 	char *graphdump = avfilter_graph_dump(ctx->filter_graph, opt);
 
 	if (graphdump) {
-#ifndef GPAC_DISABLE_LOGS
+#ifndef GPAC_DISABLE_LOG
 		if (gf_log_tool_level_on(GF_LOG_MEDIA, GF_LOG_INFO)) {
 			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[FFAVF] Graph dump:\n%s\n\n", graphdump ));
 		} else
@@ -479,6 +481,9 @@ static GF_Err ffavf_process(GF_Filter *filter)
 		//config changed at this packet, start flushing the graph
 		if (ctx->flush_state==1) {
 			ret = av_buffersrc_add_frame_flags(ipid->io_filter_ctx, NULL, 0);
+			if (ret<0) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[FFAVF] Fail to flush filter graph: %s\n", av_err2str(ret) ));
+			}
 			continue;
 		}
 
@@ -729,6 +734,8 @@ static GF_Err ffavf_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	pid_ctx = gf_filter_pid_get_udta(pid);
 	if (!pid_ctx) {
 		GF_SAFEALLOC(pid_ctx, GF_FFAVPid);
+		if (!pid_ctx) return GF_OUT_OF_MEM;
+		
 		pid_ctx->io_pid = pid;
 		gf_filter_pid_set_udta(pid, pid_ctx);
 		gf_list_add(ctx->ipids, pid_ctx);
@@ -916,6 +923,7 @@ static GF_Err ffavf_update_arg(GF_Filter *filter, const char *arg_name, const GF
 			u32 len = (u32) (target - arg_name);
 			if (len>=100) len=100;
 			strncpy(szTargetName, arg_name, len);
+			szTargetName[100] = 0;
 			arg = target+1;
 		} else {
 			strcpy(szTargetName, "all");
@@ -1022,4 +1030,3 @@ const GF_FilterRegister *ffavf_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif
-

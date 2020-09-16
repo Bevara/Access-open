@@ -392,11 +392,10 @@ void evg_yuv420p_fill_const_a(s32 y, s32 count, EVG_Span *spans, GF_EVGSurface *
 
 	if (surf->get_alpha) {
 		for (i=0; i<count; i++) {
-			char *s_pY;
 			u32 fin, j;
 			for (j=0; j<spans[i].len; j++) {
 				s32 x = spans[i].x + j;
-				s_pY = pY + x;
+				char *s_pY = pY + x;
 				u8 aa = surf->get_alpha(surf->get_alpha_udta, a, x, y);
 				fin = mul255(aa, spans[i].coverage);
 
@@ -1292,7 +1291,7 @@ GF_Err evg_surface_clear_yuyv(GF_EVGSurface *_surf, GF_IRect rc, GF_Color col)
 #define set_u16_le(_ptr, val) { ((u8 *)_ptr)[0] = (val>>8)&0xFF;  ((u8 *)_ptr)[1] = (val&0xFF); }
 #define set_u16_be(_ptr, val) { *(u16 *) _ptr = (u16) val; }
 
-#define get_u16_le(val, _ptr) { val = ((u32) (*(u8 *) ptr+1)<< 8) | *(u8 *) ptr; }
+#define get_u16_le(val, _ptr) { val = ((u32) (*(u8 *) _ptr+1)<< 8) | *(u8 *) _ptr; }
 #define get_u16_be(val, _ptr) { val = *(u16 *) (_ptr); }
 
 #else
@@ -1301,7 +1300,7 @@ GF_Err evg_surface_clear_yuyv(GF_EVGSurface *_surf, GF_IRect rc, GF_Color col)
 #define set_u16_be(_ptr, val) { ((u8 *)_ptr)[0] = (val>>8)&0xFF;  ((u8 *)_ptr)[1] = (val&0xFF); }
 
 #define get_u16_le(val, _ptr) { val = *(u16 *) (_ptr); }
-#define get_u16_be(val, _ptr) { val = ((u32) (*(u8 *) ptr)<< 8) | *(u8 *) ptr+1; }
+#define get_u16_be(val, _ptr) { val = ((u32) (*(u8 *) _ptr)<< 8) | *(u8 *) _ptr+1; }
 
 #endif
 

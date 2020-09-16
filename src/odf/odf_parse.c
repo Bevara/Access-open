@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG-4 ObjectDescriptor sub-project
@@ -157,7 +157,7 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 	Bool OD_ParseUIConfig(u8 *val, u8 **out_data, u32 *out_data_size);
 #endif
 	u32 ret = 0;
-
+	if (!fieldName || !val) return GF_BAD_PARAM;
 	if (!stricmp(val, "auto")) return GF_OK;
 	else if (!stricmp(val, "unspecified")) return GF_OK;
 
@@ -314,7 +314,9 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 					ret = 1;
 			}
 		}
-		else if (!stricmp(fieldName, "upStream")) GET_BOOL(dcd->upstream)
+		else if (!stricmp(fieldName, "upStream")) {
+			GET_BOOL(dcd->upstream)
+		}
 		else if (!stricmp(fieldName, "bufferSizeDB")) ret += sscanf(val, "%u", &dcd->bufferSizeDB);
 		else if (!stricmp(fieldName, "maxBitRate")) ret += sscanf(val, "%u", &dcd->maxBitrate);
 		else if (!stricmp(fieldName, "avgBitRate")) ret += sscanf(val, "%u", &dcd->avgBitrate);
@@ -343,7 +345,6 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 	break;
 	case GF_ODF_SLC_TAG:
 	{
-		u32 ts;
 		GF_SLConfig *slc = (GF_SLConfig*)desc;
 		if (!stricmp(fieldName, "predefined")) GET_U8(slc->predefined)
 		else if (!stricmp(fieldName, "useAccessUnitStartFlag")) GET_BOOL(slc->useAccessUnitStartFlag)
@@ -365,14 +366,8 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 		else if (!stricmp(fieldName, "timeScale")) ret += sscanf(val, "%u", &slc->timeScale);
 		else if (!stricmp(fieldName, "accessUnitDuration")) ret += sscanf(val, "%hu", &slc->AUDuration);
 		else if (!stricmp(fieldName, "compositionUnitDuration")) ret += sscanf(val, "%hu", &slc->CUDuration);
-		else if (!stricmp(fieldName, "startDecodingTimeStamp")) {
-			ret += sscanf(val, "%u", &ts);
-			slc->startDTS = ts;
-		}
-		else if (!stricmp(fieldName, "startCompositionTimeStamp")) {
-			ret += sscanf(val, "%u", &ts);
-			slc->startCTS = ts;
-		}
+		else if (!stricmp(fieldName, "startDecodingTimeStamp")) GET_U64(slc->startDTS)
+		else if (!stricmp(fieldName, "startCompositionTimeStamp"))  GET_U64(slc->startCTS)
 		else if (!stricmp(fieldName, "durationFlag")) ret = 1;
 	}
 	break;
@@ -457,8 +452,8 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 				OD_ParseBinData(val, &dsi->data, &dsi->dataLength);
 				ret = 1;
 			} else if (!strnicmp(val, "file:", 5)) {
-				gf_file_load_data(val+5, (u8 **) &dsi->data, &dsi->dataLength);
-				ret = 1;
+				if (gf_file_load_data(val+5, (u8 **) &dsi->data, &dsi->dataLength) == GF_OK)
+					ret = 1;
 			} else if (!strlen(val)) ret = 1;
 		}
 		if (!stricmp(fieldName, "src")) {
@@ -470,8 +465,8 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 				OD_ParseBinData(val, &dsi->data, &dsi->dataLength);
 				ret = 1;
 			} else if (!strnicmp(val, "file:", 5)) {
-				gf_file_load_data(val+5, (u8 **) &dsi->data, &dsi->dataLength);
-				ret = 1;
+				if (gf_file_load_data(val+5, (u8 **) &dsi->data, &dsi->dataLength) == GF_OK)
+					ret = 1;
 			}
 		}
 	}
@@ -496,8 +491,8 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 				OD_ParseBinData(val, &uic->ui_data, &uic->ui_data_length);
 				ret = 1;
 			} else if (!strnicmp(val, "file:", 5)) {
-				gf_file_load_data(val+5, (u8 **) &uic->ui_data, &uic->ui_data_length);
-				ret = 1;
+				if (gf_file_load_data(val+5, (u8 **) &uic->ui_data, &uic->ui_data_length)==GF_OK) 
+					ret = 1;
 			} else {
 #ifndef GPAC_MINIMAL_ODF
 				ret = OD_ParseUIConfig(val, &uic->ui_data, &uic->ui_data_length);
@@ -591,7 +586,6 @@ GF_Err gf_odf_set_field(GF_Descriptor *desc, char *fieldName, char *val)
 			}
 			if (!stricmp(fieldName, "fontID")) GET_U32(sd->fonts[sd->font_count-1].fontID)
 			if (!stricmp(fieldName, "fontName")) GET_STRING(sd->fonts[sd->font_count-1].fontName)
-			ret = 1;
 		}
 	}
 	break;

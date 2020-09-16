@@ -198,7 +198,7 @@ next_line:
 					dst++;
 					break;
 				}
-				else if (is_ret && wchar!='\n') {
+				else if (is_ret) {
 					u32 fpos = (u32) gf_gztell(parser->gz_in);
 					gf_gzseek(parser->gz_in, fpos-2, SEEK_SET);
 					break;
@@ -1611,7 +1611,7 @@ GF_Node *gf_bt_peek_node(GF_BTParser *parser, char *defID)
 
 		if ( (!prev_is_insert && !strcmp(str, "AT")) || !strcmp(str, "PROTO") ) {
 			/*only check in current command (but be aware of conditionals..)*/
-			if (!the_node && gf_list_find(parser->bifs_au->commands, parser->cur_com)) {
+			if (gf_list_find(parser->bifs_au->commands, parser->cur_com)) {
 				break;
 			}
 			continue;
@@ -2244,7 +2244,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 		GF_Node *targetNode, *idxNode, *childNode, *fromNode;
 		GF_FieldInfo targetField, idxField, childField, fromField;
 
-		targetNode = idxNode = childNode = fromNode = NULL;
+		idxNode = childNode = fromNode = NULL;
 		str = gf_bt_get_next(parser, 1);
 		/*get source node*/
 		strcpy(field, str);
@@ -2414,6 +2414,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 				inf->field_ptr = gf_sg_vrml_field_pointer_new(inf->fieldType);
 				info.far_ptr = inf->field_ptr;
 				info.fieldType = inf->fieldType;
+				info.name = targetField.name;
 
 				if (gf_sg_vrml_is_sf_field(inf->fieldType)) {
 					gf_bt_sffield(parser, &info, childNode ? childNode : targetNode);
@@ -3269,7 +3270,7 @@ GF_Err gf_bt_loader_run_intern(GF_BTParser *parser, GF_Command *init_com, Bool i
 
 
 	/*create a default root node for all VRML nodes*/
-	if ((parser->is_wrl && !parser->top_nodes) && !vrml_root_node) {
+	if (parser->is_wrl && !parser->top_nodes) {
 		if (initial_run ) {
 #ifndef GPAC_DISABLE_X3D
 			vrml_root_node = gf_node_new(parser->load->scene_graph, (parser->load->flags & GF_SM_LOAD_MPEG4_STRICT) ? TAG_MPEG4_Group : TAG_X3D_Group);
@@ -3611,13 +3612,13 @@ static GF_Err gf_sm_load_bt_initialize(GF_SceneLoader *load, const char *str, Bo
 		parser->load = NULL;
 		gf_bt_check_line(parser);
 		parser->load = load;
-		if (parser->def_w && parser->def_h) {
+		if (load->ctx && parser->def_w && parser->def_h) {
 			load->ctx->scene_width = parser->def_w;
 			load->ctx->scene_height = parser->def_h;
 		}
 
 		/*create at least one empty BIFS stream*/
-		if (!parser->is_wrl) {
+		if (!parser->is_wrl && load->ctx) {
 			parser->bifs_es = gf_sm_stream_new(load->ctx, 0, GF_STREAM_SCENE, GF_CODECID_BIFS);
 			parser->bifs_au = gf_sm_stream_au_new(parser->bifs_es, 0, 0, 1);
 			parser->load->ctx->is_pixel_metrics = 1;

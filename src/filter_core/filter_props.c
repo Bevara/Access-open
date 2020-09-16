@@ -282,7 +282,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				p.value.string = data;
 			}
 		} else if (value && !strnicmp(value, "bxml@", 5) ) {
-			GF_Err e = GF_OK;
+			GF_Err e;
 			GF_DOMParser *dom = gf_xml_dom_new();
 			e = gf_xml_dom_parse(dom, value+5, NULL, NULL);
 			if (e) {
@@ -327,7 +327,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				p.value.data.ptr[i] = res;
 			}
 		} else if (!strnicmp(value, "bxml@", 5) ) {
-			GF_Err e = GF_OK;
+			GF_Err e;
 			GF_DOMParser *dom = gf_xml_dom_new();
 			e = gf_xml_dom_parse(dom, value+5, NULL, NULL);
 			if (e) {
@@ -382,8 +382,9 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 					u32 xml_len = (u32) (xml_end - v);
 					if (xml_len > len) {
 						sep = strchr(xml_end, list_sep_char);
-						if (sep)
-							len = (u32) (sep - v);
+						//assigned below
+//						if (sep)
+//							len = (u32) (sep - v);
 					}
 				}
 			}
@@ -397,8 +398,8 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 			nv[len] = 0;
 			if (!strnicmp(nv, "file@", 5) ) {
 				u8 *data;
-				u32 len;
-				GF_Err e = gf_file_load_data(nv+5, (u8 **) &data, &len);
+				u32 flen;
+				GF_Err e = gf_file_load_data(nv+5, (u8 **) &data, &flen);
 				if (e) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Cannot load data from file %s\n", nv+5));
 				} else {
@@ -428,6 +429,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 			 	len = (u32) strlen(v);
 			if (len>=99) len=99;
 			strncpy(szV, v, len);
+			szV[len] = 0;
 			sscanf(szV, "%u", &val_uint);
 			p.value.uint_list.vals = gf_realloc(p.value.uint_list.vals, (p.value.uint_list.nb_items+1) * sizeof(u32));
 			p.value.uint_list.vals[p.value.uint_list.nb_items] = val_uint;
@@ -592,6 +594,8 @@ GF_PropertyMap * gf_props_new(GF_Filter *filter)
 
 	if (!map) {
 		GF_SAFEALLOC(map, GF_PropertyMap);
+		if (!map) return NULL;
+		
 		map->session = filter->session;
 #if GF_PROPS_HASHTABLE_SIZE
 #else
@@ -937,7 +941,8 @@ GF_Err gf_props_merge_property(GF_PropertyMap *dst_props, GF_PropertyMap *src_pr
 	u32 idx;
 #endif
 	GF_List *list;
-	dst_props->timescale = src_props->timescale;
+	if (src_props->timescale)
+		dst_props->timescale = src_props->timescale;
 
 #if GF_PROPS_HASHTABLE_SIZE
 	for (idx=0; idx<GF_PROPS_HASHTABLE_SIZE; idx++) {
@@ -1101,6 +1106,8 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_ID, "ID", "Stream ID", GF_PROP_UINT},
 	{ GF_PROP_PID_ESID, "ESID", "MPEG-4 ESID of pid", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ITEM_ID, "ItemID", "ID of image item in HEIF, same value as ID", GF_PROP_UINT},
+	{ GF_PROP_PID_ITEM_NUM, "ItemNumber", "Number (1-based) of image item in HEIF, in order of declaration in file", GF_PROP_UINT},
+	{ GF_PROP_PID_TRACK_NUM, "TrackNumber", "Number (1-based) of track in order of declaration in file", GF_PROP_UINT},
 	{ GF_PROP_PID_SERVICE_ID, "ServiceID", "ID of parent service", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_CLOCK_ID, "ClockID", "ID of clock reference pid", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DEPENDENCY_ID, "DependencyID", "ID of layer dependended on", GF_PROP_UINT},
@@ -1143,6 +1150,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_WIDTH, "Width", "Visual Width (video / text / graphics)", GF_PROP_UINT},
 	{ GF_PROP_PID_HEIGHT, "Height", "Visual Height (video / text / graphics)", GF_PROP_UINT},
 	{ GF_PROP_PID_PIXFMT, "PixelFormat", "Pixel format", GF_PROP_PIXFMT},
+	{ GF_PROP_PID_PIXFMT_WRAPPED, "PixelFormatWrapped", "Underlying pixel format of video stream if pixel format is external GL texture", GF_PROP_PIXFMT},
 	{ GF_PROP_PID_STRIDE, "Stride", "Image or Y/alpha plane stride", GF_PROP_UINT},
 	{ GF_PROP_PID_STRIDE_UV, "StrideUV", "UV plane or U/V planes stride", GF_PROP_UINT},
 	{ GF_PROP_PID_BIT_DEPTH_Y, "BitDepthLuma", "Bit depth for luma components", GF_PROP_UINT},
@@ -1210,7 +1218,9 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_OMA_CLEAR_LEN, "PlaintextLen", "OMA size of plaintext data", GF_PROP_LUINT},
 	{ GF_PROP_PID_CRYPT_INFO, "CryptInfo", "URL (local file only) of crypt info file for this pid", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DECRYPT_INFO, "DecryptInfo", "URL (local file only) of crypt info file for this pid - see decrypter help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PCK_SENDER_NTP, "SenderNTP", "Sender NTP time", GF_PROP_LUINT, GF_PROP_FLAG_PCK | GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_SENDER_NTP, "SenderNTP", "NTP time at sender side or grabber side", GF_PROP_LUINT, GF_PROP_FLAG_PCK | GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_RECEIVER_NTP, "ReceiverNTP", "Receiver NTP time (usually associated with the sender NTP property)", GF_PROP_LUINT, GF_PROP_FLAG_PCK | GF_PROP_FLAG_GSF_REM},
+
 	{ GF_PROP_PID_ENCRYPTED, "Encrypted", "Packets for the stream are by default encrypted (however the encryption state is carried in packet crypt flags) - changes are signaled through pid_set_info (no reconfigure)", GF_PROP_BOOL},
 	{ GF_PROP_PID_OMA_PREVIEW_RANGE, "OMAPreview", "OMA Preview range ", GF_PROP_LUINT},
 	{ GF_PROP_PID_CENC_PSSH, "CENC_PSSH", "PSSH blob for CENC, formatted as (u32)NbSystems [ (bin128)SystemID(u32)version(u32)KID_count[ (bin128)keyID ] (u32)priv_size(char*priv_size)priv_data]", GF_PROP_DATA},
@@ -1225,11 +1235,13 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	"- 1: a clear clone of the sample description is created, inserted before the CENC sample description\n"
 	"- 2: a clear clone of the sample description is created, inserted after the CENC sample description", GF_PROP_UINT},
 	{ GF_PROP_PID_AMR_MODE_SET, "AMRModeSet", "ModeSet for AMR and AMR-WideBand", GF_PROP_UINT},
-	{ GF_PROP_PCK_SUBS, "SubSampleInfo", "Binary blob describing N subsamples of the sample, formatted as N [(u32)flags(u32)size(u32)reserved(u8)priority(u8) discardable]", GF_PROP_DATA},
+	{ GF_PROP_PCK_SUBS, "SubSampleInfo", "Binary blob describing N subsamples of the sample, formatted as N [(u32)flags(u32)size(u32)codec_param(u8)priority(u8) discardable]. Subsamples for a given flag MUST appear in order, however flags can be interleaved", GF_PROP_DATA},
 	{ GF_PROP_PID_MAX_NALU_SIZE, "NALUMaxSize", "Max size of NAL units in stream - changes are signaled through pid_set_info (no reconfigure)", GF_PROP_UINT},
 	{ GF_PROP_PCK_FILENUM, "FileNumber", "Index of file when dumping to files", GF_PROP_UINT, GF_PROP_FLAG_PCK},
 	{ GF_PROP_PCK_FILENAME, "FileName", "Name of output file when dumping / dashing. Must be set on first packet belonging to new file", GF_PROP_STRING, GF_PROP_FLAG_PCK},
 	{ GF_PROP_PCK_IDXFILENAME, "IDXName", "Name of index file when dashing MPEG-2 TS. Must be set on first packet belonging to new file", GF_PROP_STRING, GF_PROP_FLAG_PCK},
+	{ GF_PROP_PCK_FILESUF, "FileSuffix", "File suffix name, replacement for $FS$ in tile templates", GF_PROP_STRING, GF_PROP_FLAG_PCK},
+
 	{ GF_PROP_PCK_EODS, "EODS", "End of DASH segment", GF_PROP_BOOL, GF_PROP_FLAG_PCK},
 	{ GF_PROP_PID_MAX_FRAME_SIZE, "MaxFrameSize", "Max size of frame in stream - changes are signaled through pid_set_info (no reconfigure)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_AVG_FRAME_SIZE, "AvgFrameSize", "Average size of frame in stream (isobmff only, static property)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
@@ -1267,7 +1279,11 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_XLINK, "xlink", "Remote period URL for DASH - cf dasher help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_CLAMP_DUR, "CDur", "Max media duration to process from pid in DASH mode", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_HLS_PLAYLIST, "HLSPL", "Name of the HLS variant playlist for this media", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_HLS_GROUPID, "HLSGroup", "Name of HLS Group of a stream", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_CUE, "DCue", "Name of a cue list file for this pid - see dasher help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_DASH_SEGMENTS, "DSegs", "Number of DASH segments defined by the DASH cue info", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_CODEC, "Codec", "codec parameter string to force. If starting with '.', appended to ISOBMF code point; otherwise replace the codec string", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+
 	{ GF_PROP_PID_SINGLE_SCALE, "SingleScale", "Indicates the movie header should use the media timescale of the first track added", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_UDP, "RequireReorder", "Indicates the PID packets come from source with losses and reordering happening (UDP)", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_PRIMARY_ITEM, "Primary", "Indicates this is a primary item in isobmf", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
@@ -1278,7 +1294,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_COLR_RANGE, "FullRange", "Indicate color full range flag for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_COLR_CHROMALOC, "ChromaLoc", "Indicate chrom location for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_SRC_MAGIC, "SrcMagic", "Indicate a magic number to store in the track, only used by importers", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_TRACK_INDEX, "TrackIndex", "Indicate target track index in destination file, stored by lowest value first (not set by demuxers)", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_MUX_INDEX, "MuxIndex", "Indicate target track index in destination file, stored by lowest value first (not set by demuxers)", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_NO_TS_LOOP, "NoTSLoop", "Indicate the timestamps on this PID are adjusted in case of loops (used by TS muxer output)", GF_PROP_BOOL, 0},
 
 
@@ -1290,6 +1306,8 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 
 	{ GF_PROP_PID_RAWGRAB, "RawGrab", "Indicate PID is a raw media grabber (webcam, microphone, etc...)", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_KEEP_AFTER_EOS, "KeepAfterEOS", "Indicate the PID must be kept alive after EOS (LASeR and BIFS)", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_COVER_ART, "CoverArt", "Indicate PID cover art image data. If associated data is NULL, the data is carried in the PID", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
+
 };
 
 GF_EXPORT
@@ -1481,6 +1499,7 @@ const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[GF_PROP_
 	{
 		u32 i, count = gf_list_count(att->value.string_list);
 		u32 len = GF_PROP_DUMP_ARG_SIZE-1;
+		dump[len]=0;
 		for (i=0; i<count; i++) {
 			char *s = gf_list_get(att->value.string_list, i);
 			if (!i) {
@@ -1501,6 +1520,7 @@ const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[GF_PROP_
 	{
 		u32 i, count = att->value.uint_list.nb_items;
 		u32 len = GF_PROP_DUMP_ARG_SIZE-1;
+		dump[len]=0;
 		for (i=0; i<count; i++) {
 			char szItem[1024];
 			if (is_4cc) {
