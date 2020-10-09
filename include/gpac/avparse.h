@@ -166,7 +166,7 @@ thus you can seek the bitstream to copy the payload without re-seeking it
 \param time_inc set to the time increment since last frame
 \param size set to the size of the compressed frame
 \param start set to the position of the first byte in the buffer/bitstream
-\param is_coded set to 1 if frame is coded, 0 if skip frame
+\param is_coded set to 1 if frame is coded, 0 if skip frame, untouched if no frame found
 \return error if any
 */
 GF_Err gf_m4v_parse_frame(GF_M4VParser *m4v, GF_M4VDecSpecInfo *dsi, u8 *frame_type, u32 *time_inc, u64 *size, u64 *start, Bool *is_coded);
@@ -395,9 +395,10 @@ u64 gf_mpegh_escaped_value(GF_BitStream *bs, u32 nBits1, u32 nBits2, u32 nBits3)
 /*! parse profile and level from a MHAS payload
 \param ptr the MHAS payhload
 \param size size of the MHAS payhload
+\param chan_layout set to the channel layout if found, 0 otherwise - optional, may be NULL
 \return the MHAS profile found, or -1 of not found
 */
-s32 gf_mpegh_get_mhas_pl(u8 *ptr, u32 size);
+s32 gf_mpegh_get_mhas_pl(u8 *ptr, u32 size, u64 *chan_layout);
 
 /*! reads a 32 bit sync safe integer of id3v2 from a bitstream object
 \param bs the bitstream object to use - has to be positioned on the start if an id3v2 size field

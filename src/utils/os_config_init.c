@@ -95,7 +95,7 @@ static Bool check_file_exists(char *name, char *path, char *outPath)
 	if (!strcmp(name, TEST_MODULE)) {
 		Bool res = GF_FALSE;
 #if defined(GPAC_STATIC_MODULES) || defined(GPAC_MP4BOX_MINI)
-		if (gf_dir_exists(path)) res = GF_TRUE;
+		res = GF_TRUE;
 #else
 		gf_enum_directory(path, GF_FALSE, mod_enum, &res, NULL);
 #endif
@@ -120,6 +120,7 @@ enum
 	//were we store gui/%, shaders/*, scripts/*
 	GF_PATH_SHARE,
 	GF_PATH_MODULES,
+	GF_PATH_LIB
 };
 
 #if defined(WIN32) || defined(_WIN32_WCE)
@@ -153,6 +154,7 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 	if (!strstr(file_path, "gpac") && !strstr(file_path, "GPAC") ) {
 		HKEY hKey = NULL;
 		DWORD dwSize = GF_MAX_PATH;
+		file_path[0] = 0;
 
 		/*locate the key in current user, then in local machine*/
 #ifdef _WIN32_WCE
@@ -179,7 +181,10 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 		RegCloseKey(hKey);
 #endif
 	}
-
+	//empty path, try DLL
+	if (!file_path[0] && (path_type != GF_PATH_LIB)) {
+		get_default_install_path(file_path, GF_PATH_LIB);
+	}
 
 	if (path_type==GF_PATH_APP) return GF_TRUE;
 
@@ -197,6 +202,21 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 	}
 	/*modules are stored in the GPAC directory (should be changed to GPAC/modules)*/
 	if (path_type==GF_PATH_MODULES) return GF_TRUE;
+	
+	if (path_type == GF_PATH_LIB) {
+		HMODULE hm=NULL;
+		if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			(LPCSTR)&get_default_install_path, &hm) == 0) {
+			return 0;
+		}
+		if (GetModuleFileName(hm, file_path, GF_MAX_PATH) == 0) {
+			return 0;
+		}
+		char *sep = strrchr(file_path, '\\');
+		if (!sep) sep = strrchr(file_path, '/');
+		if (sep) sep[0] = 0;
+		return 1;
+	}
 
 	/*we are looking for the config file path - make sure it is writable*/
 	assert(path_type == GF_PATH_CFG);
@@ -288,6 +308,25 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 /*Linux, OSX, iOS*/
 #else
 
+//dlinfo
+#if defined(__DARWIN__) || defined(__APPLE__)
+#include <dlfcn.h>
+
+typedef Dl_info _Dl_info;
+#elif defined(GPAC_CONFIG_LINUX)
+
+
+typedef struct
+{
+	const char *dli_fname;
+	void *dli_fbase;
+	const char *dli_sname;
+	void *dli_saddr;
+} _Dl_info;
+int dladdr(void *, _Dl_info *);
+
+#endif
+
 static Bool get_default_install_path(char *file_path, u32 path_type)
 {
 	char app_path[GF_MAX_PATH];
@@ -303,8 +342,9 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 		char buf[PATH_MAX];
 		char *res;
 #endif
+
 		if (!user_home) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Couldn't find HOME directory\n"));
+			GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("Couldn't find HOME directory\n"));
 			return 0;
 		}
 #ifdef GPAC_CONFIG_IOS
@@ -376,6 +416,22 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 		return 0;
 	}
 
+	if (path_type==GF_PATH_LIB) {
+#if defined(__DARWIN__) || defined(__APPLE__) || defined(GPAC_CONFIG_LINUX)
+		_Dl_info dl_info;
+		dladdr((void *)get_default_install_path, &dl_info);
+		if (dl_info.dli_fname) {
+			char *sep;
+			strcpy(file_path, dl_info.dli_fname);
+			sep = strrchr(file_path, '/');
+			if (sep) sep[0] = 0;
+			return 1;
+		}
+		return 0;
+#endif
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unknown arch, cannot find library path\n"));
+		return 0;
+	}
 
 	/*locate the app*/
 	if (!get_default_install_path(app_path, GF_PATH_APP)) {
@@ -403,15 +459,20 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 	}
 
 	if (path_type==GF_PATH_SHARE) {
+		Bool try_lib=GF_TRUE;
 		if (get_default_install_path(app_path, GF_PATH_CFG)) {
+			char *sep = strstr(app_path, ".gpac/");
+			if (sep) sep[5]=0;
 			/*GUI not found, look in ~/.gpac/share/gui/ */
-			strcat(app_path, "/.gpac/share");
-			if (check_file_exists("share/gui.bt", app_path, file_path)) return 1;
+			strcat(app_path, "/share");
+			if (check_file_exists("gui/gui.bt", app_path, file_path)) return 1;
 		}
 
 		/*GUI not found, look in gpac distribution if any */
 		if (get_default_install_path(app_path, GF_PATH_APP)) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[core] trying to locate share from application dir %s\n", app_path));
 			strcat(app_path, "/");
+retry_lib:
 			sep = strstr(app_path, "/bin/");
 			if (sep) {
 				sep[0] = 0;
@@ -427,23 +488,32 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 				if (check_file_exists("gui/gui.bt", app_path, file_path)) return 1;
 			}
 		}
+		if (get_default_install_path(app_path, GF_PATH_LIB)) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[core] trying to locate share from dynamic libgpac dir %s\n", app_path));
+			sep = strstr(app_path, "/lib");
+			if (sep) {
+				sep[0] = 0;
+				strcat(app_path, "/share");
+				if (check_file_exists("gui/gui.bt", app_path, file_path)) return 1;
+			}
+			if (try_lib) {
+				try_lib = GF_FALSE;
+				goto retry_lib;
+			}
+		}
 		/*GUI not found, look in .app for OSX case*/
 	}
 
 	if (path_type==GF_PATH_MODULES) {
-		/*look in gpac compilation tree (modules are output in the same folder as apps) */
+		/*look in gpac compilation tree (modules are output in the same folder as apps) and in distrib tree */
 		if (get_default_install_path(app_path, GF_PATH_APP)) {
 			if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
+
 			/*on OSX check modules subdirectory */
 			strcat(app_path, "/modules");
 			if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
 
-			/*modules not found*/
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("Couldn't find any modules in standard path (app path %s)\n", app_path));
-		}
-
-		/* look in distrib tree */
-		if (get_default_install_path(app_path, GF_PATH_APP)) {
+			get_default_install_path(app_path, GF_PATH_APP);
 			strcat(app_path, "/");
 			sep = strstr(app_path, "/bin/");
 			if (sep) {
@@ -451,16 +521,27 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 				strcat(app_path, "/lib/gpac");
 				if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
 			}
+
+			/*modules not found*/
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("Couldn't find any modules in standard path (app path %s)\n", app_path));
 		}
+
+		/*look in lib install */
+		if (get_default_install_path(app_path, GF_PATH_LIB)) {
+			if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
+			strcat(app_path, "/gpac");
+			if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Couldn't find any modules in lib path %s\n", app_path));
+		}
+
 
 		/*modules not found, look in ~/.gpac/modules/ */
 		if (get_default_install_path(app_path, GF_PATH_CFG)) {
-			strcpy(app_path, file_path);
-			strcat(app_path, "/.gpac/modules");
+			strcat(app_path, "/modules");
 			if (check_file_exists(TEST_MODULE, app_path, file_path)) return 1;
 		}
 		/*modules not found, failure*/
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("Couldn't find any modules in HOME path (app path %s)\n", app_path));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Couldn't find any modules in HOME path (app path %s)\n", app_path));
 		return 0;
 	}
 
@@ -527,23 +608,26 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 {
 	Bool moddir_found;
 	GF_Config *cfg;
-	char szProfilePath[GF_MAX_PATH];
 	char szPath[GF_MAX_PATH];
 
 	if (! get_default_install_path(file_path, GF_PATH_CFG)) {
-		return NULL;
+		profile = "0";
 	}
-	/*Create the config file*/
-	if (profile) {
-		sprintf(szPath, "%s%cprofiles%c%s%c%s", file_path, GF_PATH_SEPARATOR, GF_PATH_SEPARATOR, profile, GF_PATH_SEPARATOR, CFG_FILE_NAME);
-	} else {
-		sprintf(szPath, "%s%c%s", file_path, GF_PATH_SEPARATOR, CFG_FILE_NAME);
-	}
-	GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("Trying to create config file: %s\n", szPath ));
+	/*Create temp config file*/
 	if (profile && !strcmp(profile, "0")) {
 		cfg = gf_cfg_new(NULL, NULL);
 	} else {
-		FILE *f = gf_fopen(szPath, "wt");
+		FILE *f;
+
+		/*create config file from disk*/
+		if (profile) {
+			sprintf(szPath, "%s%cprofiles%c%s%c%s", file_path, GF_PATH_SEPARATOR, GF_PATH_SEPARATOR, profile, GF_PATH_SEPARATOR, CFG_FILE_NAME);
+		} else {
+			sprintf(szPath, "%s%c%s", file_path, GF_PATH_SEPARATOR, CFG_FILE_NAME);
+		}
+		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("Trying to create config file: %s\n", szPath ));
+
+		f = gf_fopen(szPath, "wt");
 		if (!f) return NULL;
 		gf_fclose(f);
 
@@ -551,7 +635,6 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	}
 
 	if (!cfg) return NULL;
-	strcpy(szProfilePath, szPath);
 
 
 #ifndef GPAC_CONFIG_IOS && !defined(__EMSCRIPTEN__)
@@ -570,9 +653,9 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 
 
 	if (!moddir_found) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] default modules not found\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[Core] default modules directory not found\n"));
 	} else {
-		gf_cfg_set_key(cfg, "core", "mod-dirs", szPath);
+		gf_cfg_set_key(cfg, "core", "module-dir", szPath);
 	}
 
 #if defined(GPAC_CONFIG_IOS)
@@ -592,8 +675,6 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	/*Setup font engine to FreeType by default, and locate TrueType font directory on the system*/
 	gf_cfg_set_key(cfg, "core", "font-reader", "FreeType Font Reader");
 	gf_cfg_set_key(cfg, "core", "rescan-fonts", "yes");
-
-	gf_cfg_set_key(cfg, "core", "js-dirs", "$GJS");
 
 
 #if defined(_WIN32_WCE)
@@ -677,7 +758,7 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 
 	if (profile && !strcmp(profile, "0")) {
 		GF_Err gf_cfg_set_filename(GF_Config *iniFile, const char * fileName);
-		sprintf(szPath, "%s%c%s", file_path, GF_PATH_SEPARATOR, CFG_FILE_NAME);
+		sprintf(szPath, "%s%c%s", gf_get_default_cache_directory(), GF_PATH_SEPARATOR, CFG_FILE_NAME);
 		gf_cfg_set_filename(cfg, szPath);
 		gf_cfg_discard_changes(cfg);
 		return cfg;
@@ -719,16 +800,16 @@ static void check_modules_dir(GF_Config *cfg)
 	const char *opt;
 
 	if ( get_default_install_path(path, GF_PATH_MODULES) ) {
-		opt = gf_cfg_get_key(cfg, "core", "mod-dirs");
+		opt = gf_cfg_get_key(cfg, "core", "module-dir");
 		//for OSX, we can have an install in /usr/... and an install in /Applications/Osmo4.app - always change
 #if defined(__DARWIN__) || defined(__APPLE__)
 		if (!opt || strcmp(opt, path))
-			gf_cfg_set_key(cfg, "core", "mod-dirs", path);
+			gf_cfg_set_key(cfg, "core", "module-dir", path);
 #else
 
 		//otherwise only check we didn't switch between a 64 bit version and a 32 bit version
 		if (!opt) {
-			gf_cfg_set_key(cfg, "core", "mod-dirs", path);
+			gf_cfg_set_key(cfg, "core", "module-dir", path);
 		} else  {
 			Bool erase_modules_dir = GF_FALSE;
 			const char *opt64 = gf_cfg_get_key(cfg, "core", "64bits");
@@ -753,7 +834,7 @@ static void check_modules_dir(GF_Config *cfg)
 			gf_cfg_set_key(cfg, "core", "64bits", opt64);
 
 			if (erase_modules_dir) {
-				gf_cfg_set_key(cfg, "core", "mod-dirs", path);
+				gf_cfg_set_key(cfg, "core", "module-dir", path);
 			}
 		}
 #endif
@@ -827,8 +908,12 @@ static GF_Config *gf_cfg_init(const char *profile)
 	}
 
 	if (!get_default_install_path(szPath, GF_PATH_CFG)) {
-		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[core] Fatal error: Cannot create global config file in application or user home directory - no write access\n"));
-		goto exit;
+		if (!profile || strcmp(profile, "0")) {
+			GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[core] Cannot locate global config path in application or user home directory, using temporary config file\n"));
+		}
+		profile="0";
+		cfg = create_default_config(szPath, profile);
+		goto skip_cfg;
 	}
 
 	if (profile) {
@@ -862,6 +947,8 @@ static GF_Config *gf_cfg_init(const char *profile)
 		}
 		cfg = create_default_config(szPath, profile);
 	}
+
+skip_cfg:
 	if (!cfg) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[core] Cannot create config file %s in %s directory\n", CFG_FILE_NAME, szPath));
 		goto exit;
@@ -875,12 +962,17 @@ static GF_Config *gf_cfg_init(const char *profile)
 
 	if (!gf_cfg_get_key(cfg, "core", "store-dir")) {
 		char *sep;
-		strcpy(szPath, gf_cfg_get_filename(cfg));
-		sep = strrchr(szPath, '/');
-		if (!sep) sep = strrchr(szPath, '\\');
-		if (sep) sep[0] = 0;
-		strcat(szPath, "/Storage");
-		if (!gf_dir_exists(szPath)) gf_mkdir(szPath);
+		if (profile && !strcmp(profile, "0")) {
+			strcpy(szPath, gf_get_default_cache_directory() );
+			strcat(szPath, "/Storage");
+		} else {
+			strcpy(szPath, gf_cfg_get_filename(cfg));
+			sep = strrchr(szPath, '/');
+			if (!sep) sep = strrchr(szPath, '\\');
+			if (sep) sep[0] = 0;
+			strcat(szPath, "/Storage");
+			if (!gf_dir_exists(szPath)) gf_mkdir(szPath);
+		}
 		gf_cfg_set_key(cfg, "core", "store-dir", szPath);
 	}
 
@@ -1077,7 +1169,7 @@ GF_GPACArg GPAC_Args[] = {
 
  GF_DEF_ARG("strict-error", "se", "exit after the first error is reported", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("store-dir", NULL, "set storage directory", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_CORE),
- GF_DEF_ARG("mod-dirs", NULL, "set module directories", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("mod-dirs", NULL, "set additional module directories as a semi-colon `;` separated list", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("js-dirs", NULL, "set javascript directories", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-js-mods", NULL, "disable javascript module loading", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("ifce", NULL, "set default multicast interface through interface IP address", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_CORE),
@@ -1309,6 +1401,8 @@ Bool gf_sys_set_cfg_option(const char *opt_string)
 	return GF_TRUE;
 }
 
+void gf_module_reload_dirs();
+
 Bool gf_opts_load_option(const char *arg_name, const char *val, Bool *consumed_next, GF_Err *e)
 {
 	const GF_GPACArg *arg = NULL;
@@ -1355,8 +1449,12 @@ Bool gf_opts_load_option(const char *arg_name, const char *val, Bool *consumed_n
 		*consumed_next = GF_TRUE;
 		if (!val && (arg->type==GF_ARG_BOOL))
 			gf_opts_set_key("temp", arg->name, "true");
-		else
+		else {
 			gf_opts_set_key("temp", arg->name, val);
+			if (!strcmp(arg->name, "mod-dirs")) {
+				gf_module_reload_dirs();
+			}
+		}
 	}
 	return GF_TRUE;
 }

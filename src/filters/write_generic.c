@@ -302,11 +302,11 @@ GF_Err writegen_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 			ctx->stride = p ? p->value.uint : 0;
 
 			if (!ctx->stride) {
-				gf_pixel_get_size_info(ctx->target_pfmt, ctx->w, ctx->h, NULL, &ctx->stride, NULL, NULL, NULL);
+				gf_pixel_get_size_info(ctx->target_pfmt ? ctx->target_pfmt : pf, ctx->w, ctx->h, NULL, &ctx->stride, NULL, NULL, NULL);
 			}
 
 		} else if (stype==GF_STREAM_AUDIO) {
-			strcpy(szExt, gf_audio_fmt_sname(ctx->target_pfmt ? ctx->target_afmt : sfmt));
+			strcpy(szExt, gf_audio_fmt_sname(ctx->target_afmt ? ctx->target_afmt : sfmt));
 			p = gf_filter_pid_caps_query(ctx->opid, GF_PROP_PID_FILE_EXT);
 			if (p) {
 				strncpy(szExt, p->value.string, GF_4CC_MSIZE-1);
@@ -417,7 +417,7 @@ static GF_FilterPacket *writegen_write_j2k(GF_GenDumpCtx *ctx, char *data, u32 d
 	sig[6] = sig[7] = ' ';
 
 	if ((data_size>16) && !memcmp(data, sig, 8)) {
-		return gf_filter_pck_new_ref(ctx->opid, NULL, 0, in_pck);
+		return gf_filter_pck_new_ref(ctx->opid, 0, 0, in_pck);
 	}
 
 	size = data_size + 8*4 /*jP%20%20 + ftyp*/ + ctx->dcfg_size + 8;
@@ -669,7 +669,7 @@ GF_Err writegen_process(GF_Filter *filter)
 		ctx->nb_bytes += 44;
 		return GF_OK;
 	} else {
-		dst_pck = gf_filter_pck_new_ref(ctx->opid, NULL, 0, pck);
+		dst_pck = gf_filter_pck_new_ref(ctx->opid, 0, 0, pck);
 	}
 	gf_filter_pck_merge_properties(pck, dst_pck);
 	//don't keep byte offset
@@ -949,6 +949,13 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "flac"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/flac"),
 	{0},
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPHA),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MHAS),
+	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "mhas"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/mpegh"),
+	{0},
 
 	//we accept unframed VVC (annex B format)
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
@@ -974,7 +981,10 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_HEVC),
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_LHVC),
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_MPEG4_PART2),
-	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
+	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_VVC),
+
+	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_MPEG2_PART3),
+	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_MPEG_AUDIO),
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG4),
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_MP),
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_LCP),

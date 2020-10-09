@@ -231,7 +231,7 @@ write all filter options and all meta filter arguments in the config file unless
 .TP
 .B \-xopt
 .br
-do not throw error on any unrecognized options following this option - used to pass arguments to GUI
+unrecognized options and filters declaration following this option are ignored - used to pass arguments to GUI
 .br
 
 .br
@@ -551,7 +551,7 @@ set storage directory
 .TP
 .B \-mod-dirs (string list)
 .br
-set module directories
+set additional module directories as a semi-colon ; separated list
 .br
 .TP
 .B \-js-dirs (string list)
@@ -1083,7 +1083,7 @@ Each filter exposes a set of argument to configure itself, using property types 
 .br
 * enumeration (for filter arguments only): must use the syntax given in the argument description, otherwise value 0 (first in enum) is assumed.
 .br
-*  1-dimension (numbers, floats, ints...): formatted as value[unit], where unit can be k|K (x1000) or m|M (x1000000) or g|G (x1000000000). For such properties, value +I means maximum possible value, -I minimum possible value.
+* 1-dimension (numbers, floats, ints...): formatted as value[unit], where unit can be k|K (x1000) or m|M (x1000000) or g|G (x1000000000). For such properties, value +I means maximum possible value, -I minimum possible value.
 .br
 * fraction: formatted as num/den or num-den or num, in which case the denominator is 1 if num is an integer, or 1000000 if num is a floating-point value.
 .br
@@ -1176,7 +1176,7 @@ Note: one trick to avoid the escape sequence is to declare the URLs option at th
 .br
 
 .br
-It is possible to disable option parsing (for string options) by duplicating the seperator.
+It is possible to disable option parsing (for string options) by duplicating the separator.
 .br
 Example
 .br
@@ -1313,7 +1313,7 @@ This will set option a to foo, b to bar:c and the option d to fun on the filter.
 .B
 Quick links
 .br
-Link between filters may be manually specified. The syntax is an @ character optionaly followed by an integer (0 if omitted). This indicates which filter previously specified at prompt should be link to the next filter listed. The optional integer is a 0-based index to the previous filter declarations, 0 indicating the previous filter declaration, 1 the one before the previous delaration, ...).
+Link between filters may be manually specified. The syntax is an @ character optionaly followed by an integer (0 if omitted). This indicates that the following filter specified at prompt should be linked only to a previous listed filter. The optional integer is a 0-based index to the previous filter declarations, 0 indicating the previous filter declaration, 1 the one before the previous declaration, ...).
 .br
 Only the last link directive occuring before a filter is used to setup links for that filter.
 .br
@@ -1323,7 +1323,7 @@ fA fB @1 fC
 .br
 
 .br
-This indicates to direct fA outputs to fC.
+This indicates that fC only accepts inputs from fA.
 .br
 Example
 .br
@@ -1331,7 +1331,7 @@ fA fB @1 @0 fC
 .br
 
 .br
-This indicates to direct fB outputs to fC, @1 is ignored.
+This indicates that fC only accepts inputs from fB, @1 is ignored.
 .br
 
 .br
@@ -1435,7 +1435,7 @@ fA fB @1#video fC
 .br
 
 .br
-This indicates to direct fA video outputs to fC.
+This indicates that fC only accepts inputs from fA, and of type video.
 .br
 Example
 .br
@@ -1491,7 +1491,7 @@ This indicates to connect to vout only PIDs with Width property equal to 640 and
 .br
 
 .br
-Warning: If a filter PID gets connected to a loaded filter, no further dynamic link resolution will be done to connect it to other filters, unless sourceIDs are set. Link directives should be carfully setup.
+Warning: If a filter PID gets connected to an explicitly loaded filter, no further dynamic link resolution will be done to connect it to other filters, unless sourceIDs are set. Link directives should be carfully setup.
 .br
 Example
 .br
@@ -1499,7 +1499,7 @@ src=file.mp4 @ reframer dst=dump.mp4
 .br
 
 .br
-This will link src file.mp4 PID (type file) to dst dump.mp4filter (type file) because dst has no sourceID and therefore will accept input from src. Since the PID is connected, the filter engine will not try to solve a link between src and reframer. The result is a direct copy of the source file, reframer being unused.
+This will link src file.mp4 PID (type file) to dst dump.mp4 filter (type file) because dst has no sourceID and therefore will accept input from src. Since the PID is connected, the filter engine will not try to solve a link between src and reframer. The result is a direct copy of the source file, reframer being unused.
 .br
 Example
 .br
@@ -1508,6 +1508,10 @@ src=file.mp4 reframer @ dst=dump.mp4
 
 .br
 This will force dst to accept only from reframer, a muxer will be loaded to solve this link, and src PID will be linked to reframer (no source ID), loading a demuxer to solve the link. The result is a complete remux of the source file.
+.br
+
+.br
+Note: the linker will prevent cycles in the graph, and a given filter can never have the same PID connected twice as an input, whether directly or through a filter chain.
 .br
 .SH Arguments inheriting
 .LP
@@ -1575,7 +1579,7 @@ KEYWORD is case sensitive, and may be present multiple times in the string. Supp
 .br
 * URL: URL of source file
 .br
-* File: path on disk for source file
+* File: path on disk for source file; if not found, use URL if set, or PID name otherwise
 .br
 * p4cc=ABCD: uses PID property with 4CC value ABCD
 .br
@@ -1612,7 +1616,7 @@ In this case, only one item (likely the first declared in the file) will connect
 .br
 Other items will not be connected since the destination only accepts one input PID.
 .br
-There is a special option clone allowing destination filters (and only them) to be cloned with the same arguments:
+There is a special option clone allowing filters to be cloned with the same arguments. The cloned filters have the same ID as the original one.
 .br
 Example
 .br
@@ -1621,6 +1625,14 @@ src=img.heif dst=dump_$ItemID$.jpg:clone
 
 .br
 In this case, the destination will be cloned for each item, and all will be exported to different JPEGs thanks to URL templating.
+.br
+Example
+.br
+src=vid.mpd enc:c=avc:FID=1:clone dst=transcode.mpd:SID=1
+.br
+
+.br
+In this case, the encoder will be cloned for each video PIDs in the source, and the destination will only use PIDs coming from the encoders.
 .br
 .SH Templating filter chains
 .LP
@@ -1752,9 +1764,9 @@ Warning: These keywords do not apply to PID properties. Multiple keywords cannot
 .br
 Defined keywords:
 .br
-* $GSHARE: replaced by system path to GPAC shared directory (e.g. /usr/share)
+* $GSHARE: replaced by system path to GPAC shared directory (e.g. /usr/share/gpac)
 .br
-* $GJS: replaced by the first path specified by global config option .I -js-dirs that contains the file name following the macro, e.g. $GJS/source.js
+* $GJS: replaced by the first path from global share directory and set through .I -js-dirs that contains the file name following the macro, e.g. $GJS/source.js
 .br
 * $GLANG: replaced by the global config language option .I -lang
 .br
@@ -1777,7 +1789,7 @@ This will dump first service in dump_10.ts, second service in dump_12.ts, etc...
 .SH External filters
 .LP
 .br
-GPAC comes with a set of built-in filters in libgpac. It may also load external filters in dynamic libraries, located in folders listed in .I -mod-dirs option. The files shall be named gf_* and shall export a single function returning a filter register - see libgpac documentation for more details.
+GPAC comes with a set of built-in filters in libgpac. It may also load external filters in dynamic libraries, located in default module folder or folders listed in .I -mod-dirs option. The files shall be named gf_* and shall export a single function RegisterFilter returning a filter register - see libgpac documentation for more details.
 .br
 
 .br
@@ -1900,6 +1912,16 @@ const data buffer
 .B strl
 .br
 UTF-8 string list
+.br
+.TP
+.B uintl
+.br
+unsigned 32 bit integer list
+.br
+.TP
+.B sintl
+.br
+signed 32 bit integer list
 .br
 
 .br
@@ -2270,6 +2292,11 @@ Bitrate in bps
 .B Maxrate (MRAT,uint,  )
 .br
 Max bitrate in bps
+.br
+.TP
+.B TargetRate (TBRT,uint,  )
+.br
+Target bitrate in bps, used to setup encoders
 .br
 .TP
 .B DBSize (DBSZ,uint,  )
@@ -2808,6 +2835,11 @@ Indicate target track index in destination file, stored by lowest value first (n
 Indicate the timestamps on this PID are adjusted in case of loops (used by TS muxer output)
 .br
 .TP
+.B MHAProfiles (MHCP,uintl,D )
+.br
+Indicate a list of compatible profiles for this MPEG-H Audio object
+.br
+.TP
 .B FragStart (PFRB,uint,D )
 .br
 Indicate if packet is a fragment start (value 1) or a segment start (value 2)
@@ -2841,6 +2873,26 @@ Indicate the PID must be kept alive after EOS (LASeR and BIFS)
 .B CoverArt (PCOV,mem,D )
 .br
 Indicate PID cover art image data. If associated data is NULL, the data is carried in the PID
+.br
+.TP
+.B BufferLength (PBPL,uint,D )
+.br
+Indicate playout buffer in ms
+.br
+.TP
+.B MaxBuffer (PBMX,uint,D )
+.br
+Indicate maximum buffer occupancy in ms
+.br
+.TP
+.B ReBuffer (PBRE,uint,D )
+.br
+Indicate rebuffer threshold in ms, 0 disable rebuffering
+.br
+.TP
+.B ViewIdx (VIDX,uint,D )
+.br
+Indicate view index for multiview (1 being left)
 .br
 .SH Pixel formats
 .LP
@@ -3646,7 +3698,7 @@ VP9 Video
 VP10 Video
 .br
 .TP
-.B mpha
+.B mhas
 .br
 MPEG-H Audio
 .br
@@ -3709,7 +3761,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit http://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev19-gd58ce6c43-master
+build: 1.1.0-DEV-rev76-g6d229978c-master
 .br
 Copyright: (c) 2000-2020 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

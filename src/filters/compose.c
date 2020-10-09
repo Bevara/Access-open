@@ -116,7 +116,7 @@ static GF_Err compose_process(GF_Filter *filter)
 				if (!ctx->validator_mode)
 					ctx->force_next_frame_redraw = GF_TRUE;
 			}
-		} else if (!ret && !ctx->check_eos_state && !nb_sys_streams_active) {
+		} else if (!ret && !ctx->frame_was_produced && !ctx->check_eos_state && !nb_sys_streams_active) {
 			ctx->check_eos_state = 1;
 		}
 		if (ctx->check_eos_state == 1) {
@@ -711,8 +711,24 @@ static GF_Err compose_initialize(GF_Filter *filter)
 		if (gui_path)
 			gf_sc_connect_from_time_ex(ctx, gui_path, 0, 0, 0, NULL);
 	}
+	else if (!ctx->player && ctx->src) {
+		gf_sc_connect_from_time_ex(ctx, ctx->src, 0, 0, 0, NULL);
+	}
 	return GF_OK;
 }
+
+GF_FilterProbeScore compose_probe_url(const char *url, const char *mime)
+{
+	//check all our builtin URL schemes
+	if (!strnicmp(url, "mosaic://", 9)) {
+		return GF_FPROBE_FORCE;
+	}
+	else if (!strnicmp(url, "views://", 8)) {
+		return GF_FPROBE_FORCE;
+	}
+	return GF_FPROBE_NOT_SUPPORTED;
+}
+
 
 #define OFFS(_n)	#_n, offsetof(GF_Compositor, _n)
 static GF_FilterArgs CompositorArgs[] =
@@ -834,6 +850,7 @@ static GF_FilterArgs CompositorArgs[] =
 	"", GF_PROP_UINT, "none", "none|point|strip", GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(nbviews), "number of views to use in stereo mode", GF_PROP_UINT, "0", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(stereo), "stereo output type. If your graphic card does not support OpenGL shaders, only `top` and `side` modes will be available\n"\
+		"- none: no stereo\n"\
 		"- side: images are displayed side by side from left to right\n"\
 		"- top: images are displayed from top (laft view) to bottom (right view)\n"\
 		"- hmd: same as side except that view aspect ratio is not changed\n"\
@@ -895,6 +912,7 @@ static GF_FilterArgs CompositorArgs[] =
 				"- yes: always loads a graphics driver. Output pixel format will be RGB\n"\
 				"- auto: decides based on the loaded content"\
 			, GF_PROP_UINT, "auto", "no|yes|auto", GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -953,9 +971,15 @@ const GF_FilterRegister CompositorFilterRegister = {
 	"If 3D graphics are used or display driver is forced, OpenGL will be used on offscreen surface and the output packet will be an OpenGL texture.\n"
 	"\n"
 	"# Specific URL syntaxes\n"
-	"The compositor accepts any URL type supported by GPAC. It also accepts the following syntaxes for URLs:\n"
-	"- views: creates an auto-stereo scene of N views from `views://v1:.:vN`. vN can be any type of URL supported by GPAC.\n"
-	"- mosaic: creates a mosaic of N views from `mosaic://v1:.:vN`. vN can be any type of URL supported by GPAC."
+	"The compositor accepts any URL type supported by GPAC. It also accepts the following schemes for URLs:\n"
+	"- views:// : creates an auto-stereo scene of N views from `views://v1:.:vN`. vN can be any type of URL supported by GPAC.\n"
+	"- mosaic:// : creates a mosaic of N views from `mosaic://v1:.:vN`. vN can be any type of URL supported by GPAC.\n"
+	"\n"
+	"The compositor can act as a source filter when the [-src]() option is explicitly set:\n"
+	"EX gpac compositor:src=source.mp4 vout\n"
+	"\n"
+	"The compositor can act as a source filter when the source url uses one of the compositor buildin protocol schemes:\n"
+	"EX gpac -i mosaic://URL1:URL2 vout\n"
 	"\n"
 	)
 	.private_size = sizeof(GF_Compositor),
@@ -969,7 +993,8 @@ const GF_FilterRegister CompositorFilterRegister = {
 	.process_event = compose_process_event,
 	.configure_pid = compose_configure_pid,
 	.reconfigure_output = compose_reconfig_output,
-	.update_arg = compose_update_arg
+	.update_arg = compose_update_arg,
+	.probe_url = compose_probe_url,
 };
 
 const GF_FilterRegister *compose_filter_register(GF_FilterSession *session)

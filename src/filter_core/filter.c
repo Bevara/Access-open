@@ -202,6 +202,7 @@ GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg,
 	filter->blacklisted = gf_list_new();
 	filter->destination_filters = gf_list_new();
 	filter->destination_links = gf_list_new();
+	filter->temp_input_pids = gf_list_new();
 
 	filter->bundle_idx_at_resolution = -1;
 	filter->cap_idx_at_resolution = -1;
@@ -243,7 +244,7 @@ GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg,
 		char *all_args;
 		const char *dbsep;
 		char *localarg_marker;
-		u32 nb_db_sep=0;
+		u32 nb_db_sep=0, src_arg_len;
 		char szDBSep[3];
 		Bool insert_escape = GF_FALSE;
 		u32 len = 2 + (u32) strlen(src_striped) + (u32) strlen(dst_striped);
@@ -272,6 +273,11 @@ GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg,
 		all_args = gf_malloc(sizeof(char)*(len+nb_db_sep));
 		if (!nb_db_sep) {
 			szDBSep[1] = 0;
+		}
+		//src_striped is ending with our seperator, don't insert a new one
+		src_arg_len = (u32)strlen(src_striped);
+		if (src_arg_len && (src_striped[src_arg_len-1] == filter->session->sep_args)) {
+			szDBSep[0] = 0;
 		}
 
 		if (insert_escape) {
@@ -432,6 +438,8 @@ void gf_filter_del(GF_Filter *filter)
 	gf_list_del(filter->destination_filters);
 	gf_list_del(filter->destination_links);
 	gf_list_del(filter->source_filters);
+	gf_list_del(filter->temp_input_pids);
+
 	gf_list_del(filter->input_pids);
 	gf_fq_del(filter->tasks, task_del);
 	gf_fq_del(filter->pending_pids, NULL);
@@ -495,6 +503,12 @@ void gf_filter_del(GF_Filter *filter)
 		gf_free(filter->iname);
 #endif
 
+	if (filter->freg && (filter->freg->flags & GF_FS_REG_CUSTOM)) {
+		if (! (filter->freg->flags & GF_FS_REG_SCRIPT))
+			if (filter->forced_caps) gf_free( (void *) filter->forced_caps);
+		gf_free( (char *) filter->freg->name);
+		gf_free( (void *) filter->freg);
+	}
 	gf_free(filter);
 }
 
@@ -689,20 +703,21 @@ static void gf_filter_set_arg(GF_Filter *filter, const GF_FilterArgs *a, GF_Prop
 		break;
 	case GF_PROP_STRING_LIST:
 		if (a->offset_in_private + sizeof(void *) <= filter->freg->private_size) {
-			GF_List *l = *(GF_List **)ptr;
-			if (l) {
-				while (gf_list_count(l)) {
-					char *s = gf_list_pop_back(l);
-					gf_free(s);
-				}
-				gf_list_del(l);
+			u32 k;
+			GF_PropStringList *l = (GF_PropStringList *)ptr;
+			for (k=0; k<l->nb_items; k++) {
+				gf_free(l->vals[k]);
 			}
+			if (l->vals) gf_free(l->vals);
 			//we don't clone since we don't free the string at the caller site
-			*(GF_List **)ptr = argv->value.string_list;
+			*l = argv->value.string_list;
 			res = GF_TRUE;
 		}
 		break;
 	case GF_PROP_UINT_LIST:
+	case GF_PROP_SINT_LIST:
+	case GF_PROP_VEC2I_LIST:
+		//use uint_list as base type for lists
 		if (a->offset_in_private + sizeof(void *) <= filter->freg->private_size) {
 			GF_PropUIntList *l = (GF_PropUIntList *)ptr;
 			if (l->vals) gf_free(l->vals);
@@ -806,38 +821,12 @@ static GF_PropertyValue gf_filter_parse_prop_solve_env_var(GF_Filter *filter, u3
 		}
 	}
 	else if (!strnicmp(value, "$GJS", 4)) {
-		Bool found = GF_FALSE;
-		const char *all_dirs = gf_opts_get_key("core", "js-dirs");
-		if (all_dirs) {
-			const char *dirs = all_dirs;
-			while (dirs && dirs[0]) {
-				char *sep = strchr(dirs, ',');
-				if (sep) {
-					u32 cplen = (u32) (sep-dirs);
-					if (cplen>=GF_MAX_PATH) cplen = GF_MAX_PATH-1;
-					strncpy(szPath, dirs, cplen);
-					szPath[cplen]=0;
-					dirs = sep+1;
-				} else {
-					strcpy(szPath, dirs);
-				}
-				if (!strcmp(szPath, "$GJS")) {
-					gf_opts_default_shared_directory(szPath);
-					strcat(szPath, "/scripts/jsf");
-				}
-				strcat(szPath, value+4);
-				if (gf_file_exists(szPath)) {
-					value = szPath;
-					found = GF_TRUE;
-					break;
-				}
-				if (!sep) break;
-			}
-			if (!found) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed solve to %s in GPAC script directories %s, file not found\n", value, all_dirs));
-			}
-		} else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to query GPAC shared resource directory location\n"));
+		Bool gf_fs_solve_js_script(char *szPath, const char *file_name, const char *file_ext);
+
+		Bool found = gf_fs_solve_js_script(szPath, value+4, NULL);
+
+		if (!found) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed solve to %s in GPAC script directories, file not found\n", value));
 		}
 	}
 	else if (!strnicmp(value, "$GLANG", 6)) {
@@ -1112,6 +1101,9 @@ static void filter_parse_dyn_args(GF_Filter *filter, const char *args, GF_Filter
 			while (args[0] == filter->session->sep_args) {
 				args++;
 			}
+			if (!args[0])
+				break;
+
 			sep = (char *) args + 1;
 			while (1) {
 				sep = strchr(sep, filter->session->sep_args);
@@ -1181,7 +1173,20 @@ static void filter_parse_dyn_args(GF_Filter *filter, const char *args, GF_Filter
 						}
 
 					} else {
-						char *sep2 = strstr(sep+3, "::");
+						//loog for '::' vs ':gfopt' and ':gpac:' - if '::' appears before these, jump to '::'
+						char *sep2 = strstr(sep+3, ":gfopt:");
+						char *sep3 = strstr(sep+3, szEscape);
+						if (sep2 && sep3 && sep2<sep3)
+							sep3 = sep2;
+						else if (!sep3)
+							sep3 = sep2;
+
+						sep2 = strstr(sep+3, "::");
+						if (sep2 && sep3 && sep3<sep2)
+							sep2 = sep3;
+						else if (sep2)
+							opaque_arg = GF_TRUE; //skip an extra ':' at the end of the arg parsing
+
 						//escape sequence present after this argument, use it
 						if (sep2) {
 							sep = sep2;
@@ -3121,6 +3126,15 @@ GF_Err gf_filter_override_caps(GF_Filter *filter, const GF_FilterCapability *cap
 }
 
 GF_EXPORT
+GF_Err gf_filter_act_as_sink(GF_Filter *filter)
+{
+	if (!filter) return GF_BAD_PARAM;
+	filter->act_as_sink = GF_TRUE;
+	return GF_OK;
+}
+
+
+GF_EXPORT
 void gf_filter_pid_init_play_event(GF_FilterPid *pid, GF_FilterEvent *evt, Double start, Double speed, const char *log_name)
 {
 	u32 pmode = GF_PLAYBACK_MODE_NONE;
@@ -3173,6 +3187,7 @@ void gf_filter_pid_init_play_event(GF_FilterPid *pid, GF_FilterEvent *evt, Doubl
 	}
 }
 
+GF_EXPORT
 void gf_filter_set_max_extra_input_pids(GF_Filter *filter, u32 max_extra_pids)
 {
 	if (filter) filter->max_extra_pids = max_extra_pids;
@@ -3183,7 +3198,7 @@ u32 gf_filter_get_max_extra_input_pids(GF_Filter *filter)
 	if (filter) return filter->max_extra_pids;
 	return 0;
 }
-
+GF_EXPORT
 Bool gf_filter_block_enabled(GF_Filter *filter)
 {
 	if (!filter) return GF_FALSE;
@@ -3428,10 +3443,11 @@ static Bool gf_filter_get_arg_internal(GF_Filter *filter, const char *arg_name, 
 		case GF_PROP_NAME:
 			p.value.ptr = * (char **) ((char *)filter->filter_udta + arg->offset_in_private);
 			break;
+		//use uint_list as base type for lists
 		case GF_PROP_STRING_LIST:
-			p.value.string_list = * (GF_List **) ((char *)filter->filter_udta + arg->offset_in_private);
-			break;
 		case GF_PROP_UINT_LIST:
+		case GF_PROP_SINT_LIST:
+		case GF_PROP_VEC2I_LIST:
 			p.value.uint_list = * (GF_PropUIntList *) ((char *)filter->filter_udta + arg->offset_in_private);
 			break;
 		case GF_PROP_PIXFMT:
@@ -3476,7 +3492,7 @@ Bool gf_filter_get_arg(GF_Filter *filter, const char *arg_name, GF_PropertyValue
 GF_EXPORT
 Bool gf_filter_is_supported_mime(GF_Filter *filter, const char *mime)
 {
-	return gf_fs_mime_supported(filter->session, mime);
+	return gf_fs_is_supported_mime(filter->session, mime);
 }
 
 GF_EXPORT
@@ -3791,6 +3807,14 @@ GF_FilterArgs *gf_filter_get_args(GF_Filter *filter)
 }
 
 GF_EXPORT
+const GF_FilterCapability *gf_filter_get_caps(GF_Filter *filter, u32 *nb_caps)
+{
+	if (!filter || !filter->forced_caps || !nb_caps) return NULL;
+	*nb_caps = filter->nb_forced_caps;
+	return filter->forced_caps;
+}
+
+GF_EXPORT
 GF_Filter *gf_filter_load_filter(GF_Filter *filter, const char *name, GF_Err *err_code)
 {
 	if (!filter) return NULL;
@@ -3815,6 +3839,7 @@ Bool gf_filter_is_alias(GF_Filter *filter)
 \param filter target filter
 \return GF_TRUE if some connection tasks are pending, GF_FALSE otherwise
 */
+GF_EXPORT
 Bool gf_filter_connections_pending(GF_Filter *filter)
 {
 	u32 i, count;
@@ -3884,3 +3909,111 @@ GF_Err gf_filter_set_event_target(GF_Filter *filter, Bool enable_events)
 	return GF_OK;
 }
 
+GF_EXPORT
+GF_Err gf_filter_push_caps(GF_Filter *filter, u32 code, GF_PropertyValue *value, const char *name, u32 flags, u8 priority)
+{
+	u32 nb_caps;
+	GF_FilterCapability *caps;
+	if (! (filter->freg->flags & GF_FS_REG_CUSTOM)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to push cap on non custom filter %s\n", filter->freg->name));
+		return GF_BAD_PARAM;
+	}
+	caps = (GF_FilterCapability *)filter->forced_caps;
+	nb_caps = filter->nb_forced_caps;
+	caps = gf_realloc(caps, sizeof(GF_FilterCapability)*(nb_caps+1) );
+	if (!caps) return GF_OUT_OF_MEM;
+	caps[nb_caps].code = code;
+	caps[nb_caps].val = *value;
+	caps[nb_caps].name = name ? gf_strdup(name) : NULL;
+	caps[nb_caps].priority = priority;
+	caps[nb_caps].flags = flags;
+	filter->nb_forced_caps++;
+	filter->forced_caps = caps;
+	return GF_OK;
+}
+
+GF_EXPORT
+GF_Err gf_filter_set_process_ckb(GF_Filter *filter, GF_Err (*process_cbk)(GF_Filter *filter) )
+{
+	if (! (filter->freg->flags & GF_FS_REG_CUSTOM)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to assign filter callback on non custom filter %s\n", filter->freg->name));
+		return GF_BAD_PARAM;
+	}
+	((GF_FilterRegister *) filter->freg)->process = process_cbk;
+	return GF_OK;
+}
+
+
+GF_EXPORT
+GF_Err gf_filter_set_configure_ckb(GF_Filter *filter, GF_Err (*configure_cbk)(GF_Filter *filter, GF_FilterPid *PID, Bool is_remove) )
+{
+	if (! (filter->freg->flags & GF_FS_REG_CUSTOM)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to assign filter callback on non custom filter %s\n", filter->freg->name));
+		return GF_BAD_PARAM;
+	}
+	((GF_FilterRegister *) filter->freg)->configure_pid = configure_cbk;
+	return GF_OK;
+}
+
+GF_EXPORT
+GF_Err gf_filter_set_process_event_ckb(GF_Filter *filter, Bool (*process_event_cbk)(GF_Filter *filter, const GF_FilterEvent *evt) )
+{
+	if (! (filter->freg->flags & GF_FS_REG_CUSTOM)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to assign filter callback on non custom filter %s\n", filter->freg->name));
+		return GF_BAD_PARAM;
+	}
+	((GF_FilterRegister *) filter->freg)->process_event = process_event_cbk;
+	return GF_OK;
+}
+
+GF_EXPORT
+GF_Err gf_filter_set_reconfigure_output_ckb(GF_Filter *filter, GF_Err (*reconfigure_output_cbk)(GF_Filter *filter, GF_FilterPid *PID) )
+{
+	if (! (filter->freg->flags & GF_FS_REG_CUSTOM)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to assign filter callback on non custom filter %s\n", filter->freg->name));
+		return GF_BAD_PARAM;
+	}
+	((GF_FilterRegister *) filter->freg)->reconfigure_output = reconfigure_output_cbk;
+	return GF_OK;
+}
+
+GF_EXPORT
+GF_Err gf_filter_set_probe_data_cbk(GF_Filter *filter, const char * (*probe_data_cbk)(const u8 *data, u32 size, GF_FilterProbeScore *score) )
+{
+	if (! (filter->freg->flags & GF_FS_REG_CUSTOM)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to assign filter callback on non custom filter %s\n", filter->freg->name));
+		return GF_BAD_PARAM;
+	}
+	((GF_FilterRegister *) filter->freg)->probe_data = probe_data_cbk;
+	return GF_OK;
+}
+
+
+GF_EXPORT
+const GF_FilterArgs *gf_filter_enumerate_args(GF_Filter *filter, u32 idx)
+{
+	u32 i;
+	if (!filter) return NULL;
+	if (!filter->freg->args) return NULL;
+
+	for (i=0; i<=idx; i++) {
+		if (! filter->freg->args[i].arg_name)
+			return NULL;
+	}
+	return &filter->freg->args[idx];
+}
+
+GF_EXPORT
+GF_Err gf_filter_set_rt_udta(GF_Filter *filter, void *udta)
+{
+	if (!filter) return GF_BAD_PARAM;
+	filter->rt_udta = udta;
+	return GF_OK;
+}
+
+GF_EXPORT
+void *gf_filter_get_rt_udta(GF_Filter *filter)
+{
+	if (!filter) return NULL;
+	return filter->rt_udta;
+}

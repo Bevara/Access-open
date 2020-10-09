@@ -238,7 +238,7 @@ typedef struct
 	Bool ctrni;
 #endif
 	Bool mfra;
-	Bool forcesync;
+	Bool forcesync, refrag;
 	u32 tags;
 
 	//internal
@@ -1090,6 +1090,14 @@ static GF_Err mp4_mux_setup_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_tr
 			if (!tkw->track_num) {
 				tkw->track_num = gf_isom_new_track_from_template(ctx->file, 0, mtype, tkw->tk_timescale, p->value.data.ptr, p->value.data.size, udta_only);
 			}
+			//purge all track references we inject internally
+			if (tkw->track_num) {
+				gf_isom_remove_track_reference(ctx->file, tkw->track_num, GF_ISOM_REF_SCAL);
+				gf_isom_remove_track_reference(ctx->file, tkw->track_num, GF_ISOM_REF_SABT);
+				gf_isom_remove_track_reference(ctx->file, tkw->track_num, GF_ISOM_REF_TBAS);
+				gf_isom_remove_track_reference(ctx->file, tkw->track_num, GF_ISOM_REF_OREF);
+				gf_isom_remove_track_reference(ctx->file, tkw->track_num, GF_ISOM_REF_BASE);
+			}
 
 			if (!ctx->btrt) {
 				gf_isom_update_bitrate(ctx->file, tkw->track_num, 0, 0, 0, 0);
@@ -1414,6 +1422,7 @@ sample_entry_setup:
 		else
 			m_subtype = m_subtype_src;
 		comp_name = "MPEG-H Audio";
+		nb_chan = 0;
 		break;
 	case GF_CODECID_MHAS:
 		if ((m_subtype_src!=GF_ISOM_SUBTYPE_MH3D_MHM1) && (m_subtype_src!=GF_ISOM_SUBTYPE_MH3D_MHM2))
@@ -1421,6 +1430,7 @@ sample_entry_setup:
 		else
 			m_subtype = m_subtype_src;
 		comp_name = "MPEG-H AudioMux";
+		nb_chan = 0;
 		break;
 	case GF_CODECID_FLAC:
 		m_subtype = GF_ISOM_SUBTYPE_FLAC;
@@ -1838,8 +1848,12 @@ sample_entry_setup:
 		if (tkw->avcc) gf_odf_avc_cfg_del(tkw->avcc);
 
 		//not yet known
-		if (!dsi) return GF_OK;
+		if (!dsi && !enh_dsi) return GF_OK;
 
+		if (!dsi) {
+			dsi = enh_dsi;
+			enh_dsi = NULL;
+		}
 		tkw->avcc = gf_odf_avc_cfg_read(dsi->value.data.ptr, dsi->value.data.size);
 
 		if (needs_sample_entry) {
@@ -2284,6 +2298,15 @@ sample_entry_setup:
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error creating new DIMS sample description: %s\n", gf_error_to_string(e) ));
 			return e;
 		}
+	} else if (codec_id==GF_CODECID_MPHA) {
+		//not ready yet
+		if (!dsi) return GF_OK;
+
+		e = gf_isom_new_mpha_description(ctx->file, tkw->track_num, NULL, NULL, &tkw->stsd_idx, dsi->value.data.ptr, dsi->value.data.size);
+		if (e) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error creating new MPEG-H Audio sample description: %s\n", gf_error_to_string(e) ));
+			return e;
+		}
 	} else if (use_gen_sample_entry) {
 		u8 isor_ext_buf[14];
 		u32 len = 0;
@@ -2660,7 +2683,11 @@ sample_entry_done:
 		tkw->import_msg_header_done = GF_TRUE;
 		if (!imp_name) imp_name = comp_name;
 		if (sr) {
-			GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("%s %s - SampleRate %d Num Channels %d\n", dst_type, imp_name, sr, nb_chan));
+			if (nb_chan) {
+				GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("%s %s - SampleRate %d Num Channels %d\n", dst_type, imp_name, sr, nb_chan));
+			} else {
+				GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("%s %s - SampleRate %d\n", dst_type, imp_name, sr));
+			}
 		} else if (is_text_subs) {
 			if (txt_fsize || txt_font) {
 				GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("%s %s - Text track %d x %d font %s (size %d) layer %d\n", dst_type, imp_name, width, height, txt_font ? txt_font : "unspecified", txt_fsize, z_order));
@@ -2682,7 +2709,7 @@ sample_entry_done:
 				GF_NALUFFParam *sl = gf_list_get(tkw->svcc->sequenceParameterSets, i);
 				u8 nal_type = sl->data[0] & 0x1F;
 				Bool is_subseq = (nal_type == GF_AVC_NALU_SVC_SUBSEQ_PARAM) ? GF_TRUE : GF_FALSE;
-				s32 ps_idx = gf_media_avc_read_sps(sl->data, sl->size, &avc, is_subseq, NULL);
+				s32 ps_idx = gf_avc_read_sps(sl->data, sl->size, &avc, is_subseq, NULL);
 				if (ps_idx>=0) {
 					GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("SVC Detected - SSPS ID %d - frame size %d x %d\n", ps_idx-GF_SVC_SSPS_ID_SHIFT, avc.sps[ps_idx].width, avc.sps[ps_idx].height ));
 
@@ -3890,6 +3917,16 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 			return e;
 		}
 
+		if (ctx->refrag) {
+			const GF_PropertyValue *p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_ISOM_TREX_TEMPLATE);
+			if (p) {
+				gf_isom_setup_track_fragment_template(ctx->file, tkw->track_id, p->value.data.ptr, p->value.data.size, ctx->nofragdef);
+			} else if (!ctx->nofragdef) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] Refragmentation with default track fragment flags signaling but no TREX found in source track %d, using defaults computed from PID, result might be broken\n", tkw->track_id));
+			}
+		}
+
+
 		if (ctx->tfdt.den && ctx->tfdt.num) {
 			tkw->offset_dts = ctx->tfdt.num * tkw->tk_timescale;
 			tkw->offset_dts /= ctx->tfdt.den;
@@ -3924,6 +3961,9 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 		p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_DASH_SEGMENTS);
 		if (p && (p->value.uint>nb_segments))
 			nb_segments = p->value.uint;
+
+		if (!ctx->dash_mode)
+			gf_isom_purge_track_reference(ctx->file, tkw->track_num);
 	}
 
 	if (max_dur.num) {
@@ -4548,6 +4588,8 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Unable to start new fragment: %s\n", gf_error_to_string(e) ));
 				return e;
 			}
+			gf_isom_set_next_moof_number(ctx->file, ctx->msn);
+			ctx->msn++;
 			if (ctx->sdtp_traf)
 				gf_isom_set_fragment_option(ctx->file, tkw->track_id, GF_ISOM_TRAF_USE_SAMPLE_DEPS_BOX, ctx->sdtp_traf);
 		}
@@ -5341,6 +5383,8 @@ static GF_Err mp4_mux_done(GF_Filter *filter, GF_MP4MuxCtx *ctx, Bool is_final)
 			gf_isom_update_edit_list_duration(ctx->file, tkw->track_num);
 		}
 
+		gf_isom_purge_track_reference(ctx->file, tkw->track_num);
+		
 		if (ctx->importer && ctx->idur.num && ctx->idur.den) {
 			u64 mdur = gf_isom_get_media_duration(ctx->file, tkw->track_num);
 			u64 pdur = gf_isom_get_track_duration(ctx->file, tkw->track_num);
@@ -5364,7 +5408,7 @@ static GF_Err mp4_mux_done(GF_Filter *filter, GF_MP4MuxCtx *ctx, Bool is_final)
 
 			if (has_bframes && (tkw->media_profile_level <= 3)) {
 				PL = 0xF5;
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] Indicated profile doesn't include B-VOPs - forcing %s", gf_m4v_get_profile_name((u8) PL) ));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] Indicated profile doesn't include B-VOPs - forcing %s\n", gf_m4v_get_profile_name((u8) PL) ));
 				force_rewrite = GF_TRUE;
 			}
 			if (PL != tkw->media_profile_level) {
@@ -5563,7 +5607,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	"- no: paramater sets are not inband, several sample descriptions might be created\n"
 	"- all: paramater sets are inband, no param sets in sample description\n"
 	"- both: paramater sets are inband, signaled as inband, and also first set is kept in sample descripton\n"
-	"- mix: creates non-standard files using single sample entry with first PSs found, and moves other PS inband", GF_PROP_UINT, "no", "no|all|both|mix|", 0},
+	"- mix: creates non-standard files using single sample entry with first PSs found, and moves other PS inband", GF_PROP_UINT, "no", "no|all|both|mix", 0},
 	{ OFFS(store), "file storage mode\n"
 	"- inter: perform precise interleave of the file using [-cdur]() (requires temporary storage of all media)\n"
 	"- flat: write samples as they arrive and moov at end (fastest mode)\n"
@@ -5650,6 +5694,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	{ OFFS(deps), "add samples dependencies information", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(mfra), "enable movie fragment random access when fragmenting (ignored when dashing)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(forcesync), "force all SAP types to be considered sync samples (might produce non-conformant files)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(refrag), "indicate to use track fragment defaults from initial file if any rather than computing them from PID propertyes (used when processing standalone segments/fragments)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(tags), "tag injection mode\n"
 			"- none: do not inject tags\n"
 			"- strict: only inject recognized itunes tags\n"

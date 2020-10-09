@@ -64,11 +64,11 @@ void lock_filters(boolean do_lock);
 */
 JSFSFilter get_filter(unsigned long index);
 
-/*! returns the JSFSFilter object for a given filter \ref iname. 
+/*! returns the JSFSFilter object for a given filter iname. 
 \param iname the iname of filter to query 
 \return the filter object, null if none found
 */
-JSFSFilter get_filter(unsigned long index);
+JSFSFilter get_filter(DOMString iname);
 
 /*! sends the given string to the remotery client(s)
 \param command the command to send
@@ -80,7 +80,7 @@ void rmt_send(DOMString command);
 \param callback the callback function to call. This function takes one parameter which is the text being received
 \return error code if any
 */
-void rmt_set_fun(function callback);
+void set_rmt_fun(function callback);
 
 /*! inserts a filter in graph
 \param filter_to_add string describin the filter to add, can be in the form "src=" for sources, "dst=" for sinks or regular string for filters.
@@ -90,14 +90,19 @@ void rmt_set_fun(function callback);
 */
 JSFSFilter add_filter(DOMString filter_to_add, optional JSFSFilter link_from=null, optional DOMString link_args=null);
 
-/*! sets callback function to get notifications upon each new filter creation. The callback function is passed a single parameter, the filter object*/
+/*! sets callback function to get notifications upon each new filter creation. 
+\param callback callback function - it is passed a single parameter, the filter object
+*/
 void set_new_filter_fun(function callback);
 
-/*! sets callback function to get notifications upon each filter destruction. The callback function is passed a single parameter, the filter object*/
+/*! sets callback function to get notifications upon each filter destruction.
+\param callback the callback function - it is passed a single parameter, the filter object
+*/
 void set_del_filter_fun(function callback);
 
-/*! sets callback function to get events being sent back to application (see \ref gf_fs_set_ui_callback). The callback function will have a single parameter set, an event instance of FilterEvent interface. The return value of the function should be as indicated for each event type*/
-boolean set_event_fun(function callback);
+/*! sets callback function to get events being sent back to application (see \ref gf_fs_set_ui_callback). 
+\param callback callback function - it is passed a single parameter set, an event instance of FilterEvent interface. The return value of the function should be as indicated for each event type*/
+void set_event_fun(function callback);
 
 /*! fires a given event on all registered user event if no filter is specified, or on the filter
 \param evt the event to send
@@ -109,6 +114,14 @@ boolean fire_event(FilterEvent evt, optional JSFSFilter *filter=null, optional b
 /*! enables session reporting - see \ref gf_fs_enable_reporting. 
 \param enable enables reporting if true*/
 void reporting(boolean enable);
+
+/*! creates a new custom JS filter. This filter will share the same script context as the filter session script - see \ref JSFilter
+\note A custom filter cannot use default arguments, and will not have the initialize callback function called.
+
+\param name name for the filter
+\return new filter
+*/
+JSFilter new_filter(DOMString name=NULL);
 
 /*! number of filters in the session - see \ref gf_fs_get_filters_count. 
 This number is only valid when session is locked*/

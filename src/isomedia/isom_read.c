@@ -358,7 +358,7 @@ static GF_Err isom_create_init_from_mem(const char *fileName, GF_ISOFile *file)
 			nal_type = nal[0] & 0x1F;
 			if (nal_type == GF_AVC_NALU_SEQ_PARAM) {
 /*				AVCState avcc;
-				u32 idx = gf_media_avc_read_sps(slc->data, slc->size, &avcc, 0, NULL);
+				u32 idx = gf_avc_read_sps(slc->data, slc->size, &avcc, 0, NULL);
 				avc->avc_config->config->profile_compatibility = avcc.sps[idx].prof_compat;
 				avc->avc_config->config->AVCProfileIndication = avcc.sps[idx].profile_idc;
 				avc->avc_config->config->AVCLevelIndication = avcc.sps[idx].level_idc;
@@ -1114,6 +1114,24 @@ s32 gf_isom_get_reference_count(GF_ISOFile *movie, u32 trackNumber, u32 referenc
 	if ( (movie->LastError = Track_FindRef(trak, referenceType, &dpnd)) ) return -1;
 	if (!dpnd) return 0;
 	return dpnd->trackIDCount;
+}
+
+
+//Return the number of track references of a track for a given ReferenceType
+//return 0 if error
+GF_EXPORT
+const GF_ISOTrackID *gf_isom_enum_track_references(GF_ISOFile *movie, u32 trackNumber, u32 idx, u32 *referenceType, u32 *referenceCount)
+{
+	GF_TrackBox *trak;
+	GF_TrackReferenceTypeBox *dpnd;
+	trak = gf_isom_get_track_from_file(movie, trackNumber);
+	if (!trak) return NULL;
+	if (!trak->References) return NULL;
+	dpnd = gf_list_get(trak->References->child_boxes, idx);
+	if (!dpnd) return NULL;
+	*referenceType = dpnd->reference_type;
+	*referenceCount = dpnd->trackIDCount;
+	return dpnd->trackIDs;
 }
 
 
@@ -5063,6 +5081,24 @@ GF_Err gf_isom_get_sidx_duration(GF_ISOFile *movie, u64 *sidx_dur, u32 *sidx_tim
 	}
 	*sidx_dur = dur;
 	return GF_OK;
+}
+
+GF_EXPORT
+const u8 *gf_isom_get_mpegh_compatible_profiles(GF_ISOFile *movie, u32 trackNumber, u32 sampleDescIndex, u32 *nb_compat_profiles)
+{
+	GF_SampleEntryBox *ent;
+	GF_MHACompatibleProfilesBox *mhap;
+	GF_TrackBox *trak;
+
+	trak = gf_isom_get_track_from_file(movie, trackNumber);
+	if (!trak || !trak->Media || !nb_compat_profiles) return NULL;
+	*nb_compat_profiles = 0;
+	ent = gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, sampleDescIndex-1);
+	if (!ent) return NULL;
+	mhap = (GF_MHACompatibleProfilesBox *) gf_isom_box_find_child(ent->child_boxes, GF_ISOM_BOX_TYPE_MHAP);
+	if (!mhap) return NULL;
+	*nb_compat_profiles = mhap->num_profiles;
+	return mhap->compat_profiles;
 }
 
 #endif /*GPAC_DISABLE_ISOM*/

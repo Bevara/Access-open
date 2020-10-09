@@ -580,7 +580,7 @@ u32 gf_codecid_4cc_type(GF_CodecID codecid);
 \param cname target codec short name
 \return codecid codec ID
 */
-GF_CodecID gf_codec_parse(const char *cname);
+GF_CodecID gf_codecid_parse(const char *cname);
 
 /*! Gets the raw file ext (one or more, | separated) for the given codecid
 \param codecid codec ID
@@ -835,11 +835,23 @@ u64 gf_audio_fmt_get_layout_from_cicp(u32 cicp_layout);
 */
 const char *gf_audio_fmt_get_layout_name_from_cicp(u32 cicp_layout);
 
+/*! get channel layout name
+\param chan_layout channel layout mask
+\return name of layout of "unknown" if unknown
+*/
+const char *gf_audio_fmt_get_layout_name(u64 chan_layout);
+
 /*! get CICP layout value from channel layout mask 
 \param chan_layout channel layout mask
 \return CICP code point or 255 if unknown
 */
 u32 gf_audio_fmt_get_cicp_from_layout(u64 chan_layout);
+
+/*! get channel count from channel  layout
+\param chan_layout channel layout mask
+\return number of channels in this layout
+*/
+u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout);
 
 /*! Color primaries as defined by ISO/IEC 23001-8 / 23091-2
   */

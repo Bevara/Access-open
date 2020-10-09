@@ -184,7 +184,7 @@ void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, GF_Filt
 		group->pto_setup = 1;
 	}
 
-	dst_pck = gf_filter_pck_new_ref(out_pid, NULL, 0, in_pck);
+	dst_pck = gf_filter_pck_new_ref(out_pid, 0, 0, in_pck);
 	//this will copy over clock info for PCR in TS
 	gf_filter_pck_merge_properties(in_pck, dst_pck);
 	gf_filter_pck_set_dts(dst_pck, dts);
@@ -280,10 +280,10 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 
 	group->seg_filter_src = gf_filter_connect_source(ctx->filter, sURL, NULL, GF_FALSE, &e);
 	if (!group->seg_filter_src) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASHDmx] group %d error locating plugin for segment - mime type %s name %s: %s\n", group_index, mime, sURL, gf_error_to_string(e) ));
 		gf_free(sURL);
 		gf_free(group);
 		gf_dash_set_group_udta(ctx->dash, group_index, NULL);
-		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASHDmx] group %d error locating plugin for segment - mime type %s name %s\n", group_index, mime, sURL));
 		return e;
 	}
 	GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASHDmx] setting up group %d from %s\n", group->idx, sURL));
@@ -805,12 +805,11 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 
 	if (ctx->use_bmin) {
 		u32 max = gf_dash_get_min_buffer_time(ctx->dash);
-		gf_filter_pid_set_property_str(opid, "BufferLength", &PROP_UINT(max));
+		gf_filter_pid_set_property(opid, GF_PROP_PID_PLAY_BUFFER, &PROP_UINT(max));
 	}
 
 	memset(&qualities, 0, sizeof(GF_PropertyValue));
 	qualities.type = GF_PROP_STRING_LIST;
-	qualities.value.string_list = gf_list_new();
 
 	count = gf_dash_group_get_num_qualities(ctx->dash, group_idx);
 	for (i=0; i<count; i++) {
@@ -881,7 +880,10 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 			e = gf_dynstrcat(&qdesc, szInfo, "::");
 			if (e) break;
 		}
-		gf_list_add(qualities.value.string_list, qdesc);
+		qualities.value.string_list.vals = gf_realloc(qualities.value.string_list.vals, sizeof(char *) * (qualities.value.string_list.nb_items+1));
+
+		qualities.value.string_list.vals[qualities.value.string_list.nb_items] = qdesc;
+		qualities.value.string_list.nb_items++;
 		qdesc = NULL;
 	}
 	gf_filter_pid_set_info_str(opid, "has:qualities", &qualities);

@@ -151,9 +151,7 @@ endif
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/gui/extensions"
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/shaders"
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/scripts"
-	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/res/gpac.mp4 $(DESTDIR)$(prefix)/share/gpac/res/
-	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/res/gpac_cfg_test.mp4 $(DESTDIR)$(prefix)/share/gpac/res/
-	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/res/gpac.png $(DESTDIR)$(prefix)/share/gpac/res/
+	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/vis"
 	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/default.cfg $(DESTDIR)$(prefix)/share/gpac/
 
 ifneq ($(CONFIG_DARWIN),yes)
@@ -167,18 +165,22 @@ endif
 	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/gui/gui.bt "$(DESTDIR)$(prefix)/share/gpac/gui/"
 	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/gui/gui.js "$(DESTDIR)$(prefix)/share/gpac/gui/"
 	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/gui/gwlib.js "$(DESTDIR)$(prefix)/share/gpac/gui/"
-	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/scripts/webvtt-renderer.js "$(DESTDIR)$(prefix)/share/gpac/scripts/"
-	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/scripts/ttml-renderer.js "$(DESTDIR)$(prefix)/share/gpac/scripts/"
 
 
 ifeq ($(CONFIG_DARWIN),yes)
 	cp $(SRC_PATH)/share/gui/icons/* "$(DESTDIR)$(prefix)/share/gpac/gui/icons/"
 	cp -R $(SRC_PATH)/share/gui/extensions/* "$(DESTDIR)$(prefix)/share/gpac/gui/extensions/"
 	cp $(SRC_PATH)/share/shaders/* "$(DESTDIR)$(prefix)/share/gpac/shaders/"
+	cp -R $(SRC_PATH)/share/scripts/* "$(DESTDIR)$(prefix)/share/gpac/scripts/"
+	cp $(SRC_PATH)/share/res/* "$(DESTDIR)$(prefix)/share/gpac/res/"
+	cp -R $(SRC_PATH)/share/vis/* "$(DESTDIR)$(prefix)/share/gpac/vis/"
 else
 	cp --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/gui/icons/* $(DESTDIR)$(prefix)/share/gpac/gui/icons/
 	cp -R --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/gui/extensions/* $(DESTDIR)$(prefix)/share/gpac/gui/extensions/
 	cp --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/shaders/* $(DESTDIR)$(prefix)/share/gpac/shaders/
+	cp -R --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/scripts/* $(DESTDIR)$(prefix)/share/gpac/scripts/
+	cp --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/res/* $(DESTDIR)$(prefix)/share/gpac/res/
+	cp -R --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/vis/* $(DESTDIR)$(prefix)/share/gpac/vis/
 endif
 
 lninstall:
@@ -198,10 +200,14 @@ ifeq ($(CONFIG_DARWIN),yes)
 	ln -s $(BUILD_PATH)/bin/gcc/libgpac$(DYN_LIB_SUFFIX) $(DESTDIR)$(prefix)/$(lib_dir)/libgpac.$(VERSION_SONAME)$(DYN_LIB_SUFFIX)
 	ln -sf $(DESTDIR)$(prefix)/$(lib_dir)/libgpac.$(VERSION_SONAME)$(DYN_LIB_SUFFIX) $(DESTDIR)$(prefix)/$(lib_dir)/libgpac.$(VERSION_MAJOR)$(DYN_LIB_SUFFIX)
 	ln -sf $(DESTDIR)$(prefix)/$(lib_dir)/libgpac.$(VERSION_SONAME)$(DYN_LIB_SUFFIX) $(DESTDIR)$(prefix)/$(lib_dir)/libgpac$(DYN_LIB_SUFFIX)
+
+	ln -s $(BUILD_PATH)/bin/gcc/ $(DESTDIR)$(prefix)/$(lib_dir)/gpac
+	ln -s $(SRC_PATH)/share/ $(DESTDIR)$(prefix)/share/gpac
 else
 	ln -s $(BUILD_PATH)/bin/gcc/libgpac$(DYN_LIB_SUFFIX).$(VERSION_SONAME) $(DESTDIR)$(prefix)/$(lib_dir)/libgpac$(DYN_LIB_SUFFIX).$(VERSION_SONAME)
 	ln -sf $(DESTDIR)$(prefix)/$(lib_dir)/libgpac$(DYN_LIB_SUFFIX).$(VERSION_SONAME) $(DESTDIR)$(prefix)/$(lib_dir)/libgpac.so.$(VERSION_MAJOR)
 	ln -sf $(DESTDIR)$(prefix)/$(lib_dir)/libgpac$(DYN_LIB_SUFFIX).$(VERSION_SONAME) $(DESTDIR)$(prefix)/$(lib_dir)/libgpac.so
+	ln -s $(BUILD_PATH)/bin/gcc/ $(DESTDIR)$(prefix)/$(lib_dir)/gpac
 
 	ln -s $(SRC_PATH)/share/ $(DESTDIR)$(prefix)/share/gpac
 	ln -sf $(DESTDIR)$(prefix)/share/gpac/res/gpac.png $(DESTDIR)/usr/share/pixmaps/gpac.png

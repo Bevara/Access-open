@@ -1096,6 +1096,16 @@ GF_Err gf_isom_get_sample_for_media_time(GF_ISOFile *isom_file, u32 trackNumber,
 */
 u32 gf_isom_get_sample_from_dts(GF_ISOFile *isom_file, u32 trackNumber, u64 dts);
 
+
+/*! enumerates the type and references IDs of a track
+\param isom_file the target ISO file
+\param trackNumber the target track
+\param idx 0-based index of reference to query
+\param referenceType set to the four character code of the reference entry
+\param referenceCount set to the number of track ID references for  the reference entry
+\return list of track IDs, NULL if no references - do NOT modify !*/
+const GF_ISOTrackID *gf_isom_enum_track_references(GF_ISOFile *isom_file, u32 trackNumber, u32 idx, u32 *referenceType, u32 *referenceCount);
+
 /*! get the number of track references of a track for a given ReferenceType
 \param isom_file the target ISO file
 \param trackNumber the target track
@@ -1802,6 +1812,21 @@ GF_Err gf_isom_set_track_reference(GF_ISOFile *isom_file, u32 trackNumber, u32 r
 \return error if any
 */
 GF_Err gf_isom_remove_track_references(GF_ISOFile *isom_file, u32 trackNumber);
+
+/*! removes any track reference poiting to a non-existing track
+\param isom_file the target ISO file
+\param trackNumber the target track
+\return error if any
+*/
+GF_Err gf_isom_purge_track_reference(GF_ISOFile *isom_file, u32 trackNumber);
+
+/*! removes all track references of a given type
+\param isom_file the target ISO file
+\param trackNumber the target track
+\param ref_type the reference type to remove
+\return error if any
+*/
+GF_Err gf_isom_remove_track_reference(GF_ISOFile *isom_file, u32 trackNumber, u32 ref_type);
 
 /*! sets track handler name.
 \param isom_file the target ISO file
@@ -2591,7 +2616,7 @@ the specific codec (equivalent to 0xFF value in MPEG profiles)
 \param ProfileLevel the profile and level value to set
 \return error if any
 */
-GF_Err gf_isom_set_pl_indication(GF_ISOFile *isom_file, u8 PL_Code, GF_ISOProfileLevelType ProfileLevel);
+GF_Err gf_isom_set_pl_indication(GF_ISOFile *isom_file, GF_ISOProfileLevelType PL_Code, u8 ProfileLevel);
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 /*! sets the rootOD ID of the movie if you need it. By default, movies are created without root ODs
@@ -3537,6 +3562,32 @@ GF_Err gf_isom_get_tmcd_config(GF_ISOFile *isom_file, u32 trackNumber, u32 sampl
 \return error if any
 */
 GF_Err gf_isom_get_pcm_config(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, u32 *flags, u32 *pcm_size);
+
+
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+
+/*! creates a MPHA  sample description
+\param isom_file the target ISO file
+\param trackNumber the target track
+\param URLname URL value of the data reference, NULL if no data reference (media in the file)
+\param URNname URN value of the data reference, NULL if no data reference (media in the file)
+\param outDescriptionIndex set to the index of the created sample description
+\param dsi the MPEGH audio config (payload of mhaC box):  byte[0]=1 (config version) ,byte[1]=ProfileLevel,  byte[2]=channel layout, byte[3],byte[4]: the size of what follows the rest being a mpegh3daConfig
+\param dsi_size the size of the MPEGH audio config
+\return error if any
+*/
+GF_Err gf_isom_new_mpha_description(GF_ISOFile *isom_file, u32 trackNumber, const char *URLname, const char *URNname, u32 *outDescriptionIndex, u8 *dsi, u32 dsi_size);
+#endif
+
+/*! gets compatible profile list for mpegh entry
+\param isom_file the target ISO file
+\param trackNumber the target track
+\param sampleDescriptionIndex the target sample description index
+\param nb_compatible_profiles set to the number of compatible profiles returned
+\return array of compatible profiles, NULL if none found
+*/
+const u8 *gf_isom_get_mpegh_compatible_profiles(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, u32 *nb_compatible_profiles);
 
 /*! @} */
 
@@ -4909,6 +4960,7 @@ GF_ISOSample *gf_isom_xml_subtitle_to_sample(GF_GenericSubtitleSample *subt_samp
 */
 GF_Err gf_isom_xml_subtitle_sample_add_text(GF_GenericSubtitleSample *subt_samp, char *text_data, u32 text_len);
 
+
 #endif	/*GPAC_DISABLE_ISOM_WRITE*/
 
 /*! @} */
@@ -5665,7 +5717,7 @@ GF_Err gf_isom_add_meta_item_memory(GF_ISOFile *isom_file, Bool root_meta, u32 t
 \param sample_num number of sample to reference
 \return error if any
 */
-GF_Err gf_isom_add_meta_item_sample_ref(GF_ISOFile *file, Bool root_meta, u32 track_num, const char *item_name, u32 item_id, u32 item_type, const char *mime_type, const char *content_encoding, GF_ImageItemProperties *image_props, GF_ISOTrackID tk_id, u32 sample_num);
+GF_Err gf_isom_add_meta_item_sample_ref(GF_ISOFile *isom_file, Bool root_meta, u32 track_num, const char *item_name, u32 item_id, u32 item_type, const char *mime_type, const char *content_encoding, GF_ImageItemProperties *image_props, GF_ISOTrackID tk_id, u32 sample_num);
 
 /*! creates image item(s) from samples of a media track
 \param isom_file the target ISO file
@@ -5978,7 +6030,7 @@ enum {
 \param trackNumber the target track
 \param sampleNumber the target sample number
 \param is_rap set to GF_TRUE if sample is a rap (open gop), GF_FALSE otherwise
-\param has_roll set to GF_ISOM_SAMPLE_ROLL if sample has roll information, GF_ISOM_SAMPLE_PREROLL if sample has preroll information, GF_ISOM_SAMPLE_ROLL_NONE otherwise
+\param roll_type set to GF_ISOM_SAMPLE_ROLL if sample has roll information, GF_ISOM_SAMPLE_PREROLL if sample has preroll information, GF_ISOM_SAMPLE_ROLL_NONE otherwise
 \param roll_distance if sample has roll information, set to roll distance
 \return error if any*/
 GF_Err gf_isom_get_sample_rap_roll_info(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleNumber, Bool *is_rap, GF_ISOSampleRollType *roll_type, s32 *roll_distance);

@@ -57,7 +57,7 @@ typedef struct
 {
 	//options
 	char *dst, *user_agent;
-	GF_List *mounts;
+	GF_PropStringList mounts;
 	u32 port, firstport;
 	Bool xps;
 	u32 mtu;
@@ -321,7 +321,7 @@ static GF_Err rtspout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 
 	if (ctx->loop) {
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_PLAYBACK_MODE);
-		if (!p || (p->value.uint<GF_PLAYBACK_MODE_SEEK)) {
+		if (!p || (p->value.uint<GF_PLAYBACK_MODE_FASTFORWARD)) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTSPOut] PID %s cannot be seek, disabling loop\n", gf_filter_pid_get_name(pid) ));
 
 			sess->loop_disabled = GF_TRUE;
@@ -382,7 +382,7 @@ static GF_Err rtspout_initialize(GF_Filter *filter)
 	ip = ctx->ifce;
 
 	if (!ctx->dst) {
-		if (!ctx->mounts) {
+		if (! ctx->mounts.nb_items) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTSPOut] No root dir for server, cannot run\n" ));
 			return GF_BAD_PARAM;
 		}
@@ -721,8 +721,8 @@ static char *rtspout_get_local_res_path(GF_RTSPOutCtx *ctx, char *res_path)
 {
 	u32 i;
 	char *src_url=NULL;
-	for (i=0; i<gf_list_count(ctx->mounts); i++) {
-		char *mpoint = gf_list_get(ctx->mounts, i);
+	for (i=0; i<ctx->mounts.nb_items; i++) {
+		char *mpoint = ctx->mounts.vals[i];
 
 		gf_dynstrcat(&src_url, mpoint, NULL);
 		gf_dynstrcat(&src_url, res_path, "/");

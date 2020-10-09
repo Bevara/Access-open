@@ -2897,10 +2897,10 @@ static void gf_mpd_print_dasher_segments(FILE *out, GF_List *segments, s32 inden
 	gf_mpd_lf(out, indent);
 }
 
-static void gf_mpd_print_representation(GF_MPD_Representation const * const rep, FILE *out, Bool write_context, s32 indent)
+static void gf_mpd_print_representation(GF_MPD_Representation *rep, FILE *out, Bool write_context, s32 indent, u32 alt_mha_profile)
 {
 	u32 i;
-
+	char *bck_codecs = NULL;
 	gf_mpd_nl(out, indent);
 	gf_fprintf(out, "<Representation");
 	if (rep->id) gf_fprintf(out, " id=\"%s\"", rep->id);
@@ -2909,13 +2909,26 @@ static void gf_mpd_print_representation(GF_MPD_Representation const * const rep,
 		can_close = 1;
 	}
 */
-
+	if (alt_mha_profile) {
+		char szTmp[15], *sep;
+		bck_codecs = rep->codecs;
+		rep->codecs = gf_strdup(bck_codecs);
+		snprintf(szTmp, 14, "0x%02X", alt_mha_profile-1);
+		szTmp[14] = 0;
+		sep = strstr(rep->codecs, ".0x");
+		if (sep) strcpy(sep+1, szTmp);
+	}
 	gf_mpd_print_common_attributes(out, (GF_MPD_CommonAttributes*)rep);
 
 	if (rep->bandwidth) gf_fprintf(out, " bandwidth=\"%d\"", rep->bandwidth);
 	if (rep->quality_ranking) gf_fprintf(out, " qualityRanking=\"%d\"", rep->quality_ranking);
 	if (rep->dependency_id) gf_fprintf(out, " dependencyId=\"%s\"", rep->dependency_id);
 	if (rep->media_stream_structure_id) gf_fprintf(out, " mediaStreamStructureId=\"%s\"", rep->media_stream_structure_id);
+
+	if (bck_codecs) {
+		gf_free(rep->codecs);
+		rep->codecs = bck_codecs;
+	}
 
 
 	gf_fprintf(out, ">");
@@ -2963,11 +2976,19 @@ static void gf_mpd_print_representation(GF_MPD_Representation const * const rep,
 	gf_mpd_lf(out, indent);
 }
 
-static void gf_mpd_print_adaptation_set(GF_MPD_AdaptationSet *as, FILE *out, Bool write_context, s32 indent)
+static void gf_mpd_print_adaptation_set(GF_MPD_AdaptationSet *as, FILE *out, Bool write_context, s32 indent, u32 alt_mha_profile)
 {
 	u32 i;
 	GF_MPD_Representation *rep;
 	GF_MPD_other_descriptors *o_desc;
+
+	if (!alt_mha_profile && as->nb_alt_mha_profiles && as->alt_mha_profiles_only) {
+		for (i=0; i<as->nb_alt_mha_profiles; i++) {
+			gf_mpd_print_adaptation_set(as, out, write_context, indent, as->alt_mha_profiles[i] + 1);
+		}
+
+		return;
+	}
 
 	gf_mpd_nl(out, indent);
 	gf_fprintf(out, "<AdaptationSet");
@@ -3042,13 +3063,17 @@ static void gf_mpd_print_adaptation_set(GF_MPD_AdaptationSet *as, FILE *out, Boo
 
 	i=0;
 	while ((rep = (GF_MPD_Representation *)gf_list_enum(as->representations, &i))) {
-		gf_mpd_print_representation(rep, out, write_context, indent+1);
+		gf_mpd_print_representation(rep, out, write_context, indent+1, alt_mha_profile);
 	}
 	gf_mpd_nl(out, indent);
 	gf_fprintf(out, "</AdaptationSet>");
 	gf_mpd_lf(out, indent);
 
-
+	if (!alt_mha_profile) {
+		for (i=0; i<as->nb_alt_mha_profiles; i++) {
+			gf_mpd_print_adaptation_set(as, out, write_context, indent, as->alt_mha_profiles[i] + 1);
+		}
+	}
 }
 
 static void gf_mpd_print_period(GF_MPD_Period const * const period, Bool is_dynamic, FILE *out, Bool write_context, s32 indent)
@@ -3098,7 +3123,7 @@ static void gf_mpd_print_period(GF_MPD_Period const * const period, Bool is_dyna
 
 	i=0;
 	while ( (as = (GF_MPD_AdaptationSet *) gf_list_enum(period->adaptation_sets, &i))) {
-		gf_mpd_print_adaptation_set(as, out, write_context, indent+1);
+		gf_mpd_print_adaptation_set(as, out, write_context, indent+1, 0);
 	}
 	gf_mpd_nl(out, indent);
 	gf_fprintf(out, "</Period>");
@@ -3711,8 +3736,21 @@ GF_Err gf_mpd_write(GF_MPD const * const mpd, FILE *out, Bool compact)
 		gf_mpd_lf(out, indent);
 	}
 
-	if (gf_list_count(mpd->utc_timings))
-		gf_mpd_print_descriptors(out, mpd->utc_timings, "UTCTiming", indent+1);
+	if (mpd->inject_service_desc) {
+		gf_mpd_nl(out, indent+1);
+		gf_fprintf(out, "<ServiceDescription id=\"0\">");
+		gf_mpd_lf(out, indent);
+		gf_mpd_nl(out, indent+2);
+		gf_fprintf(out, "<Latency max=\"6000\" min=\"2000\" referenceId=\"0\" target=\"4000\"/>");
+		gf_mpd_lf(out, indent);
+		gf_mpd_nl(out, indent+2);
+		gf_fprintf(out, "<PlaybackRate max=\"1.04\" min=\"0.96\"/>");
+		gf_mpd_lf(out, indent);
+		gf_mpd_nl(out, indent+1);
+		gf_fprintf(out, "</ServiceDescription>");
+		gf_mpd_lf(out, indent);
+	}
+
 	/*
 		i=0;
 		while ((text = (char *)gf_list_enum(mpd->metrics, &i))) {
@@ -3729,6 +3767,10 @@ GF_Err gf_mpd_write(GF_MPD const * const mpd, FILE *out, Bool compact)
 		if (!i && count>1 && mpd->was_dynamic) is_dynamic = GF_TRUE;
 		gf_mpd_print_period(period, is_dynamic, out, mpd->write_context, indent+1);
 	}
+
+	if (gf_list_count(mpd->utc_timings))
+		gf_mpd_print_descriptors(out, mpd->utc_timings, "UTCTiming", indent+1);
+
 
 	gf_fprintf(out, "</MPD>");
 
@@ -5163,7 +5205,7 @@ GF_Err gf_mpd_split_adaptation_sets(GF_MPD *mpd)
 				}
 
 				//serialize
-				gf_mpd_print_adaptation_set(set, f, GF_FALSE, 0);
+				gf_mpd_print_adaptation_set(set, f, GF_FALSE, 0, 0);
 				size = (u32) gf_ftell(f);
 				data = gf_malloc(size+1);
 				gf_fseek(f, 0, SEEK_SET);

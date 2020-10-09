@@ -352,6 +352,8 @@
 		92334CDD2333AB9A00DA6051 /* quickjs.h in Headers */ = {isa = PBXBuildFile; fileRef = 92334CCC2333AB9A00DA6051 /* quickjs.h */; };
 		923EB53423D1B87E00E1FFA1 /* libbf.c in Sources */ = {isa = PBXBuildFile; fileRef = 923EB53323D1B87E00E1FFA1 /* libbf.c */; };
 		9246EE7724A1240600F72EAD /* filter_session_js.c in Sources */ = {isa = PBXBuildFile; fileRef = 9246EE7624A1240600F72EAD /* filter_session_js.c */; };
+		9251E540251E398700CEB84D /* res in Resources */ = {isa = PBXBuildFile; fileRef = 9251E53F251E398600CEB84D /* res */; };
+		9251E542251E39A300CEB84D /* scripts in Resources */ = {isa = PBXBuildFile; fileRef = 9251E541251E39A300CEB84D /* scripts */; };
 		925730A21A0916D20057FF04 /* libiconv.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 925730A11A0916D20057FF04 /* libiconv.dylib */; };
 		925730A41A0916DB0057FF04 /* libbz2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 925730A31A0916DB0057FF04 /* libbz2.dylib */; };
 		925FF2A51ABC53F30085B04C /* odf_parse_common.h in Headers */ = {isa = PBXBuildFile; fileRef = 925FF2A31ABC53F30085B04C /* odf_parse_common.h */; };
@@ -370,6 +372,8 @@
 		928607152398F4C800FDA1ED /* ff_avf.c in Sources */ = {isa = PBXBuildFile; fileRef = 928607142398F4C800FDA1ED /* ff_avf.c */; };
 		928B2D131BE11BC100CAC65D /* libcrypto.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 928B2D111BE11BC100CAC65D /* libcrypto.a */; };
 		928B2D141BE11BC100CAC65D /* libssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 928B2D121BE11BC100CAC65D /* libssl.a */; };
+		928EB67525271B5800E47747 /* rewrite_mhas.c in Sources */ = {isa = PBXBuildFile; fileRef = 928EB67425271B5800E47747 /* rewrite_mhas.c */; };
+		9290E74E25263F4F00BC0EE3 /* reframe_mhas.c in Sources */ = {isa = PBXBuildFile; fileRef = 9290E74D25263F4E00BC0EE3 /* reframe_mhas.c */; };
 		92910FAA233A44110052365D /* jsfilter.c in Sources */ = {isa = PBXBuildFile; fileRef = 92910FA9233A44110052365D /* jsfilter.c */; };
 		9292BEFF1CFC93C10070EB05 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9292BEFE1CFC93C10070EB05 /* VideoToolbox.framework */; };
 		9292BF011CFC93D50070EB05 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9292BF001CFC93D50070EB05 /* CoreVideo.framework */; };
@@ -937,6 +941,8 @@
 		9236FDEF1DD23F1400B3E86F /* iTunesArtwork */ = {isa = PBXFileReference; lastKnownFileType = file; name = iTunesArtwork; path = ../../applications/osmo4_ios/Resources/iTunesArtwork; sourceTree = "<group>"; };
 		923EB53323D1B87E00E1FFA1 /* libbf.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = libbf.c; path = ../../src/quickjs/libbf.c; sourceTree = "<group>"; };
 		9246EE7624A1240600F72EAD /* filter_session_js.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = filter_session_js.c; path = ../../src/filter_core/filter_session_js.c; sourceTree = "<group>"; };
+		9251E53F251E398600CEB84D /* res */ = {isa = PBXFileReference; lastKnownFileType = folder; name = res; path = ../../share/res; sourceTree = "<group>"; };
+		9251E541251E39A300CEB84D /* scripts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = scripts; path = ../../share/scripts; sourceTree = "<group>"; };
 		925730A11A0916D20057FF04 /* libiconv.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libiconv.dylib; path = usr/lib/libiconv.dylib; sourceTree = SDKROOT; };
 		925730A31A0916DB0057FF04 /* libbz2.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libbz2.dylib; path = usr/lib/libbz2.dylib; sourceTree = SDKROOT; };
 		925FF2A31ABC53F30085B04C /* odf_parse_common.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = odf_parse_common.h; sourceTree = "<group>"; };
@@ -953,6 +959,8 @@
 		928607142398F4C800FDA1ED /* ff_avf.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = ff_avf.c; path = ../../src/filters/ff_avf.c; sourceTree = "<group>"; };
 		928B2D111BE11BC100CAC65D /* libcrypto.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libcrypto.a; path = ../../extra_lib/lib/iOS/libcrypto.a; sourceTree = "<group>"; };
 		928B2D121BE11BC100CAC65D /* libssl.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libssl.a; path = ../../extra_lib/lib/iOS/libssl.a; sourceTree = "<group>"; };
+		928EB67425271B5800E47747 /* rewrite_mhas.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = rewrite_mhas.c; path = ../../src/filters/rewrite_mhas.c; sourceTree = "<group>"; };
+		9290E74D25263F4E00BC0EE3 /* reframe_mhas.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = reframe_mhas.c; path = ../../src/filters/reframe_mhas.c; sourceTree = "<group>"; };
 		92910FA9233A44110052365D /* jsfilter.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = jsfilter.c; path = ../../src/filters/jsfilter.c; sourceTree = "<group>"; };
 		9292BEFE1CFC93C10070EB05 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
 		9292BF001CFC93D50070EB05 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
@@ -1190,6 +1198,8 @@
 		29B97314FDCFA39411CA2CEA /* CustomTemplate */ = {
 			isa = PBXGroup;
 			children = (
+				9251E541251E39A300CEB84D /* scripts */,
+				9251E53F251E398600CEB84D /* res */,
 				9281B62E21C92D00006B0FD5 /* gui */,
 				9281B62F21C92D00006B0FD5 /* shaders */,
 				71CCF1381277041D00339E12 /* libgpac */,
@@ -1947,6 +1957,7 @@
 				92EB6DBA20E4E19700A97A49 /* reframe_h263.c */,
 				92EB6D8520E4E19300A97A49 /* reframe_img.c */,
 				929FA64221A3E83E000455A7 /* reframe_latm.c */,
+				9290E74D25263F4E00BC0EE3 /* reframe_mhas.c */,
 				92EB6DA520E4E19500A97A49 /* reframe_mp3.c */,
 				92EB6DBB20E4E19700A97A49 /* reframe_mpgvid.c */,
 				92EB6D7520E4E19200A97A49 /* reframe_nalu.c */,
@@ -1958,6 +1969,7 @@
 				92EB6DB620E4E19600A97A49 /* resample_audio.c */,
 				92EB6D9320E4E19400A97A49 /* rewind.c */,
 				92EB6D8120E4E19300A97A49 /* rewrite_adts.c */,
+				928EB67425271B5800E47747 /* rewrite_mhas.c */,
 				92EB6D9E20E4E19500A97A49 /* rewrite_mp4v.c */,
 				92EB6DB420E4E19600A97A49 /* rewrite_nalu.c */,
 				8959AC83211C9C3C004D2C87 /* rewrite_obu.c */,
@@ -2195,8 +2207,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				9281B63021C92D00006B0FD5 /* gui in Resources */,
+				9251E542251E39A300CEB84D /* scripts in Resources */,
 				9280E7251DD23FFE001E6441 /* iTunesArtwork in Resources */,
 				71EC88E11396273B004DCB6A /* osmo.icns in Resources */,
+				9251E540251E398700CEB84D /* res in Resources */,
 				929A929C16EF8BC200B7C64F /* Default-568h@2x.png in Resources */,
 				929A929D16EF8BC200B7C64F /* icon_ipad_retina.png in Resources */,
 				929A929E16EF8BC200B7C64F /* icon_ipad.png in Resources */,
@@ -2285,6 +2299,7 @@
 				92D6C5AD2343BF9400262217 /* dom_js.c in Sources */,
 				71CCF24B1277045100339E12 /* conditional.c in Sources */,
 				71CCF24C1277045100339E12 /* field_decode.c in Sources */,
+				928EB67525271B5800E47747 /* rewrite_mhas.c in Sources */,
 				92EB6E0220E4E19700A97A49 /* write_generic.c in Sources */,
 				92EB6E3020E4E58E00A97A49 /* scene_node_init.c in Sources */,
 				92EB6E0B20E4E19700A97A49 /* mux_isom.c in Sources */,
@@ -2559,6 +2574,7 @@
 				92EB6E0420E4E19700A97A49 /* ff_dmx.c in Sources */,
 				92EB6DCE20E4E19700A97A49 /* filelist.c in Sources */,
 				92EB6DE320E4E19700A97A49 /* compose.c in Sources */,
+				9290E74E25263F4F00BC0EE3 /* reframe_mhas.c in Sources */,
 				92E9DFAF2215CEA700628420 /* raster_rgb.c in Sources */,
 				929DE74924183FB40056AFA7 /* gzio.c in Sources */,
 				92EB6DF320E4E19700A97A49 /* dmx_avi.c in Sources */,

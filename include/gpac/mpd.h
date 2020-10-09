@@ -389,7 +389,7 @@ typedef struct {
 	char *wallclock;
 	/*! presentation time in timescale of the Representation*/
 	u64 presentation_time;
-	/*! UTC timing desc if any/*/
+	/*! UTC timing desc if any */
 	GF_MPD_Descriptor *utc_timing;
 } GF_MPD_ProducerReferenceTime;
 
@@ -673,6 +673,10 @@ typedef struct
 
 	/*! user private, eg used by dasher*/
 	void *udta;
+
+	/*! mpegh compatible profile hack*/
+	u32 nb_alt_mha_profiles, *alt_mha_profiles;
+	Bool alt_mha_profiles_only;
 } GF_MPD_AdaptationSet;
 
 /*! MPD offering type*/
@@ -783,10 +787,11 @@ typedef struct {
 	/*! set during parsing, to set during authoring, won't be freed by GPAC*/
 	const char *xml_namespace;
 
-	/*! UTC timing desc if any/*/
+	/*! UTC timing desc if any */
 	GF_List *utc_timings;
 
 	/* internal variables for dasher*/
+	Bool inject_service_desc;
 
 	/*! dasher init NTP clock in ms - GPAC internal*/
 	u64 gpac_init_ntp_ms;

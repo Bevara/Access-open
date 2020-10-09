@@ -195,6 +195,7 @@ GF_GPACArg m4b_gen_args[] =
 	        "- box=base64,DATA: base64 encoded udta data, formatted as serialized boxes\n"
 	        "- src=FILE: location of the udta data (will be stored in a single box of type CODE)\n"
 	        "- src=base64,DATA: base64 encoded udta data (will be stored in a single box of type CODE)\n"
+	        "- str=STRING: use the given string as payload for the udta box\n"
 	        "Note: If no source is set, UDTA of type CODE will be removed\n", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
 	GF_DEF_ARG("patch [tkID=]FILE", NULL, "apply box patch described in FILE, for given trackID if set\n", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
 	GF_DEF_ARG("bo", NULL, "freeze the order of boxes in input file\n", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED),
@@ -244,7 +245,7 @@ GF_GPACArg m4b_dash_args[] =
 	GF_DEF_ARG("frag", NULL, "specify the fragment duration in ms. If not set, this is the DASH duration (one fragment per segment)", NULL, NULL, GF_ARG_DOUBLE, 0),
 	GF_DEF_ARG("out", NULL, "specify the output MPD file name", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("tmp", NULL, "specify directory for temporary file creation", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("profile", NULL, "specify the target DASH profile, and set default options to ensure conformance to the desired profile. Default profile is `full` in static mode, `live` in dynamic mode", NULL, "onDemand|live|main|simple|full|hbbtv1.5:live|dashavc264:live|dashavc264:onDemand", GF_ARG_STRING, 0),
+	GF_DEF_ARG("profile", NULL, "specify the target DASH profile, and set default options to ensure conformance to the desired profile. Default profile is `full` in static mode, `live` in dynamic mode (old syntax using `:live` instead of `.live` as separator still possible)", NULL, "onDemand|live|main|simple|full|hbbtv1.5.live|dashavc264.live|dashavc264.onDemand|dashif.ll", GF_ARG_STRING, 0),
 	GF_DEF_ARG("profile-ext", NULL, "specify a list of profile extensions, as used by DASH-IF and DVB. The string will be colon-concatenated with the profile used", NULL, NULL, GF_ARG_STRING, 0),
 
 	GF_DEF_ARG("rap", NULL, "ensure that segments begin with random access points, segment durations might vary depending on the source encoding", NULL, NULL, GF_ARG_BOOL, 0),
@@ -328,6 +329,7 @@ GF_GPACArg m4b_dash_args[] =
 
 	GF_DEF_ARG("cues", NULL, "ignore dash duration and segment according to cue times in given XML file (tests/media/dash_cues for examples)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("strict-cues", NULL, "throw error if something is wrong while parsing cues or applying cue-based segmentation", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
+	GF_DEF_ARG("merge-last-seg", NULL, "merge last segment if shorter than half the target duration", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	{0}
 };
 
@@ -345,7 +347,7 @@ void PrintDASHUsage()
 		"- #N: only use the track ID N from the source file (mapped to [-tkid](mp4dmx))\n"
 		"- #video: only use the first video track from the source file\n"
 		"- #audio: only use the first audio track from the source file\n"
-		"- :id=NAME: set the representation ID to NAME. Reserved value `NULL` disables representation ID for multiplexed inputs\n"
+		"- :id=NAME: set the representation ID to NAME. Reserved value `NULL` disables representation ID for multiplexed inputs. If not set, a default value is computed and all selected tracks from the source will be in the same output mux.\n"
 		"- :dur=VALUE: process VALUE seconds from the media. If VALUE is longer than media duration, last sample duration is extended.\n"
 		"- :period=NAME: set the representation's period to NAME. Multiple periods may be used. Periods appear in the MPD in the same order as specified with this option\n"
 		"- :BaseURL=NAME: set the BaseURL. Set multiple times for multiple BaseURLs\nWarning: This does not modify generated files location (see segment template).\n"
@@ -361,9 +363,15 @@ void PrintDASHUsage()
 		"- :desc_rep=VALUE: add a descriptor at the Representation level. Value must be a properly formatted XML element. Value is ignored while creating AdaptationSet elements.\n"
 		"- :sscale: force movie timescale to match media timescale of the first track in the segment.\n"
 		"- :trackID=N: only use the track ID N from the source file\n"
-		"- @@f1[:args][@@fN:args]: set a filter chain to insert between the source and the dasher. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](filters_general). If several filters are set, they will be chained in the given order.\n"
+		"- @f1[:args][@fN:args][@@fK:args]: set a filter chain to insert between the source and the dasher. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](filters_general). If several filters are set:\n"
+		"  - they will be chained in the given order if separated by a single `@`\n"
+		"  - a new filter chain will be created if separated by a double `@@`. In this case, no representation ID is assigned to the source.\n"
+		"EX source.mp4:@enc:c=avc:b=1M@@enc:c=avc:b=500k\n"
+		"This will load a filter chain with two encoders connected to the source and to the dasher.\n"
+		"EX source.mp4:@enc:c=avc:b=1M@enc:c=avc:b=500k\n"
+		"This will load a filter chain with the second encoder connected to the output of the first (!!).\n"
 		"\n"
-		"Note: `@@f` must be placed after all other options.\n"
+		"Note: `@f` must be placed after all other options.\n"
 		"\n"
 		"# Options\n"
 		);
@@ -520,7 +528,7 @@ static GF_GPACArg ImportFileOpts [] = {
 	GF_DEF_ARG("fgraph", NULL, "print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
 	{"sopt:[OPTS]", NULL, "set `OPTS` as additional arguments to source filter. `OPTS` can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
 	{"dopt:[OPTS]", NULL, "`X` set `OPTS` as additional arguments to [destination filter](mp4mx). OPTS can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
-	{"@@f1[:args][@@fN:args]", NULL, "set a filter chain to insert before the muxer. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](Filters). If several filters are set, they will be chained in the given order. The last filter shall not have any Filter ID specified"},
+	{"@f1[:args][@fN:args]", NULL, "set a filter chain to insert before the muxer. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](Filters). A `@@` separator starts a new chain (see DASH help). The last filter in each chain shall not have any ID specified"},
 	{0}
 };
 
@@ -566,7 +574,7 @@ void PrintImportUsage()
 	}
 
 	gf_sys_format_help(helpout, help_flags, "\n"
-		"Note: `sopt`, `dopt` and `@@f` must be placed after all other options.\n"
+		"Note: `sopt`, `dopt` and `@f` must be placed after all other options.\n"
 		"# Global import options\n"
 	);
 
@@ -1105,6 +1113,8 @@ static Bool PrintHelpArg(char *arg_name, u32 search_type, GF_FilterSession *fs)
 					break;
 				case GF_PROP_STRING_LIST:
 				case GF_PROP_UINT_LIST:
+				case GF_PROP_SINT_LIST:
+				case GF_PROP_VEC2I_LIST:
 					an_arg.type = GF_ARG_STRINGS;
 					break;
 				default:
@@ -1712,7 +1722,7 @@ static Bool parse_meta_args(MetaAction *meta, MetaActionType act_type, char *opt
 			case META_ACTION_ADD_IMAGE_ITEM:
 			case META_ACTION_SET_XML:
 			case META_ACTION_DUMP_XML:
-				if (!strncmp(szSlot, "dopt", 4) || !strncmp(szSlot, "sopt", 4) || !strncmp(szSlot, "@@", 2)) {
+				if (!strncmp(szSlot, "dopt", 4) || !strncmp(szSlot, "sopt", 4) || !strncmp(szSlot, "@", 1)) {
 					if (next) next[0]=':';
 					next=NULL;
 				}
@@ -1872,6 +1882,7 @@ typedef struct
 	u32 dump_type, sample_num;
 	char *out_name;
 	char *src_name;
+	char *string;
 	u32 udta_type;
 	char *kind_scheme, *kind_value;
 	u32 newTrackID;
@@ -1894,6 +1905,7 @@ enum
 GF_DashSegmenterInput *set_dash_input(GF_DashSegmenterInput *dash_inputs, char *name, u32 *nb_dash_inputs)
 {
 	GF_DashSegmenterInput *di;
+	Bool skip_rep_id = GF_FALSE;
 	char *other_opts = NULL;
 	char *sep = gf_url_colon_suffix(name);
 
@@ -1904,47 +1916,18 @@ GF_DashSegmenterInput *set_dash_input(GF_DashSegmenterInput *dash_inputs, char *
 
 	if (sep) {
 		char *opts, *first_opt;
-		opts = first_opt = sep;
+		first_opt = sep;
+		opts = sep+1;
 		while (opts) {
 			sep = gf_url_colon_suffix(opts);
-			while (sep) {
-				/* this is a real separator if it is followed by a keyword we are looking for */
-				if (!strnicmp(sep, ":id=", 4) ||
-				        !strnicmp(sep, ":dur=", 5) ||
-				        !strnicmp(sep, ":period=", 8) ||
-				        !strnicmp(sep, ":BaseURL=", 9) ||
-				        !strnicmp(sep, ":bandwidth=", 11) ||
-				        !strnicmp(sep, ":role=", 6) ||
-				        !strnicmp(sep, ":desc", 5) ||
-				        !strnicmp(sep, ":sscale", 7) ||
-				        !strnicmp(sep, ":duration=", 10) ||
-				        !strnicmp(sep, ":period_duration=", 10) ||
-				        !strnicmp(sep, ":pdur=", 6) ||
-				        !strnicmp(sep, ":xlink=", 7) ||
-				        !strnicmp(sep, ":asID=", 6) ||
-				        !strnicmp(sep, ":sn=", 4) ||
-				        !strnicmp(sep, ":tpl=", 5) ||
-				        !strnicmp(sep, ":hls=", 5) ||
-				        !strnicmp(sep, ":trackID=", 9) ||
-				        !strnicmp(sep, ":@@", 3)
-				        ) {
-					break;
-				} else {
-					char *nsep = gf_url_colon_suffix(sep+1);
-					if (nsep) nsep[0] = 0;
-
-					gf_dynstrcat(&other_opts, sep, ":");
-
-					if (nsep) nsep[0] = ':';
-
-					sep = strchr(sep+1, ':');
-				}
-			}
-			if (sep && !strncmp(sep, "://", 3) && strnicmp(sep, ":@@", 3)) sep = gf_url_colon_suffix(sep+3);
+			if (sep && !strncmp(sep, "://", 3) && strncmp(sep, ":@", 2)) sep = gf_url_colon_suffix(sep+3);
 			if (sep) sep[0] = 0;
 
 			if (!strnicmp(opts, "id=", 3)) {
-				di->representationID = gf_strdup(opts+3);
+				if (!stricmp(opts+3, "NULL"))
+					skip_rep_id = GF_TRUE;
+				else
+					di->representationID = gf_strdup(opts+3);
 				/*we allow the same repID to be set to force muxed representations*/
 			}
 			else if (!strnicmp(opts, "dur=", 4)) di->media_duration = (Double)atof(opts+4);
@@ -2001,10 +1984,16 @@ GF_DashSegmenterInput *set_dash_input(GF_DashSegmenterInput *dash_inputs, char *
 			else if (!strnicmp(opts, "tpl=", 4)) di->seg_template = gf_strdup(opts+4);
 			else if (!strnicmp(opts, "hls=", 4)) di->hls_pl = gf_strdup(opts+4);
 			else if (!strnicmp(opts, "trackID=", 8)) di->track_id = atoi(opts+8);
-			else if (!strnicmp(opts, "@@", 2)) {
-				di->filter_chain = gf_strdup(opts+2);
+			else if (!strnicmp(opts, "@", 1)) {
+				Bool old_syntax = (opts[1]=='@') ? GF_TRUE : GF_FALSE;
 				if (sep) sep[0] = ':';
+				di->filter_chain = gf_strdup(opts + (old_syntax ? 2 : 1) );
 				sep = NULL;
+				if (!old_syntax && (strstr(di->filter_chain, "@@")!=NULL)) {
+					skip_rep_id = GF_TRUE;
+				}
+			} else {
+				gf_dynstrcat(&other_opts, opts, ":");
 			}
 
 			if (!sep) break;
@@ -2016,7 +2005,7 @@ GF_DashSegmenterInput *set_dash_input(GF_DashSegmenterInput *dash_inputs, char *
 	di->file_name = name;
 	di->source_opts = other_opts;
 
-	if (!di->representationID) {
+	if (!skip_rep_id && !di->representationID) {
 		char szRep[100];
 		sprintf(szRep, "%d", *nb_dash_inputs);
 		di->representationID = gf_strdup(szRep);
@@ -2048,6 +2037,8 @@ static GF_Err parse_track_action_params(char *string, TrackAction *action)
 				action->out_name = gf_strdup(param+7);
 			} else if (!strncmp("src=", param, 4)) {
 				action->src_name = gf_strdup(param+4);
+			} else if (!strncmp("str=", param, 4)) {
+				action->string = gf_strdup(param+4);
 			} else if (!strncmp("box=", param, 4)) {
 				action->src_name = gf_strdup(param+4);
 				action->sample_num = 1;
@@ -2478,6 +2469,7 @@ u32 track_dump_type, dump_isom, dump_timestamps, dump_nal_type;
 GF_ISOTrackID trackID;
 u32 do_flat, box_patch_trackID=0, print_info;
 Bool comp_lzma=GF_FALSE;
+Bool merge_last_seg=GF_FALSE;
 Bool freeze_box_order=GF_FALSE;
 Bool chap_qt=GF_FALSE;
 Bool no_odf_conf=GF_FALSE;
@@ -2584,6 +2576,8 @@ u32 mp4box_cleanup(u32 ret_code) {
 				gf_free(tracks[i].out_name);
 			if (tracks[i].src_name)
 				gf_free(tracks[i].src_name);
+			if (tracks[i].string)
+				gf_free(tracks[i].string);
 			if (tracks[i].kind_scheme)
 				gf_free(tracks[i].kind_scheme);
 			if (tracks[i].kind_value)
@@ -4300,6 +4294,9 @@ Bool mp4box_parse_args(int argc, char **argv)
         else if (!stricmp(arg, "-tfdt-traf")) {
             tfdt_per_traf = 1;
         }
+		else if (!stricmp(arg, "-merge-last-seg")) {
+			merge_last_seg = GF_TRUE;
+		}
 		else if (!stricmp(arg, "-mpd-title")) {
 			CHECK_NEXT_ARG dash_title = argv[i + 1];
 			i++;
@@ -4365,15 +4362,13 @@ Bool mp4box_parse_args(int argc, char **argv)
 			CHECK_NEXT_ARG
 			if (!stricmp(argv[i + 1], "live") || !stricmp(argv[i + 1], "simple")) dash_profile = GF_DASH_PROFILE_LIVE;
 			else if (!stricmp(argv[i + 1], "onDemand")) dash_profile = GF_DASH_PROFILE_ONDEMAND;
-			else if (!stricmp(argv[i + 1], "hbbtv1.5:live")) {
+			else if (!stricmp(argv[i + 1], "hbbtv1.5:live") || !stricmp(argv[i + 1], "hbbtv1.5.live"))
 				dash_profile = GF_DASH_PROFILE_HBBTV_1_5_ISOBMF_LIVE;
-			}
-			else if (!stricmp(argv[i + 1], "dashavc264:live")) {
+			else if (!stricmp(argv[i + 1], "dashavc264:live") || !stricmp(argv[i + 1], "dashavc264.live"))
 				dash_profile = GF_DASH_PROFILE_AVC264_LIVE;
-			}
-			else if (!stricmp(argv[i + 1], "dashavc264:onDemand")) {
+			else if (!stricmp(argv[i + 1], "dashavc264:onDemand") || !stricmp(argv[i + 1], "dashavc264.onDemand"))
 				dash_profile = GF_DASH_PROFILE_AVC264_ONDEMAND;
-			}
+			else if (!stricmp(argv[i + 1], "dashif.ll")) dash_profile = GF_DASH_PROFILE_DASHIF_LL;
 			else if (!stricmp(argv[i + 1], "main")) dash_profile = GF_DASH_PROFILE_MAIN;
 			else if (!stricmp(argv[i + 1], "full")) dash_profile = GF_DASH_PROFILE_FULL;
 			else {
@@ -5199,6 +5194,7 @@ int mp4boxMain(int argc, char **argv)
 		if (!e) e = gf_dasher_enable_cached_inputs(dasher, no_cache);
 		if (!e) e = gf_dasher_enable_loop_inputs(dasher, ! no_loop);
 		if (!e) e = gf_dasher_set_split_mode(dasher, dash_split_mode);
+		if (!e) e = gf_dasher_set_last_segment_merge(dasher, merge_last_seg);
 		if (!e) e = gf_dasher_set_hls_clock(dasher, hls_clock);
 		if (!e && dash_cues) e = gf_dasher_set_cues(dasher, dash_cues, strict_cues);
 		if (!e && fs_dump_flags) e = gf_dasher_print_session_info(dasher, fs_dump_flags);
@@ -6167,7 +6163,7 @@ int mp4boxMain(int argc, char **argv)
 			break;
 		case TRAC_ACTION_SET_UDTA:
 			fprintf(stderr, "Assigning udta box\n");
-			e = set_file_udta(file, track, tka->udta_type, tka->src_name, tka->sample_num ? GF_TRUE : GF_FALSE);
+			e = set_file_udta(file, track, tka->udta_type, tka->string ? tka->string : tka->src_name , tka->sample_num ? GF_TRUE : GF_FALSE, tka->string ? GF_TRUE : GF_FALSE);
 			if (e) goto err_exit;
 			needSave = GF_TRUE;
 			break;

@@ -3337,7 +3337,7 @@ static GF_Err gf_isom_dump_srt_track(GF_ISOFile *the_file, u32 track, FILE *dump
 						if (txt->styles->styles[k].startCharOffset>char_num) continue;
 						if (txt->styles->styles[k].endCharOffset<char_num+1) continue;
 
-						if (txt->styles->styles[k].style_flags & (GF_TXT_STYLE_ITALIC | GF_TXT_STYLE_BOLD | GF_TXT_STYLE_UNDERLINED)) {
+						if (txt->styles->styles[k].style_flags & (GF_TXT_STYLE_ITALIC | GF_TXT_STYLE_BOLD | GF_TXT_STYLE_UNDERLINED | GF_TXT_STYLE_STRIKETHROUGH)) {
 							new_styles = txt->styles->styles[k].style_flags;
 							new_color = txt->styles->styles[k].text_color;
 							break;
@@ -3348,7 +3348,9 @@ static GF_Err gf_isom_dump_srt_track(GF_ISOFile *the_file, u32 track, FILE *dump
 					if ((new_styles & GF_TXT_STYLE_BOLD) && !(styles & GF_TXT_STYLE_BOLD)) gf_fprintf(dump, "<b>");
 					if ((new_styles & GF_TXT_STYLE_ITALIC) && !(styles & GF_TXT_STYLE_ITALIC)) gf_fprintf(dump, "<i>");
 					if ((new_styles & GF_TXT_STYLE_UNDERLINED) && !(styles & GF_TXT_STYLE_UNDERLINED)) gf_fprintf(dump, "<u>");
+					if ((new_styles & GF_TXT_STYLE_STRIKETHROUGH) && !(styles & GF_TXT_STYLE_STRIKETHROUGH)) gf_fprintf(dump, "<strike>");
 
+					if ((styles & GF_TXT_STYLE_STRIKETHROUGH) && !(new_styles & GF_TXT_STYLE_STRIKETHROUGH)) gf_fprintf(dump, "</strike>");
 					if ((styles & GF_TXT_STYLE_UNDERLINED) && !(new_styles & GF_TXT_STYLE_UNDERLINED)) gf_fprintf(dump, "</u>");
 					if ((styles & GF_TXT_STYLE_ITALIC) && !(new_styles & GF_TXT_STYLE_ITALIC)) gf_fprintf(dump, "</i>");
 					if ((styles & GF_TXT_STYLE_BOLD) && !(new_styles & GF_TXT_STYLE_BOLD)) gf_fprintf(dump, "</b>");
@@ -3388,6 +3390,7 @@ static GF_Err gf_isom_dump_srt_track(GF_ISOFile *the_file, u32 track, FILE *dump
 			}
 			new_styles = 0;
 			if (new_styles != styles) {
+				if (styles & GF_TXT_STYLE_STRIKETHROUGH) gf_fprintf(dump, "</strike>");
 				if (styles & GF_TXT_STYLE_UNDERLINED) gf_fprintf(dump, "</u>");
 				if (styles & GF_TXT_STYLE_ITALIC) gf_fprintf(dump, "</i>");
 				if (styles & GF_TXT_STYLE_BOLD) gf_fprintf(dump, "</b>");
@@ -5649,11 +5652,30 @@ GF_Err mhac_box_dump(GF_Box *a, FILE * trace)
 
 	gf_isom_box_dump_start(a, "MHAConfigurationBox", trace);
 
-	gf_fprintf(trace, "configurationVersion=\"%d\" mpegh3daProfileLevelIndication=\"%d\" referenceChannelLayout=\"%d\">\n", p->configuration_version, p->mha_pl_indication, p->reference_channel_layout);
+	gf_fprintf(trace, "configurationVersion=\"%d\" mpegh3daProfileLevelIndication=\"0x%02X\" referenceChannelLayout=\"%d\" data=\"", p->configuration_version, p->mha_pl_indication, p->reference_channel_layout);
+	dump_data(trace, p->mha_config, p->mha_config_size);
+	gf_fprintf(trace, "\">\n");
+
 	gf_isom_box_dump_done("MHAConfigurationBox", a, trace);
 	return GF_OK;
 }
 
+GF_Err mhap_box_dump(GF_Box *a, FILE * trace)
+{
+	u32 i;
+	GF_MHACompatibleProfilesBox *p = (GF_MHACompatibleProfilesBox *) a;
+
+	gf_isom_box_dump_start(a, "MHACompatibleProfilesBox", trace);
+	gf_fprintf(trace, "compatible_profiles=\"");
+	for (i=0; i<p->num_profiles; i++) {
+		if (i)
+			gf_fprintf(trace, " ", p->compat_profiles[i]);
+		gf_fprintf(trace, "%d", p->compat_profiles[i]);
+	}
+	gf_fprintf(trace, "\">\n");
+	gf_isom_box_dump_done("MHACompatibleProfilesBox", a, trace);
+	return GF_OK;
+}
 GF_Err tmcd_box_dump(GF_Box *a, FILE * trace)
 {
 	GF_TimeCodeSampleEntryBox *p = (GF_TimeCodeSampleEntryBox *) a;

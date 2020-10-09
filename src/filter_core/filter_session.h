@@ -568,6 +568,8 @@ struct __gf_filter
 	GF_List *destination_filters;
 	//list of potential destination for which we need to perform link resolution
 	GF_List *destination_links;
+	//temp list of input PIDs during graph resolution, added during pid_init task and removed at pid_configure task
+	GF_List *temp_input_pids;
 
 	//statistics
 	//number of tasks executed by this filter
@@ -666,6 +668,8 @@ struct __gf_filter
 	//for encoder filters, set to the corresponding stream type - used to discard filters during the resolution
 	u32 encoder_stream_type;
 
+	Bool act_as_sink;
+	
 #ifndef GPAC_DISABLE_REMOTERY
 	rmtU32 rmt_hash;
 #endif
@@ -705,6 +709,8 @@ struct __gf_filter
 	char *iname;
 	JSValue jsval;
 #endif
+	//for external bindings
+	void *rt_udta;
 };
 
 GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg, const char *args, const char *dst_args, GF_FilterArgType arg_type, GF_Err *err, GF_Filter *multi_sink_target, Bool dynamic_filter);

@@ -104,6 +104,7 @@ struct __gf_dash_segmenter
 	Bool enable_mix_codecs;
 	Bool enable_sar_mix;
 	Bool check_duration;
+	Bool merge_last_seg;
 
 	const char *dash_state;
 
@@ -446,6 +447,14 @@ GF_Err gf_dasher_set_split_mode(GF_DASHSegmenter *dasher, GF_DASH_SplitMode spli
 }
 
 GF_EXPORT
+GF_Err gf_dasher_set_last_segment_merge(GF_DASHSegmenter *dasher, Bool merge_last_seg)
+{
+	if (!dasher) return GF_BAD_PARAM;
+	dasher->merge_last_seg = merge_last_seg;
+	return GF_OK;
+}
+
+GF_EXPORT
 GF_Err gf_dasher_set_cues(GF_DASHSegmenter *dasher, const char *cues_file, Bool strict_cues)
 {
 	dasher->cues_file = cues_file;
@@ -510,6 +519,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 	char *sep_ext;
 	char *args=NULL, szArg[1024];
 	Bool multi_period = GF_FALSE;
+	Bool use_filter_chains = GF_FALSE;
 
 	if (!dasher->mpd_name) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Missing MPD name\n"));
@@ -622,6 +632,9 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		break;
 	case GF_DASH_PROFILE_AVC264_ONDEMAND:
 		e |= gf_dynstrcat(&args, "profile=dashavc264.onDemand", ":");
+		break;
+	case GF_DASH_PROFILE_DASHIF_LL:
+		e |= gf_dynstrcat(&args, "profile=dashif.ll", ":");
 		break;
 	}
 	if (dasher->cp_location_mode==GF_DASH_CPMODE_REPRESENTATION) e |= gf_dynstrcat(&args, "cp=rep", ":");
@@ -753,6 +766,9 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 	else if (dasher->split_mode==GF_DASH_SPLIT_IN)
 		e |= gf_dynstrcat(&args, "sbound=in", ":");
 
+	if (dasher->merge_last_seg)
+		e |= gf_dynstrcat(&args, "last_seg_merge", ":");
+
 	//finally append profiles/info/etc with double separators as these may contain ':'
 	if (dasher->dash_profile_extension) {
 		sprintf(szArg, "profX=%s", dasher->dash_profile_extension);
@@ -842,6 +858,13 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 			cur_period_order++;
 		}
 	}
+	for (i=0; i<count; i++) {
+		GF_DashSegmenterInput *di = gf_list_get(dasher->inputs, i);
+		if (di->filter_chain) {
+			use_filter_chains = GF_TRUE;
+			break;
+		}
+	}
 
 	for (i=0; i<count; i++) {
 		u32 j;
@@ -883,7 +906,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		}
 
 		//set all args
-		if (di->representationID && strcmp(di->representationID, "NULL")) {
+		if (!use_filter_chains && di->representationID && strcmp(di->representationID, "NULL")) {
 			sprintf(szArg, "#Representation=%s", di->representationID );
 			e |= gf_dynstrcat(&args, szArg, ":");
 		}
@@ -1022,17 +1045,35 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 			src = rt;
 		}
 
-		if (!di->filter_chain) continue;
-
+		if (!di->filter_chain) {
+			//assign this source 
+			gf_filter_set_source(dasher->output, src, NULL);
+			continue;
+		}
 		//create the filter chain between source (or rt if it was set) and dasher
 
 		//filter chain
 		GF_Filter *prev_filter=src;
 		char *fargs = (char *) di->filter_chain;
+		char *sep1 = strstr(fargs, "@@");
+		char *sep2 = strstr(fargs, "@");
+		Bool old_syntax = GF_FALSE;
+		if (sep1 && sep2 && (sep1==sep2))
+			old_syntax = GF_TRUE;
+
 		while (fargs) {
 			GF_Filter *f;
-			char *sep = strstr(fargs, "@@");
+			char *sep;
+			Bool end_of_sub_chain = GF_FALSE;
+			if (old_syntax) {
+				sep = strstr(fargs, "@@");
+			} else {
+				sep = strstr(fargs, "@");
+				if (sep && (sep[1] == '@'))
+					end_of_sub_chain = GF_TRUE;
+			}
 			if (sep) sep[0] = 0;
+
 			f = gf_fs_load_filter(dasher->fsess, fargs, &e);
 			if (!f) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to load filter %s: %s\n", fargs, gf_error_to_string(e) ));
@@ -1044,7 +1085,15 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 			prev_filter = f;
 			if (!sep) break;
 			sep[0] = '@';
-			fargs = sep+2;
+			if (old_syntax || end_of_sub_chain) {
+				fargs = sep+2;
+				if (end_of_sub_chain && prev_filter) {
+					gf_filter_set_source(dasher->output, prev_filter, NULL);
+					prev_filter = src;
+				}
+			} else {
+				fargs = sep+1;
+			}
 		}
 		if (prev_filter) {
 			gf_filter_set_source(dasher->output, prev_filter, NULL);

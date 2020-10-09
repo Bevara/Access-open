@@ -368,6 +368,8 @@ set udta for given track or movie if tkID is 0. OPTS is a colon separated list o
 .br
 * src=base64,DATA: base64 encoded udta data (will be stored in a single box of type CODE)
 .br
+* str=STRING: use the given string as payload for the udta box
+.br
 Note: If no source is set, UDTA of type CODE will be removed
 .br
 
@@ -503,7 +505,7 @@ Input media files to dash can use the following modifiers
 .br
 * #audio: only use the first audio track from the source file
 .br
-* :id=NAME: set the representation ID to NAME. Reserved value NULL disables representation ID for multiplexed inputs
+* :id=NAME: set the representation ID to NAME. Reserved value NULL disables representation ID for multiplexed inputs. If not set, a default value is computed and all selected tracks from the source will be in the same output mux.
 .br
 * :dur=VALUE: process VALUE seconds from the media. If VALUE is longer than media duration, last sample duration is extended.
 .br
@@ -537,11 +539,31 @@ Warning: This does not modify generated files location (see segment template).
 .br
 * :trackID=N: only use the track ID N from the source file
 .br
-* @@f1[:args][@@fN:args]: set a filter chain to insert between the source and the dasher. Each filter in the chain is formatted as a regular filter, see filter doc `gpac -h doc`. If several filters are set, they will be chained in the given order.
+* @f1[:args][@fN:args][@@fK:args]: set a filter chain to insert between the source and the dasher. Each filter in the chain is formatted as a regular filter, see filter doc `gpac -h doc`. If several filters are set:
+.br
+  - they will be chained in the given order if separated by a single @
+.br
+  - a new filter chain will be created if separated by a double @@. In this case, no representation ID is assigned to the source.
+.br
+Example
+.br
+source.mp4:@enc:c=avc:b=1M@@enc:c=avc:b=500k
 .br
 
 .br
-Note: @@f must be placed after all other options.
+This will load a filter chain with two encoders connected to the source and to the dasher.
+.br
+Example
+.br
+source.mp4:@enc:c=avc:b=1M@enc:c=avc:b=500k
+.br
+
+.br
+This will load a filter chain with the second encoder connected to the output of the first (!!).
+.br
+
+.br
+Note: @f must be placed after all other options.
 .br
 
 .br
@@ -586,9 +608,9 @@ specify the output MPD file name
 specify directory for temporary file creation
 .br
 .TP
-.B \-profile (string, values: onDemand|live|main|simple|full|hbbtv1.5:live|dashavc264:live|dashavc264:onDemand)
+.B \-profile (string, values: onDemand|live|main|simple|full|hbbtv1.5.live|dashavc264.live|dashavc264.onDemand|dashif.ll)
 .br
-specify the target DASH profile, and set default options to ensure conformance to the desired profile. Default profile is full in static mode, live in dynamic mode
+specify the target DASH profile, and set default options to ensure conformance to the desired profile. Default profile is full in static mode, live in dynamic mode (old syntax using :live instead of .live as separator still possible)
 .br
 .TP
 .B \-profile-ext (string)
@@ -914,6 +936,11 @@ ignore dash duration and segment according to cue times in given XML file (tests
 .B \-strict-cues
 .br
 throw error if something is wrong while parsing cues or applying cue-based segmentation
+.br
+.TP
+.B \-merge-last-seg
+.br
+merge last segment if shorter than half the target duration
 .br
 .SH File Dumping
 .LP
@@ -1721,13 +1748,13 @@ set OPTS as additional arguments to source filter. OPTS can be any usual filter 
 X set OPTS as additional arguments to destination filter. OPTS can be any usual filter argument, see filter doc `gpac -h doc`
 .br
 .TP
-.B @@f1[:args][@@fN:args]
+.B @f1[:args][@fN:args]
 .br
-set a filter chain to insert before the muxer. Each filter in the chain is formatted as a regular filter, see filter doc `gpac -h doc`. If several filters are set, they will be chained in the given order. The last filter shall not have any Filter ID specified
+set a filter chain to insert before the muxer. Each filter in the chain is formatted as a regular filter, see filter doc `gpac -h doc`. A @@ separator starts a new chain (see DASH help). The last filter in each chain shall not have any ID specified
 .br
 
 .br
-Note: sopt, dopt and @@f must be placed after all other options.
+Note: sopt, dopt and @f must be placed after all other options.
 .br
 .SH Global import options
 .LP
@@ -2308,7 +2335,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit http://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev19-gd58ce6c43-master
+build: 1.1.0-DEV-rev76-g6d229978c-master
 .br
 Copyright: (c) 2000-2020 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

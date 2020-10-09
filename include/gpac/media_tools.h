@@ -383,7 +383,7 @@ typedef struct __track_import
 	const char *filter_src_opts;
 	/*! any filter options to pass to sink*/
 	const char *filter_dst_opts;
-	/*! filter chain to insert before destination, formated as f1[:args]@@f2[:args] options to pass to sink*/
+	/*! filter chain to insert before destination, formated as "f1[:args]@f2[:args]" options to pass to sink*/
 	const char *filter_chain;
 
 
@@ -570,11 +570,11 @@ typedef struct
 {
 	/*! source file to be used*/
 	char *file_name;
-	/*! ID of the representation. If not set, assigned automatically*/
+	/*! ID of the representation, may be NULL (assigned by dasher)*/
 	char *representationID;
-	/*! ID of the period. If not set, assigned automatically*/
+	/*! ID of the period, may be NULL (assigned by dasher)*/
 	char *periodID;
-	/*! ID of the adaptation set. If not set, assigned automatically.*/
+	/*! ID of the adaptation set, may be 0 (assigned by dasher)*/
 	u32 asID;
 	/*! forced media duration.*/
 	Double media_duration;
@@ -653,6 +653,8 @@ typedef enum
 	GF_DASH_PROFILE_AVC264_LIVE,
 	/*! industry profile DASH-IF ISOBMFF onDemand */
 	GF_DASH_PROFILE_AVC264_ONDEMAND,
+	/*! industry profile DASH-IF ISOBMFF low latency */
+	GF_DASH_PROFILE_DASHIF_LL,
 } GF_DashProfile;
 
 
@@ -988,6 +990,15 @@ typedef enum
 \return error code if any
 */
 GF_Err gf_dasher_set_split_mode(GF_DASHSegmenter *dasher, GF_DASH_SplitMode split_mode);
+
+
+/*!
+ Enable/Disable last segment merging (disabled by default).
+ *	\param dasher the DASH segmenter object
+ *	\param merge_last_seg if true, last segment is merged into previous if duration less than half target dur
+ *	\return error code if any
+*/
+GF_Err gf_dasher_set_last_segment_merge(GF_DASHSegmenter *dasher, Bool merge_last_seg);
 
 /*!
  Sets m3u8 file name - if not set, no m3u8 output

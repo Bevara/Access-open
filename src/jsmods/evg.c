@@ -612,7 +612,7 @@ static JSValue canvas_clear_ex(JSContext *c, JSValueConst obj, int argc, JSValue
 			return JS_EXCEPTION;
 	}
 	if ((argc>idx) && JS_IsString(argv[idx])) {
-		const char *str = JS_ToCString(c, argv[0]);
+		const char *str = JS_ToCString(c, argv[idx]);
 		col = gf_color_parse(str);
 		JS_FreeCString(c, str);
 	} else {
@@ -5253,6 +5253,12 @@ static GF_Err texture_load_file(JSContext *c, GF_JSTexture *tx, const char *file
 		full_url = gf_url_concatenate(par_url, fileName);
 		fileName = full_url;
 	}
+	if (!strncmp(fileName, "$GSHARE/", 8)) {
+		char szPath[GF_MAX_PATH];
+		gf_opts_default_shared_directory(szPath);
+		strcat(szPath, fileName + 7);
+		fileName = szPath;
+	}
 	if (!gf_file_exists(fileName) || (gf_file_load_data(fileName, &data, &size) != GF_OK)) {
 		if (full_url) gf_free(full_url);
 		return GF_URL_ERROR;
@@ -5699,7 +5705,9 @@ static JSValue text_set_text(JSContext *c, JSValueConst obj, int argc, JSValueCo
 	if (!argc) return JS_UNDEFINED;
 
 	txt->font = gf_font_manager_set_font(txt->fm, &txt->fontname, 1, txt->styles);
-	if (!txt->font) return js_throw_err_msg(c, GF_NOT_FOUND, "Font %s not found and no default font available - check your GPAC configuration", txt->fontname);
+	if (!txt->font)
+		return js_throw_err_msg(c, GF_NOT_FOUND, "Font %s not found and no default font available!\n"
+			"Check your GPAC configuration, or use `-rescan-fonts` to refresh font directory.\n", txt->fontname);
 
 	for (i=0; i<argc; i++) {
 		if (JS_IsArray(c, argv[i])) {

@@ -56,7 +56,7 @@ typedef struct
 	GF_List *imports;
 } WGTEnum;
 
-GF_Err set_file_udta(GF_ISOFile *dest, u32 tracknum, u32 udta_type, char *src, Bool is_box_array)
+GF_Err set_file_udta(GF_ISOFile *dest, u32 tracknum, u32 udta_type, char *src, Bool is_box_array, Bool is_string)
 {
 	u8 *data = NULL;
 	GF_Err res = GF_OK;
@@ -78,7 +78,11 @@ GF_Err set_file_udta(GF_ISOFile *dest, u32 tracknum, u32 udta_type, char *src, B
 		size = gf_base64_decode((u8 *)src, size, data, size);
 	} else
 #endif
-	{
+	if (is_string) {
+		data = (u8 *) src;
+		size = strlen(src)+1;
+		is_box_array = 0;
+	} else {
 		GF_Err e = gf_file_load_data(src, (u8 **) &data, &size);
 		if (e) return e;
 	}
@@ -89,7 +93,8 @@ GF_Err set_file_udta(GF_ISOFile *dest, u32 tracknum, u32 udta_type, char *src, B
 		} else {
 			res = gf_isom_add_user_data(dest, tracknum, udta_type, uuid, data, size);
 		}
-		gf_free(data);
+		if (!is_string)
+			gf_free(data);
 	}
 	return res;
 }
@@ -648,18 +653,21 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 			print_stats_graph |= 1;
 		else if (!stricmp(ext+1, "fgraph"))
 			print_stats_graph |= 2;
-		else if (!strncmp(ext+1, "sopt", 4) || !strncmp(ext+1, "dopt", 4) || !strncmp(ext+1, "@@", 2)) {
+		else if (!strncmp(ext+1, "sopt", 4) || !strncmp(ext+1, "dopt", 4) || !strncmp(ext+1, "@", 1)) {
 			if (ext2) ext2[0] = ':';
 			opt_src = strstr(ext, ":sopt:");
 			opt_dst = strstr(ext, ":dopt:");
-			fchain = strstr(ext, ":@@");
+			fchain = strstr(ext, ":@");
 			if (opt_src) opt_src[0] = 0;
 			if (opt_dst) opt_dst[0] = 0;
 			if (fchain) fchain[0] = 0;
 
 			if (opt_src) import.filter_src_opts = opt_src+6;
 			if (opt_dst) import.filter_dst_opts = opt_dst+6;
-			if (fchain) import.filter_chain = fchain+3;
+			if (fchain) {
+				//check for old syntax (0.9->1.0) :@@
+				import.filter_chain = fchain + ((fchain[2]=='@') ? 3 : 2);
+			}
 
 			ext = NULL;
 			break;

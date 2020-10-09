@@ -205,6 +205,9 @@ struct __tag_compositor
 	u32 drv;
 	GF_Err last_error;
 
+	//filter mode, we can be a source for our built-in URLs
+	char *src;
+
 	/*audio renderer*/
 	struct _audio_render *audio_renderer;
 	/*video out*/
@@ -1495,7 +1498,9 @@ enum
 	/*span is in the current text selection*/
 	GF_TEXT_SPAN_RIGHT_TO_LEFT = 1<<3,
 	/*span is in the current text selection*/
-	GF_TEXT_SPAN_SELECTED = 1<<4
+	GF_TEXT_SPAN_SELECTED = 1<<4,
+	/*span is strikeout*/
+	GF_TEXT_SPAN_STRIKEOUT = 1<<5
 };
 
 typedef struct __text_span

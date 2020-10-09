@@ -1370,7 +1370,7 @@ static void dump_isom_obu(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump, B
 	for (i=0; i<gf_list_count(av1.config->obu_array); i++) {
 		GF_AV1_OBUArrayEntry *obu = gf_list_get(av1.config->obu_array, i);
 		bs = gf_bs_new(obu->obu, (u32) obu->obu_length, GF_BITSTREAM_READ);
-		gf_media_aom_av1_parse_obu(bs, &obu_type, &obu_size, &hdr_size, &av1);
+		gf_av1_parse_obu(bs, &obu_type, &obu_size, &hdr_size, &av1);
 		gf_inspect_dump_obu(dump, &av1, obu->obu, obu->obu_length, obu_type, obu_size, hdr_size, dump_crc);
 		gf_bs_del(bs);
 	}
@@ -1399,7 +1399,7 @@ static void dump_isom_obu(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump, B
 
 		bs = gf_bs_new(ptr, size, GF_BITSTREAM_READ);
 		while (size) {
-			gf_media_aom_av1_parse_obu(bs, &obu_type, &obu_size, &hdr_size, &av1);
+			gf_av1_parse_obu(bs, &obu_type, &obu_size, &hdr_size, &av1);
 			if (obu_size > size) {
 				fprintf(dump, "   <!-- OBU number %d is corrupted: size is %d but only %d remains -->\n", idx, (u32) obu_size, size);
 				break;
@@ -2060,7 +2060,7 @@ void dump_hevc_track_info(GF_ISOFile *file, u32 trackNum, GF_HEVCConfig *hevccfg
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_HEVC)
 			for (idx=0; idx<gf_list_count(ar->nalus); idx++) {
 				GF_NALUFFParam *vps = gf_list_get(ar->nalus, idx);
-				s32 ps_idx=gf_media_hevc_read_vps(vps->data, vps->size, hevc_state);
+				s32 ps_idx=gf_hevc_read_vps(vps->data, vps->size, hevc_state);
 				if (hevccfg->is_lhvc && (ps_idx>=0)) {
 					non_hevc_base_layer = ! hevc_state->vps[ps_idx].base_layer_internal_flag;
 				}
@@ -2150,7 +2150,7 @@ void dump_vvc_track_info(GF_ISOFile *file, u32 trackNum, GF_VVCConfig *vvccfg
 #if !defined(GPAC_DISABLE_AV_PARSERS) && 0 //TODO
 			for (idx=0; idx<gf_list_count(ar->nalus); idx++) {
 				GF_NALUFFParam *vps = gf_list_get(ar->nalus, idx);
-				s32 ps_idx=gf_media_hevc_read_vps(vps->data, vps->size, hevc_state);
+				s32 ps_idx=gf_hevc_read_vps(vps->data, vps->size, hevc_state);
 				if (hevccfg->is_lhvc && (ps_idx>=0)) {
 					non_hevc_base_layer = ! hevc_state->vps[ps_idx].base_layer_internal_flag;
 				}
@@ -2968,35 +2968,55 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 #if !defined(GPAC_DISABLE_AV_PARSERS)
 		if (vvc_state) gf_free(vvc_state);
 #endif
-	} else if ((msub_type == GF_ISOM_SUBTYPE_MH3D_MHA1) || (msub_type == GF_ISOM_SUBTYPE_MH3D_MHA2)) {
-		fprintf(stderr, "\tMPEG-H Audio stream - Sample Rate %d - %d channel(s) %d bps\n", sr, nb_ch, (u32) bps);
+	} else if ((msub_type == GF_ISOM_SUBTYPE_MH3D_MHA1) || (msub_type == GF_ISOM_SUBTYPE_MH3D_MHA2)
+			|| (msub_type == GF_ISOM_SUBTYPE_MH3D_MHM1) || (msub_type == GF_ISOM_SUBTYPE_MH3D_MHM2)
+	) {
+		const u8 *compat_profiles;
+		u32 i, nb_compat_profiles;
+		Bool valid = GF_FALSE;
+		Bool allow_inband = GF_FALSE;
+		if ( (msub_type == GF_ISOM_SUBTYPE_MH3D_MHM1) || (msub_type == GF_ISOM_SUBTYPE_MH3D_MHM2))
+			allow_inband = GF_TRUE;
+
+		fprintf(stderr, "\tMPEG-H Audio stream - Sample Rate %d\n", sr);
+
 		esd = gf_media_map_esd(file, trackNum, 1);
 		if (!esd || !esd->decoderConfig || !esd->decoderConfig->decoderSpecificInfo
-		|| !esd->decoderConfig->decoderSpecificInfo->data || (esd->decoderConfig->decoderSpecificInfo->dataLength<5)
+			|| !esd->decoderConfig->decoderSpecificInfo->data
 		) {
-			fprintf(stderr, "\tInvalid MPEG-H audio config\n");
-		} else {
-			fprintf(stderr, "\tProfileLevelIndication: %02X\n", esd->decoderConfig->decoderSpecificInfo->data[1]);
-		}
-		if (esd) gf_odf_desc_del((GF_Descriptor *)esd);
-	} else if ((msub_type == GF_ISOM_SUBTYPE_MH3D_MHM1) || (msub_type == GF_ISOM_SUBTYPE_MH3D_MHM2)) {
-		fprintf(stderr, "\tMPEG-H AudioMux stream - Sample Rate %d - %d channel(s) %d bps\n", sr, nb_ch, (u32) bps);
-		esd = gf_media_map_esd(file, trackNum, 1);
-		if (!esd || !esd->decoderConfig || !esd->decoderConfig->decoderSpecificInfo
-			|| !esd->decoderConfig->decoderSpecificInfo->data) {
-			GF_ISOSample *samp = gf_isom_get_sample(file, trackNum, 1, NULL);
-			if (samp) {
-				s32 PL = gf_mpegh_get_mhas_pl(samp->data, samp->dataLength);
-				if (PL>=0)
-					fprintf(stderr, "\tProfileLevelIndication: %02X\n", PL);
-				gf_isom_sample_del(&samp);
+			if (allow_inband) {
+				GF_ISOSample *samp = gf_isom_get_sample(file, trackNum, 1, NULL);
+				if (samp) {
+					u64 ch_layout=0;
+					s32 PL = gf_mpegh_get_mhas_pl(samp->data, samp->dataLength, &ch_layout);
+					if (PL>=0) {
+						fprintf(stderr, "\tProfileLevelIndication: 0x%02X", PL);
+						if (ch_layout)
+							fprintf(stderr, " - Reference Channel Layout %s", gf_audio_fmt_get_layout_name(ch_layout) );
+						fprintf(stderr, "\n");
+					}
+					gf_isom_sample_del(&samp);
+				}
+				valid = GF_TRUE;
 			}
-		} else if (esd->decoderConfig->decoderSpecificInfo->dataLength<5) {
+		} else if (esd->decoderConfig->decoderSpecificInfo->dataLength>=5) {
+			fprintf(stderr, "\tProfileLevelIndication: 0x%02X - Reference Channel Layout %s\n", esd->decoderConfig->decoderSpecificInfo->data[1]
+				, gf_audio_fmt_get_layout_name_from_cicp(esd->decoderConfig->decoderSpecificInfo->data[2])
+			);
+			valid = GF_TRUE;
+		}
+		if (!valid) {
 			fprintf(stderr, "\tInvalid MPEG-H audio config\n");
-		} else {
-			fprintf(stderr, "\tProfileLevelIndication: %02X\n", esd->decoderConfig->decoderSpecificInfo->data[1]);
 		}
 		if (esd) gf_odf_desc_del((GF_Descriptor *)esd);
+		compat_profiles = gf_isom_get_mpegh_compatible_profiles(file, trackNum, 1, &nb_compat_profiles);
+		for (i=0; i<nb_compat_profiles; i++) {
+			if (!i)
+				fprintf(stderr, "\tCompatible profiles:");
+			fprintf(stderr, " 0x%02X", compat_profiles[i]);
+		}
+		if (i) fprintf(stderr, "\n");
+
 	} else {
 		GF_GenericSampleDescription *udesc = gf_isom_get_generic_sample_description(file, trackNum, 1);
 		if (udesc) {

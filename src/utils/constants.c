@@ -142,7 +142,7 @@ CodecIDReg CodecRegistry [] = {
 	{GF_CODECID_VP9, 0, GF_STREAM_VISUAL, "VP9 Video", "vp9|ivf", NULL, "video/vp9"},
 	{GF_CODECID_VP10, 0, GF_STREAM_VISUAL, "VP10 Video", "vp10|ivf", NULL, "video/vp10"},
 
-	{GF_CODECID_MPHA, 0, GF_STREAM_AUDIO, "MPEG-H Audio", "mpha", "mha1", "audio/x-mpegh"},
+	{GF_CODECID_MPHA, 0, GF_STREAM_AUDIO, "MPEG-H Audio", "mhas", "mha1", "audio/x-mpegh"},
 	{GF_CODECID_MHAS, 0, GF_STREAM_AUDIO, "MPEG-H AudioMux", "mhas", "mhm1", "audio/x-mhas"},
 
 	{GF_CODECID_APCH, 0, GF_STREAM_VISUAL, "ProRes Video 422 HQ", "prores|apch", "apch", "video/prores"},
@@ -159,7 +159,7 @@ CodecIDReg CodecRegistry [] = {
 
 
 GF_EXPORT
-GF_CodecID gf_codec_parse(const char *cname)
+GF_CodecID gf_codecid_parse(const char *cname)
 {
 	u32 len = (u32) strlen(cname);
 	u32 i, count = sizeof(CodecRegistry) / sizeof(CodecIDReg);
@@ -796,6 +796,17 @@ const char *gf_audio_fmt_get_layout_name_from_cicp(u32 cicp_layout)
 }
 
 GF_EXPORT
+const char *gf_audio_fmt_get_layout_name(u64 ch_layout)
+{
+	u32 i, nb_cicp = sizeof(GF_CICPLayouts) / sizeof(GF_CICPAudioLayout);
+	for (i = 0; i < nb_cicp; i++) {
+		if (GF_CICPLayouts[i].channel_mask == ch_layout) return GF_CICPLayouts[i].name;
+	}
+	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported audio layout value "LLU"\n", ch_layout));
+	return "unknwon";
+}
+
+GF_EXPORT
 u32 gf_audio_fmt_get_cicp_from_layout(u64 chan_layout)
 {
 	u32 i, nb_cicp = sizeof(GF_CICPLayouts) / sizeof(GF_CICPAudioLayout);
@@ -804,6 +815,17 @@ u32 gf_audio_fmt_get_cicp_from_layout(u64 chan_layout)
 	}
 	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported cicp audio layout for channel layout "LLU"\n", chan_layout));
 	return 255;
+}
+
+GF_EXPORT
+u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout)
+{
+	u32 i, nb_chan = 0;
+	for (i=0; i<64; i++) {
+		nb_chan += (chan_layout&1) ? 1 : 0;
+		chan_layout>>=1;
+	}
+	return nb_chan;
 }
 
 typedef struct

@@ -3011,7 +3011,7 @@ void gf_m2ts_demux_del(GF_M2TS_Demuxer *ts)
 		if (gf_list_count(ts->dsmcc_controler)) {
 #ifdef GPAC_ENABLE_DSMCC
 			GF_M2TS_DSMCC_OVERLORD* dsmcc_overlord = (GF_M2TS_DSMCC_OVERLORD*)gf_list_get(ts->dsmcc_controler,0);
-			gf_cleanup_dir(dsmcc_overlord->root_dir);
+			gf_dir_cleanup(dsmcc_overlord->root_dir);
 			gf_rmdir(dsmcc_overlord->root_dir);
 			gf_m2ts_delete_dsmcc_overlord(dsmcc_overlord);
 			if(ts->dsmcc_root_dir) {
@@ -3056,7 +3056,20 @@ static Bool gf_m2ts_probe_buffer(char *buf, u32 size)
 
 	ts = gf_m2ts_demux_new();
 	e = gf_m2ts_process_data(ts, buf, size);
-	if (!ts->pck_number) e = GF_BAD_PARAM;
+
+	if (!ts->pck_number) {
+		e = GF_BAD_PARAM;
+	} else {
+		u32 nb_pck;
+		//max number of packets
+		if (ts->prefix_present)
+			nb_pck = size/192;
+		else
+			nb_pck = size/188;
+		//probe success if after align we have nb_pck - 2 and at least 2 packets
+		if ((nb_pck<2) || (ts->pck_number + 2 < nb_pck))
+			e = GF_BAD_PARAM;
+	}
 	gf_m2ts_demux_del(ts);
 
 	gf_log_set_tool_level(GF_LOG_CONTAINER, lt);

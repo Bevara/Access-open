@@ -167,6 +167,8 @@ analyze (bool, default: false, updatable): analyze sample content (NALU, OBU)
 .br
 xml (bool, default: false, updatable): use xml formatting (implied if (-analyze]() is set) and disable .I fmt
 .br
+crc (bool, default: false, updatable): dump crc of packets, NALU and OBU
+.br
 fftmcd (bool, default: false, updatable): consider timecodes use ffmpeg-compatible signaling rather than QT compliant one
 .br
 dtype (bool, default: false, updatable): dump property type
@@ -246,6 +248,8 @@ dur (frac, default: 0/0):      set inspect duration
 analyze (bool, default: false, updatable): analyze sample content (NALU, OBU)
 .br
 xml (bool, default: false, updatable): use xml formatting (implied if (-analyze]() is set) and disable .I fmt
+.br
+crc (bool, default: false, updatable): dump crc of packets, NALU and OBU
 .br
 fftmcd (bool, default: false, updatable): consider timecodes use ffmpeg-compatible signaling rather than QT compliant one
 .br
@@ -343,11 +347,33 @@ If 3D graphics are used or display driver is forced, OpenGL will be used on offs
 .SH Specific URL syntaxes
 .LP
 .br
-The compositor accepts any URL type supported by GPAC. It also accepts the following syntaxes for URLs:
+The compositor accepts any URL type supported by GPAC. It also accepts the following schemes for URLs:
 .br
-* views: creates an auto-stereo scene of N views from views://v1:.:vN. vN can be any type of URL supported by GPAC.
+* views:// : creates an auto-stereo scene of N views from views://v1:.:vN. vN can be any type of URL supported by GPAC.
 .br
-* mosaic: creates a mosaic of N views from mosaic://v1:.:vN. vN can be any type of URL supported by GPAC.
+* mosaic:// : creates a mosaic of N views from mosaic://v1:.:vN. vN can be any type of URL supported by GPAC.
+.br
+
+.br
+The compositor can act as a source filter when the .I src option is explicitly set:
+.br
+Example
+.br
+gpac compositor:src=source.mp4 vout
+.br
+
+.br
+
+.br
+The compositor can act as a source filter when the source url uses one of the compositor buildin protocol schemes:
+.br
+Example
+.br
+gpac -i mosaic://URL1:URL2 vout
+.br
+
+.br
+
 .br
 
 .br
@@ -574,6 +600,8 @@ nbviews (uint, default: 0, updatable): number of views to use in stereo mode
 .br
 stereo (enum, default: none, updatable): stereo output type. If your graphic card does not support OpenGL shaders, only top and side modes will be available
 .br
+* none: no stereo
+.br
 * side: images are displayed side by side from left to right
 .br
 * top: images are displayed from top (laft view) to bottom (right view)
@@ -673,6 +701,8 @@ drv (enum, default: auto):     indicate if graphics driver should be used. Ignor
 * auto: decides based on the loaded content
 .br
 
+.br
+src (cstr):                    location of source content
 .br
 
 .br
@@ -1935,6 +1965,8 @@ mfra (bool, default: false):   enable movie fragment random access when fragment
 .br
 forcesync (bool, default: false): force all SAP types to be considered sync samples (might produce non-conformant files)
 .br
+refrag (bool, default: false): indicate to use track fragment defaults from initial file if any rather than computing them from PID propertyes (used when processing standalone segments/fragments)
+.br
 tags (enum, default: strict):  tag injection mode
 .br
 * none: do not inject tags
@@ -2474,6 +2506,24 @@ mpeg2 (enum, default: auto):   signal as MPEG2 AAC
 .br
 
 .br
+.SH ufmhas
+.LP
+.br
+Description: MHAS writer
+.br
+
+.br
+This filter converts MPEG-H Audio streams into MHAS encapsulated data.
+.br
+
+.br
+.SH Options (expert):
+.LP
+.br
+syncp (bool, default: yes):    if set, insert sync packet at each frame, otherwise only at SAP
+.br
+
+.br
 .SH reframer
 .LP
 .br
@@ -2734,7 +2784,7 @@ rcfg (bool, default: true):    force repeating decoder config at each I-frame
 .br
 extract (enum, default: all):  layer extraction mode
 .br
-* full: extracts all layers
+* all: extracts all layers
 .br
 * base: extract base layer only
 .br
@@ -3819,6 +3869,64 @@ The segmenter can also be configured to:
 .br
 .P
 .B
+Dynamic (real-time live) Mode
+.br
+The dasher does not perform real-time regulation by default.
+.br
+For regular segmentation, you should enable segment regulation .I sreg if your sources are not real-time.
+.br
+Example
+.br
+gpac -i source.mp4 -o live.mpd:segdur=2:profile=live:dmode=dynamic:sreg
+.br
+
+.br
+For low latency segmentation with fMP4, you will need to specify the following options:
+.br
+* cdur: set the fMP4 fragment duration
+.br
+* asto: set the availability time offset. This value should be equal or slightly greater than segment duration minus cdur
+.br
+If your sources are not real-time, insert a reframer filter with real-time regulation
+.br
+Example
+.br
+gpac -i source.mp4 reframer:rt=on @ -o live.mpd:segdur=2:cdur=0.2:asto=1.8:profile=live:dmode=dynamic
+.br
+
+.br
+This will create DASH segments of 2 seconds made of fragments of 200 ms and indicate to the client that requests can be made 1.8 seconds earlier than segment complete availability on server.
+.br
+Note: Low latency HLS is not yet supported.
+.br
+
+.br
+For DASH, the filter will use the local clock for UTC anchor points in DASH.
+.br
+The filter can fetch and signal clock in other ways using .I utcs.
+.br
+Example
+.br
+[opts]:utcs=inband
+.br
+
+.br
+This will use the local clock and insert in the MPD a UTCTiming descriptor containing the local clock.
+.br
+Example
+.br
+[opts]::utcs=http://time.akamai.com[::opts]
+.br
+
+.br
+This will fetch time from http://time.akamai.com, use it as the UTC reference for segment generation and insert in the MPD a UTCTiming descriptor containing the time server URL.
+.br
+Note: if not set as a global option using --utcs=, you must escape the url using double :: or use other separators.
+.br
+
+.br
+.P
+.B
 Cue-driven segmentation
 .br
 The segmenter can take a list of instructions, or Cues, to use for the segmentation process, in which case only these are used to derive segment boundaries.
@@ -4032,6 +4140,8 @@ muxtype (enum, default: auto): muxtype to use for the segments
 .br
 * webm: uses WebM format
 .br
+* ogg: uses OGG format
+.br
 * raw: uses raw media format (disables muxed representations)
 .br
 * auto: guess format based on extension, default to mp4 if no extension
@@ -4057,6 +4167,8 @@ profile (enum, default: auto): target DASH profile. This will set default option
 * dashavc264.live: DASH-IF live profile
 .br
 * dashavc264.onDemand: DASH-IF onDemand profile
+.br
+* dashif.ll: DASH IF low-latency profile (set UTC server to time.akamai.com if none set)
 .br
 
 .br
@@ -4173,6 +4285,18 @@ scope_deps (bool, default: true): scope PID dependencies to be within source. If
 utcs (str):                    URL to use as time server / UTCTiming source. Special value inband enables inband UTC (same as publishTime), special prefix xsd@ uses xsDateTime schemeURI rather than ISO
 .br
 force_flush (bool, default: false): force generating a single segment for each input. This can be usefull in batch mode when average source duration is known and used as segment duration but actual duration may sometimes be greater
+.br
+last_seg_merge (bool, default: false): force merging last segment if less than half the target duration
+.br
+mha_compat (enum, default: no): adaptation set generation mode for compatible MPEG-H Audio profile
+.br
+* no: only generate the adaptation set for the main profile
+.br
+* comp: only generate the adaptation sets for all compatible profiles
+.br
+* all: generate the adaptation set for the main profile and all compatible profiles
+.br
+
 .br
 
 .br
@@ -4367,7 +4491,7 @@ Description: GSF Muxer
 .br
 
 .br
-This filter provides GSF (GPAC Super/Simple/Serialized/Stream/State Format) multiplexing.
+This filter provides GSF (GPAC Serialized Format) multiplexing.
 .br
 It serializes the stream states (config/reconfig/info update/remove/eos) and packets of input PIDs. This allows either saving to file a session, or forwarding the state/data of streams to another instance of GPAC using either pipes or sockets. Upstream events are not serialized.
 .br
@@ -4378,6 +4502,9 @@ The default behaviour does not insert sequence numbers. When running over genera
 The serializer sends tune-in packets (global and per pid) at the requested carousel rate - if 0, no carousel. These packets are marked as redundant so that they can be discarded by output filters if needed.
 .br
 
+.br
+.SH Encryption
+.LP
 .br
 The stream format can be encrypted in AES 128 CBC mode. For all packets, the packet header (header, size, frame size/block offset and optional seq num) are in the clear and the followings byte until the last byte of the last multiple of block size (16) fitting in the payload are encrypted.
 .br
@@ -4390,6 +4517,9 @@ For header/tunein packets, the first 25 bytes after the header are in the clear 
 The .I IV is constant to avoid packet overhead, randomly generated if not set and sent in the initial stream header. Pattern mode can be used (cf CENC cbcs) to encrypt K block and leave N blocks in the clear.
 .br
 
+.br
+.SH Filtering properties
+.LP
 .br
 The header/tunein packet may get quite big when all pid properties are kept. In order to help reduce its size, the .I minp option can be used: this will remove all built-in properties marked as dropable (cf property help) as well as all non built-in properties.
 .br
@@ -4404,6 +4534,43 @@ skp="4CC1,Name2
 This will remove properties of type 4CC1 and properties (built-in or not) of name Name2.
 .br
 
+.br
+.SH File mode
+.LP
+.br
+By default the filter only accepts framed media streams as input PID, not files. This can be changed by explictly loading the filter with .I ext or .I dst set.
+.br
+Example
+.br
+gpac -i source.mp4 gsfmx:dst=manifest.mpd @ -o dump.gsf
+.br
+
+.br
+This will DASH the source and store every files produced as PIDs in the GSF mux.
+.br
+In order to demux such a file, the GSF demuxer will likely need to be explictly loaded:
+.br
+Example
+.br
+gpac -i mux.gsf gsfdmx @ -o dump/$File$:dynext:clone
+.br
+
+.br
+This will extract all files from the GSF mux.
+.br
+
+.br
+When working in file mode, the filter by default only accepts PID of type file as input.
+.br
+To allow a mix of files and streams, use .I mixed:
+.br
+Example
+.br
+gpac -i source.mp4 gsfmx:dst=manifest.mpd:mixed @ -o dump.gsf
+.br
+
+.br
+This will DASH the source, store the manifest file and the media streams with their packet properties in the GSF mux.
 .br
 
 .br
@@ -4446,6 +4613,12 @@ minp (bool, default: false):   include only the minimum set of properties requir
 .br
 crate (dbl, default: 0):       carousel period for tune-in info in seconds - see filter help
 .br
+ext (str):                     file extension for file mode - see filter help
+.br
+dst (str):                     target URL in file mode - see filter help
+.br
+mixed (bool, default: false):  allow GSF to contain both files and media streams - see filter help
+.br
 
 .br
 .SH gsfdmx
@@ -4455,7 +4628,7 @@ Description: GSF Demuxer
 .br
 
 .br
-This filter provides GSF (GPAC Super/Simple/Serialized/Stream/State Format) demultiplexing.
+This filter provides GSF (GPAC Serialized Format) demultiplexing.
 .br
 It deserializes the stream states (config/reconfig/info update/remove/eos) and packets of input PIDs.
 .br
@@ -5449,6 +5622,36 @@ index (dbl, default: 1.0):     indexing window length
 .br
 
 .br
+.SH rfmhas
+.LP
+.br
+Description: MPEH-H Audio Stream reframer
+.br
+
+.br
+This filter parses MHAS files/data and outputs corresponding audio PID and frames.
+.br
+By default, the filter expects a MHAS stream with SYNC packets set, otherwise tune-in will fail. Using .I nosync=false can help parsing bitstreams with no SYNC packets.
+.br
+The default behaviour is to dispatch a framed MHAS bitstream. To demultiplex into a raw MPEG-H Audio, use .I mpha.
+.br
+
+.br
+
+.br
+.SH Options (expert):
+.LP
+.br
+index (dbl, default: 1.0):     indexing window length
+.br
+mpha (bool, default: false):   demux MHAS and only forward audio frames
+.br
+pcksync (uint, default: 4):    number of unknwon packets to tolerate before considering sync is lost
+.br
+nosync (bool, default: true):  initial sync state - see filter help
+.br
+
+.br
 .SH rfprores
 .LP
 .br
@@ -5707,6 +5910,10 @@ Encodes audio and video streams.
 See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details
 .br
 Note: if no codec is explicited through .I ffc option and no pixel format is given, codecs will be enumerated to find a matching pixel format.
+.br
+
+.br
+The encoder will look for property TargetRate on input PID to set the desired bitrate per PID.
 .br
 
 .br
@@ -6004,6 +6211,149 @@ reset_switch (bool, default: false): reset decoder at config change
 .br
 
 .br
+.SH avgen
+.LP
+.br
+Description: AV Counter Generator
+.br
+Version: 1.0
+.br
+Author: GPAC Team
+.br
+
+.br
+This filter generates AV streams representing a counter. Streams can be enabled or disabled using .I type.
+.br
+The filter is software-based and does not use GPU.
+.br
+
+.br
+When .I adjust is set, the first video frame is adjusted such that a full circle happens at each exact second according to the system UTC clock.
+.br
+By default, video UTC and date are computed at each frame generation from current clock and not from frame number.
+.br
+This will result in broken timing when playing at speeds other than 1.0.
+.br
+This can be changed using .I lock.
+.br
+
+.br
+Audio beep is generated every second, with octave (2xfreq) of even beep used every 10 seconds.
+.br
+When video is generated, beep is synchronized to video at each exact second.
+.br
+
+.br
+If NTP injection is used, each video packet (but not audio ones) has a SenderNTP property set; if video is not used, each audio packet has a SenderNTP property set.
+.br
+
+.br
+.SH Multistream generation
+.LP
+.br
+More than one output size can be specified. This will result in multiple sources being generated, one per size.
+.br
+A size can be specified more than once, resulting in packet references when [-copy] is not set, or full copies otherwise.
+.br
+Target encoding bitrates can be assigned to each output using .I rates. This can be usefull when generating dash:
+.br
+Example
+.br
+gpac avgen:sizes=1280x720,1920x1080:rates=2M,5M enc:c=aac:FID=1 enc:c=264:FID=2:clone -o live.mpd:SID=1,2
+.br
+
+.br
+
+.br
+.SH Multiview generation
+.LP
+.br
+In multiview mode, only the animated counter will move in depth backward and forward, as indicated by the .I disparity value.
+.br
+When .I pack is set, a packed stereo couple is generated for each video packet.
+.br
+Otherwise, when .I views is greater than 2, each view is generated on a dedicated output pid with the property ViewIdx set in [1, views].
+.br
+Multi-view output forces usage of .I copy mode.
+.br
+
+.br
+.SH PID Naming
+.LP
+.br
+The audio PID is assigned the name audio and ID 1.
+.br
+If a single video PID is produced, it is assigned the name video and ID 2.
+.br
+If multiple video PIDs are produced, they are assigned the names videoN and ID N+1, N in [1, sizes].
+.br
+If multiple .I views are generated, they are assigned the names videoN_vK and ID N*views+K-1, N in [1,sizes], K in [1, views].
+.br
+
+.br
+
+.br
+.SH Options (expert):
+.LP
+.br
+type (enum, default: av):      output selection
+.br
+* a: audio only
+.br
+* v: video only
+.br
+* av: audio and video
+.br
+
+.br
+freq (uint, default: 440):     frequency of beep
+.br
+freq2 (uint, default: 659):    frequency of odd beep
+.br
+sr (uint, default: 44100):     output samplerate
+.br
+flen (uint, default: 1024):    output frame length in samples
+.br
+ch (uint, default: 1):         number of channels
+.br
+alter (bool, default: false):  beep alternatively on each channel
+.br
+blen (uint, default: 50):      length of beep in milliseconds
+.br
+fps (frac, default: 25):       video frame rate
+.br
+sizes (v2il, default: 1280x720): video size in pixels
+.br
+lock (bool, default: false):   lock timing to video generation
+.br
+dyn (bool, default: true):     move bottom banner
+.br
+ntp (bool, default: true):     send NTP along with packets
+.br
+copy (bool, default: false):   copy the framebuffer into each video packet instead of using packet references
+.br
+dur (frac, default: 0/0):      run for the given time in second
+.br
+adjust (bool, default: true):  adjust start time to synchronize counter and UTC - see filter help
+.br
+pack (enum, default: no):      packing mode for stereo views
+.br
+ * no: no packing
+.br
+ * ss: side by side packing, forces .I views to 2
+.br
+ * tb: top-bottom packing, forces .I views to 2
+.br
+
+.br
+disparity (uint, default: 20): disparity in pixels between left-most and right-most views
+.br
+views (uint, default: 1):      number of views
+.br
+rates (strl):                  number of target bitrates to assign, one per size
+.br
+
+.br
 .SH EXAMPLES
 .TP
 Basic and advanced examples are available at https://wiki.gpac.io/Filters
@@ -6013,7 +6363,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit http://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev19-gd58ce6c43-master
+build: 1.1.0-DEV-rev76-g6d229978c-master
 .br
 Copyright: (c) 2000-2020 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br
