@@ -322,6 +322,7 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	u32 dsi_data_size=0;
 	u32 w, h;
 	GF_FilterPid *pid;
+	const char *codec_name = NULL;
 	w = h = 0;
 	
     dec_dsi = CFDictionaryCreateMutable(kCFAllocatorDefault, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -344,7 +345,10 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	if (p) w = p->value.uint;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_HEIGHT);
 	if (p) h = p->value.uint;
-
+	if (w && h) {
+		ctx->width = w;
+		ctx->height = h;
+	}
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DECODER_CONFIG);
 
@@ -381,7 +385,8 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 			if (!pps) return GF_NON_COMPLIANT_BITSTREAM;
 			ctx->reconfig_needed = GF_FALSE;
 			
-			ctx->vtb_type = kCMVideoCodecType_H264;
+			ctx->vtb_type = 'avc1'; //kCMVideoCodecType_H264;
+			codec_name = "AVC|H264";
 
 			if (gf_avc_read_sps(sps->data, sps->size, &ctx->avc, 0, NULL)<0)
 				return GF_NON_COMPLIANT_BITSTREAM;
@@ -507,7 +512,8 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 			if (!pps) return GF_NON_COMPLIANT_BITSTREAM;
 			ctx->reconfig_needed = GF_FALSE;
 
-			ctx->vtb_type = kCMVideoCodecType_HEVC;
+			ctx->vtb_type = 'hvc1'; //kCMVideoCodecType_HEVC;
+			codec_name = "HEVC";
 
 			idx = ctx->active_sps;
 			ctx->width = ctx->hevc.sps[idx].width;
@@ -622,7 +628,8 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	case GF_CODECID_MPEG2_HIGH:
 	case GF_CODECID_MPEG2_422:
 
-        ctx->vtb_type = kCMVideoCodecType_MPEG2Video;
+        ctx->vtb_type = 'mp2v'; //kCMVideoCodecType_MPEG2Video;
+		codec_name = "MPEG2";
 		if (!ctx->width || !ctx->height) {
 			ctx->init_mpeg12 = GF_TRUE;
 			return GF_OK;
@@ -632,7 +639,8 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
         break;
 		
 	case GF_CODECID_MPEG1:
-		ctx->vtb_type = kCMVideoCodecType_MPEG1Video;
+		ctx->vtb_type = 'mp1v'; //kCMVideoCodecType_MPEG1Video;
+		codec_name = "MPEG1";
 		if (!ctx->width || !ctx->height) {
 			ctx->init_mpeg12 = GF_TRUE;
 			return GF_OK;
@@ -644,7 +652,8 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	{
 		char *vosh = NULL;
 		u32 vosh_size = 0;
-		ctx->vtb_type = kCMVideoCodecType_MPEG4Video;
+		ctx->vtb_type = 'mp4v'; //kCMVideoCodecType_MPEG4Video;
+		codec_name = "MPEG4";
 
 		if (!p || !p->value.data.ptr) {
 			vosh = ctx->vosh;
@@ -697,14 +706,34 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	case GF_CODECID_S263:
 		ctx->reorder_probe = 0;
 		ctx->reconfig_needed = GF_FALSE;
-		if (w && h) {
-			ctx->width = w;
-			ctx->height = h;
-			ctx->vtb_type = kCMVideoCodecType_H263;
-			break;
-		}
+		ctx->vtb_type = 'h263'; //kCMVideoCodecType_H263;
+		codec_name = "H263";
 		break;
-		
+
+	case GF_CODECID_AP4X:
+		ctx->vtb_type = 'ap4x'; //kCMVideoCodecType_AppleProRes4444XQ;
+		codec_name = "ProRes.AP4X";
+		break;
+	case GF_CODECID_AP4H:
+		ctx->vtb_type = 'ap4h'; //kCMVideoCodecType_AppleProRes4444;
+		codec_name = "ProRes.AP4H";
+		break;
+	case GF_CODECID_APCH:
+		ctx->vtb_type = 'apch'; // kCMVideoCodecType_AppleProRes422HQ;
+		codec_name = "ProRes.APCH";
+		break;
+	case GF_CODECID_APCN:
+		ctx->vtb_type = 'apcn'; // kCMVideoCodecType_AppleProRes422;
+		codec_name = "ProRes.APCN";
+		break;
+	case GF_CODECID_APCS:
+		ctx->vtb_type = 'apcs'; // kCMVideoCodecType_AppleProRes422LT;
+		codec_name = "ProRes.APCS";
+		break;
+	case GF_CODECID_APCO:
+		ctx->vtb_type = 'apco'; // kCMVideoCodecType_AppleProRes422Proxy;
+		codec_name = "ProRes.APCO";
+		break;
 	default :
 		ctx->reconfig_needed = GF_FALSE;
 		return GF_NOT_SUPPORTED;
@@ -789,24 +818,11 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	ctx->profile_supported = GF_FALSE;
 	ctx->can_reconfig = !gf_opts_get_bool("core", "no-reassign");
 
-	switch (ctx->vtb_type) {
-	case kCMVideoCodecType_H264:
-		gf_filter_set_name(filter, ctx->is_hardware ? "VTB:Hardware:AVC|H264" : "VTB:Software:AVC|H264");
-		break;
-	case kCMVideoCodecType_MPEG2Video:
-		gf_filter_set_name(filter, ctx->is_hardware ? "VTB:Hardware:MPEG2" : "VTB:Software:MPEG2");
-		break;
-    case  kCMVideoCodecType_MPEG4Video:
-		gf_filter_set_name(filter, ctx->is_hardware ? "VTB:Hardware:MPEG4P2" : "VTB:Software:MPEG4P2");
-		break;
-    case kCMVideoCodecType_H263:
-		gf_filter_set_name(filter, ctx->is_hardware ? "VTB:Hardware:H263" : "VTB:Software:H263");
-		break;
-	case kCMVideoCodecType_MPEG1Video:
-		gf_filter_set_name(filter, ctx->is_hardware ? "VTB:Hardware:MPEG1" : "VTB:Software:MPEG1");
-		break;
-	default:
-		break;
+	if (codec_name) {
+		char szName[100];
+		snprintf(szName, 99, "VTB:%s:%s", ctx->is_hardware ? "Hardware" : "Software", codec_name);
+		szName[99] = 0;
+		gf_filter_set_name(filter, szName);
 	}
 	return GF_OK;
 }
@@ -822,7 +838,7 @@ static void vtbdec_register_param_sets(GF_VTBDecCtx *ctx, char *data, u32 size, 
 	else gf_bs_reassign_buffer(ctx->ps_bs, data, size);
 
 	if (hevc_nal_type) {
-#ifndef GPAC_DISABLE_HEVC
+#if !defined(GPAC_DISABLE_HEVC)
 		if (hevc_nal_type==GF_HEVC_NALU_SEQ_PARAM) {
 			dest = ctx->SPSs;
 			ps_id = gf_hevc_read_sps_bs(ctx->ps_bs, &ctx->hevc);
@@ -1274,7 +1290,7 @@ static GF_Err vtbdec_parse_nal_units(GF_Filter *filter, GF_VTBDecCtx *ctx, char 
 				}
 			}
 		} else if (ctx->is_hevc) {
-#ifdef GPAC_DISABLE_HEVC
+#if defined(GPAC_DISABLE_HEVC)
 			return GF_NOT_SUPPORTED;
 #else
 			u8 temporal_id, ayer_id;
@@ -1957,9 +1973,8 @@ static const GF_FilterCapability VTBDecCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG4_PART2),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AVC),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_HEVC),
-	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED,GF_PROP_PID_TILE_BASE, GF_TRUE),
+	{ .code=GF_PROP_PID_SCALABLE, .val={.type=GF_PROP_BOOL, .value.boolean = GF_TRUE}, .flags=(GF_CAPS_INPUT_OPT), .priority=255 },
 
-#ifndef GPAC_CONFIG_IOS
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_SIMPLE),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_MAIN),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_SNR),
@@ -1968,7 +1983,13 @@ static const GF_FilterCapability VTBDecCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_422),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_H263),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_S263),
-#endif
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AP4X),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AP4H),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_APCH),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_APCN),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_APCS),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_APCO),
+
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_RAW),
 };
@@ -1987,7 +2008,7 @@ static const GF_FilterArgs VTBDecArgs[] =
 GF_FilterRegister GF_VTBDecCtxRegister = {
 	.name = "vtbdec",
 	GF_FS_SET_DESCRIPTION("VideoToolBox decoder")
-	GF_FS_SET_HELP("This filter decodes MPEG-2, H263, AVC|H264 and HEVC streams through VideoToolBox. It allows GPU frame dispatch or direct frame copy.")
+	GF_FS_SET_HELP("This filter decodes video streams through OSX/iOS VideoToolBox (MPEG-2, H263, AVC|H264, HEVC, ProRes). It allows GPU frame dispatch or direct frame copy.")
 	.private_size = sizeof(GF_VTBDecCtx),
 	.args = VTBDecArgs,
 	.priority = 1,

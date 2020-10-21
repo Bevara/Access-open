@@ -1037,6 +1037,8 @@ enum
 	GF_PROP_PCK_IDXFILENAME = GF_4CC('I','N','A','M'),
 	GF_PROP_PCK_FILESUF = GF_4CC('F','S','U','F'),
 	GF_PROP_PCK_EODS = GF_4CC('E','O','D','S'),
+	GF_PROP_PCK_CUE_START = GF_4CC('P','C','U','S'),
+
 	GF_PROP_PID_MAX_FRAME_SIZE = GF_4CC('M','F','R','S'),
 	GF_PROP_PID_AVG_FRAME_SIZE = GF_4CC('A','F','R','S'),
 	GF_PROP_PID_MAX_TS_DELTA = GF_4CC('M','T','S','D'),
@@ -1102,6 +1104,7 @@ enum
 	GF_PROP_PID_RAWGRAB = GF_4CC('P','G','R','B'),
 	GF_PROP_PID_KEEP_AFTER_EOS = GF_4CC('P','K','A','E'),
 	GF_PROP_PID_COVER_ART = GF_4CC('P','C','O','V'),
+	GF_PROP_PID_ORIG_FRAG_URL = GF_4CC('O','F','R','A'),
 	//internal property indicating pointer to associated GF_DownloadSession
 	GF_PROP_PID_DOWNLOAD_SESSION = GF_4CC('G','H','T','T')
 };
@@ -1167,23 +1170,34 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 /*! Maximum string size to use when dumping a property*/
 #define GF_PROP_DUMP_ARG_SIZE	100
 
+/*! Data property dump mode*/
+typedef enum
+{
+	/*! do not dump data*/
+	GF_PROP_DUMP_DATA_NONE=0,
+	/*! dump data if less than 40 bytes, otherwise dump ptr adress and CRC*/
+	GF_PROP_DUMP_DATA_INFO,
+	/*! dump data to parsable property, as ADDRESS+'@'+POINTER*/
+	GF_PROP_DUMP_DATA_PTR,
+} GF_PropDumDataMode;
+
 /*! Dumps a property value to string
 \param att property value
 \param dump buffer holding the resulting value for types requiring string conversions (integers, ...)
-\param dump_data if set data will be dumped in hexadecimal. Otherwise, data buffer is not dumped
+\param dump_data_mode data dump mode
 \param min_max_enum optional, gives the min/max or enum string when the property is a filter argument
 \return string
 */
-const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], Bool dump_data, const char *min_max_enum);
+const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumDataMode dump_data_mode, const char *min_max_enum);
 
 /*! Dumps a property value to string, resolving any built-in types (pix formats, codec id, ...)
 \param p4cc property 4CC
 \param att property value
 \param dump buffer holding the resulting value for types requiring string conversions (integers, ...)
-\param dump_data if set data will be dumped in hexadecimal. Otherwise, data buffer is not dumped
+\param dump_data_mode data dump mode
 \return string
 */
-const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], Bool dump_data);
+const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumDataMode dump_data_mode);
 
 /*! Resets a property value, freeing allocated data or strings depending on the property type
 \param prop property 4CC
@@ -2794,7 +2808,6 @@ GF_Err gf_filter_pid_set_property_dyn(GF_FilterPid *PID, char *name, const GF_Pr
 Similar to \ref gf_filter_pid_set_property, but infos are not copied up the chain and to not trigger PID reconfiguration.
 First packet dispatched after calling this function will be marked, and its fetching by the consuming filter will trigger a process_event notification.
 If the consumming filter copies properties from source packet to output packet, the flag will be passed to such new output packet.
-Note: any property type can be used for info, except \ref GF_PROP_POINTER.
 
 \param PID the target filter PID
 \param prop_4cc the built-in property code to modify

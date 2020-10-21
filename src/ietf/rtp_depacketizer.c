@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / RTP input module
@@ -922,7 +922,10 @@ static void gf_rtp_parse_latm(GF_RTPDepacketizer *rtp, GF_RTPHeader *hdr, u8 *pa
 		rtp->on_sl_packet(rtp->udta, (char *) payload, latm_size, &rtp->sl_hdr, GF_OK);
 		payload += latm_size;
 		remain -= (latm_size+latm_hdr_size);
-		rtp->sl_hdr.compositionTimeStamp += rtp->sl_hdr.au_duration;
+		if (rtp->sl_hdr.au_duration)
+			rtp->sl_hdr.compositionTimeStamp += rtp->sl_hdr.au_duration;
+		else
+			rtp->sl_hdr.compositionTimeStamp += 1024;
 	}
 }
 #endif
@@ -1023,8 +1026,8 @@ static void gf_rtp_parse_ac3(GF_RTPDepacketizer *rtp, GF_RTPHeader *hdr, u8 *pay
 	size -= 2;
 
 	if (!ft) {
-		GF_AC3Header ac3hdr;
-		memset(&ac3hdr, 0, sizeof(GF_AC3Header));
+		GF_AC3Config ac3hdr;
+		memset(&ac3hdr, 0, sizeof(GF_AC3Config));
 		rtp->sl_hdr.accessUnitStartFlag = rtp->sl_hdr.accessUnitEndFlag = 1;
 		while (size) {
 			u32 offset;
@@ -1292,6 +1295,11 @@ static GF_Err gf_rtp_payt_setup(GF_RTPDepacketizer *rtp, GF_RTPMap *map, GF_SDPM
 		gf_bs_del(bs);
 		rtp->sl_map.StreamType = GF_STREAM_AUDIO;
 		rtp->sl_map.CodecID = GF_CODECID_AAC_MPEG4;
+		rtp->sl_hdr.au_duration = 1024;
+		if (cfg.base_sr && map && (cfg.base_sr!=map->ClockRate)) {
+			rtp->sl_hdr.au_duration *= map->ClockRate;
+			rtp->sl_hdr.au_duration /= cfg.base_sr;
+		}
 
 		/*assign depacketizer*/
 		rtp->depacketize = gf_rtp_parse_latm;

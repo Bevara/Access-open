@@ -895,6 +895,10 @@ static GF_Err gf_filter_pid_configure(GF_Filter *filter, GF_FilterPid *pid, GF_P
 		filter->has_pending_pids = GF_FALSE;
 		while (gf_fq_count(filter->pending_pids)) {
 			GF_FilterPid *a_pid=gf_fq_pop(filter->pending_pids);
+			//filter is a pid adaptation filter (dynamically loaded to solve prop negociation)
+			//copy over play state if the input PID was already playing
+			if (pid->is_playing && filter->is_pid_adaptation_filter)
+				a_pid->is_playing = GF_TRUE;
 
 			gf_filter_pid_post_init_task(filter, a_pid);
 		}
@@ -1321,7 +1325,7 @@ static Bool filter_pid_check_fragment(GF_FilterPid *src_pid, char *frag_name, Bo
 	//check for dynamic assignment
 	if ( (psep[0]==src_pid->filter->session->sep_name) && ((psep[1]=='*') || (psep[1]=='\0') ) ) {
 		*needs_resolve = GF_TRUE;
-		gf_props_dump_val(&pent->prop, prop_dump_buffer, GF_FALSE, NULL);
+		gf_props_dump_val(&pent->prop, prop_dump_buffer, GF_PROP_DUMP_DATA_NONE, NULL);
 		return GF_FALSE;
 	}
 
@@ -1713,14 +1717,19 @@ Bool gf_filter_pid_caps_match(GF_FilterPid *src_pid_or_ipid, const GF_FilterRegi
 			}
 		}
 
-		//optional cap
-		if (cap->flags & GF_CAPFLAG_OPTIONAL) continue;
-
 		//try by name
 		if (!pid_cap && cap->name) pid_cap = gf_filter_pid_get_property_str_first(src_pid_or_ipid, cap->name);
 
 		if (ext_not_trusted && (cap->code==GF_PROP_PID_FILE_EXT)) {
 			has_file_ext_cap = GF_TRUE;
+			continue;
+		}
+
+		//optional cap, only adjust priority
+		if (cap->flags & GF_CAPFLAG_OPTIONAL) {
+			if (pid_cap && priority && cap->priority && ((*priority) < cap->priority)) {
+				(*priority) = cap->priority;
+			}
 			continue;
 		}
 
@@ -1774,13 +1783,16 @@ Bool gf_filter_pid_caps_match(GF_FilterPid *src_pid_or_ipid, const GF_FilterRegi
 						}
 						prop_excluded = GF_TRUE;
 					}
-					if (prop_equal) break;
+					if (prop_equal) {
+						if (priority && a_cap->priority && ((*priority) < a_cap->priority)) {
+							(*priority) = a_cap->priority;
+						}
+						break;
+					}
 				}
 			}
 			if (!prop_equal && !prop_excluded) {
 				all_caps_matched=GF_FALSE;
-			} else if (priority && cap->priority) {
-				(*priority) = cap->priority;
 			}
 			if (ext_not_trusted && prop_equal && (cap->code==GF_PROP_PID_MIME))
 				mime_matched = GF_TRUE;
@@ -2708,6 +2720,8 @@ static void gf_filter_pid_resolve_link_dijkstra(GF_FilterPid *pid, GF_Filter *ds
 					edge->status = EDGE_STATUS_DISABLED;
 					continue;
 				}
+				if (priority)
+					path_weight *= priority;
 			}
 
 			//if source is not edge origin and edge is only valid for explicitly loaded filters, disable edge
@@ -3565,7 +3579,7 @@ static void dump_pid_props(GF_FilterPid *pid)
 	const GF_PropertyEntry *p;
 	GF_PropertyMap *pmap = gf_list_get(pid->properties, 0);
 	while (pmap && (p = gf_list_enum(pmap->properties, &idx))) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Pid prop %s: %s\n", gf_props_4cc_get_name(p->p4cc), gf_props_dump(p->p4cc, &p->prop, szDump, GF_FALSE) ));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Pid prop %s: %s\n", gf_props_4cc_get_name(p->p4cc), gf_props_dump(p->p4cc, &p->prop, szDump, GF_PROP_DUMP_DATA_NONE) ));
 	}
 }
 #endif
@@ -4389,10 +4403,6 @@ static GF_Err gf_filter_pid_set_property_full(GF_FilterPid *pid, u32 prop_4cc, c
 
 	//info property, do not request a new property map
 	if (is_info) {
-		if (value && (value->type==GF_PROP_POINTER)) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to set info property of type pointer is forbidden (filter %s) - ignoring\n", pid->filter->name));
-			return GF_BAD_PARAM;
-		}
 		map = pid->infos;
 		if (!map) {
 			map = pid->infos = gf_props_new(pid->filter);
@@ -5748,9 +5758,22 @@ void gf_filter_pid_send_event_downstream(GF_FSTask *task)
 		if (pid->not_connected)
 			pid->not_connected = 2;
 		return;
-	} else if (f->freg->process_event) {
-		FSESS_CHECK_THREAD(f)
-		canceled = f->freg->process_event(f, evt);
+	}
+	//otherwise process
+	else {
+		//reset EOS to false on source switch before executing the event, so that a filter may set a pid to EOS in the callback
+		if (evt->base.type==GF_FEVT_SOURCE_SWITCH) {
+			for (i=0; i<f->num_output_pids; i++) {
+				GF_FilterPid *apid = gf_list_get(f->output_pids, i);
+				apid->has_seen_eos = GF_FALSE;
+				gf_filter_pid_check_unblock(apid);
+			}
+		}
+
+		if (f->freg->process_event) {
+			FSESS_CHECK_THREAD(f)
+			canceled = f->freg->process_event(f, evt);
+		}
 	}
 
 	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Filter %s PID %s processed event %s - canceled %s\n", f->name, evt->base.on_pid ? evt->base.on_pid->name : "none", gf_filter_event_name(evt->base.type), canceled ? "yes" : "no" ));
@@ -5839,13 +5862,6 @@ void gf_filter_pid_send_event_downstream(GF_FSTask *task)
 				else
 					gf_filter_pid_check_unblock(evt->base.on_pid);
 			}
-		}
-	}
-	else if (evt->base.type==GF_FEVT_SOURCE_SWITCH) {
-		for (i=0; i<f->num_output_pids; i++) {
-			GF_FilterPid *apid = gf_list_get(f->output_pids, i);
-			apid->has_seen_eos = GF_FALSE;
-			gf_filter_pid_check_unblock(apid);
 		}
 	}
 
@@ -6660,7 +6676,7 @@ GF_Err gf_filter_pid_resolve_file_template(GF_FilterPid *pid, char szTemplate[GF
 				value = prop_val->value.uint;
 				has_val = GF_TRUE;
 			} else {
-				str_val = gf_props_dump_val(prop_val, szPropVal, GF_FALSE, NULL);
+				str_val = gf_props_dump_val(prop_val, szPropVal, GF_PROP_DUMP_DATA_NONE, NULL);
 			}
 		}
 		szTemplateVal[0]=0;

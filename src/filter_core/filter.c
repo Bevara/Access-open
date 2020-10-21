@@ -2469,7 +2469,6 @@ static void gf_filter_setup_failure_task(GF_FSTask *task)
 	if (task->udta) {
 		e = ((struct _gf_filter_setup_failure *)task->udta)->e;
 		gf_free(task->udta);
-
 		f->session->last_connect_error = e;
 	}
 
@@ -2485,6 +2484,21 @@ static void gf_filter_setup_failure_task(GF_FSTask *task)
 	}
 
 	if (f->session->filters_mx) gf_mx_v(f->session->filters_mx);
+
+	//detach all input pids
+	while (gf_list_count(f->input_pids)) {
+		GF_FilterPidInst *pidinst = gf_list_pop_back(f->input_pids);
+		pidinst->filter = NULL;
+	}
+	//detach all output pids
+	while (gf_list_count(f->output_pids)) {
+		u32 j;
+		GF_FilterPid *pid = gf_list_pop_back(f->output_pids);
+		for (j=0; j<pid->num_destinations; j++) {
+			GF_FilterPid *pidinst = gf_list_get(pid->destinations, j);
+			pidinst->pid = NULL;
+		}
+	}
 
 	gf_filter_del(f);
 }
@@ -2681,6 +2695,10 @@ void gf_filter_remove_internal(GF_Filter *filter, GF_Filter *until_filter, Bool 
 		return;
 
 	if (until_filter) {
+		//check if filter has not been removed
+		s32 res = gf_list_find(until_filter->session->filters, filter);
+		if (res<0)
+			return;
 		GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Disconnecting filter %s up to %s\n", filter->name, until_filter->name));
 	} else {
 		GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Disconnecting filter %s from session\n", filter->name));
@@ -3478,7 +3496,7 @@ const char *gf_filter_get_arg_str(GF_Filter *filter, const char *arg_name, char 
 	if (p.type==GF_PROP_PCMFMT)
 		return gf_audio_fmt_name(p.value.uint);
 
-	return gf_props_dump_val(&p, dump, GF_FALSE, arg_min_max);
+	return gf_props_dump_val(&p, dump, GF_PROP_DUMP_DATA_NONE, arg_min_max);
 }
 
 GF_EXPORT

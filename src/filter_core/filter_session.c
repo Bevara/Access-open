@@ -119,14 +119,14 @@ void gf_fs_add_filter_register(GF_FilterSession *fsess, const GF_FilterRegister 
 static Bool fs_default_event_proc(void *ptr, GF_Event *evt)
 {
 	GF_FilterSession *fs = (GF_FilterSession *)ptr;
+	if (evt->type==GF_EVENT_QUIT) {
+		gf_fs_abort(fs, GF_FALSE);
+	}
+
 #ifdef GPAC_HAS_QJS
 	if (fs->on_evt_task)
 		return jsfs_on_event(fs, evt);
 #endif
-
-	if (evt->type==GF_EVENT_QUIT) {
-		gf_fs_abort(fs, GF_FALSE);
-	}
 	return 0;
 }
 
@@ -2334,7 +2334,7 @@ GF_Filter *gf_fs_load_source_dest_internal(GF_FilterSession *fsess, const char *
 			sURL[ulen]=0;
 		}
 
-		if (for_source && gf_url_is_local(sURL)) {
+		if (for_source && gf_url_is_local(sURL) && !strstr(sURL, "isobmff://")) {
 			char *frag_par, *cgi, *ext_start;
 			char f_c=0;
 			gf_url_to_fs_path(sURL);
@@ -2353,7 +2353,7 @@ GF_Filter *gf_fs_load_source_dest_internal(GF_FilterSession *fsess, const char *
 				frag_par[0] = 0;
 			}
 
-			if (strcmp(sURL, "null") && strcmp(sURL, "-") && strcmp(sURL, "stdin") && ! gf_file_exists(sURL)) {
+			if (strcmp(sURL, "null") && strncmp(sURL, "rand", 4) && strcmp(sURL, "-") && strcmp(sURL, "stdin") && ! gf_file_exists(sURL)) {
 				char szPath[GF_MAX_PATH];
 				Bool try_js = gf_fs_solve_js_script(szPath, sURL, NULL);
 				if (sep) sep[0] = fsess->sep_args;
@@ -2499,7 +2499,11 @@ restart:
 	if (!filter) {
 		filter = gf_filter_new(fsess, candidate_freg, args, NULL, arg_type, err, alias_for_filter, GF_FALSE);
 	} else {
-		filter->freg = candidate_freg;
+        //destroy underlying JS object - gf_filter_new_finalize always reassign it to JS_UNDEFINED
+#ifdef GPAC_HAS_QJS
+        jsfs_on_filter_destroyed(filter);
+#endif
+        filter->freg = candidate_freg;
 		e = gf_filter_new_finalize(filter, args, arg_type);
 		if (err) *err = e;
 	}
@@ -2867,20 +2871,23 @@ GF_DownloadManager *gf_filter_get_download_manager(GF_Filter *filter)
 }
 
 GF_EXPORT
-struct _gf_ft_mgr *gf_filter_get_font_manager(GF_Filter *filter)
+struct _gf_ft_mgr *gf_fs_get_font_manager(GF_FilterSession *fsess)
 {
 #ifdef GPAC_DISABLE_PLAYER
 	return NULL;
 #else
-	GF_FilterSession *fsess;
-	if (!filter) return NULL;
-	fsess = filter->session;
-
 	if (!fsess->font_manager) {
 		fsess->font_manager = gf_font_manager_new();
 	}
 	return fsess->font_manager;
 #endif
+}
+
+GF_EXPORT
+struct _gf_ft_mgr *gf_filter_get_font_manager(GF_Filter *filter)
+{
+	if (!filter) return NULL;
+	return gf_fs_get_font_manager(filter->session);
 }
 
 void gf_fs_cleanup_filters(GF_FilterSession *fsess)

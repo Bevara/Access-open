@@ -139,7 +139,11 @@ GF_GPACArg m4b_gen_args[] =
  	GF_DEF_ARG("ab", NULL, "add given brand to file's alternate brand list", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
  	GF_DEF_ARG("rb", NULL, "remove given brand to file's alternate brand list", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
  	GF_DEF_ARG("cprt", NULL, "add copyright string to file", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
- 	GF_DEF_ARG("chap", NULL, "set chapter information from given file", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
+ 	GF_DEF_ARG("chap", NULL, "set chapter information from given file. The following formats are supported (but cannot be mixed) in the chapter text file:\n"
+		"  - ZoomPlayer: `AddChapter(nb_frames,chapter name)`, `AddChapterBySeconds(nb_sec,chapter name)` and `AddChapterByTime(h,m,s,chapter name)` with 1 chapter per line\n"
+		"  - Time codes: `h:m:s chapter_name`, `h:m:s:ms chapter_name` and `h:m:s.ms chapter_name` with 1 chapter per line\n"
+		"  - SMPTE codes: `h:m:s;nb_f/fps chapter_name` and `h:m:s;nb_f chapter_name` with `nb_f` the number of frames and `fps` the framerate with 1 chapter per line\n"
+		"  - Common syntax: `CHAPTERX=h:m:s[:ms or .ms]` on first line and `CHAPTERXNAME=name` on next line (reverse order accepted)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
  	GF_DEF_ARG("chapqt", NULL, "set chapter information from given file, using QT signaling for text tracks", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
  	GF_DEF_ARG("set-track-id `id1:id2`", NULL, "change id of track with id1 to id2", NULL, NULL, GF_ARG_STRING, 0),
  	GF_DEF_ARG("swap-track-id `id1:id2`", NULL, "swap the id between tracks with id1 to id2", NULL, NULL, GF_ARG_STRING, 0),
@@ -166,14 +170,6 @@ GF_GPACArg m4b_gen_args[] =
  	GF_DEF_ARG("name `tkID=NAME`", NULL, "set track handler name to NAME (UTF-8 string)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
  	GF_DEF_ARG("itags `tag1[:tag2]`", NULL, "set iTunes tags to file, see [-tag-list]()", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
  	GF_DEF_ARG("tag-list", NULL, "print the set of supported iTunes tags", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED),
- 	GF_DEF_ARG("split", NULL, "split in files of given max duration", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("split-size", "splits", "split in files of given max size (in kb)", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("split-rap", "splitr", "split in files at each new RAP", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("split-chunk VAL", "splitx", "extract a new file from source. `VAL` can be formated as:\n"
-	"- `S:E`: `S` (number of seconds) to `E` with `E` a number (in seconds), `end` or `end-N`, N  number of seconds before the end\n"
-	"- `S-E`: start and end dates, each formatted as `HH:MM:SS.ms` or `MM:SS.ms`", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("splitz `S:E`", NULL, "same as -split-chunk, but adjust the end time to be before the last RAP sample", NULL, NULL, GF_ARG_STRING, 0),
-
  	GF_DEF_ARG("group-add", NULL, "create a new grouping information in the file. Format is a colon-separated list of following options:\n"
 	        "- refTrack=ID: ID of the track used as a group reference. If not set, the track will belong to the same group as the "
 	        "previous trackID specified. If 0 or no previous track specified, a new alternate group will be created\n"
@@ -201,8 +197,6 @@ GF_GPACArg m4b_gen_args[] =
 	GF_DEF_ARG("bo", NULL, "freeze the order of boxes in input file\n", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED),
 	GF_DEF_ARG("init-seg", NULL, "use the given file as an init segment for dumping or for encryption\n", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED),
 	GF_DEF_ARG("zmov", NULL, "compress movie box according to ISOBMFF box compression\n", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED),
-
-
 	{0}
 };
 
@@ -210,7 +204,7 @@ void PrintGeneralUsage()
 {
 	u32 i=0;
 	gf_sys_format_help(helpout, help_flags, "# General Options\n"
-		"MP4Box is a multimedia packager, with a vast number of functionalities: conversion, splitting, hinting, dumping, DASH-ing, encryption and others.\n"
+		"MP4Box is a multimedia packager, with a vast number of functionalities: conversion, splitting, hinting, dumping, DASH-ing, encryption, transcoding and others.\n"
 		"MP4Box provides a large set of options, classified by categories (see [-h]()). These options do not follow any particular ordering.\n"
 		"MP4Box performs in-place rewrite of IsoMedia files (the input file is overwritten). You can change this behaviour by using the [-out]() option.\n"
 		"MP4Box stores by default the file with 0.5 second interleaving and meta-data (`moov`...) at the beginning, making it suitable for HTTP streaming. This may however takes longer to store the file, use [-flat]() to change this behaviour.\n"
@@ -220,19 +214,50 @@ void PrintGeneralUsage()
 		"Unless specified otherwise, an option of type `integer` expects a trackID value following it."
 		"An option of type `boolean` expects no following value."
 		"  \n"
-		"# File Splitting and Concatenation\n"
-		"MP4Box can split IsoMedia files by size, duration or extract a given part of the file to new IsoMedia file(s). This process requires that at most one track in the input file has non random-access points (typically one video track at most). This process will also ignore all MPEG-4 Systems tracks and hint tracks, but will try to split private media tracks.\n"
-		"Note: The input file must have enough random access points in order to be split. This may not be the case with some video files where only the very first sample of the video track is a key frame (many 3GP files with H263 video are recorded that way). In order to split such files you will have to use a real video editor and re-encode the content.\n"
-		"Note: You can add media to a file and split it in the same pass. In this case, the destination file (the one which would be obtained without spliting) will not be stored.\n"
-		"  \n"
-		"Options:\n"
 	);
 
+	
 	while (m4b_gen_args[i].name) {
 		GF_GPACArg *arg = &m4b_gen_args[i];
 		i++;
 		gf_sys_print_arg(helpout, help_flags, arg, "mp4box-gen");
 	}
+}
+
+
+GF_GPACArg m4b_split_args[] =
+{
+ 	GF_DEF_ARG("split", NULL, "split in files of given max duration", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("split-size", "splits", "split in files of given max size (in kb)", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("split-rap", "splitr", "split in files at each new RAP", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("split-chunk VAL", "splitx", "extract a new file from source. `VAL` can be formated as:\n"
+	"- `S:E`: `S` (number of seconds) to `E` with `E` a number (in seconds), `end` or `end-N`, N  number of seconds before the end\n"
+	"- `S-E`: start and end dates, each formatted as `HH:MM:SS.ms` or `MM:SS.ms`", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("splitz `S:E`", NULL, "same as -split-chunk, but adjust the end time to be before the next RAP sample, so that ranges `A:B` and `B:C` share exactly the same boundary `B`", NULL, NULL, GF_ARG_STRING, 0),
+	{0}
+};
+
+
+static void PrintSplitUsage()
+{
+	u32 i=0;
+	gf_sys_format_help(helpout, help_flags, "  \n"
+		"# File Spliting\n"
+		"MP4Box can split IsoMedia files by size, duration or extract a given part of the file to new IsoMedia file(s).\n"
+		"This requires that at most one track in the input file has non random-access points (typically one video track at most).\n"
+		"Spliting will ignore all MPEG-4 Systems tracks and hint tracks, but will try to split private media tracks.\n"
+		"The input file must have enough random access points in order to be split. If this is not the case, you will have to re-encode the content.\n"
+		"You can add media to a file and split it in the same pass. In this case, the destination file (the one which would be obtained without spliting) will not be stored.\n"
+		"  \n"
+	);
+
+	i=0;
+	while (m4b_split_args[i].name) {
+		GF_GPACArg *arg = &m4b_split_args[i];
+		i++;
+		gf_sys_print_arg(helpout, help_flags, arg, "mp4box-split");
+	}
+
 }
 
 
@@ -409,7 +434,7 @@ GF_GPACArg m4b_imp_args[] =
 };
 
 
-static GF_GPACArg ImportFileOpts [] = {
+static GF_GPACArg m4b_imp_fileopt_args [] = {
 	GF_DEF_ARG("dur", NULL, "`X` import only the specified duration from the media. Value can be:\n"
 		"  - positive float: specifies duration in seconds\n"
 		"  - fraction: specifies duration as NUM/DEN fraction\n"
@@ -567,8 +592,8 @@ void PrintImportUsage()
 	);
 
 	i=0;
-	while (ImportFileOpts[i].name) {
-		GF_GPACArg *arg = &ImportFileOpts[i];
+	while (m4b_imp_fileopt_args[i].name) {
+		GF_GPACArg *arg = &m4b_imp_fileopt_args[i];
 		i++;
 		gf_sys_print_arg(helpout, help_flags | GF_PRINTARG_NO_DASH, arg, "mp4box-import");
 	}
@@ -938,9 +963,10 @@ GF_GPACArg m4b_usage_args[] =
  		"- general: general options help\n"
 		"- hint: hinting options help\n"
 		"- dash: DASH segmenter help\n"
+		"- split: split options help\n"
 		"- import: import options help\n"
 		"- encode: encode options help\n"
-		"- meta: meta handling options help\n"
+		"- meta: meta (HEIF, MPEG-21) handling options help\n"
 		"- extract: extraction options help\n"
 		"- dump: dump options help\n"
 		"- swf: Flash (SWF) options help\n"
@@ -1017,7 +1043,7 @@ static u32 PrintHelpForArgs(char *arg_name, GF_GPACArg *args, u32 search_type)
 		GF_GPACArg an_arg;
 		Bool do_match = GF_FALSE;
 
-		if (args==ImportFileOpts) {
+		if (args==m4b_imp_fileopt_args) {
 			flags = GF_PRINTARG_COLON;
 			if (!strncmp(arg_name, arg->name, alen) && ((arg->name[alen]==0) || (arg->name[alen]=='=')))
 				do_match = GF_TRUE;
@@ -1062,9 +1088,10 @@ static Bool PrintHelpArg(char *arg_name, u32 search_type, GF_FilterSession *fs)
 	u32 res = 0;
 	u32 alen = (u32) strlen(arg_name);
 	res += PrintHelpForArgs(arg_name, m4b_gen_args, search_type);
+	res += PrintHelpForArgs(arg_name, m4b_split_args, search_type);
 	res += PrintHelpForArgs(arg_name, m4b_dash_args, search_type);
 	res += PrintHelpForArgs(arg_name, m4b_imp_args, search_type);
-	res += PrintHelpForArgs(arg_name, ImportFileOpts, search_type);
+	res += PrintHelpForArgs(arg_name, m4b_imp_fileopt_args, search_type);
 	res += PrintHelpForArgs(arg_name, m4b_senc_args, search_type);
 	res += PrintHelpForArgs(arg_name, m4b_crypt_args, search_type);
 	res += PrintHelpForArgs(arg_name, m4b_hint_args, search_type);
@@ -3512,6 +3539,7 @@ u32 mp4box_parse_args_continue(int argc, char **argv, u32 *current_index)
 			if (i + 1 == (u32)argc) PrintUsage();
 			else if (!strcmp(argv[i + 1], "general")) PrintGeneralUsage();
 			else if (!strcmp(argv[i + 1], "extract")) PrintExtractUsage();
+			else if (!strcmp(argv[i + 1], "split")) PrintSplitUsage();
 			else if (!strcmp(argv[i + 1], "dash")) PrintDASHUsage();
 			else if (!strcmp(argv[i + 1], "dump")) PrintDumpUsage();
 			else if (!strcmp(argv[i + 1], "import")) PrintImportUsage();
@@ -3530,6 +3558,7 @@ u32 mp4box_parse_args_continue(int argc, char **argv, u32 *current_index)
 				PrintGeneralUsage();
 				PrintExtractUsage();
 				PrintDASHUsage();
+				PrintSplitUsage();
 				PrintDumpUsage();
 				PrintImportUsage();
 				PrintHintUsage();
@@ -3629,6 +3658,7 @@ u32 mp4box_parse_args_continue(int argc, char **argv, u32 *current_index)
 			PrintGeneralUsage();
 			PrintExtractUsage();
 			PrintDASHUsage();
+			PrintSplitUsage();
 			PrintDumpUsage();
 			PrintImportUsage();
 			PrintHintUsage();
@@ -5619,8 +5649,8 @@ int mp4boxMain(int argc, char **argv)
 				} else {
 					fprintf(stderr, "Error writing IOD %s\n", szName);
 				}
-				gf_fclose(iodf);
 				gf_bs_del(bs);
+				gf_fclose(iodf);
 			}
 			gf_odf_desc_del((GF_Descriptor*)iod);
 		}
@@ -5628,7 +5658,8 @@ int mp4boxMain(int argc, char **argv)
 
 #if !defined(GPAC_DISABLE_ISOM_WRITE) && !defined(GPAC_DISABLE_MEDIA_IMPORT)
 	if (split_duration || split_size || split_range_str) {
-		split_isomedia_file(file, split_duration, split_size, inName, interleaving_time, split_start, adjust_split_end, outName, tmpdir, seg_at_rap, split_range_str);
+		split_isomedia_file(file, split_duration, split_size, inName, interleaving_time, split_start, adjust_split_end, outName, tmpdir, seg_at_rap, split_range_str, fs_dump_flags);
+
 		/*never save file when splitting is desired*/
 		open_edit = GF_FALSE;
 		needSave = GF_FALSE;
@@ -5691,7 +5722,7 @@ int mp4boxMain(int argc, char **argv)
 	for (i=0; i<nb_meta_act; i++) {
 		u32 tk = 0;
 #ifndef GPAC_DISABLE_ISOM_WRITE
-		Bool self_ref;
+		u32 self_ref;
 #endif
 		MetaAction *meta = &metas[i];
 
@@ -5722,9 +5753,9 @@ int mp4boxMain(int argc, char **argv)
 			break;
 		case META_ACTION_ADD_IMAGE_ITEM:
 		{
-			u32 self_ref = 0;
 			u32 old_tk_count = gf_isom_get_track_count(file);
 			GF_Fraction _frac = {0,0};
+			self_ref = 0;
 
 			tk = 0;
 			if (meta->szPath && (!strcmp(meta->szPath, "this") || !strcmp(meta->szPath, "self") || !strcmp(meta->szPath, "ref"))

@@ -228,9 +228,13 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			else
  				pix_fmt = GF_PIXEL_RGB;
 			break;
-		case GF_QT_SUBTYPE_YUV422:
+		case GF_QT_SUBTYPE_YUYV:
 			codec_id = GF_CODECID_RAW;
-			pix_fmt = GF_PIXEL_YUV422;
+			pix_fmt = GF_PIXEL_YUYV;
+			break;
+		case GF_QT_SUBTYPE_UYVY:
+			codec_id = GF_CODECID_RAW;
+			pix_fmt = GF_PIXEL_UYVY;
 			break;
 		case GF_QT_SUBTYPE_YUV444:
 			codec_id = GF_CODECID_RAW;
@@ -243,6 +247,10 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		case GF_QT_SUBTYPE_YUV444_10:
 			codec_id = GF_CODECID_RAW;
 			pix_fmt = GF_PIXEL_YUV444_10;
+			break;
+		case GF_QT_SUBTYPE_YUV420:
+			codec_id = GF_CODECID_RAW;
+			pix_fmt = GF_PIXEL_YUV;
 			break;
 		case GF_ISOM_SUBTYPE_IPCM:
 			if (gf_isom_get_pcm_config(read->mov, track, stsd_idx, &pcm_flags, &pcm_size) == GF_OK) {
@@ -274,6 +282,18 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		}
 			break;
 
+		case GF_ISOM_SUBTYPE_AC3:
+		case GF_ISOM_SUBTYPE_EC3:
+		{
+			GF_AC3Config *ac3cfg = gf_isom_ac3_config_get(read->mov, track, stsd_idx);
+			codec_id = (m_subtype==GF_ISOM_SUBTYPE_AC3) ? GF_CODECID_AC3 : GF_CODECID_EAC3;
+			if (ac3cfg) {
+				gf_odf_ac3_cfg_write(ac3cfg, &dsi, &dsi_size);
+				gf_free(ac3cfg);
+			}
+		}
+			break;
+
 		default:
 			codec_id = gf_codec_id_from_isobmf(m_subtype);
 			if (!codec_id)
@@ -298,7 +318,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 	}
 	if (!streamtype || !codec_id) {
 		if (udesc) gf_free(udesc);
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[IsoMedia] Failed to %s pid for track %d, couldnot extract codec/streamtype info\n", ch ? "update" : "create", track));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[IsoMedia] Failed to %s pid for track %d, could not extract codec/streamtype info\n", ch ? "update" : "create", track));
 		if (lang_desc) gf_odf_desc_del((GF_Descriptor *)lang_desc);
 		if (dsi) gf_free(dsi);
 		return;
@@ -360,6 +380,21 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 				break;
 			default:
 				break;
+			}
+
+			if (!has_scalable_layers) {
+				u32 i;
+				GF_ISOTrackID track_id = gf_isom_get_track_id(read->mov, track);
+				for (i=0; i<gf_isom_get_track_count(read->mov); i++) {
+					if (gf_isom_get_reference_count(read->mov, i+1, GF_ISOM_REF_BASE)>=0) {
+						GF_ISOTrackID tkid;
+						gf_isom_get_reference_ID(read->mov, i+1, GF_ISOM_REF_BASE, 1, &tkid);
+						if (tkid==track_id) {
+							has_scalable_layers = GF_TRUE;
+							break;
+						}
+					}
+				}
 			}
 		}
 
@@ -715,6 +750,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		}
 
 		if (!gf_sys_is_test_mode()) {
+			u32 nb_udta;
 			const char *hdlr = NULL;
 			gf_isom_get_handler_name(read->mov, ch->track, &hdlr);
 			if (hdlr)
@@ -732,6 +768,37 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 				p.value.uint_list.vals = vals;
 				gf_isom_get_track_matrix(read->mov, ch->track, vals);
 				gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_TRACK_MATRIX, &p);
+			}
+
+
+			nb_udta =  gf_isom_get_udta_count(read->mov, ch->track);
+			if (nb_udta) {
+				for (i=0; i<nb_udta; i++) {
+					u32 j, type, nb_items;
+					bin128 uuid;
+					gf_isom_get_udta_type(read->mov, ch->track, i+1, &type, &uuid);
+					nb_items = gf_isom_get_user_data_count(read->mov, ch->track, type, uuid);
+					//we only export 4CC udta boxes
+					if (!type) continue;
+
+					for (j=0; j<nb_items; j++) {
+						char szName[31];
+						u8 *udta=NULL;
+						u32 udta_size;
+						gf_isom_get_user_data(read->mov, ch->track, type, uuid, j+1, &udta, &udta_size);
+						if (!udta) continue;
+						if (nb_items>1)
+							snprintf(szName, 30, "udta_%s_%d", gf_4cc_to_str(type), j+1);
+						else
+							snprintf(szName, 30, "udta_%s", gf_4cc_to_str(type));
+						szName[30]=0;
+						if (gf_utf8_is_legal(udta, udta_size)) {
+							gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_STRING_NO_COPY(udta));
+						} else {
+							gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_DATA_NO_COPY(udta, udta_size));
+						}
+					}
+				}
 			}
 		}
 	}
@@ -782,7 +849,6 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			}
 			if (hvcc) gf_odf_hevc_cfg_del(hvcc);
 			if (lhcc) gf_odf_hevc_cfg_del(lhcc);
-
 		}
 		if ((codec_id==GF_CODECID_AVC) || (codec_id==GF_CODECID_SVC) || (codec_id==GF_CODECID_MVC)) {
 			Bool is_mvc = GF_FALSE;

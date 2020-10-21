@@ -1395,7 +1395,7 @@ Description: VideoToolBox decoder
 .br
 
 .br
-This filter decodes MPEG-2, H263, AVC|H264 and HEVC streams through VideoToolBox. It allows GPU frame dispatch or direct frame copy.
+This filter decodes video streams through OSX/iOS VideoToolBox (MPEG-2, H263, AVC|H264, HEVC, ProRes). It allows GPU frame dispatch or direct frame copy.
 .br
 
 .br
@@ -1965,7 +1965,7 @@ mfra (bool, default: false):   enable movie fragment random access when fragment
 .br
 forcesync (bool, default: false): force all SAP types to be considered sync samples (might produce non-conformant files)
 .br
-refrag (bool, default: false): indicate to use track fragment defaults from initial file if any rather than computing them from PID propertyes (used when processing standalone segments/fragments)
+refrag (bool, default: false): indicate to use track fragment defaults from initial file if any rather than computing them from PID properties (used when processing standalone segments/fragments)
 .br
 tags (enum, default: strict):  tag injection mode
 .br
@@ -3409,6 +3409,8 @@ fsort (enum, default: no):     sort list of files
 .br
 
 .br
+sigcues (bool, default: false): inject CueStart property at each source begin (new or repeated) for DASHing
+.br
 
 .br
 .SH m2tsmx
@@ -3929,7 +3931,9 @@ Note: if not set as a global option using --utcs=, you must escape the url using
 .B
 Cue-driven segmentation
 .br
-The segmenter can take a list of instructions, or Cues, to use for the segmentation process, in which case only these are used to derive segment boundaries.
+The segmenter can take a list of instructions, or Cues, to use for the segmentation process, in which case only these are used to derive segment boundaries. Cues can be set through XML files or injected in input packets.
+.br
+
 .br
 Cue files can be specified for the entire segmenter, or per PID using DashCue property.
 .br
@@ -3940,6 +3944,8 @@ Cues are given in an XML file with a root element called <DASHCues>, with curren
 * timescale: integer giving the units of following timestamps
 .br
 * mode: if present and value is edit, the timestamp are in presentation time (edit list applied) otherwise they are in media time
+.br
+* ts_offset: integer giving a value (in timescale) to substract to the DTS/CTS values listed
 .br
 
 .br
@@ -3952,6 +3958,16 @@ The children of <Stream> are one or more <Cue> elements, with attributes:
 * cts: long integer giving the composition / presentation time stamp of a sample at which spliting shall happen
 .br
 Warning: Cues shall be listed in decoding order.
+.br
+
+.br
+If the DashCue property of a PID equals inband, the PID will be segmented according to the CueStart property of input packets.
+.br
+This feature is typically combined with a list of files as input:
+.br
+Example
+.br
+-i list.m3u:sigcues -o res/live.mpdThis will load the flist filter in cue mode, generating continuous timelines from the sources and injecting a CueStart property at each new file.
 .br
 
 .br
@@ -5917,7 +5933,7 @@ The encoder will look for property TargetRate on input PID to set the desired bi
 .br
 
 .br
-The encoder will force a closed gop boundary at each packet with a FileNumber property set.
+The encoder will force a closed gop boundary at each packet with a FileNumber property set or a CueStart property set to true.
 .br
 
 .br
@@ -6363,7 +6379,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit http://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev76-g6d229978c-master
+build: 1.1.0-DEV-rev113-gcbf8e5433-master
 .br
 Copyright: (c) 2000-2020 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

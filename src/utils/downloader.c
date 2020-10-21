@@ -737,7 +737,8 @@ static void gf_dm_configure_cache(GF_DownloadSession *sess)
 		}
 		if (!found) {
 			sess->reused_cache_entry = GF_FALSE;
-			gf_cache_close_write_cache(sess->cache_entry, sess, GF_FALSE);
+			if (sess->cache_entry)
+				gf_cache_close_write_cache(sess->cache_entry, sess, GF_FALSE);
 		}
 		gf_cache_add_session_to_cache_entry(sess->cache_entry, sess);
 		if (sess->needs_range)
@@ -861,7 +862,7 @@ static void gf_dm_disconnect(GF_DownloadSession *sess, Bool force_close)
 				gf_sk_del(sx);
 			}
 		}
-		if (force_close && sess->use_cache_file) {
+		if (force_close && sess->use_cache_file && sess->cache_entry) {
 			gf_cache_close_write_cache(sess->cache_entry, sess, GF_FALSE);
 		}
 	}
@@ -1272,10 +1273,10 @@ GF_Err gf_dm_sess_setup_from_url(GF_DownloadSession *sess, const char *url, Bool
 	if (sess->status==GF_NETIO_STATE_ERROR)
 		socket_changed = GF_TRUE;
 
-	if (!socket_changed && info.userName  && !strcmp(info.userName, sess->creds->username)) {
+	if (!socket_changed && info.userName && !strcmp(info.userName, sess->creds->username)) {
 	} else {
 		sess->creds = NULL;
-		if (info.userName ) {
+		if (info.userName) {
 			if (! sess->dm) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTP] Did not found any download manager, credentials not supported\n"));
 			} else
@@ -2132,7 +2133,7 @@ retry_cache:
 	}
 
 	/*use it in in BYTES per second*/
-	dm->limit_data_rate = 1000 * gf_opts_get_int("core", "maxrate") / 8;
+	dm->limit_data_rate = gf_opts_get_int("core", "maxrate") / 8;
 
 	dm->read_buf_size = GF_DOWNLOAD_BUFFER_SIZE;
 	//when rate is limited, use smaller smaller read size
@@ -3738,8 +3739,6 @@ static GF_Err wait_for_header_and_parse(GF_DownloadSession *sess, char * sHTTP)
 		gf_dm_sess_notify_state(sess, GF_NETIO_DATA_TRANSFERED, GF_OK);
 		sess->http_read_type = GET;
 		return GF_OK;
-
-
 	}
 
 

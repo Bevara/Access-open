@@ -154,6 +154,8 @@ u32 gf_isom_probe_file_range(const char *fileName, u64 start_range, u64 end_rang
 		if (!size) return 0;
 		if (size > start_range + 8)
 			type = GF_4CC(mem_address[start_range + 4], mem_address[start_range + 5], mem_address[start_range + 6], mem_address[start_range + 7]);
+	} else if (!strncmp(fileName, "isobmff://", 10)) {
+		return 2;
 	} else {
 		u32 nb_read;
 		unsigned char data[4];
@@ -242,13 +244,14 @@ static GF_Err isom_create_init_from_mem(const char *fileName, GF_ISOFile *file)
 		else if (!strncmp(val, "w=", 2)) width = atoi(val+2);
 		else if (!strncmp(val, "h=", 2)) height = atoi(val+2);
 		else if (!strncmp(val, "scale=", 6)) timescale = atoi(val+6);
-		else if (!strncmp(val, "tfdt=", 5)) tfdt = atoi(val+5);
-
+		else if (!strncmp(val, "tfdt=", 5)) {
+			sscanf(val+5, LLX, &tfdt);
+		}
 		if (!sep) break;
 		sep[0] = ' ';
 		val = sep+1;
 	}
-	if (!stricmp(sz4cc, "H264")) {
+	if (!stricmp(sz4cc, "H264") || !stricmp(sz4cc, "AVC1")) {
 	}
 	else if (!stricmp(sz4cc, "AACL")) {
 	}
@@ -318,9 +321,10 @@ static GF_Err isom_create_init_from_mem(const char *fileName, GF_ISOFile *file)
 	if (!stbl->SampleDescription) return GF_OUT_OF_MEM;
 
 	trak->dts_at_seg_start = tfdt;
+	trak->dts_at_next_seg_start = tfdt;
 
 
-	if (!stricmp(sz4cc, "H264")) {
+	if (!stricmp(sz4cc, "H264") || !stricmp(sz4cc, "AVC1")) {
 #ifndef GPAC_DISABLE_AV_PARSERS
 		u32 pos = 0;
 		u32 end, sc_size=0;
@@ -1179,7 +1183,7 @@ GF_Err gf_isom_get_reference_ID(GF_ISOFile *movie, u32 trackNumber, u32 referenc
 	trak = gf_isom_get_track_from_file(movie, trackNumber);
 
 	*refTrackID = 0;
-	if (!trak || !trak->References) return GF_BAD_PARAM;
+	if (!trak || !trak->References || !referenceIndex) return GF_BAD_PARAM;
 
 	dpnd = NULL;
 	e = Track_FindRef(trak, referenceType, &dpnd);
@@ -2585,7 +2589,7 @@ found:
 			memcpy(*userData, ptr->data, sizeof(char)*ptr->dataSize);
 			*userDataSize = ptr->dataSize;
 			return GF_OK;
-		} else if (ptr->type != GF_ISOM_BOX_TYPE_UUID) {
+		} else if (ptr->type == GF_ISOM_BOX_TYPE_UUID) {
 			GF_UnknownUUIDBox *p_uuid = (GF_UnknownUUIDBox *)ptr;
 			*userData = (char *)gf_malloc(sizeof(char)*p_uuid->dataSize);
 			if (!*userData) return GF_OUT_OF_MEM;
@@ -2593,7 +2597,25 @@ found:
 			*userDataSize = p_uuid->dataSize;
 			return GF_OK;
 		} else {
-			return GF_ISOM_INVALID_FILE;
+			char *str = NULL;
+			switch (ptr->type) {
+			case GF_ISOM_BOX_TYPE_NAME:
+			//case GF_QT_BOX_TYPE_NAME: same as above
+				str = ((GF_NameBox *)ptr)->string;
+				break;
+			case GF_ISOM_BOX_TYPE_KIND:
+				str = ((GF_KindBox *)ptr)->value;
+				break;
+			}
+			if (str) {
+				u32 len = (u32) strlen(str) + 1;
+				*userData = (char *)gf_malloc(sizeof(char) * len);
+				if (!*userData) return GF_OUT_OF_MEM;
+				memcpy(*userData, str, sizeof(char)*len);
+				*userDataSize = len;
+				return GF_OK;
+			}
+			return GF_NOT_SUPPORTED;
 		}
 	}
 
@@ -4744,6 +4766,19 @@ u64 gf_isom_get_current_tfdt(GF_ISOFile *the_file, u32 trackNumber)
 }
 
 GF_EXPORT
+u64 gf_isom_get_smooth_next_tfdt(GF_ISOFile *the_file, u32 trackNumber)
+{
+#ifdef	GPAC_DISABLE_ISOM_FRAGMENTS
+	return 0;
+#else
+	GF_TrackBox *trak;
+	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	if (!trak) return 0;
+	return trak->dts_at_next_seg_start;
+#endif
+}
+
+GF_EXPORT
 Bool gf_isom_is_smooth_streaming_moov(GF_ISOFile *the_file)
 {
 	return the_file ? the_file->is_smooth : GF_FALSE;
@@ -5099,6 +5134,18 @@ const u8 *gf_isom_get_mpegh_compatible_profiles(GF_ISOFile *movie, u32 trackNumb
 	if (!mhap) return NULL;
 	*nb_compat_profiles = mhap->num_profiles;
 	return mhap->compat_profiles;
+}
+
+const void *gf_isom_get_tfrf(GF_ISOFile *movie, u32 trackNumber)
+{
+#ifdef GPAC_DISABLE_ISOM_FRAGMENTS
+	return NULL;
+#else
+	GF_TrackBox *trak = gf_isom_get_track_from_file(movie, trackNumber);
+	if (!trak) return NULL;
+
+	return trak->tfrf;
+#endif
 }
 
 #endif /*GPAC_DISABLE_ISOM*/

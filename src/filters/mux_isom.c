@@ -1317,6 +1317,9 @@ sample_entry_setup:
 	case GF_CODECID_MPEG2_PART3:
 		m_subtype = GF_ISOM_SUBTYPE_MP3;
 		comp_name = "MP3";
+		//if source had a DSI, this was mpeg4 systems signaling, reuse that
+		if (dsi)
+			use_m4sys = GF_TRUE;
 		break;
 	case GF_CODECID_AAC_MPEG4:
 	case GF_CODECID_AAC_MPEG2_MP:
@@ -1645,8 +1648,16 @@ sample_entry_setup:
 			case GF_PIXEL_RGB:
 				m_subtype = GF_QT_SUBTYPE_RAW;
 				break;
-			case GF_PIXEL_YUV422:
-				m_subtype = GF_QT_SUBTYPE_YUV422;
+			case GF_PIXEL_YUV:
+				m_subtype = GF_QT_SUBTYPE_YUV420;
+				force_colr = GF_TRUE;
+				break;
+			case GF_PIXEL_YUYV:
+				m_subtype = GF_QT_SUBTYPE_YUYV;
+				force_colr = GF_TRUE;
+				break;
+			case GF_PIXEL_UYVY:
+				m_subtype = GF_QT_SUBTYPE_UYVY;
 				force_colr = GF_TRUE;
 				break;
 			case GF_PIXEL_YUV422_10:
@@ -1655,6 +1666,10 @@ sample_entry_setup:
 				break;
 			case GF_PIXEL_YUV444:
 				m_subtype = GF_QT_SUBTYPE_YUV444;
+				force_colr = GF_TRUE;
+				break;
+			case GF_PIXEL_YUVA444:
+				m_subtype = GF_QT_SUBTYPE_YUVA444;
 				force_colr = GF_TRUE;
 				break;
 			case GF_PIXEL_YUV444_10:
@@ -2032,7 +2047,7 @@ sample_entry_setup:
 			}
 		}
 
-		if (dsi && ctx->xps_inband) {
+		if (ctx->xps_inband) {
 			//this will cleanup all PS in vvcC
 			gf_isom_vvc_set_inband_config(ctx->file, tkw->track_num, tkw->stsd_idx, (ctx->xps_inband==2) ? GF_TRUE : GF_FALSE);
 		} else {
@@ -2136,7 +2151,7 @@ sample_entry_setup:
 		memset(&ac3cfg, 0, sizeof(GF_AC3Config));
 
 		if (dsi) {
-			gf_isom_ac3_config_parse(dsi->value.data.ptr, dsi->value.data.size, (codec_id==GF_CODECID_EAC3) ? GF_TRUE : GF_FALSE, &ac3cfg);
+			gf_odf_ac3_config_parse(dsi->value.data.ptr, dsi->value.data.size, (codec_id==GF_CODECID_EAC3) ? GF_TRUE : GF_FALSE, &ac3cfg);
 		}
 		e = gf_isom_ac3_config_new(ctx->file, tkw->track_num, &ac3cfg, (char *)src_url, NULL, &tkw->stsd_idx);
 		if (e) {
@@ -3188,12 +3203,18 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 	if (tkw->nb_samples && (prev_dts >= tkw->sample.DTS) ) {
 		//the fragmented API will patch the duration on the fly
 		if (!for_fragment) {
-			gf_isom_patch_last_sample_duration(ctx->file, tkw->track_num, prev_dts);
+			gf_isom_patch_last_sample_duration(ctx->file, tkw->track_num, prev_dts ? prev_dts : 1);
 		}
 		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] PID %s Sample %d with DTS "LLU" less than previous sample DTS "LLU", adjusting prev sample duration\n", gf_filter_pid_get_name(tkw->ipid), tkw->nb_samples, tkw->sample.DTS, prev_dts ));
 
-		tkw->dts_patch = prev_dts - tkw->sample.DTS;
-		tkw->sample.DTS += tkw->dts_patch;
+		if (prev_dts) {
+			tkw->dts_patch = prev_dts - tkw->sample.DTS;
+			tkw->sample.DTS += tkw->dts_patch;
+		} else {
+			tkw->sample.DTS += 1;
+			if (tkw->sample.CTS_Offset) tkw->sample.CTS_Offset -= 1;
+			duration-=1;
+		}
 	}
 
 
@@ -3918,7 +3939,7 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 		}
 
 		if (ctx->refrag) {
-			const GF_PropertyValue *p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_ISOM_TREX_TEMPLATE);
+			p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_ISOM_TREX_TEMPLATE);
 			if (p) {
 				gf_isom_setup_track_fragment_template(ctx->file, tkw->track_id, p->value.data.ptr, p->value.data.size, ctx->nofragdef);
 			} else if (!ctx->nofragdef) {
@@ -5631,7 +5652,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	{ OFFS(tfdt), "set TFDT of first traf", GF_PROP_FRACTION64, "0", NULL, 0},
 	{ OFFS(tfdt_traf), "set TFDT in each traf", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(nofragdef), "disable default flags in fragments", GF_PROP_BOOL, "false", NULL, 0},
-	{ OFFS(straf), "use a single traf per moov (smooth streaming and co)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(straf), "use a single traf per moof (smooth streaming and co)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(strun), "use a single trun per traf (smooth streaming and co)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(psshs), "set PSSH boxes store mode\n"
 	"- moof: in first moof of each segments\n"
@@ -5694,7 +5715,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	{ OFFS(deps), "add samples dependencies information", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(mfra), "enable movie fragment random access when fragmenting (ignored when dashing)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(forcesync), "force all SAP types to be considered sync samples (might produce non-conformant files)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(refrag), "indicate to use track fragment defaults from initial file if any rather than computing them from PID propertyes (used when processing standalone segments/fragments)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(refrag), "indicate to use track fragment defaults from initial file if any rather than computing them from PID properties (used when processing standalone segments/fragments)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(tags), "tag injection mode\n"
 			"- none: do not inject tags\n"
 			"- strict: only inject recognized itunes tags\n"

@@ -35,6 +35,13 @@
 #include <gpac/avparse.h>
 #endif
 
+enum
+{
+	FLIST_STATE_STOP=0,
+	FLIST_STATE_PLAY,
+	FLIST_STATE_WAIT_PLAY,
+};
+
 typedef struct
 {
 	GF_FilterPid *ipid;
@@ -50,7 +57,10 @@ typedef struct
 	u64 dts_sub;
 	u64 first_dts_plus_one;
 
-	Bool is_playing;
+	Bool skip_dts_init;
+	u32 play_state;
+
+	Bool send_cue;
 } FileListPid;
 
 typedef struct
@@ -72,7 +82,7 @@ enum
 typedef struct
 {
 	//opts
-	Bool revert;
+	Bool revert, sigcues;
 	s32 floop;
 	u32 fsort;
 	u32 ka;
@@ -106,6 +116,8 @@ typedef struct
 
 	Bool wait_update;
 	u64 last_file_modif_time;
+
+	char *frag_url;
 } GF_FileListCtx;
 
 static const GF_FilterCapability FileListCapsSrc[] =
@@ -123,6 +135,12 @@ static void filelist_start_ipid(GF_FileListCtx *ctx, FileListPid *iopid)
 		//if we reattached the input, we must send a play request
 		gf_filter_pid_init_play_event(iopid->ipid, &evt, ctx->start, 1.0, "FileList");
 		gf_filter_pid_send_event(iopid->ipid, &evt);
+        iopid->skip_dts_init = GF_FALSE;
+        if (iopid->play_state==FLIST_STATE_STOP) {
+            GF_FEVT_INIT(evt, GF_FEVT_STOP, iopid->ipid)
+            gf_filter_pid_send_event(iopid->ipid, &evt);
+            iopid->skip_dts_init = GF_TRUE;
+        }
 	}
 
 	//and convert back cts/dts offsets from 1Mhs to OLD timescale (since we dispatch in this timescale)
@@ -155,6 +173,8 @@ GF_Err filelist_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	const GF_PropertyValue *p;
 	u32 i, count;
 	Bool reassign = GF_FALSE;
+	u32 force_bitrate = 0;
+	char *src_url = NULL;
 	GF_FileListCtx *ctx = gf_filter_get_udta(filter);
 
 	if (is_remove) {
@@ -211,6 +231,8 @@ GF_Err filelist_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 			if (!iopid->o_timescale) iopid->o_timescale = 1000;
 		}
 		gf_list_add(ctx->io_pids, iopid);
+		iopid->send_cue = ctx->sigcues;
+		iopid->play_state = FLIST_STATE_WAIT_PLAY;
 	}
 	gf_filter_pid_set_udta(pid, iopid);
 
@@ -219,6 +241,16 @@ GF_Err filelist_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_STREAM_TYPE);
 		assert(p);
 		iopid->stream_type = p->value.uint;
+	}
+
+	if (ctx->sigcues) {
+		p = gf_filter_pid_get_property(iopid->opid, GF_PROP_PID_BITRATE);
+		if (!p) p = gf_filter_pid_get_property(iopid->ipid, GF_PROP_PID_BITRATE);
+		if (p) force_bitrate = p->value.uint;
+
+		p = gf_filter_pid_get_property(iopid->ipid, GF_PROP_PID_URL);
+		if (p && p->value.string) src_url = gf_strdup(p->value.string);
+
 	}
 
 	//copy properties at init or reconfig:
@@ -232,7 +264,7 @@ GF_Err filelist_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	if (ctx->file_pid) {
 		gf_filter_pid_merge_properties(iopid->opid, ctx->file_pid, filelist_merge_prop, iopid->ipid);
 	}
-	
+
 	//we could further optimize by querying the duration of all sources in the list
 	gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_PLAYBACK_MODE, &PROP_UINT(GF_PLAYBACK_MODE_NONE) );
 	gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_TIMESCALE, &PROP_UINT(iopid->o_timescale) );
@@ -252,13 +284,33 @@ GF_Err filelist_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	}
 #endif
 
+	if (ctx->frag_url)
+		gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_ORIG_FRAG_URL, &PROP_NAME(ctx->frag_url) );
+
 	//if we reattached the input, we must send a play request
 	if (reassign) {
 		filelist_start_ipid(ctx, iopid);
 	}
-	p = gf_filter_pid_get_property(pid, GF_PROP_PID_URL);
-	if (p)
-	 	gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_URL, p);
+
+	if (ctx->sigcues) {
+		if (!src_url) {
+			gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_URL, &PROP_STRING("mysource") );
+			gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_FILEPATH, &PROP_STRING("mysource") );
+		} else {
+			gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_URL, &PROP_STRING(src_url) );
+			gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_FILEPATH, &PROP_STRING_NO_COPY(src_url));
+		}
+		if (force_bitrate)
+			gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_BITRATE, &PROP_UINT(force_bitrate) );
+		else
+			gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_BITRATE, NULL );
+
+		gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_DASH_CUE, &PROP_STRING("inband") );
+	} else {
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_URL);
+		if (p)
+			gf_filter_pid_set_property(iopid->opid, GF_PROP_PID_URL, p);
+	}
 
 	return GF_OK;
 }
@@ -277,13 +329,17 @@ static Bool filelist_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		iopid = gf_list_get(ctx->io_pids, i);
 		if (!iopid->ipid) continue;
 
+        //only send on non connected inputs or on the one matching the pid event
+        if (iopid->opid && (iopid->opid != evt->base.on_pid))
+            continue;
+
 		fevt.base.on_pid = iopid->ipid;
 		if (evt->base.type==GF_FEVT_PLAY) {
 			gf_filter_pid_init_play_event(iopid->ipid, &fevt, ctx->start, 1.0, "FileList");
-			iopid->is_playing = GF_TRUE;
+			iopid->play_state = FLIST_STATE_PLAY;
 			iopid->is_eos = GF_FALSE;
 		} else if (evt->base.type==GF_FEVT_STOP) {
-			iopid->is_playing = GF_FALSE;
+			iopid->play_state = FLIST_STATE_STOP;
 			iopid->is_eos = GF_TRUE;
 		}
 		gf_filter_pid_send_event(iopid->ipid, &fevt);
@@ -527,12 +583,18 @@ GF_Err filelist_process(GF_Filter *filter)
 				FILE *f=NULL;
 				p = gf_filter_pid_get_property(ctx->file_pid, GF_PROP_PID_FILEPATH);
 				if (p) {
+					char *frag;
 					if (ctx->file_path) {
 						gf_free(ctx->file_path);
 						is_first = GF_FALSE;
 					}
 					ctx->file_path = gf_strdup(p->value.string);
-					f = gf_fopen(p->value.string, "rt");
+					frag = strchr(ctx->file_path, '#');
+					if (frag) {
+						frag[0] = 0;
+						ctx->frag_url = gf_strdup(frag+1);
+					}
+					f = gf_fopen(ctx->file_path, "rt");
 				}
 				if (!f) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[FileList] Unable to open file %s\n", ctx->file_path ? ctx->file_path : "no source path"));
@@ -636,8 +698,9 @@ GF_Err filelist_process(GF_Filter *filter)
 			GF_FilterPacket *pck;
 			u64 dts;
 			iopid = gf_list_get(ctx->io_pids, i);
-			if (!iopid->ipid) return GF_OK;
-			pck = gf_filter_pid_get_packet(iopid->ipid);
+            if (!iopid->ipid) return GF_OK;
+            if (iopid->skip_dts_init) continue;
+            pck = gf_filter_pid_get_packet(iopid->ipid);
 			if (!pck) {
 				if (gf_filter_pid_is_eos(iopid->ipid)) {
 					nb_eos++;
@@ -676,11 +739,20 @@ GF_Err filelist_process(GF_Filter *filter)
 			nb_inactive++;
 			continue;
 		}
+		if (iopid->play_state==FLIST_STATE_WAIT_PLAY)
+			continue;
+        if (iopid->play_state==FLIST_STATE_STOP) {
+            //in case the input still dispatch packets, drop them
+            while (1) {
+                GF_FilterPacket *pck = gf_filter_pid_get_packet(iopid->ipid);
+                if (!pck) break;
+                gf_filter_pid_drop_packet(iopid->ipid);
+            }
+            nb_done++;
+            continue;
+        }
 		if (iopid->is_eos) {
 			nb_done++;
-			continue;
-		}
-		if (!iopid->is_playing) {
 			continue;
 		}
 		if (gf_filter_pid_would_block(iopid->opid))
@@ -754,6 +826,11 @@ GF_Err filelist_process(GF_Filter *filter)
 			if (!iopid->first_dts_plus_one) {
 				iopid->first_dts_plus_one = dts + 1;
 			}
+
+			if (iopid->send_cue) {
+				iopid->send_cue = GF_FALSE;
+				gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_CUE_START, &PROP_BOOL(GF_TRUE));
+			}
 			gf_filter_pck_send(dst_pck);
 			gf_filter_pid_drop_packet(iopid->ipid);
 			//if we have an end range, compute max_dts (includes dur) - firrst_dts
@@ -793,6 +870,7 @@ GF_Err filelist_process(GF_Filter *filter)
 				ts /= iopid->timescale;
 				if (max_dts < ts) max_dts = ts;
 			}
+			iopid->send_cue = ctx->sigcues;
 		}
 		ctx->cts_offset += max_dts;
 		ctx->dts_offset += max_dts;
@@ -965,6 +1043,7 @@ void filelist_finalize(GF_Filter *filter)
 	gf_list_del(ctx->io_pids);
 	gf_list_del(ctx->filter_srcs);
 	if (ctx->file_path) gf_free(ctx->file_path);
+	if (ctx->frag_url) gf_free(ctx->frag_url);
 }
 
 
@@ -985,6 +1064,9 @@ static const GF_FilterArgs GF_FileListArgs[] =
 		"- date: sort by increasing modification time\n"
 		"- datex: sort by increasing modification time - see filter help"
 		, GF_PROP_UINT, "no", "no|name|size|date|datex", 0},
+
+	{ OFFS(sigcues), "inject CueStart property at each source begin (new or repeated) for DASHing", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+
 	{0}
 };
 

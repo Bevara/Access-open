@@ -2129,6 +2129,32 @@ restart:
 		gpac_print_report(session, GF_TRUE, GF_FALSE);
 	}
 
+	if (!session_js) {
+		u32 j;
+		Bool has_vout = GF_FALSE;
+		Bool has_compositor = GF_FALSE;
+		for (j=0; j<gf_list_count(loaded_filters); j++) {
+			GF_FilterStats stats;
+			GF_Filter *f = gf_list_get(loaded_filters, j);
+			gf_filter_get_stats(f, &stats);
+			if (!stats.reg_name) continue;
+			if (!strcmp(stats.reg_name, "vout")) has_vout=GF_TRUE;
+			//if compositor in player mode, don't load script
+			else if (!strcmp(stats.reg_name, "compositor")) {
+				GF_PropertyValue p;
+				gf_filter_get_arg(f, "player", &p);
+				if (p.value.uint!=0)
+					has_compositor=GF_TRUE;
+			}
+		}
+		if (has_vout && !has_compositor) {
+			session_js = "$GSHARE/scripts/vout.js";
+			gf_fs_load_script(session, session_js);
+		}
+	}
+
+
+
 	e = gf_fs_run(session);
 	if (e>0) e = GF_OK;
 
@@ -2217,7 +2243,7 @@ static void dump_caps(u32 nb_caps, const GF_FilterCapability *caps)
 		//dump some interesting predefined ones which are not mapped to types
 		if (cap->code==GF_PROP_PID_STREAM_TYPE) szVal = gf_stream_type_name(cap->val.value.uint);
 		else if (cap->code==GF_PROP_PID_CODECID) szVal = (const char *) gf_codecid_name(cap->val.value.uint);
-		else szVal = gf_props_dump_val(&cap->val, szDump, GF_FALSE, NULL);
+		else szVal = gf_props_dump_val(&cap->val, szDump, GF_PROP_DUMP_DATA_NONE, NULL);
 
 		gf_sys_format_help(helpout, help_flags, " %s=\"%s\"", szName,  szVal);
 		if (cap->priority) gf_sys_format_help(helpout, help_flags, ", priority=%d", cap->priority);
@@ -2279,8 +2305,10 @@ static void print_filter_single_opt(const GF_FilterRegister *reg, char *optname,
 	u32 idx=0;
 	Bool found = GF_FALSE;
 	const GF_FilterArgs *args = NULL;
-	if (filter_inst) args = gf_filter_get_args(filter_inst);
-	else args = reg->args;
+	if (filter_inst)
+		args = gf_filter_get_args(filter_inst);
+	else if (reg)
+		args = reg->args;
 
 	if (!args) return;
 
@@ -2510,7 +2538,6 @@ static void print_filter(const GF_FilterRegister *reg, GF_SysArgMode argmode, GF
 			u32 j=0;
 			char szArg[100];
 			sprintf(szArg, " %s ", a->arg_name);
-			const char *reg_help = filter_inst ? gf_filter_get_help(filter_inst) : reg->help;
 			if (reg_help && strstr(reg_help, szArg)) {
 				fprintf(stderr, "\nWARNING: filter %s bad help, uses arg %s without link\n", reg_name, a->arg_name);
 				exit(1);

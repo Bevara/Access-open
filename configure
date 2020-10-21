@@ -1,8 +1,8 @@
 #!/bin/sh
 #
 # GPAC configure script
-#     (c) 2003-2018 Telecom ParisTech
-#     Authors: Jean Le Feuvre, Romain Bouqueau
+#     (c) 2003-2020 Telecom ParisTech
+#     Authors: Jean Le Feuvre, Romain Bouqueau, Aurelien David
 #
 #set -v
 
@@ -1474,6 +1474,7 @@ EOF
 if docc $LDFLAGS $vtb_ldflags ; then
     has_vtb="yes"
 fi
+
 fi
 
 

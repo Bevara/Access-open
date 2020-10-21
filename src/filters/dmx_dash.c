@@ -34,7 +34,8 @@ typedef struct
 {
 	//opts
 	s32 shift_utc, debug_as, atsc_shift;
-	u32 max_buffer, auto_switch, init_timeshift, tiles_rate, segstore, delay40X, exp_threshold, switch_count;
+	u32 max_buffer, auto_switch, tiles_rate, segstore, delay40X, exp_threshold, switch_count;
+	s32 init_timeshift;
 	Bool server_utc, screen_res, aggressive, speedadapt;
 	GF_DASHInitialSelectionMode start_with;
 	GF_DASHTileAdaptationMode tile_mode;
@@ -67,6 +68,10 @@ typedef struct
 	Bool mpd_open;
 	Bool initial_play;
 	Bool check_eos;
+
+	char *frag_url;
+
+	Bool is_dash;
 } GF_DASHDmxCtx;
 
 typedef struct
@@ -82,6 +87,7 @@ typedef struct
 	Bool stats_uploaded;
 	Bool wait_for_pck;
 	Bool eos_detected;
+	u32 next_dependent_rep_idx, current_dependent_rep_idx;
 
 	GF_DownloadSession *sess;
 	Bool is_timestamp_based, pto_setup;
@@ -106,7 +112,7 @@ void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, GF_Filt
 	Bool seek_flag = 0;
 	u64 cts, dts;
 
-	if (gf_dash_is_m3u8(ctx->dash)) {
+	if (!ctx->is_dash) {
 		gf_filter_pck_forward(in_pck, out_pid);
 
 		if (!group->pto_setup) {
@@ -207,7 +213,7 @@ static void dashdmx_on_filter_setup_error(GF_Filter *failed_filter, void *udta, 
 
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] group %d download setup error %s\n", group->idx, gf_error_to_string(err) ));
 
-	gf_dash_set_group_download_state(group->ctx->dash, group->idx, err);
+	gf_dash_set_group_download_state(group->ctx->dash, group->idx, group->current_dependent_rep_idx, err);
 	if (err) {
 		Bool group_done=GF_FALSE;
 
@@ -255,7 +261,7 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 		if (url_type==1)
 			sprintf(sURL, "http://%s", init_segment_name);
 		else if (url_type==2)
-			sprintf(sURL, "http://%s", init_segment_name);
+			sprintf(sURL, "https://%s", init_segment_name);
 		else
 			sprintf(sURL, "file://%s", init_segment_name);
 	}
@@ -477,7 +483,7 @@ GF_Err dashdmx_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_evt
 			gf_dash_group_set_quality_degradation_hint(ctx->dash, 0, 0);
 			gf_dash_group_set_visible_rect(ctx->dash, 0, 0, 0, 0, 0, 0);
 			//this happen only when error downloading a segment
-			gf_dash_set_group_download_state(ctx->dash, 0, GF_OK);
+			gf_dash_set_group_download_state(ctx->dash, 0, 0, GF_OK);
 		}
 #endif
 		/*select input services if possible*/
@@ -948,6 +954,9 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 	if (ctx->mpd_pid) {
 		gf_filter_pid_merge_properties(opid, ctx->mpd_pid, dashdmx_merge_prop, ipid);
 	}
+
+	if (ctx->frag_url)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_ORIG_FRAG_URL, &PROP_NAME(ctx->frag_url) );
 }
 
 static GF_Err dashdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
@@ -993,6 +1002,7 @@ static GF_Err dashdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 
 	//configure MPD pid
 	if (!ctx->mpd_pid) {
+		char *frag;
 		const GF_PropertyValue *p;
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_URL);
 		if (!p || !p->value.string) {
@@ -1011,6 +1021,16 @@ static GF_Err dashdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 			gf_filter_setup_failure(filter, e);
 			return e;
 		}
+		frag = strchr(p->value.string, '#');
+		if (frag) {
+			if (ctx->frag_url) gf_free(ctx->frag_url);
+			ctx->frag_url = gf_strdup(frag+1);
+		}
+		if (gf_dash_is_m3u8(ctx->dash) || gf_dash_is_smooth_streaming(ctx->dash))
+			ctx->is_dash = GF_FALSE;
+		else
+			ctx->is_dash = GF_TRUE;
+
 		//we have a redirect URL on mpd pid, this means this comes from a service feeding the cache so we won't get any data on the pid.
 		//request a process task
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_REDIRECT_URL);
@@ -1069,6 +1089,7 @@ static GF_Err dashdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 
 static GF_Err dashdmx_initialize(GF_Filter *filter)
 {
+	u32 timeshift;
 	GF_DASHDmxCtx *ctx = (GF_DASHDmxCtx*) gf_filter_get_udta(filter);
 	ctx->filter = filter;
 	ctx->dm = gf_filter_get_download_manager(filter);
@@ -1097,7 +1118,13 @@ static GF_Err dashdmx_initialize(GF_Filter *filter)
 
 	ctx->dash_io.on_dash_event = dashdmx_io_on_dash_event;
 
-	ctx->dash = gf_dash_new(&ctx->dash_io, GF_DASH_THREAD_NONE, 0, ctx->auto_switch, (ctx->segstore==2) ? GF_TRUE : GF_FALSE, (ctx->algo==GF_DASH_ALGO_NONE) ? GF_TRUE : GF_FALSE, ctx->start_with, ctx->init_timeshift);
+	if (ctx->init_timeshift<0) {
+		timeshift = -ctx->init_timeshift;
+		if (timeshift>100) timeshift = 100;
+	} else {
+		timeshift = ctx->init_timeshift;
+	}
+	ctx->dash = gf_dash_new(&ctx->dash_io, GF_DASH_THREAD_NONE, 0, ctx->auto_switch, (ctx->segstore==2) ? GF_TRUE : GF_FALSE, (ctx->algo==GF_DASH_ALGO_NONE) ? GF_TRUE : GF_FALSE, ctx->start_with, timeshift);
 
 	if (!ctx->dash) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASHDmx] Error - cannot create DASH Client\n"));
@@ -1121,7 +1148,7 @@ static GF_Err dashdmx_initialize(GF_Filter *filter)
 	gf_dash_set_switching_probe_count(ctx->dash, ctx->switch_count);
 	gf_dash_set_agressive_adaptation(ctx->dash, ctx->aggressive);
 	gf_dash_debug_group(ctx->dash, ctx->debug_as);
-	gf_dash_disable_speed_adaptation(ctx->dash, ctx->speedadapt);
+	gf_dash_disable_speed_adaptation(ctx->dash, !ctx->speedadapt);
 	gf_dash_ignore_xlink(ctx->dash, ctx->noxlink);
 	gf_dash_set_period_xlink_query_string(ctx->dash, ctx->query);
 	gf_dash_set_low_latency_mode(ctx->dash, ctx->lowlat);
@@ -1148,6 +1175,9 @@ static void dashdmx_finalize(GF_Filter *filter)
 
 	if (ctx->dash)
 		gf_dash_del(ctx->dash);
+
+	if (ctx->frag_url)
+		gf_free(ctx->frag_url);
 }
 
 static Bool dashdmx_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
@@ -1364,11 +1394,57 @@ static Bool dashdmx_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 	return GF_TRUE;
 }
 
+static void dashdmx_update_group_stats(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
+{
+	u32 bytes_per_sec = 0;
+	u64 file_size = 0, bytes_done = 0;
+	const GF_PropertyValue *p;
+	GF_PropertyEntry *pe=NULL;
+	Bool broadcast_flag = GF_FALSE;
+	if (group->stats_uploaded) return;
+	if (group->prev_is_init_segment) return;
+	if (!group->seg_filter_src) return;
+
+	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_FILE_CACHED, &pe);
+	if (!p || !p->value.boolean) {
+		gf_filter_release_property(pe);
+		return;
+	}
+	group->stats_uploaded = GF_TRUE;
+
+	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_DOWN_RATE, &pe);
+	if (p) bytes_per_sec = p->value.uint / 8;
+
+	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_DOWN_SIZE, &pe);
+	if (p) file_size = p->value.longuint;
+
+	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_DOWN_BYTES, &pe);
+	if (p) bytes_done = p->value.longuint;
+
+	p = gf_filter_get_info_str(group->seg_filter_src, "x-atsc", &pe);
+	if (p && p->value.string && !strcmp(p->value.string, "yes")) {
+		broadcast_flag = GF_TRUE;
+	}
+
+	gf_dash_group_store_stats(ctx->dash, group->idx, group->current_dependent_rep_idx, bytes_per_sec, (u32) file_size, (u32) bytes_done, broadcast_flag);
+
+	//we allow file abort, check the download
+	if (ctx->abort)
+		gf_dash_group_check_bandwidth(ctx->dash, group->idx);
+
+	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_FILE_CACHED, &pe);
+	if (p && p->value.boolean)
+		group->stats_uploaded = GF_TRUE;
+
+	gf_filter_release_property(pe);
+}
+
+
 static void dashdmx_switch_segment(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
 {
 	u32 dependent_representation_index = 0;
 	GF_Err e;
-	Bool has_next;
+	Bool has_scalable_next;
 	GF_FilterEvent evt;
 	const char *next_url, *next_url_init_or_switch_segment, *src_url, *key_url;
 	u64 start_range, end_range, switch_start_range, switch_end_range;
@@ -1380,15 +1456,13 @@ static void dashdmx_switch_segment(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
 	group->in_error = GF_FALSE;
 	if (group->segment_sent) {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] group %d drop current segment\n", group->idx));
-		if (!group->current_group_dep)
+		if (!group->current_group_dep && !group->next_dependent_rep_idx)
 			gf_dash_group_discard_segment(ctx->dash, group->idx);
 
 		group->segment_sent = GF_FALSE;
 		//no thread mode, we work with at most one entry in cache, call process right away to get the group next URL ready
 		gf_dash_process(ctx->dash);
 	}
-
-	group->stats_uploaded = GF_FALSE;
 
 #if 0
 	if (group_done) {
@@ -1404,16 +1478,30 @@ static void dashdmx_switch_segment(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
 			dependent_representation_index = group->current_group_dep;
 //			s32 res = gf_dash_get_dependent_group_index(ctx->dash, group->idx, group->current_group_dep-
 		}
+	} else if (group->next_dependent_rep_idx) {
+		dashdmx_update_group_stats(ctx, group);
+		dependent_representation_index = group->current_dependent_rep_idx = group->next_dependent_rep_idx;
+	} else if (group->current_dependent_rep_idx) {
+		dashdmx_update_group_stats(ctx, group);
+		group->current_dependent_rep_idx = 0;
 	}
+
+	group->stats_uploaded = GF_FALSE;
+
 	e = gf_dash_group_get_next_segment_location(ctx->dash, group_idx, dependent_representation_index, &next_url, &start_range, &end_range,
 		        NULL, &next_url_init_or_switch_segment, &switch_start_range , &switch_end_range,
-		        &src_url, &has_next, &key_url, &key_IV);
+		        &src_url, &has_scalable_next, &key_url, &key_IV);
 
 	if (e == GF_EOS) {
 		group->eos_detected = GF_TRUE;
 		return;
 	}
 	group->eos_detected = GF_FALSE;
+	if (!has_scalable_next) {
+		group->next_dependent_rep_idx = 0;
+	} else {
+		group->next_dependent_rep_idx++;
+	}
 
 	if (e != GF_OK) {
 		if (e == GF_BUFFER_TOO_SMALL) {
@@ -1466,50 +1554,7 @@ static void dashdmx_switch_segment(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
 	gf_filter_send_event(group->seg_filter_src, &evt, GF_FALSE);
 }
 
-static void dashdmx_update_group_stats(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
-{
-	u32 bytes_per_sec = 0;
-	u64 file_size = 0, bytes_done = 0;
-	const GF_PropertyValue *p;
-	GF_PropertyEntry *pe=NULL;
-	Bool broadcast_flag = GF_FALSE;
-	if (group->stats_uploaded) return;
-	if (group->prev_is_init_segment) return;
-	if (!group->seg_filter_src) return;
-
-	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_FILE_CACHED, &pe);
-	if (!p || !p->value.boolean) {
-		gf_filter_release_property(pe);
-		return;
-	}
-	group->stats_uploaded = GF_TRUE;
-
-	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_DOWN_RATE, &pe);
-	if (p) bytes_per_sec = p->value.uint / 8;
-
-	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_DOWN_SIZE, &pe);
-	if (p) file_size = p->value.longuint;
-
-	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_DOWN_BYTES, &pe);
-	if (p) bytes_done = p->value.longuint;
-
-	p = gf_filter_get_info_str(group->seg_filter_src, "x-atsc", &pe);
-	if (p && p->value.string && !strcmp(p->value.string, "yes")) {
-		broadcast_flag = GF_TRUE;
-	}
-
-	gf_dash_group_store_stats(ctx->dash, group->idx, bytes_per_sec, (u32) file_size, (u32) bytes_done, broadcast_flag);
-
-	//we allow file abort, check the download
-	if (ctx->abort)
-		gf_dash_group_check_bandwidth(ctx->dash, group->idx);
-
-	p = gf_filter_get_info(group->seg_filter_src, GF_PROP_PID_FILE_CACHED, &pe);
-	if (p && p->value.boolean)
-		group->stats_uploaded = GF_TRUE;
-
-	gf_filter_release_property(pe);
-}
+GF_Err gf_dash_group_push_tfrf(GF_DashClient *dash, u32 idx, void *tfrf, u32 timescale);
 
 GF_Err dashdmx_process(GF_Filter *filter)
 {
@@ -1601,6 +1646,8 @@ GF_Err dashdmx_process(GF_Filter *filter)
 						//good to switch, cancel all end of stream signals on pids from this group and switch
 						GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] End of segment for group %d, updating stats and switching segment\n", group->idx));
 						for (j=0; j<count; j++) {
+							const GF_PropertyValue *p;
+							GF_PropertyEntry *pe=NULL;
 							GF_FilterPid *an_ipid = gf_filter_get_ipid(filter, j);
 							GF_FilterPid *an_opid = gf_filter_pid_get_udta(an_ipid);
 							GF_DASHGroup *agroup;
@@ -1612,6 +1659,12 @@ GF_Err dashdmx_process(GF_Filter *filter)
 								gf_filter_pid_clear_eos(an_ipid, GF_TRUE);
 								GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] Clearing EOS on pids from group %d\n", group->idx));
 							}
+
+							p = gf_filter_pid_get_info_str(an_ipid, "smooth_tfrf", &pe);
+							if (p) {
+								gf_dash_group_push_tfrf(ctx->dash, group->idx, p->value.ptr, gf_filter_pid_get_timescale(an_ipid));
+							}
+							gf_filter_release_property(pe);
 						}
 						dashdmx_update_group_stats(ctx, group);
 						group->stats_uploaded = GF_TRUE;
@@ -1772,7 +1825,7 @@ static const GF_FilterArgs DASHDmxArgs[] =
 	{ OFFS(atsc_shift), "shift ATSC requests time by given ms", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(server_utc), "use ServerUTC: or Date: http headers instead of local UTC", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(screen_res), "use screen resolution in selection phase", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(init_timeshift), "set initial timshift in ms (if >0) or in per-cent of timeshift buffer (if <0)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(init_timeshift), "set initial timshift in ms (if >0) or in per-cent of timeshift buffer (if <0)", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(tile_mode), "tile adaptation mode\n"\
 						"- none: bitrate is shared equaly accross all tiles\n"\
 						"- rows: bitrate decreases for each row of tiles starting from the top, same rate for each tile on the row\n"\

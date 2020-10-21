@@ -828,6 +828,43 @@ u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout)
 	return nb_chan;
 }
 
+u16 gf_audio_fmt_get_dolby_chanmap(u32 cicp)
+{
+	u16 res = 0;
+	u64 layout = gf_audio_fmt_get_layout_from_cicp(cicp);
+
+	if (layout & GF_AUDIO_CH_FRONT_LEFT) res |= (1<<15); // 0
+	if (layout & GF_AUDIO_CH_FRONT_CENTER) res |= (1<<14); //1
+	if (layout & GF_AUDIO_CH_FRONT_RIGHT) res |= (1<<13); //2
+	if (layout & GF_AUDIO_CH_REAR_SURROUND_LEFT) res |= (1<<12); //3
+	if (layout & GF_AUDIO_CH_REAR_SURROUND_RIGHT) res |= (1<<11); //4
+	//Lc/Rc
+	if (layout & GF_AUDIO_CH_FRONT_CENTER_LEFT) res |= (1<<11); //5
+	//Lrs/Rrs
+	if (layout & GF_AUDIO_CH_SURROUND_LEFT) res |= (1<<9); //6
+	//Cs
+	if (layout & GF_AUDIO_CH_REAR_CENTER) res |= (1<<8); //7
+	//Ts
+	if (layout & GF_AUDIO_CH_REAR_CENTER) res |= (1<<7); //8
+	//Lsd/Rsd
+	if (layout & GF_AUDIO_CH_SIDE_SURROUND_LEFT) res |= (1<<6); //9
+	//Lw/Rw
+	if (layout & GF_AUDIO_CH_FRONT_CENTER_LEFT) res |= (1<<5); //10
+	//Vhl/Vhr
+	if (layout & GF_AUDIO_CH_FRONT_TOP_LEFT) res |= (1<<4); //11
+	//Vhc
+	if (layout & GF_AUDIO_CH_FRONT_TOP_CENTER) res |= (1<<3); //12
+	//Lts/Rts
+	if (layout & GF_AUDIO_CH_SURROUND_TOP_LEFT) res |= (1<<2); //13
+	//LFE2
+	if (layout & GF_AUDIO_CH_LFE2) res |= (1<<1); //14
+	//LFE
+	if (layout & GF_AUDIO_CH_LFE) res |= (1); //15
+	return res;
+
+}
+
+
 typedef struct
 {
 	GF_PixelFormat pixfmt;
@@ -844,12 +881,12 @@ static const GF_PixFmt GF_PixelFormats[] =
 	{GF_PIXEL_YUV422_10, "yuv422_10", "Planar YUV 422 10 bit", "yp2l"},
 	{GF_PIXEL_YUV444, "yuv444", "Planar YUV 444 8 bit", "yuv4"},
 	{GF_PIXEL_YUV444_10, "yuv444_10", "Planar YUV 444 10 bit", "yp4l"},
-	{GF_PIXEL_UYVY, "uyvy", "Planar UYVY 422 8 bit"},
-	{GF_PIXEL_VYUY, "vyuy", "Planar VYUV 422 8 bit"},
-	{GF_PIXEL_YUYV, "yuyv", "Planar YUYV 422 8 bit"},
-	{GF_PIXEL_YVYU, "yvyu", "Planar YVYU 422 8 bit"},
-	{GF_PIXEL_NV12, "nv12", "Semi-planar YUV 420 8 bit, Y plane and UV plane"},
-	{GF_PIXEL_NV21, "nv21", "Semi-planar YUV 420 8 bit, Y plane and VU plane"},
+	{GF_PIXEL_UYVY, "uyvy", "Packed UYVY 422 8 bit"},
+	{GF_PIXEL_VYUY, "vyuy", "Packed VYUV 422 8 bit"},
+	{GF_PIXEL_YUYV, "yuyv", "Packed YUYV 422 8 bit"},
+	{GF_PIXEL_YVYU, "yvyu", "Packed YVYU 422 8 bit"},
+	{GF_PIXEL_NV12, "nv12", "Semi-planar YUV 420 8 bit, Y plane and UV packed plane"},
+	{GF_PIXEL_NV21, "nv21", "Semi-planar YUV 420 8 bit, Y plane and VU packed plane"},
 	{GF_PIXEL_NV12_10, "nv1l", "Semi-planar YUV 420 10 bit, Y plane and UV plane"},
 	{GF_PIXEL_NV21_10, "nv2l", "Semi-planar YUV 420 8 bit, Y plane and VU plane"},
 	{GF_PIXEL_YUVA, "yuva", "Planar YUV+alpha 420 8 bit"},

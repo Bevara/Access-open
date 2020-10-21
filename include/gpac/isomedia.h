@@ -329,11 +329,13 @@ enum
 	GF_QT_SUBTYPE_APCS	= GF_4CC( 'a', 'p', 'c', 's' ),
 	GF_QT_SUBTYPE_AP4X	= GF_4CC( 'a', 'p', '4', 'x' ),
 	GF_QT_SUBTYPE_AP4H	= GF_4CC( 'a', 'p', '4', 'h' ),
-	GF_QT_SUBTYPE_YUV422 	= GF_4CC('y','u','v','2'),
-//	GF_QT_SUBTYPE_YUV422 	= GF_4CC('2','v','u','Y'),
-	GF_QT_SUBTYPE_YUV444 	= GF_4CC('v','3','0','8'),
-	GF_QT_SUBTYPE_YUV422_10 	= GF_4CC('v','2','1','0'),
-	GF_QT_SUBTYPE_YUV444_10 	= GF_4CC('v','4','1','0'),
+	GF_QT_SUBTYPE_YUYV = GF_4CC('y','u','v','2'),
+	GF_QT_SUBTYPE_UYVY = GF_4CC('2','v','u','y'),
+	GF_QT_SUBTYPE_YUV444 = GF_4CC('v','3','0','8'),
+	GF_QT_SUBTYPE_YUVA444 = GF_4CC('v','4','0','8'),
+	GF_QT_SUBTYPE_YUV422_10 = GF_4CC('v','2','1','0'),
+	GF_QT_SUBTYPE_YUV444_10 = GF_4CC('v','4','1','0'),
+	GF_QT_SUBTYPE_YUV420 = GF_4CC('j','4','2','0'),
 };
 
 
@@ -1546,7 +1548,6 @@ GF_Err gf_isom_get_current_top_box_offset(GF_ISOFile *isom_file, u64 *current_to
 \return error if any
 */
 GF_Err gf_isom_purge_samples(GF_ISOFile *isom_file, u32 trackNumber, u32 nb_samples);
-
 
 #ifndef GPAC_DISABLE_ISOM_DUMP
 
@@ -3408,42 +3409,6 @@ GF_Err gf_isom_get_dims_description(GF_ISOFile *isom_file, u32 trackNumber, u32 
 GF_Err gf_isom_new_dims_description(GF_ISOFile *isom_file, u32 trackNumber, GF_DIMSDescription *desc, const char *URLname, const char *URNname, u32 *outDescriptionIndex);
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
-/*! AC-3 config record extension for EAC-3 - see dolby specs*/
-struct __ec3_stream
-{
-	/*! AC3 fs code*/
-	u8 fscod;
-	/*! AC3 bsid code*/
-	u8 bsid;
-	/*! AC3 bs mode*/
-	u8 bsmod;
-	/*! AC3 ac mode*/
-	u8 acmod;
-	/*! LF on*/
-	u8 lfon;
-	/*! asvc mode, only for EC3*/
-	u8 asvc;
-	/*! deps, only for EC3*/
-	u8 nb_dep_sub;
-	/*! channel loc, only for EC3*/
-	u8 chan_loc;
-};
-
-/*! AC3 config record*/
-typedef struct
-{
-	/*! indicates if ec3*/
-	u8 is_ec3;
-	/*! number of streams :
-		1 for AC3
-		max 8 for EC3, main stream is included
-	*/
-	u8 nb_streams;
-	/*! if AC3 this is the bitrate code, otherwise cumulated data rate of EC3 streams*/
-	u16 brcode;
-	struct __ec3_stream streams[8];
-} GF_AC3Config;
-
 /*! gets an AC3 sample description
 \param isom_file the target ISO file
 \param trackNumber the target track
@@ -3451,15 +3416,6 @@ typedef struct
 \return AC-3 config
 */
 GF_AC3Config *gf_isom_ac3_config_get(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex);
-
-/*! parses an AC3/EC3 sample description
-\param dsi the encoded config
-\param dsi_len the encoded config size
-\param is_ec3 indicates that the encoded config is for an EC3 track
-\param cfg the AC3/EC3 confgi to fill
-\return Error if any
-*/
-GF_Err gf_isom_ac3_config_parse(u8 *dsi, u32 dsi_len, Bool is_ec3, GF_AC3Config *cfg);
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 /*! creates an AC3 sample description
@@ -3688,6 +3644,13 @@ GF_Err gf_isom_refresh_fragmented(GF_ISOFile *isom_file, u64 *MissingBytes, cons
 \return the track fragment decode time in media timescale
 */
 u64 gf_isom_get_current_tfdt(GF_ISOFile *isom_file, u32 trackNumber);
+
+/*! gets the estimated DTS of the first sample of the next segment for SmoothStreaming files (no tfdt, no tfxd)
+\param isom_file the target ISO file
+\param trackNumber the target track
+\return the next track fragment decode time in media timescale
+*/
+u64 gf_isom_get_smooth_next_tfdt(GF_ISOFile *the_file, u32 trackNumber);
 
 /*! checks if the movie is a smooth streaming recomputed initial movie
 \param isom_file the target ISO file

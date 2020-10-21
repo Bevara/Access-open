@@ -1482,11 +1482,11 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 			} else if ((att->type==GF_PROP_STRING) || (att->type==GF_PROP_STRING_NO_COPY)) {
 				gf_xml_dump_string(dump, NULL, att->value.string, NULL);
 			} else {
-				gf_fprintf(dump, " %s=\"%s\"", pname_no_space, gf_props_dump(p4cc, att, szDump, ctx->dump_data));
+				gf_fprintf(dump, " %s=\"%s\"", pname_no_space, gf_props_dump(p4cc, att, szDump, (GF_PropDumDataMode) ctx->dump_data));
 			}
 			gf_free(pname_no_space);
 		} else {
-			gf_fprintf(dump, " %s=\"%s\"", pname ? pname : gf_4cc_to_str(p4cc), gf_props_dump(p4cc, att, szDump, ctx->dump_data));
+			gf_fprintf(dump, " %s=\"%s\"", pname ? pname : gf_4cc_to_str(p4cc), gf_props_dump(p4cc, att, szDump, (GF_PropDumDataMode) ctx->dump_data));
 		}
 	} else {
 		if (ctx->dtype) {
@@ -1522,7 +1522,7 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 				gf_fprintf(dump, "%s", (const char *) att->value.string_list.vals[k]);
 			}
 		}else{
-			gf_fprintf(dump, "%s", gf_props_dump(p4cc, att, szDump, ctx->dump_data) );
+			gf_fprintf(dump, "%s", gf_props_dump(p4cc, att, szDump, (GF_PropDumDataMode) ctx->dump_data) );
 		}
 		gf_fprintf(dump, "\n");
 	}
@@ -1692,7 +1692,7 @@ static void inspect_dump_packet_fmt(GF_InspectCtx *ctx, FILE *dump, GF_FilterPac
 			if (!prop) prop = gf_filter_pid_get_property_str(pctx->src_pid, key);
 
 			if (prop) {
-				gf_fprintf(dump, "%s", gf_props_dump(prop_4cc, prop, szDump, ctx->dump_data) );
+				gf_fprintf(dump, "%s", gf_props_dump(prop_4cc, prop, szDump, (GF_PropDumDataMode) ctx->dump_data) );
 			}
 		}
 		else {
@@ -1706,7 +1706,7 @@ static void inspect_dump_packet_fmt(GF_InspectCtx *ctx, FILE *dump, GF_FilterPac
 			if (!prop) prop = gf_filter_pck_get_property_str(pck, key);
 
 			if (prop) {
-				gf_fprintf(dump, "%s", gf_props_dump(prop_4cc, prop, szDump, ctx->dump_data) );
+				gf_fprintf(dump, "%s", gf_props_dump(prop_4cc, prop, szDump, (GF_PropDumDataMode) ctx->dump_data) );
 			}
 		}
 
@@ -1745,7 +1745,7 @@ static void inspect_dump_mpeg124(PidCtx *pctx, char *data, u32 size, FILE *dump)
 				gf_fprintf(dump, " name=\"VOS\" PL=\"%d\"", pctx->dsi.VideoPL);
 				break;
 			case M4V_VOL_START_CODE:
-				gf_fprintf(dump, " name=\"VOL\" RAP=\"%d\" objectType=\"%d\" par=\"%d/%d\" hasShape=\"%d\"", pctx->dsi.RAP_stream, pctx->dsi.objectType, pctx->dsi.par_num, pctx->dsi.par_den, pctx->dsi.has_shape);
+				gf_fprintf(dump, " name=\"VOL\" RAPStream=\"%d\" objectType=\"%d\" par=\"%d/%d\" hasShape=\"%d\"", pctx->dsi.RAP_stream, pctx->dsi.objectType, pctx->dsi.par_num, pctx->dsi.par_den, pctx->dsi.has_shape);
 				if (pctx->dsi.clock_rate)
 					gf_fprintf(dump, " clockRate=\"%d\"", pctx->dsi.clock_rate);
 				if (pctx->dsi.time_increment)
@@ -1756,7 +1756,7 @@ static void inspect_dump_mpeg124(PidCtx *pctx, char *data, u32 size, FILE *dump)
 				break;
 
 			case M4V_VOP_START_CODE:
-				gf_fprintf(dump, " name=\"VOP\" frameType=\"%d\" timeInc=\"%d\" isCoded=\"%d\"", ftype, tinc, is_coded);
+				gf_fprintf(dump, " name=\"VOP\" RAP=\"%d\" frameType=\"%d\" timeInc=\"%d\" isCoded=\"%d\"", (ftype==0) ? 1 : 0, ftype, tinc, is_coded);
 				break;
 			case M4V_GOV_START_CODE:
 				gf_fprintf(dump, " name=\"GOV\"");
@@ -2600,7 +2600,7 @@ static void inspect_dump_pid(GF_InspectCtx *ctx, FILE *dump, GF_FilterPid *pid, 
 
 static GF_Err inspect_process(GF_Filter *filter)
 {
-	u32 i, count, nb_done=0;
+	u32 i, count, nb_done=0, nb_hdr_done=0;
 	GF_InspectCtx *ctx = (GF_InspectCtx *) gf_filter_get_udta(filter);
 
 	count = gf_list_count(ctx->src_pids);
@@ -2630,6 +2630,9 @@ static GF_Err inspect_process(GF_Filter *filter)
 	for (i=0; i<count; i++) {
 		PidCtx *pctx = gf_list_get(ctx->src_pids, i);
 		GF_FilterPacket *pck = gf_filter_pid_get_packet(pctx->src_pid);
+
+		if (pctx->init_pid_config_done)
+			nb_hdr_done++;
 
 		if (!pck && !gf_filter_pid_is_eos(pctx->src_pid))
 			continue;
@@ -2669,7 +2672,7 @@ static GF_Err inspect_process(GF_Filter *filter)
 			if (ts == GF_FILTER_NO_TS) ts = gf_filter_pck_get_cts(pck);
 
 			if (!pctx->init_ts) pctx->init_ts = ts;
-			else if (ctx->dur.den * (ts - pctx->init_ts) >= ctx->dur.num * timescale) {
+			else if ((ts - pctx->init_ts) * (u64)ctx->dur.den >= timescale * (u64) ctx->dur.num) {
 				GF_FilterEvent evt;
 				GF_FEVT_INIT(evt, GF_FEVT_STOP, pctx->src_pid);
 				gf_filter_pid_send_event(pctx->src_pid, &evt);
@@ -2679,14 +2682,17 @@ static GF_Err inspect_process(GF_Filter *filter)
 		}
 		gf_filter_pid_drop_packet(pctx->src_pid);
 	}
-	if (ctx->is_prober && !ctx->probe_done && (nb_done==count) && !ctx->allp) {
+	if ((ctx->is_prober && !ctx->probe_done && (nb_done==count) && !ctx->allp)
+		|| (!ctx->is_prober && !ctx->allp && !ctx->dump_pck && (nb_hdr_done==count) && !gf_filter_connections_pending(filter))
+	) {
 		for (i=0; i<count; i++) {
 			PidCtx *pctx = gf_list_get(ctx->src_pids, i);
 			GF_FilterEvent evt;
 			GF_FEVT_INIT(evt, GF_FEVT_STOP, pctx->src_pid);
 			gf_filter_pid_send_event(pctx->src_pid, &evt);
 		}
-		ctx->probe_done = GF_TRUE;
+		if (ctx->is_prober)
+			ctx->probe_done = GF_TRUE;
 		return GF_EOS;
 	}
 	return GF_OK;

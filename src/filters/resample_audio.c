@@ -276,14 +276,13 @@ static GF_Err resample_process(GF_Filter *filter)
 		gf_filter_pck_send(dstpck);
 
 		if (ctx->timescale==ctx->freq) {
-			ctx->out_cts += written / bytes_per_samp;
+			ctx->out_cts += (u64) (ctx->speed * written / bytes_per_samp);
 		} else {
 			u64 ts_inc = written / bytes_per_samp;
 			ts_inc *= ctx->timescale;
 			ts_inc /= ctx->freq;
 
-			ctx->out_cts += ts_inc;
-
+			ctx->out_cts += (u64) (ctx->speed * ts_inc);
 		}
 		//still some bytes to use from packet, do not discard
 		if (ctx->bytes_consumed<ctx->size) {
@@ -358,6 +357,24 @@ static GF_Err resample_reconfigure_output(GF_Filter *filter, GF_FilterPid *pid)
 	return GF_OK;
 }
 
+static Bool resample_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
+{
+	if ((evt->base.type==GF_FEVT_SET_SPEED) && evt->play.speed) {
+		GF_ResampleCtx *ctx = gf_filter_get_udta(filter);
+		ctx->speed = evt->play.speed;
+		if (ctx->speed<0) ctx->speed = -ctx->speed;
+
+		ctx->passthrough = GF_FALSE;
+		if (ctx->speed > FIX_ONE) {
+			GF_FilterEvent anevt;
+			GF_FEVT_INIT(anevt, GF_FEVT_BUFFER_REQ, ctx->ipid);
+			anevt.buffer_req.max_buffer_us = FIX2INT( ctx->speed * 100000 );
+			gf_filter_pid_send_event(ctx->ipid, &anevt);
+		}
+	}
+	return GF_FALSE;
+}
+
 static const GF_FilterCapability ResamplerCaps[] =
 {
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
@@ -387,6 +404,7 @@ GF_FilterRegister ResamplerRegister = {
 	.configure_pid = resample_configure_pid,
 	.process = resample_process,
 	.reconfigure_output = resample_reconfigure_output,
+	.process_event = resample_process_event,
 };
 
 
