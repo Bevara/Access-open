@@ -394,7 +394,7 @@ static Bool is_mintty = GF_FALSE;
 #endif
 
 
-
+#ifndef GPAC_DISABLE_LOG
 
 GF_EXPORT
 void gf_sys_set_console_code(FILE *std, GF_ConsoleCodes code)
@@ -588,6 +588,7 @@ win32_ismtty:
 	}
 #endif
 }
+#endif
 
 #ifndef GPAC_DISABLE_LOG
 u32 call_lev = 0;

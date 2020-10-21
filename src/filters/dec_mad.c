@@ -27,7 +27,6 @@
 #include <gpac/filters.h>
 
 #ifdef GPAC_HAS_MAD
-
 #include <gpac/constants.h>
 
 #if defined(_WIN32_WCE) || defined(_WIN64) || defined(__SYMBIAN32__)
@@ -40,38 +39,7 @@
 #endif
 #endif
 
-# ifdef HAVE_CONFIG_H
-#  include "config.h"
-# endif
-
-# include "global.h"
-
-# ifdef HAVE_SYS_TYPES_H
-#  include <sys/types.h>
-# endif
-
-# ifdef HAVE_SYS_WAIT_H
-#  include <sys/wait.h>
-# endif
-
-# ifdef HAVE_UNISTD_H
-#  include <unistd.h>
-# endif
-
-# ifdef HAVE_FCNTL_H
-#  include <fcntl.h>
-# endif
-
-# include <stdlib.h>
-
-# ifdef HAVE_ERRNO_H
-#  include <errno.h>
-# endif
-
-# include "stream.h"
-# include "frame.h"
-# include "synth.h"
-# include "decoder.h"
+#include <mad.h>
 
 #if !defined(__GNUC__)
 # if defined(_WIN32_WCE) || defined (WIN32)
