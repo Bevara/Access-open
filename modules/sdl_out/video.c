@@ -1821,7 +1821,10 @@ static GF_Err SDL_Blit(GF_VideoOutput *dr, GF_VideoSurface *video_src, GF_Window
 	}
 	if (!(*pool)) {
 		(*pool) = SDL_CreateTexture(ctx->renderer, format, SDL_TEXTUREACCESS_STREAMING, video_src->width, video_src->height);
-		if (!(*pool)) return GF_NOT_SUPPORTED;
+		if (!(*pool)) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[SDL2] SDL_CreateTexture error: %s\n", SDL_GetError()));
+			return GF_NOT_SUPPORTED;
+		}
 	}
 
 	SDL_QueryTexture((*pool), &format, &acc, &w, &h);
