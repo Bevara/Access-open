@@ -174,6 +174,7 @@ void gf_sc_load_opengl_extensions(GF_Compositor *compositor, Bool has_gl_context
 	}
 
 #if !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
+	compositor->shader_mode_disabled = 1; // FIXME GORINJE
 	if (!compositor->shader_mode_disabled && compositor->vertshader && compositor->fragshader) {
 		if (!gf_file_exists(compositor->vertshader)) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] GLES Vertex shader %s not found, disabling shaders\n", compositor->vertshader));
@@ -3964,7 +3965,7 @@ GF_Err compositor_3d_setup_fbo(u32 width, u32 height, u32 *fbo_id, u32 *tx_id, u
 		glGenRenderbuffers(1, depth_id);
 
 	glBindRenderbuffer(GL_RENDERBUFFER, *depth_id);
-#if defined(GPAC_CONFIG_IOS) ||  defined(GPAC_CONFIG_ANDROID)
+#if defined(GPAC_CONFIG_IOS) ||  defined(GPAC_CONFIG_ANDROID) ||  defined(__EMSCRIPTEN__)
 	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
 #else
 	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
