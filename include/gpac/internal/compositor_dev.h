@@ -150,6 +150,12 @@ typedef struct
 
 #define DOUBLECLICK_TIME_MS		250
 
+enum
+{
+	TILE_DEBUG_NONE=0,
+	TILE_DEBUG_PARTIAL,
+	TILE_DEBUG_FULL
+};
 
 enum
 {
@@ -293,7 +299,7 @@ struct __tag_compositor
 	Bool amc, async;
 	u32 asr, ach, alayout, afmt, asize, avol, apan, abuf;
 	Double max_aspeed, max_vspeed;
-	u32 buf, rbuf, mbuf, ntpsync;
+	u32 buffer, rbuffer, mbuffer, ntpsync;
 	
 	u32 ogl, mode2d;
 
@@ -646,8 +652,8 @@ struct __tag_compositor
 	u8 *screen_buffer, *line_buffer;
 	u32 screen_buffer_alloc_size;
 
-	u32 tvtn, tvtt;
-	Bool tvtd, tvtf;
+	u32 tvtn, tvtt, tvtd;
+	Bool tvtf;
 	u32 vrhud_mode;
 	Fixed fov;
 
@@ -1661,7 +1667,7 @@ struct _gf_scene
 	both external resources (urls) and ODs sent in MPEG-4 systems*/
 	GF_List *resources;
 
-	/*list of GF_MediaObject - these are the links betwwen scene nodes (URL, xlink:href) and media resources.
+	/*list of GF_MediaObject - these are the links between scene nodes (URL, xlink:href) and media resources.
 	We need this link because of MPEG-4 Systems, where an OD (media resource) can be removed or replaced by the server
 	without the scene being modified*/
 	GF_List *scene_objects;
@@ -1785,7 +1791,7 @@ Bool gf_scene_is_root(GF_Scene *scene);
 
 void gf_scene_remove_object(GF_Scene *scene, GF_ObjectManager *odm, u32 for_shutdown);
 /*browse all (media) channels and send buffering info to the app*/
-void gf_scene_buffering_info(GF_Scene *scene);
+void gf_scene_buffering_info(GF_Scene *scene, Bool rebuffer_done);
 void gf_scene_attach_to_compositor(GF_Scene *scene);
 struct _mediaobj *gf_scene_get_media_object(GF_Scene *scene, MFURL *url, u32 obj_type_hint, Bool lock_timelines);
 struct _mediaobj *gf_scene_get_media_object_ex(GF_Scene *scene, MFURL *url, u32 obj_type_hint, Bool lock_timelines, struct _mediaobj *sync_ref, Bool force_new_if_not_attached, GF_Node *node_ptr);
@@ -1822,7 +1828,7 @@ void gf_scene_force_size_to_video(GF_Scene *scene, GF_MediaObject *mo);
 //If @check_buffering is 1, returns 1 if no clock is buffering, 0 otheriwse
 Bool gf_scene_check_clocks(GF_SceneNamespace *ns, GF_Scene *scene, Bool check_buffering);
 
-void gf_scene_notify_event(GF_Scene *scene, u32 event_type, GF_Node *n, void *dom_evt, GF_Err code, Bool no_queueing);
+void gf_scene_notify_event(GF_Scene *scene, u32 event_type, GF_Node *n, void *dom_evt, GF_Err code, Bool no_queuing);
 
 void gf_scene_mpeg4_inline_restart(GF_Scene *scene);
 void gf_scene_mpeg4_inline_check_restart(GF_Scene *scene);
@@ -2037,6 +2043,8 @@ enum
 
 	/*flag indicates the odm is a target passthrough*/
 	GF_ODM_PASSTHROUGH = (1<<15),
+	/*flag indicates the clock is shared between tiles and a play should not trigger a rebuffer*/
+	GF_ODM_TILED_SHARED_CLOCK = (1<<16),
 };
 
 enum
@@ -2099,7 +2107,7 @@ struct _od_manager
 	Bool clock_inherited;
 	//0 or 1, except for IOD where we may have several BIFS/OD streams
 	u32 nb_buffering, nb_rebuffer;
-	u32 buffer_max_us, buffer_min_us, buffer_playout_us;
+	u32 buffer_max_ms, buffer_min_ms, buffer_playout_ms;
 	Bool blocking_media;
 
 	//internal hash for source allowing to distinguish input PIDs sources
@@ -2133,7 +2141,8 @@ struct _od_manager
 	u32 timeshift_depth;
 
 	u32 action_type;
-	s32 delay;
+	//delay in PID timescale
+	s64 timestamp_offset;
 	
 	Fixed set_speed;
 	Bool disable_buffer_at_next_play;
@@ -2340,7 +2349,7 @@ GF_MediaObject *gf_mo_new();
 
 /*media access events */
 void gf_odm_service_media_event(GF_ObjectManager *odm, GF_EventType event_type);
-void gf_odm_service_media_event_with_download(GF_ObjectManager *odm, GF_EventType event_type, u64 loaded_size, u64 total_size, u32 bytes_per_sec);
+void gf_odm_service_media_event_with_download(GF_ObjectManager *odm, GF_EventType event_type, u64 loaded_size, u64 total_size, u32 bytes_per_sec, u32 buffer_level_plus_one, u32 min_buffer_time);
 
 /*checks the URL and returns the ODID (MPEG-4 od://) or GF_MEDIA_EXTERNAL_ID for all regular URLs*/
 u32 gf_mo_get_od_id(MFURL *url);

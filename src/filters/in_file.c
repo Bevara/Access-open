@@ -226,6 +226,9 @@ static GF_FilterProbeScore filein_probe_url(const char *url, const char *mime_ty
 			return GF_FPROBE_SUPPORTED;
 		return GF_FPROBE_NOT_SUPPORTED;
 	}
+	if (strstr(src, "://"))
+		return GF_FPROBE_NOT_SUPPORTED;
+
 
 	//strip any fragment identifer
 	ext_start = gf_file_ext_start(url);
@@ -311,6 +314,16 @@ static Bool filein_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		filein_initialize(filter);
 		gf_filter_post_process_task(filter);
 		break;
+	case GF_FEVT_FILE_DELETE:
+		if (ctx->is_end && !strcmp(evt->file_del.url, "__gpac_self__")) {
+			if (ctx->file) {
+				gf_fclose(ctx->file);
+				ctx->file = NULL;
+			}
+			gf_file_delete(ctx->src);
+		}
+		break;
+
 	default:
 		break;
 	}
@@ -341,7 +354,6 @@ static GF_Err filein_process(GF_Filter *filter)
 	if (ctx->pck_out)
 		return GF_EOS;
 	if (ctx->pid && gf_filter_pid_would_block(ctx->pid)) {
-		assert(0);
 		return GF_OK;
 	}
 
@@ -550,7 +562,7 @@ static GF_Err filein_process(GF_Filter *filter)
 
 static const GF_FilterArgs FileInArgs[] =
 {
-	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(src), "location of source file", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(block_size), "block size used to read file. 0 means 5000 if file less than 500m, 1M otherwise", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(range), "byte range", GF_PROP_FRACTION64, "0-0", NULL, 0},
 	{ OFFS(ext), "override file extension", GF_PROP_NAME, NULL, NULL, 0},

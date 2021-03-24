@@ -1210,7 +1210,7 @@ static void TraverseCustomTexture(GF_Node *node, void *rs, Bool is_destroy)
 static void CustomTexture_update(GF_TextureHandler *txh)
 {
 #ifndef GPAC_DISABLE_3D
-    u8 data[12];
+    u8 data[16];
 #endif
     CustomTextureStack *stack = gf_node_get_private(txh->owner);
     //alloc texture
@@ -1350,7 +1350,9 @@ static void TraverseVRGeometry(GF_Node *node, void *rs, Bool is_destroy)
 		
 		if (tr_state->traversing_mode==TRAVERSE_DRAW_3D) {
 			Bool visible = GF_FALSE;
-
+#ifndef GPAC_DISABLE_LOG
+			const char *pid_name = gf_filter_pid_get_name(txh->stream->odm->pid);
+#endif
 			if (! tr_state->camera_was_dirty && !mesh_was_reset) {
 				visible = (stack->mesh->flags & MESH_WAS_VISIBLE) ? GF_TRUE : GF_FALSE;
 			} else if ((vrinfo.srd_w==vrinfo.srd_max_x) && (vrinfo.srd_h==vrinfo.srd_max_y)) {
@@ -1390,7 +1392,7 @@ static void TraverseVRGeometry(GF_Node *node, void *rs, Bool is_destroy)
 				}
 				if (nb_visible > min_visible_threshold) 
 					visible = GF_TRUE;
-				GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %d Partial sphere is %s - %d sample points visible out of %d\n", txh->stream->OD_ID, visible ? "visible" : "hidden",  nb_visible, i));
+				GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %s Partial sphere is %s - %d sample points visible out of %d\n", pid_name, visible ? "visible" : "hidden",  nb_visible, i));
 			}
 
 			if (visible) {
@@ -1411,7 +1413,7 @@ static void TraverseVRGeometry(GF_Node *node, void *rs, Bool is_destroy)
 				visual_3d_setup_ray(tr_state->visual, tr_state, gx, gy);
 				visual_3d_vrml_drawable_pick(node, tr_state, stack->mesh, NULL);
 				if (tr_state->visual->compositor->hit_node) {
-					GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %d Partial sphere is under gaze coord %d %d\n", txh->stream->OD_ID, tr_state->visual->compositor->gaze_x, tr_state->visual->compositor->gaze_y));
+					GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %s Partial sphere is under gaze coord %d %d\n", pid_name, tr_state->visual->compositor->gaze_x, tr_state->visual->compositor->gaze_y));
 
 					tr_state->visual->compositor->hit_node = NULL;
 				} else {
@@ -1423,23 +1425,29 @@ static void TraverseVRGeometry(GF_Node *node, void *rs, Bool is_destroy)
 			if (vrinfo.has_full_coverage) {
 				if (visible) {
 					if (!txh->is_open) {
-						GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %d stoped on visible partial sphere - starting it\n", txh->stream->OD_ID));
+						GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %s stoped on visible partial sphere - starting it\n", pid_name));
 						assert(txh->stream && txh->stream->odm);
 						txh->stream->odm->disable_buffer_at_next_play = GF_TRUE;
-
-						gf_sc_texture_play(txh, NULL);
+						txh->stream->odm->flags |= GF_ODM_TILED_SHARED_CLOCK;
+						gf_sc_texture_play_from_to(txh, NULL, -1, -1, 1, 0);
 					}
+
 					if (txh->data) {
+						Bool do_show = GF_TRUE;
+						Bool is_full_cover =  (vrinfo.srd_w == vrinfo.srd_max_x) ? GF_TRUE : GF_FALSE;
 						visual_3d_enable_depth_buffer(tr_state->visual, GF_FALSE);
 						visual_3d_enable_antialias(tr_state->visual, GF_FALSE);
-						if (!tr_state->visual->compositor->tvtd || (vrinfo.srd_w != vrinfo.srd_max_x)) {
+						if ((tr_state->visual->compositor->tvtd == TILE_DEBUG_FULL) && !is_full_cover) do_show = GF_FALSE;
+						else if ((tr_state->visual->compositor->tvtd == TILE_DEBUG_PARTIAL) && is_full_cover) do_show = GF_FALSE;
+
+						if (do_show) {
 							visual_3d_draw(tr_state, stack->mesh);
 						}
 						visual_3d_enable_depth_buffer(tr_state->visual, GF_TRUE);
 					}
 				} else {
 					if (txh->is_open) {
-						GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %d playing on hidden partial sphere - stoping it\n", txh->stream->OD_ID));
+						GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Texture %s playing on hidden partial sphere - stoping it\n", pid_name));
 						gf_sc_texture_stop_no_unregister(txh);
 					}
 				}

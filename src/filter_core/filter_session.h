@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2018
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -72,7 +72,7 @@ typedef struct
 	GF_List *properties;
 #endif
 	volatile u32 reference_count;
-	//number of references hold by packet references - since these may be destroyed at the end of the refering filter
+	//number of references hold by packet references - since these may be destroyed at the end of the referring filter
 	//the pid might be dead. This is only used for pid props maps
 	volatile u32 pckrefs_reference_count;
 	GF_FilterSession *session;
@@ -428,6 +428,9 @@ struct __gf_filter_session
 	GF_List *jstasks;
 	struct __jsfs_task *new_f_task, *del_f_task, *on_evt_task;
 #endif
+
+	gf_fs_on_filter_creation on_filter_create_destroy;
+	void *rt_udta;
 };
 
 #ifdef GPAC_HAS_QJS
@@ -475,6 +478,8 @@ struct __gf_filter
 	//but dynamic_source_ids still contains the unresolved pattern (eg ServiceID=*)
 	char *dynamic_source_ids;
 
+	char *restricted_source_id;
+	
 	//parent media session
 	GF_FilterSession *session;
 
@@ -493,7 +498,9 @@ struct __gf_filter
 	char *src_args;
 	//allocated argument string of the destingation filter for filters dynamically loaded, if any
 	char *dst_args;
-
+	//filter tag
+	char *tag;
+	
 	//tasks pending for this filter. The first task in this list is also present in the filter session
 	//task list in order to avoid locking the main task list with a mutex
 	GF_FilterQueue *tasks;
@@ -551,6 +558,7 @@ struct __gf_filter
 	volatile u32 num_events_queued;
 	volatile u32 detach_pid_tasks_pending;
 	volatile u32 nb_shared_packets_out;
+	volatile u32 abort_pending;
 	GF_List *postponed_packets;
 
 	//list of blacklisted filtered registries
@@ -609,7 +617,8 @@ struct __gf_filter
 	Bool finalized;
 	//filter is scheduled for removal: any filter connected to this filter will
 	//not be checked for graph resolution - destroy has not yet been posted
-	Bool removed;
+	//if value is 2, packets are still dispatched to this PID instance (pid reconfig)
+	u32 removed;
 	//setup has been notified
 	Bool setup_notified;
 	//filter loaded to solve a filter chain
@@ -782,7 +791,7 @@ struct __gf_filter_pid_inst
 	u64 last_pck_fetch_time;
 	u64 stats_start_ts, stats_start_us;
 	u32 cur_bit_size, avg_bit_rate, max_bit_rate, avg_process_rate, max_process_rate;
-	u32 nb_processed, nb_sap_processed;
+	u32 nb_processed, nb_sap_processed, nb_reagg_pck;
 	//all times in us
 	u64 total_process_time, total_sap_process_time;
 	u64 max_process_time, max_sap_process_time;
@@ -810,7 +819,6 @@ struct __gf_filter_pid_inst
 	GF_Filter *alias_orig;
 
 	GF_Fraction64 last_ts_drop;
-
 };
 
 struct __gf_filter_pid
@@ -864,6 +872,7 @@ struct __gf_filter_pid
 	u64 last_pck_dts, last_pck_cts, min_pck_cts, max_pck_cts;
 	u32 min_pck_duration, nb_unreliable_dts;
 	Bool recompute_dts;
+	Bool ignore_blocking;
 
 	u32 nb_pck_sent;
 	//1000x speed value
@@ -876,7 +885,8 @@ struct __gf_filter_pid
 	void *udta;
 
 	GF_PropertyMap *caps_negociate;
-	GF_FilterPidInst *caps_negociate_pidi;
+	Bool caps_negociate_direct;
+	GF_List *caps_negociate_pidi_list;
 	GF_List *adapters_blacklist;
 	GF_Filter *caps_dst_filter;
 
@@ -1014,6 +1024,11 @@ void gf_fs_check_graph_load(GF_FilterSession *fsess, Bool for_load);
 void gf_filter_renegociate_output_task(GF_FSTask *task);
 
 void gf_fs_unload_script(GF_FilterSession *fs, void *js_ctx);
+
+
+Bool gf_fs_check_filter_register_cap_ex(const GF_FilterRegister *f_reg, u32 incode, GF_PropertyValue *cap_input, u32 outcode, GF_PropertyValue *cap_output, Bool exact_match_only, Bool out_cap_excluded);
+
+Bool gf_filter_update_arg_apply(GF_Filter *filter, const char *arg_name, const char *arg_value, Bool is_sync_call);
 
 #endif //_GF_FILTER_SESSION_H_
 

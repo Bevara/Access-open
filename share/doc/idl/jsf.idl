@@ -271,6 +271,9 @@ void prevent_blocking(boolean do_prevent);
 */
 void block_eos(boolean do_block);
 
+/*! aborts the filter - see \ref gf_filter_abort*/
+void abort();
+
 };
 
 /*! FilterInstance wraps the set of functions available for filters loaded by the script*/
@@ -308,6 +311,12 @@ void send_update(DOMString filter_id, DOMString arg_name, DOMString arg_value, l
 \param source_id the source ID to assign
 */
 void set_source(Filter from, optional DOMString source_id=null);
+
+/*! assigns restricted source name to a filter - see \ref gf_filter_set_source_restricted
+\param from a Filter or a FilterInstance object to set a a source for this filter
+\param source_id the source ID to assign
+*/
+void set_source_restricted(Filter from, optional DOMString source_id=null);
 
 /*! removes a source filter - see \ref gf_filter_remove_src*/
 void remove();
@@ -353,6 +362,8 @@ readonly attribute DOMString src_name;
 readonly attribute DOMString args;
 /*! argument of source filter*/
 readonly attribute DOMString src_args;
+/*! argument of source filter or first filter responsible for a fan-out*/
+readonly attribute DOMString unicity_args;
 /*! max buffer requirement of the pid - see \ref gf_filter_pid_get_max_buffer and \ref gf_filter_pid_set_max_buffer*/
 attribute long max_buffer;
 /*! enables loose connect of the pid - see \ref gf_filter_pid_set_loose_connect*/
@@ -546,6 +557,11 @@ void reset_props();
 \param from source pid
 */
 void copy_props(FilterPid from);
+
+/*! ignore this pid in blocking computations - see gf_filter_pid_ignore_blocking*
+\param do_ignore if true, pid is not used in blocking mode evaluation
+*/
+void ignore_blocking(optional boolean do_ignore=true);
 
 /*! creates a new output packet with no associated data
 \return new packet or null*/
@@ -916,12 +932,11 @@ interface JSCapDesc {
 
 GF_PROP_PID_CODECID: string containing the codec name\n
 GF_PROP_PID_STREAM_TYPE: string containing the stream type name\n
-GF_PROP_PID_AUDIO_FORMAT: string containing the audio format name\n
-GF_PROP_PID_PIXFMT: string containing the pixel format name\n
 \n
 Other properties are mapped by property type:\n
 GF_PROP_BOOL: boolean\n
 GF_PROP_UINT: integer\n
+GF_PROP_4CC: string\n
 GF_PROP_SINT: integer\n
 GF_PROP_LUINT: large integer\n
 GF_PROP_LSINT: large integer\n
@@ -931,14 +946,14 @@ GF_PROP_STRING: string\n
 GF_PROP_STRING_NO_COPY: string\n
 GF_PROP_VEC2: object with number properties "x" and "y"\n
 GF_PROP_VEC2I: object with integer properties "x" and "y"\n
-GF_PROP_VEC3: object with number properties "x", "y" and "z"\n
 GF_PROP_VEC3I: object with integer properties "x", "y" and "z"\n
-GF_PROP_VEC4: object with number properties "x", "y", "z" and "w"\n
 GF_PROP_VEC4I: object with integer properties "x", "y", "z" and "w"\n
 GF_PROP_FRACTION: object with integer properties "n" and "d", representing fraction n/d\n
 GF_PROP_FRACTION64: object with large integer properties "n" and "d", representing fraction n/d\n
 GF_PROP_UINT_LIST: array of integers\n
+GF_PROP_4CC_LIST: array of strings\n
 GF_PROP_STRING_LIST: array of strings\n
+All enumeration properties (pixel format, audio format, etc): string\n
 */
 typedef Object FilterProperty;
 

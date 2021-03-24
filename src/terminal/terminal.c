@@ -339,7 +339,7 @@ GF_Terminal *gf_term_new(GF_User *user)
 	def_h = opt ? atoi(opt) : 0;
 
 	if (def_w && def_h) {
-		sprintf(szArgs, "compositor:FID=compose:player=base:size=%dx%d", def_w, def_h);
+		sprintf(szArgs, "compositor:FID=compose:player=base:osize=%dx%d", def_w, def_h);
 	} else {
 		strcpy(szArgs, "compositor:FID=compose:player=base");
 	}
@@ -1067,8 +1067,12 @@ GF_Err gf_term_set_speed(GF_Terminal *term, Fixed speed)
 		speed = -speed;
 
 	fps = term->compositor->fps;
-	fps.num = fps.num * (u32) (1000 * FIX2FLT(speed));
-	fps.den *= 1000;
+	if (fps.den<1000) {
+		fps.num = fps.num * (u32) (1000 * FIX2FLT(speed));
+		fps.den *= 1000;
+	} else {
+		fps.num = (u32) (fps.num * FIX2FLT(speed));
+	}
 	gf_media_get_reduced_frame_rate(&fps.num, &fps.den);
 	gf_sc_set_fps(term->compositor, fps);
 	return GF_OK;

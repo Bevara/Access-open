@@ -5243,6 +5243,7 @@ static GF_Err texture_load_data(JSContext *c, GF_JSTexture *tx, u8 *data, u32 si
 }
 static GF_Err texture_load_file(JSContext *c, GF_JSTexture *tx, const char *fileName, Bool rel_to_script)
 {
+	char szPath[GF_MAX_PATH];
 	u8 *data;
 	u32 size;
 	GF_Err e;
@@ -5254,7 +5255,6 @@ static GF_Err texture_load_file(JSContext *c, GF_JSTexture *tx, const char *file
 		fileName = full_url;
 	}
 	if (!strncmp(fileName, "$GSHARE/", 8)) {
-		char szPath[GF_MAX_PATH];
 		gf_opts_default_shared_directory(szPath);
 		strcat(szPath, fileName + 7);
 		fileName = szPath;
@@ -5729,7 +5729,7 @@ static JSValue text_set_text(JSContext *c, JSValueConst obj, int argc, JSValueCo
 	for (i=0; i<nb_lines; i++) {
 		GF_TextSpan *span = gf_list_get(txt->spans, i);
 		gf_font_manager_refresh_span_bounds(span);
-		span->bounds.y += i*txt->lineSpacing;
+		span->bounds.y += FLT2FIX( i*txt->lineSpacing );
 
 		if (!txt->max_h && !txt->max_w) {
 			txt->max_w = span->bounds.width;
@@ -6281,7 +6281,7 @@ static JSValue mx_lookat(JSContext *ctx, JSValueConst this_val, int argc, JSValu
 {
 	GF_Vec pos, target, up;
 	GF_Matrix *mx = JS_GetOpaque(this_val, matrix_class_id);
-	if (!mx || (argc<3) ) return JS_EXCEPTION;
+	if (!mx || (argc!=3) ) return JS_EXCEPTION;
 
 	WGL_GET_VEC3F(pos, argv[0]);
 	WGL_GET_VEC3F(target, argv[1]);

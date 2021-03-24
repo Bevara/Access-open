@@ -35,9 +35,12 @@
 
 typedef struct
 {
+
 	u8 is_setup;
-	/*set to true for proto IS fields*/
+	/*set to 1 for proto IS fields*/
 	u8 IS_route;
+	/*set to 1 for JS route to fun*/
+	u8 script_route;
 
 	u32 ID;
 	char *name;
@@ -215,6 +218,9 @@ int qjs_module_set_import_meta(JSContext *ctx, JSValueConst func_val, Bool use_r
     return 0;
 }
 
+
+#ifndef GPAC_STATIC_BUILD
+
 #if defined(WIN32) || defined(_WIN32_WCE)
 #include <windows.h>
 #else
@@ -279,13 +285,20 @@ static JSModuleDef *qjs_module_loader_dyn_lib(JSContext *ctx,
 	return m;
 }
 
+#endif // GPAC_STATIC_BUILD
+
 JSModuleDef *qjs_module_loader(JSContext *ctx, const char *module_name, void *opaque)
 {
 	JSModuleDef *m;
 	const char *fext = gf_file_ext_start(module_name);
 
 	if (fext && (!strcmp(fext, ".so") || !strcmp(fext, ".dll") || !strcmp(fext, ".dylib")) )  {
+#ifndef GPAC_STATIC_BUILD
 		m = qjs_module_loader_dyn_lib(ctx, module_name);
+#else
+		JS_ThrowReferenceError(ctx, "could not load module filename '%s', dynamic library loading disabled in build", module_name);
+		m = NULL;
+#endif
 	} else {
 		u32 buf_len;
 		u8 *buf;
@@ -330,7 +343,6 @@ JSContext *gf_js_create_context()
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_SCRIPT, ("[ECMAScript] ECMAScript runtime allocated %p\n", js_runtime));
 
     	JS_SetModuleLoaderFunc(js_rt->js_runtime, NULL, qjs_module_loader, NULL);
-
 	}
 	js_rt->nb_inst++;
 
@@ -346,22 +358,41 @@ JSContext *gf_js_create_context()
 
 void gf_js_delete_context(JSContext *ctx)
 {
+	if (!js_rt) return;
+
 	gf_js_call_gc(ctx);
 
+	gf_mx_p(js_rt->mx);
 	gf_list_del_item(js_rt->allocated_contexts, ctx);
 	JS_FreeContext(ctx);
-	if (js_rt) {
-		js_rt->nb_inst --;
-		if (js_rt->nb_inst == 0) {
-			JS_FreeRuntime(js_rt->js_runtime);
-			gf_list_del(js_rt->allocated_contexts);
-			gf_mx_del(js_rt->mx);
-			gf_free(js_rt);
-			js_rt = NULL;
+	gf_mx_v(js_rt->mx);
+
+	js_rt->nb_inst --;
+	if (js_rt->nb_inst == 0) {
+		//persistent context, do not delete runtime but perform GC
+		if (gf_opts_get_bool("temp", "peristent-jsrt")) {
+			JS_RunGC(js_rt->js_runtime);
+			return;
 		}
+
+		JS_FreeRuntime(js_rt->js_runtime);
+		gf_list_del(js_rt->allocated_contexts);
+		gf_mx_del(js_rt->mx);
+		gf_free(js_rt);
+		js_rt = NULL;
 	}
 }
-
+GF_EXPORT
+void gf_js_delete_runtime()
+{
+	if (js_rt) {
+		JS_FreeRuntime(js_rt->js_runtime);
+		gf_list_del(js_rt->allocated_contexts);
+		gf_mx_del(js_rt->mx);
+		gf_free(js_rt);
+		js_rt = NULL;
+	}
+}
 
 
 #ifndef GPAC_DISABLE_SVG
@@ -956,6 +987,7 @@ static JSValue addRoute(JSContext *c, JSValueConst this_val, int argc, JSValueCo
 		if ( !r ) {
 			GF_SAFEALLOC(r, GF_RouteToScript)
 			if (!r) return JS_FALSE;
+			r->script_route = 1;
 			r->FromNode = n1;
 			r->FromField.fieldIndex = f_id1;
 			gf_node_get_field(r->FromNode, f_id1, &r->FromField);
@@ -2597,7 +2629,6 @@ static void array_finalize_ex(JSRuntime *rt, JSValue obj, Bool is_js_call)
 	GF_JSField *ptr = JS_GetOpaque_Nocheck(obj);
 
 	JS_ObjectDestroyed(rt, obj, ptr, 1);
-
 	if (!ptr) return;
 
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_SCRIPT, ("[VRML JS] unregistering MFField %s\n", ptr->field.name));
@@ -3156,8 +3187,10 @@ static void field_gc_mark(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_fun
 		u32 i=0;
 		GF_RouteToScript *r;
 		while ( (r = gf_list_enum(jsf->node->sgprivate->interact->routes, &i))) {
-			JS_MarkValue(rt, r->fun, mark_func);
-			JS_MarkValue(rt, r->obj, mark_func);
+			if (r->script_route) {
+				JS_MarkValue(rt, r->fun, mark_func);
+				JS_MarkValue(rt, r->obj, mark_func);
+			}
 		}
 	}
 	if (jsf->mfvals) {
@@ -4028,6 +4061,7 @@ static void JS_ReleaseRootObjects(GF_ScriptPriv *priv)
 {
 	/*pop the list rather than walk through it since unprotecting an element could trigger GC which in turn could modify this list content*/
 	while (gf_list_count(priv->jsf_cache)) {
+		JSValue obj;
 		GF_JSField *jsf = gf_list_pop_back(priv->jsf_cache);
 		assert(jsf);
 
@@ -4038,21 +4072,22 @@ static void JS_ReleaseRootObjects(GF_ScriptPriv *priv)
 		We therefore destroy by hand all SFNode (obj rooted) and MFNode (for js_list)
 		*/
 
-		JS_FreeValue(priv->js_ctx, jsf->obj);
-
+		obj = jsf->obj;
+		jsf->obj = JS_UNDEFINED;
 		if (jsf->mfvals)
-			array_finalize_ex(js_rt->js_runtime, jsf->obj, 0);
+			array_finalize_ex(js_rt->js_runtime, obj, 0);
 		else if (jsf->node)
-			node_finalize_ex(js_rt->js_runtime, jsf->obj, 0);
+			node_finalize_ex(js_rt->js_runtime, obj, 0);
 		else
 			jsf->js_ctx=NULL;
 
-		jsf->obj = JS_UNDEFINED;
+		JS_FreeValue(priv->js_ctx, obj);
 	}
 }
 
 static void JS_PreDestroy(GF_Node *node)
 {
+	GF_SceneGraph *scene;
 	GF_ScriptPriv *priv = node->sgprivate->UserPrivate;
 	if (!priv) return;
 
@@ -4080,6 +4115,19 @@ static void JS_PreDestroy(GF_Node *node)
 #endif
 
 	JS_FreeValue(priv->js_ctx, priv->js_obj);
+
+
+	scene = JS_GetContextOpaque(priv->js_ctx);
+	if (scene && scene->__reserved_null) {
+		GF_Node *n = JS_GetContextOpaque(priv->js_ctx);
+		scene = n->sgprivate->scenegraph;
+	}
+	if (scene && scene->attached_session) {
+		void gf_fs_unload_js_api(JSContext *c, GF_FilterSession *fs);
+
+		gf_fs_unload_js_api(priv->js_ctx, scene->attached_session);
+	}
+
 
 	gf_js_lock(priv->js_ctx, 0);
 

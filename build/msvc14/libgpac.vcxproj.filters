@@ -399,7 +399,7 @@
     <ClInclude Include="..\..\src\filters\isoffin.h">
       <Filter>filters</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\include\gpac\atsc.h">
+    <ClInclude Include="..\..\include\gpac\route.h">
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\gpac\crypt_tools.h">
@@ -1097,7 +1097,7 @@
     <ClCompile Include="..\..\src\isomedia\iff.c">
       <Filter>isomedia</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\src\media_tools\atsc_dmx.c">
+    <ClCompile Include="..\..\src\media_tools\route_dmx.c">
       <Filter>media_tools</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\compositor\clock.c">
@@ -1295,6 +1295,9 @@
     <ClCompile Include="..\..\src\filters\inspect.c">
       <Filter>filters</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filters\io_fcryp.c">
+      <Filter>filters</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\filters\isoffin_load.c">
       <Filter>filters</Filter>
     </ClCompile>
@@ -1365,6 +1368,9 @@
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\reframe_rawvid.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\reframe_truehd.c">
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\reframer.c">
@@ -1445,6 +1451,9 @@
     <ClCompile Include="..\..\src\filters\tileagg.c">
       <Filter>filters</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filters\tilesplit.c">
+      <Filter>filters</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\filters\encrypt_cenc_isma.c">
       <Filter>filters</Filter>
     </ClCompile>
@@ -1460,11 +1469,14 @@
     <ClCompile Include="..\..\src\utils\Remotery.c">
       <Filter>utils</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\src\filters\in_atsc.c">
+    <ClCompile Include="..\..\src\filters\in_route.c">
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\evg\ftgrays.c">
       <Filter>evg</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\out_route.c">
+      <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\out_rtp.c">
       <Filter>filters</Filter>

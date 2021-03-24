@@ -80,7 +80,7 @@ static u64 sys_start_time_hr = 0;
 #include <gpac/revision.h>
 #define GPAC_FULL_VERSION       GPAC_VERSION "-rev" GPAC_GIT_REVISION
 
-#define GPAC_COPYRIGHT "(c) 2000-2020 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io"
+#define GPAC_COPYRIGHT "(c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io"
 
 GF_EXPORT
 const char *gf_gpac_version()
@@ -114,6 +114,22 @@ const char *gf_gpac_copyright_cite()
 		"\tGPAC: https://doi.org/10.1145/1291233.1291452\n"\
 		;
 
+}
+
+GF_EXPORT
+u32 gf_gpac_abi_major()
+{
+	return GPAC_VERSION_MAJOR;
+}
+GF_EXPORT
+u32 gf_gpac_abi_minor()
+{
+	return GPAC_VERSION_MINOR;
+}
+GF_EXPORT
+u32 gf_gpac_abi_micro()
+{
+	return GPAC_VERSION_MICRO;
 }
 
 
@@ -877,6 +893,7 @@ Bool gf_sys_has_filter_global_meta_args()
 }
 
 static u32 gpac_quiet = 0;
+char gf_prog_lf = '\r';
 
 GF_EXPORT
 GF_Err gf_sys_set_args(s32 argc, const char **argv)
@@ -890,8 +907,12 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 			Bool consumed;
 			GF_Err e;
 			Bool use_sep=GF_FALSE;
+			Bool bool_value = GF_TRUE;
+			char *arg_val;
 			const char *arg = argv[i];
-			char *arg_val = strchr(arg, '=');
+			if (!arg) continue;
+
+			arg_val = strchr(arg, '=');
 			if (arg_val) {
 				arg_val[0]=0;
 				arg_val++;
@@ -906,6 +927,10 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 				}
 				continue;
 			}
+			if (arg_val && (!strcmp(arg_val, "no") || !strcmp(arg_val, "false") || !strcmp(arg_val, "°0") ) )
+				bool_value = GF_FALSE;
+
+
 			if (arg[1]=='-') {
 				gpac_has_global_filter_args = GF_TRUE;
 			} else if (arg[1]=='+') {
@@ -932,12 +957,14 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 				gpac_quiet = 2;
 			} else if (!strcmp(arg, "-noprog")) {
 				if (!gpac_quiet) gpac_quiet = 1;
+			} else if (!strcmp(arg, "-proglf")) {
+				gf_prog_lf = '\n';
 			} else if (!stricmp(arg, "-for-test")) {
-				gpac_test_mode = GF_TRUE;
+				gpac_test_mode = bool_value;
 			} else if (!stricmp(arg, "-old-arch")) {
-				gpac_old_arch = GF_TRUE;
+				gpac_old_arch = bool_value;
 			} else if (!stricmp(arg, "-no-save")) {
-				gpac_discard_config = GF_TRUE;
+				gpac_discard_config = bool_value;
 			} else if (!stricmp(arg, "-ntp-shift")) {
 				s32 shift = arg_val ? atoi(arg_val) : 0;
 				gf_net_set_ntp_shift(shift);
@@ -1045,6 +1072,8 @@ const char *gf_log_level_name(GF_LOG_Level log_level);
 
 void gpac_rmt_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist)
 {
+#ifndef GPAC_DISABLE_LOG
+
 #define RMT_LOG_SIZE	5000
 	char szMsg[RMT_LOG_SIZE];
 	u32 len;
@@ -1057,6 +1086,9 @@ void gpac_rmt_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, con
 	rmt_LogText(szMsg);
 
 #undef RMT_LOG_SIZE
+
+#endif
+
 }
 
 static void *rmt_udta = NULL;
@@ -1958,8 +1990,8 @@ Bool gf_sys_get_rti(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 }
 
 static char szCacheDir[GF_MAX_PATH];
-GF_EXPORT
-const char * gf_get_default_cache_directory()
+
+const char * gf_get_default_cache_directory_ex(Bool do_create)
 {
 	const char *cache_dir;
 	char root_tmp[GF_MAX_PATH];
@@ -1988,11 +2020,17 @@ const char * gf_get_default_cache_directory()
 
 	strcat(szCacheDir, "gpac_cache");
 
-	if ( !gf_dir_exists(szCacheDir) && gf_mkdir(szCacheDir)!=GF_OK ) {
+	if (do_create && !gf_dir_exists(szCacheDir) && gf_mkdir(szCacheDir)!=GF_OK ) {
 		strcpy(szCacheDir, root_tmp);
 		return szCacheDir;
 	}
 	return szCacheDir;
+}
+
+GF_EXPORT
+const char * gf_get_default_cache_directory()
+{
+	return gf_get_default_cache_directory_ex(GF_TRUE);
 }
 
 
@@ -2385,9 +2423,21 @@ s32 gf_net_get_timezone()
 	t_timezone = (t_gmt.tm_hour - t_local.tm_hour) * 3600 + (t_gmt.tm_min - t_local.tm_min) * 60;
 	return t_timezone;
 #endif
-
 }
 
+GF_EXPORT
+Bool gf_net_time_is_dst()
+{
+#if defined(_WIN32_WCE)
+	return GF_FALSE;
+#else
+	struct tm t_local;
+	time_t t_time;
+	t_time = time(NULL);
+	t_local = *localtime(&t_time);
+	return t_local.tm_isdst ? GF_TRUE : GF_FALSE;
+#endif
+}
 //no mkgmtime on mingw..., use our own
 #if (defined(WIN32) && defined(__GNUC__))
 

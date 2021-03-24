@@ -65,7 +65,7 @@ int wmain( int argc, wchar_t** wargv )\
 		wchar_t *src_str = wargv[i];\
 		len = UTF8_MAX_BYTES_PER_CHAR*gf_utf8_wcslen(wargv[i]);\
 		argv[i] = (char *)malloc(len + 1);\
-		res_len = gf_utf8_wcstombs(argv[i], len, &src_str);\
+		res_len = gf_utf8_wcstombs(argv[i], len, (const unsigned short **) &src_str);\
 		argv[i][res_len] = 0;\
 		if (res_len > len) {\
 			fprintf(stderr, "Length allocated for conversion of wide char to UTF-8 not sufficient\n");\
@@ -90,23 +90,29 @@ int main(int argc, char **argv) {\
 
 #endif //win32
 
-/*! structure holding a gpac arg (not a filter arg)*/
+/*! macro defining fields of a libgpac arg (not a filter arg)*/
+#define GF_GPAC_ARG_BASE \
+	/*! name of arg*/ \
+	const char *name; \
+	/*! alternate name of arg*/ \
+	const char *altname; \
+	/*! description of arg*/ \
+	const char *description; \
+	/*! default value of arg*/ \
+	const char *val; \
+	/*! possible value of arg*/ \
+	const char *values; \
+	/*! argument type for UI construction - note that argument values are not parsed and shall be set as strings*/ \
+	u16 type; \
+	/*! argument flags*/ \
+	u16 flags; \
+
+
+/*! structure holding a libgpac arg (not a filter arg)*/
 typedef struct
 {
-	/*! name of arg*/
-	const char *name;
-	/*! alternate name of arg*/
-	const char *altname;
-	/*! description of arg*/
-	const char *description;
-	/*! default value of arg*/
-	const char *val;
-	/*! possible value of arg*/
-	const char *values;
-	/*! argument type for UI construction - note that argument values are not parsed and shall be set as strings*/
-	u16 type;
-	/*! argument flags*/
-	u16 flags;
+	/*! base structure, shall always be placed first if you extend args in your application*/
+	GF_GPAC_ARG_BASE
 } GF_GPACArg;
 
 //these 3 values match argument hints of filters
@@ -146,6 +152,12 @@ typedef struct
 #define GF_ARG_STRING	3
 /*! argument is a camma-separated list of strings*/
 #define GF_ARG_STRINGS	4
+/*! argument is a custom arg, default value contains the syntax of the argument*/
+#define GF_ARG_4CC		5
+/*! argument is a custom arg, default value contains the syntax of the argument*/
+#define GF_ARG_4CCS		6
+/*! argument is a custom arg, default value contains the syntax of the argument*/
+#define GF_ARG_CUSTOM	7
 
 /*! macros for defining a GF_GPACArg argument*/
 #define GF_DEF_ARG(_a, _b, _c, _d, _e, _f, _g) {_a, _b, _c, _d, _e, _f, _g}
@@ -177,14 +189,14 @@ typedef enum
 	GF_ARGMODE_ALL
 } GF_SysArgMode;
 
-/*! flags for help formating*/
+/*! flags for help formatting*/
 typedef enum
 {
 	/*! first word in format string should be highlighted */
  	GF_PRINTARG_HIGHLIGHT_FIRST = 1,
 	/*! prints <br/> instead of new line*/
 	GF_PRINTARG_NL_TO_BR = 1<<1,
-	/*! first word in format string is an option descritptor*/
+	/*! first word in format string is an option descripttor*/
 	GF_PRINTARG_OPT_DESC = 1<<2,
 	/*! the format string is an application string, not a gpac core one*/
 	GF_PRINTARG_IS_APP = 1<<3,

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -24,6 +24,7 @@
  */
 
 #include <gpac/tools.h>
+#include <gpac/thread.h>
 
 
 //ugly patch, we have a concurrence issue with gf_4cc_to_str, for now fixed by rolling buffers
@@ -35,7 +36,6 @@ GF_EXPORT
 const char *gf_4cc_to_str(u32 type)
 {
 	u32 ch, i;
-	Bool is_ok=GF_TRUE;
 	char *szTYPE = szTYPE_BUF[buf_4cc_idx];
 	char *name = (char *)szTYPE;
 	if (!type) return "00000000";
@@ -43,23 +43,27 @@ const char *gf_4cc_to_str(u32 type)
 	if (buf_4cc_idx==NB_4CC_BUF)
 		buf_4cc_idx=0;
 
-	for (i = 0; i < 4; i++, name++) {
+	for (i = 0; i < 4; i++) {
 		ch = type >> (8 * (3-i) ) & 0xff;
 		if ( ch >= 0x20 && ch <= 0x7E ) {
 			*name = ch;
+			name++;
 		} else {
-			is_ok=GF_FALSE;
-			break;
+			sprintf(name, "%02X", ch);
+			name += 2;
 		}
 	}
-	if (is_ok) {
-		*name = 0;
-		return (const char *) szTYPE;
-	}
-	sprintf(szTYPE, "%02X%02X%02X%02X", (type>>24)&0xFF, (type>>16)&0xFF, (type>>8)&0xFF, (type)&0xFF);
+	*name = 0;
 	return (const char *) szTYPE;
 }
 
+GF_EXPORT
+u32 gf_4cc_parse(const char *val)
+{
+	if (val && strlen(val)==4) return GF_4CC(val[0], val[1], val[2], val[3]);
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Value is not a properly defined 4CC", val));
+	return 0;
+}
 
 static const char *szProg[] =
 {
@@ -88,6 +92,8 @@ static const char *szProg[] =
 
 static u64 prev_pos = (u64) -1;
 static u64 prev_pc = (u64) -1;
+extern char gf_prog_lf;
+
 static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 {
 	Double prog;
@@ -105,7 +111,7 @@ static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 	if ((pos!=prev_pos) || (pc!=prev_pc)) {
 		prev_pos = pos;
 		prev_pc = pc;
-		fprintf(stderr, "%s: |%s| (%02d/100)\r", szT, szProg[pos], pc);
+		fprintf(stderr, "%s: |%s| (%02d/100)%c", szT, szProg[pos], pc, gf_prog_lf);
 		fflush(stderr);
 	}
 	if (done==total) {
@@ -115,7 +121,7 @@ static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 				fprintf(stderr, " ");
 				len--;
 			};
-			fprintf(stderr, "\r");
+			fprintf(stderr, "%c", gf_prog_lf);
 		}
 		prev_pos = 0;
 	}
@@ -183,7 +189,7 @@ static struct log_tool_info {
 	{ GF_LOG_DASH, "dash", GF_LOG_WARNING },
 	{ GF_LOG_FILTER, "filter", GF_LOG_WARNING },
 	{ GF_LOG_SCHEDULER, "sched", GF_LOG_WARNING },
-	{ GF_LOG_ATSC, "atsc", GF_LOG_WARNING },
+	{ GF_LOG_ROUTE, "route", GF_LOG_WARNING },
 	{ GF_LOG_CONSOLE, "console", GF_LOG_INFO },
 	{ GF_LOG_APP, "app", GF_LOG_INFO },
 };
@@ -689,11 +695,11 @@ void default_log_callback_color(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool
 
 	vfprintf(stderr, fmt, vlist);
 	gf_sys_set_console_code(stderr, GF_CONSOLE_RESET);
+	gf_fflush(stderr);
 }
 
 
 
-#include <gpac/thread.h>
 static void *user_log_cbk = NULL;
 gf_log_cbk log_cbk = default_log_callback_color;
 static Bool log_exit_on_error = GF_FALSE;
@@ -871,7 +877,6 @@ const char *gf_error_to_string(GF_Err e)
 	case GF_SCRIPT_ERROR:
 		return "Invalid Script";
 
-	/*MPEG-4 Errors */
 	case GF_BUFFER_TOO_SMALL:
 		return "Bad Buffer size (too small)";
 	case GF_NON_COMPLIANT_BITSTREAM:
@@ -879,9 +884,10 @@ const char *gf_error_to_string(GF_Err e)
 	case GF_FILTER_NOT_FOUND:
 		return "Filter not found for the desired type";
 
-	/*DMIF errors - local and control plane */
 	case GF_URL_ERROR:
 		return "Requested URL is not valid or cannot be found";
+	case GF_URL_REMOVED:
+		return "Requested URL is no longer available";
 
 	case GF_SERVICE_ERROR:
 		return "Internal Service Error";
@@ -1108,6 +1114,9 @@ static const char *gf_disabled_features()
 #ifdef GPAC_USE_GLES2
 	                       "GPAC_USE_GLES2 "
 #endif
+#ifdef GPAC_DISABLE_ZLIB
+	                       "GPAC_DISABLE_ZLIB "
+#endif
 #ifdef GPAC_DISABLE_SVG
 	                       "GPAC_DISABLE_SVG "
 #endif
@@ -1183,8 +1192,8 @@ static const char *gf_disabled_features()
 #ifdef GPAC_DISABLE_STREAMING
 	                       "GPAC_DISABLE_STREAMING "
 #endif
-#ifdef GPAC_DISABLE_ATSC
-	                       "GPAC_DISABLE_ATSC "
+#ifdef GPAC_DISABLE_ROUTE
+	                       "GPAC_DISABLE_ROUTE "
 #endif
 
 	                       ;
@@ -1755,7 +1764,7 @@ const char *gf_lang_get_3cc(u32 idx)
 }
 
 GF_EXPORT
-GF_Err gf_blob_get_data(const char *blob_url, u8 **out_data, u32 *out_size)
+GF_Err gf_blob_get(const char *blob_url, u8 **out_data, u32 *out_size, u32 *out_flags)
 {
 	GF_Blob *blob = NULL;
 	if (strncmp(blob_url, "gmem://", 7)) return GF_BAD_PARAM;
@@ -1763,7 +1772,22 @@ GF_Err gf_blob_get_data(const char *blob_url, u8 **out_data, u32 *out_size)
 	if (!blob) return GF_BAD_PARAM;
 	if (out_data) *out_data = blob->data;
 	if (out_size) *out_size = blob->size;
+	if (out_flags) *out_flags = blob->flags;
+	if (blob->data && blob->mx)
+		gf_mx_p(blob->mx);
 	return GF_OK;
+}
+
+GF_EXPORT
+GF_Err gf_blob_release(const char *blob_url)
+{
+    GF_Blob *blob = NULL;
+    if (strncmp(blob_url, "gmem://", 7)) return GF_BAD_PARAM;
+    if (sscanf(blob_url, "gmem://%p", &blob) != 1) return GF_BAD_PARAM;
+    if (!blob) return GF_BAD_PARAM;
+    if (blob->data && blob->mx)
+        gf_mx_v(blob->mx);
+    return GF_OK;
 }
 
 GF_EXPORT

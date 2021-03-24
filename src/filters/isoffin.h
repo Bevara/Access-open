@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2018
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -48,6 +48,13 @@ enum
 	MP4DMX_SINGLE,
 };
 
+enum
+{
+	MP4DMX_XPS_AUTO=0,
+	MP4DMX_XPS_KEEP,
+	MP4DMX_XPS_REMOVE,
+};
+
 typedef struct
 {
 	//options
@@ -60,6 +67,7 @@ typedef struct
 	u32 frame_size;
 	char* tkid;
 	Bool analyze;
+	u32 xps_check;
 	char *catseg;
 	Bool sigfrag;
 	Bool nocrypt, strtxt;
@@ -95,15 +103,15 @@ typedef struct
 
 	u32 pending_scalable_enhancement_segment_index;
 
-	Bool drop_next_segment;
 	Bool in_data_flush;
 	u32 has_pending_segments, nb_force_flush;
 
 	Bool clock_discontinuity;
 	Bool disconnected;
 	Bool no_order_check;
-	Bool moov_not_loaded;
-
+	u32 moov_not_loaded;
+    Bool invalid_segment;
+    
 	u64 last_sender_ntp, ntp_at_last_sender_ntp, cts_for_last_sender_ntp;
 	Bool is_partial_download, wait_for_source;
 
@@ -156,7 +164,9 @@ typedef struct
 
 	u32 time_scale;
 	Bool to_init, has_rap;
-	Bool playing, eos_sent;
+	//0: not playing, 1: playing 2: playing but end of range reached
+	u32 playing;
+	Bool eos_sent;
 	u8 streamType;
 	Bool initial_play_seen;
 
@@ -171,30 +181,30 @@ typedef struct
 	u64 dts, cts;
 	u8 skip_byte_block, crypt_byte_block;
 	Bool is_protected;
-	u8 constant_IV_size;
-	bin128 constant_IV;
-	u8 IV_size;
 	u32 au_seq_num;
 	u64 sender_ntp, ntp_at_server_ntp;
 	u32 seek_flag;
 	u32 au_duration;
 	Bool set_disc;
-	Bool cenc_state_changed;
+
 	u64 isma_BSO;
-	bin128 KID;
 	Bool pck_encrypted;
+
+	u32 key_info_crc;
 
 	u8 *sai_buffer;
 	u32 sai_alloc_size, sai_buffer_size;
 
-	Bool check_avc_ps, check_hevc_ps, check_mhas_pl;
+	Bool check_avc_ps, check_hevc_ps, check_vvc_ps, check_mhas_pl;
 	GF_HEVCConfig *hvcc;
 	GF_AVCConfig *avcc;
+	GF_VVCConfig *vvcc;
 	GF_BitStream *nal_bs;
 	u32 dsi_crc;
 
 	Bool needs_pid_reconfig;
 	u32 sap_only;
+	Bool check_has_rap;
 } ISOMChannel;
 
 void isor_reset_reader(ISOMChannel *ch);
@@ -215,6 +225,8 @@ void isor_set_crypt_config(ISOMChannel *ch);
 void isor_reader_check_config(ISOMChannel *ch);
 
 Bool isor_declare_item_properties(ISOMReader *read, ISOMChannel *ch, u32 item_idx);
+
+void isor_declare_pssh(ISOMChannel *ch);
 
 #endif /*GPAC_DISABLE_ISOM*/
 

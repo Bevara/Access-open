@@ -159,11 +159,10 @@ static GF_Err ffdmx_process(GF_Filter *filter)
 		av_free_packet(&ctx->pkt);
 		return GF_OK;
 	}
-    if (! gf_filter_pid_is_playing( ctx->pids[ctx->pkt.stream_index] ) ) {
+    if (ctx->stop_seen && ! gf_filter_pid_is_playing( ctx->pids[ctx->pkt.stream_index] ) ) {
         av_free_packet(&ctx->pkt);
         return GF_OK;
     }
-
 	if (ctx->raw_data && (ctx->probe_frames<ctx->probes) ) {
 		if (ctx->pkt.stream_index==ctx->audio_idx) {
 			av_free_packet(&ctx->pkt);
@@ -225,7 +224,7 @@ static GF_Err ffdmx_process(GF_Filter *filter)
 	} else if (ctx->pkt.pts != AV_NOPTS_VALUE) {
 		AVStream *stream = ctx->demuxer->streams[ctx->pkt.stream_index];
 		u64 ts;
-		if (stream->first_dts<0)
+		if ((stream->first_dts!=AV_NOPTS_VALUE) && (stream->first_dts<0))
 			ts = (ctx->pkt.pts - stream->first_dts) * stream->time_base.num;
 		else
 			ts = ctx->pkt.pts * stream->time_base.num;
@@ -233,7 +232,7 @@ static GF_Err ffdmx_process(GF_Filter *filter)
 		gf_filter_pck_set_cts(pck_dst, ts );
 
 		if (ctx->pkt.dts != AV_NOPTS_VALUE) {
-			if (stream->first_dts<0)
+			if ((stream->first_dts!=AV_NOPTS_VALUE) && (stream->first_dts<0))
 				ts = (ctx->pkt.dts - stream->first_dts) * stream->time_base.num;
 			else
 				ts = ctx->pkt.dts * stream->time_base.num;
@@ -364,8 +363,8 @@ GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, Bool is_grab)
 			else if (ctx->demuxer->duration>=0)
 				gf_filter_pid_set_property(pid, GF_PROP_PID_DURATION, &PROP_FRAC64_INT(ctx->demuxer->duration, AV_TIME_BASE) );
 
-			if (stream->first_dts<0)
-				gf_filter_pid_set_property(pid, GF_PROP_PID_DELAY, &PROP_SINT((s32) stream->first_dts) );
+			if ((stream->first_dts!=AV_NOPTS_VALUE) && (stream->first_dts<0))
+				gf_filter_pid_set_property(pid, GF_PROP_PID_DELAY, &PROP_LONGSINT( stream->first_dts) );
 		}
 
 		if (stream->sample_aspect_ratio.num && stream->sample_aspect_ratio.den)
@@ -460,37 +459,23 @@ GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, Bool is_grab)
 		if ((codec->codec_type==AVMEDIA_TYPE_VIDEO)
 			&& (codec->pix_fmt || ((codec->codec_id==AV_CODEC_ID_RAWVIDEO) && codec->codec_tag))
 		) {
+			Bool is_full_range = GF_FALSE;
 			u32 pfmt = 0;
 
-#define CHECK_FF_PFMT(__ff_cid, __gp_cid)\
-			if ((codec->pix_fmt && (codec->pix_fmt==__ff_cid)) \
-				|| (codec->codec_tag && (avcodec_pix_fmt_to_codec_tag(__ff_cid) == codec->codec_tag))) { \
-				pfmt = __gp_cid; \
-			} \
-
-			CHECK_FF_PFMT(AV_PIX_FMT_YUV420P, GF_PIXEL_YUV)
-			else CHECK_FF_PFMT(AV_PIX_FMT_YUV420P10LE, GF_PIXEL_YUV_10)
-			else CHECK_FF_PFMT(AV_PIX_FMT_YUV422P, GF_PIXEL_YUV422)
-			else CHECK_FF_PFMT(AV_PIX_FMT_YUV422P10LE, GF_PIXEL_YUV422_10)
-			else CHECK_FF_PFMT(AV_PIX_FMT_YUV444P, GF_PIXEL_YUV444)
-			else CHECK_FF_PFMT(AV_PIX_FMT_YUV444P10LE, GF_PIXEL_YUV444_10)
-			else CHECK_FF_PFMT(AV_PIX_FMT_RGBA, GF_PIXEL_RGBA)
-			else CHECK_FF_PFMT(AV_PIX_FMT_RGB24, GF_PIXEL_RGB)
-			else CHECK_FF_PFMT(AV_PIX_FMT_BGR24, GF_PIXEL_BGR)
-			else CHECK_FF_PFMT(AV_PIX_FMT_UYVY422, GF_PIXEL_UYVY)
-			else CHECK_FF_PFMT(AV_PIX_FMT_YUYV422, GF_PIXEL_YUYV)
-			else CHECK_FF_PFMT(AV_PIX_FMT_NV12, GF_PIXEL_NV12)
-			else CHECK_FF_PFMT(AV_PIX_FMT_NV21, GF_PIXEL_NV21)
-			else CHECK_FF_PFMT(AV_PIX_FMT_0RGB, GF_PIXEL_XRGB)
-			else CHECK_FF_PFMT(AV_PIX_FMT_RGB0, GF_PIXEL_RGBX)
-			else CHECK_FF_PFMT(AV_PIX_FMT_0BGR, GF_PIXEL_XBGR)
-			else CHECK_FF_PFMT(AV_PIX_FMT_BGR0, GF_PIXEL_BGRX)
-			else {
-				GF_LOG(GF_LOG_WARNING, ctx->log_class, ("[%s] Unsupported pixel format %d\n", ctx->fname, codec->pix_fmt));
+			if (codec->pix_fmt) {
+				pfmt = ffmpeg_pixfmt_to_gpac(codec->pix_fmt);
+				is_full_range = ffmpeg_pixfmt_is_fullrange(codec->pix_fmt);
+			} else if (codec->codec_tag) {
+				pfmt = ffmpeg_pixfmt_from_codec_tag(codec->codec_tag, &is_full_range);
 			}
-			gf_filter_pid_set_property(pid, GF_PROP_PID_PIXFMT, &PROP_UINT( pfmt) );
 
-#undef CHECK_FF_PFMT
+			if (!pfmt) {
+				GF_LOG(GF_LOG_WARNING, ctx->log_class, ("[%s] Unsupported pixel format %d\n", ctx->fname, codec->pix_fmt));
+			} else {
+				gf_filter_pid_set_property(pid, GF_PROP_PID_PIXFMT, &PROP_UINT( pfmt) );
+				if (is_full_range)
+					gf_filter_pid_set_property(pid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL( GF_TRUE ) );
+			}
 		}
 
 
@@ -538,6 +523,12 @@ static int ffavio_read_packet(void *opaque, uint8_t *buf, int buf_size)
 static int64_t ffavio_seek(void *opaque, int64_t offset, int whence)
 {
 	GF_FFDemuxCtx *ctx = (GF_FFDemuxCtx *)opaque;
+	if (whence==AVSEEK_SIZE) {
+		u64 pos = gf_ftell(ctx->gfio);
+		u64 size = gf_fsize(ctx->gfio);
+		gf_fseek(ctx->gfio, pos, SEEK_SET);
+		return size;
+	}
 	return (int64_t) gf_fseek(ctx->gfio, offset, whence);
 }
 
@@ -657,7 +648,6 @@ static Bool ffdmx_process_event(GF_Filter *filter, const GF_FilterEvent *com)
 		}
 		ctx->nb_playing++;
 		ctx->stop_seen = GF_FALSE;
-
 		//cancel event
 		return GF_TRUE;
 
@@ -736,7 +726,10 @@ GF_FilterRegister FFDemuxRegister = {
 	.name = "ffdmx",
 	.version=LIBAVFORMAT_IDENT,
 	GF_FS_SET_DESCRIPTION("FFMPEG demuxer")
-	GF_FS_SET_HELP("See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details")
+	GF_FS_SET_HELP("Demuxes files and open protocol using FFMPEG.\n"
+	"See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details.\n"
+	"To list all supported demuxers for your GPAC build, use `gpac -h ffdmx:*`.\n"
+	)
 	.private_size = sizeof(GF_FFDemuxCtx),
 	SETCAPS(FFDmxCaps),
 	.initialize = ffdmx_initialize,
@@ -752,7 +745,7 @@ GF_FilterRegister FFDemuxRegister = {
 
 static const GF_FilterArgs FFDemuxArgs[] =
 {
-	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(src), "URL of source content", GF_PROP_NAME, NULL, NULL, 0},
 	{ "*", -1, "any possible options defined for AVFormatContext and sub-classes. See `gpac -hx ffdmx` and `gpac -hx ffdmx:*`", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
 	{0}
 };
@@ -767,7 +760,7 @@ const GF_FilterRegister *ffdmx_register(GF_FilterSession *session)
 
 static GF_Err ffavin_initialize(GF_Filter *filter)
 {
-	s32 res, i;
+	s32 res, i, dev_idx=-1;
 	Bool has_a, has_v;
 	char szPatchedName[1024];
 	const char *dev_name=NULL;
@@ -837,6 +830,14 @@ static GF_Err ffavin_initialize(GF_Filter *filter)
 	else if (!strncmp(ctx->src, "audio://", 8)) wants_audio = GF_TRUE;
 	else if (!strncmp(ctx->src, "av://", 5)) wants_video = wants_audio = GF_TRUE;
 
+	if (sscanf(dev_name, "%d", &dev_idx)==1) {
+		sprintf(szPatchedName, "%d", dev_idx);
+		if (strcmp(szPatchedName, dev_name)) 
+			dev_idx = -1;
+	} else {
+		dev_idx = -1;
+	}
+
 	szPatchedName[0]=0;
 
 #if defined(__DARWIN) || defined(__APPLE__)
@@ -846,9 +847,17 @@ static GF_Err ffavin_initialize(GF_Filter *filter)
 		dev_name = (char *) szPatchedName;
 	}
 #endif
+	if (!strncmp(dev_fmt->priv_class->class_name, "V4L2", 4) && (dev_idx>=0) ) {
+		if (wants_audio) {
+			sprintf(szPatchedName, "/dev/video%d:hw:%d", dev_idx, dev_idx);
+		} else {
+			sprintf(szPatchedName, "/dev/video%d", dev_idx);
+		}
+		dev_name = (char *) szPatchedName;
+	}
 
-	if (wants_video && wants_audio && !strcmp(dev_name, "0")) {
-		strcpy(szPatchedName, "0:0");
+	else if (wants_video && wants_audio && (dev_idx>=0)) {
+		sprintf(szPatchedName, "%d:%d", dev_idx, dev_idx);
 		dev_name = (char *) szPatchedName;
 	}
 #if defined(__APPLE__) && !defined(GPAC_CONFIG_IOS)
@@ -973,22 +982,27 @@ static GF_FilterProbeScore ffavin_probe_url(const char *url, const char *mime)
 static const GF_FilterCapability FFAVInCaps[] =
 {
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
-	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
-	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_RAW),
+	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL)
+	//do not expose a specific codec ID (eg raw) as some grabbers might give us mjpeg
 };
 
 GF_FilterRegister FFAVInRegister = {
 	.name = "ffavin",
 	.version = LIBAVDEVICE_IDENT,
 	GF_FS_SET_DESCRIPTION("FFMPEG AV Capture")
-	GF_FS_SET_HELP("Typical classes are `dshow` on windows, `avfoundation` on OSX, `video4linux2` or `x11grab` on linux\n\n"\
-	"Typical device name can be the webcam name:\n"\
-		"`FaceTime HD Camera` on OSX, device name on windows, `/dev/video0` on linux\n"\
-		"`screen-capture-recorder`, see http://screencapturer.sf.net/ on windows\n"\
-		"`Capture screen 0` on OSX (0=first screen), or `screenN` for short\n"\
-		"X display name (eg `:0.0`) on linux"\
-		"\n"\
-		"See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details")
+	GF_FS_SET_HELP("Reads from audio/video capture devices using FFMPEG.\n"
+	"See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details.\n"
+	"To list all supported grabbers for your GPAC build, use `gpac -h ffavin:*`.\n"
+	"\n"
+	"# Device identification\n"
+	"Typical classes are `dshow` on windows, `avfoundation` on OSX, `video4linux2` or `x11grab` on linux\n"
+	"\n"
+	"Typical device name can be the webcam name:\n"
+	"- `FaceTime HD Camera` on OSX, device name on windows, `/dev/video0` on linux\n"
+	"- `screen-capture-recorder`, see http://screencapturer.sf.net/ on windows\n"
+	"- `Capture screen 0` on OSX (0=first screen), or `screenN` for short\n"
+	"- X display name (eg `:0.0`) on linux"
+	)
 	.private_size = sizeof(GF_FFDemuxCtx),
 	SETCAPS(FFAVInCaps),
 	.initialize = ffavin_initialize,

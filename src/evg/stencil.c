@@ -760,7 +760,7 @@ static void tex_fill_run(GF_EVGStencil *p, GF_EVGSurface *surf, s32 _x, s32 _y, 
 
 		if (has_alpha) {
 			cx = ((GF_COL_A(pix) + 1) * _this->alpha) >> 8;
-			pix = ( ((cx<<24) & 0xFF000000) ) | (pix & 0x00FFFFFF);
+			pix = ( (((u32)cx<<24) & 0xFF000000) ) | (pix & 0x00FFFFFF);
 		}
 		if (has_replace_cmat) {
 			u32 __a;
@@ -1469,6 +1469,7 @@ u32 get_pix_vyuy(EVG_Texture *_this, u32 x, u32 y)
 
 static void texture_set_callbacks(EVG_Texture *_this)
 {
+	Bool swap_uv = GF_FALSE;
 	if (_this->tx_callback)
 		return;
 	switch (_this->pixel_format) {
@@ -1521,6 +1522,8 @@ static void texture_set_callbacks(EVG_Texture *_this)
 		_this->tx_get_pixel = get_pix_greyalpha;
 		return;
 	case GF_PIXEL_YUV:
+	//we swap pU and pV at setup, use the same function
+	case GF_PIXEL_YVU:
 		_this->tx_get_pixel = get_pix_yuv420p;
 		break;
 	case GF_PIXEL_YUVA:
@@ -1580,11 +1583,18 @@ static void texture_set_callbacks(EVG_Texture *_this)
 	if (_this->pix_u) return;
 
 	switch (_this->pixel_format) {
+	case GF_PIXEL_YVU:
+		swap_uv = GF_TRUE;
 	case GF_PIXEL_YUV_10:
 	case GF_PIXEL_YUV:
 		if (!_this->stride_uv) _this->stride_uv = _this->stride/2;
 		_this->pix_u = _this->pixels + _this->stride*_this->height;
 		_this->pix_v = _this->pix_u + _this->stride_uv * _this->height/2;
+		if (swap_uv) {
+			u8 *tmp = _this->pix_u;
+			_this->pix_u = _this->pix_v;
+			_this->pix_v = tmp;
+		}
 		return;
 	case GF_PIXEL_YUVA:
 		if (!_this->stride_uv) _this->stride_uv = _this->stride/2;
@@ -1655,6 +1665,7 @@ static GF_Err gf_evg_stencil_set_texture_internal(GF_EVGStencil * st, u32 width,
 		_this->Bpp = 1;
 		break;
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
 	case GF_PIXEL_NV12:
 	case GF_PIXEL_NV21:
 	case GF_PIXEL_YUV422:
@@ -2011,7 +2022,7 @@ void evg_fill_run(GF_EVGStencil *p, GF_EVGSurface *surf, s32 x, s32 y, u32 count
 		} else {
 			u32 *col = (u32 *)surf->stencil_pix_run;
 			for (i=0; i<count; i++) {
-				u8 a = GF_COL_A(*col);
+				u32 a = GF_COL_A(*col);
 				a = surf->get_alpha(surf->get_alpha_udta, a, x+i, y);
 				*col = (a<<24) | ((*col) & 0x00FFFFFF);
 				col ++;

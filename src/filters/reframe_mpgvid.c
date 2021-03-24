@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2017
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG-1/2/4(Part2) video reframer filter
@@ -85,6 +85,7 @@ typedef struct
 
 	MPGVidIdx *indexes;
 	u32 index_alloc_size, index_size;
+	u32 bitrate;
 } GF_MPGVidDmxCtx;
 
 
@@ -96,7 +97,10 @@ GF_Err mpgviddmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_rem
 
 	if (is_remove) {
 		ctx->ipid = NULL;
-		if (ctx->opid) gf_filter_pid_remove(ctx->opid);
+		if (ctx->opid) {
+			gf_filter_pid_remove(ctx->opid);
+			ctx->opid = NULL;
+		}
 		return GF_OK;
 	}
 	if (! gf_filter_pid_check_caps(pid))
@@ -168,7 +172,7 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 	GF_M4VParser *vparser;
 	GF_M4VDecSpecInfo dsi;
 	GF_Err e;
-	u64 duration, cur_dur;
+	u64 duration, cur_dur, rate;
 	const GF_PropertyValue *p;
 	if (!ctx->opid || ctx->timescale || ctx->file_loaded) return;
 
@@ -229,6 +233,7 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 			cur_dur = 0;
 		}
 	}
+	rate = gf_bs_get_position(bs);
 	gf_m4v_parser_del(vparser);
 	gf_fclose(stream);
 
@@ -237,6 +242,12 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 		ctx->duration.den = ctx->cur_fps.num;
 
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+
+		if (duration && !gf_sys_is_test_mode() ) {
+			rate *= 8 * ctx->duration.den;
+			rate /= ctx->duration.num;
+			ctx->bitrate = (u32) rate;
+		}
 	}
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
@@ -338,6 +349,10 @@ static void mpgviddmx_check_pid(GF_Filter *filter, GF_MPGVidDmxCtx *ctx, u32 vos
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(GF_CODECID_MPEG4_PART2));
 	}
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PROFILE_LEVEL, & PROP_UINT (ctx->dsi.VideoPL) );
+
+	if (ctx->bitrate) {
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_BITRATE, & PROP_UINT(ctx->bitrate));
+	}
 
 	ctx->b_frames = 0;
 
@@ -1073,7 +1088,8 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 		ftype = 0;
 		is_coded = GF_FALSE;
 		e = gf_m4v_parse_frame(parser, &dsi, &ftype, &tinc, &fsize, &start, &is_coded);
-		if (!nb_frames && start)
+		//if start is more than 4 (start-code size), we have garbage at the begining, do not parse
+		if (!nb_frames && (start>4))
 			break;
 		if (is_coded) nb_frames++;
 		if (e==GF_EOS) {
@@ -1104,7 +1120,8 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 		ftype = 0;
 		is_coded = GF_FALSE;
 		e = gf_m4v_parse_frame(parser, &dsi, &ftype, &tinc, &fsize, &start, &is_coded);
-		if (!nb_frames && start)
+		//if start is more than 4 (start-code size), we have garbage at the begining, do not parse
+		if (!nb_frames && (start>4))
 			break;
 		if (is_coded) nb_frames++;
 		if (e==GF_EOS) {

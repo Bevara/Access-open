@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / common ffmpeg filters
@@ -55,6 +55,7 @@ typedef struct
 {
 	u32 ff_pf;
 	u32 gpac_pf;
+	u32 flags; //only 1 used, for full range
 } GF_FF_PFREG;
 
 #ifndef FFMPEG_ENABLE_VVC
@@ -100,10 +101,9 @@ static const GF_FF_PFREG FF2GPAC_PixelFormats[] =
 	{AV_PIX_FMT_BGRA, GF_PIXEL_BGRA},
 
 	/*aliases*/
-	{AV_PIX_FMT_YUVJ420P, GF_PIXEL_YUV},
-	{AV_PIX_FMT_YUVJ422P, GF_PIXEL_YUV422},
-	{AV_PIX_FMT_YUVJ444P, GF_PIXEL_YUV444},
-
+	{AV_PIX_FMT_YUVJ420P, GF_PIXEL_YUV, 1},
+	{AV_PIX_FMT_YUVJ422P, GF_PIXEL_YUV422, 1},
+	{AV_PIX_FMT_YUVJ444P, GF_PIXEL_YUV444, 1},
 	{0},
 };
 
@@ -133,6 +133,34 @@ u32 ffmpeg_pixfmt_to_gpac(u32 pfmt)
 		i++;
 	}
 	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[FFMPEG] Unmapped FFMPEG pixel format %s, patch welcome\n", ffdesc->name));
+	return 0;
+}
+
+Bool ffmpeg_pixfmt_is_fullrange(u32 pfmt)
+{
+	u32 i=0;
+	while (FF2GPAC_PixelFormats[i].gpac_pf) {
+		if (FF2GPAC_PixelFormats[i].ff_pf == pfmt)
+			return (FF2GPAC_PixelFormats[i].flags & 1) ? GF_TRUE : GF_FALSE;
+		i++;
+	}
+	return GF_FALSE;
+}
+
+u32 ffmpeg_pixfmt_from_codec_tag(u32 codec_tag, Bool *is_full_range)
+{
+	u32 i=0;
+	if (is_full_range) *is_full_range = 0;
+
+	while (FF2GPAC_PixelFormats[i].gpac_pf) {
+		if (avcodec_pix_fmt_to_codec_tag(FF2GPAC_PixelFormats[i].ff_pf) == codec_tag) {
+			if (is_full_range && (FF2GPAC_PixelFormats[i].flags & 1)) {
+				*is_full_range = GF_TRUE;
+			}
+			return FF2GPAC_PixelFormats[i].gpac_pf;
+		}
+		i++;
+	}
 	return 0;
 }
 
@@ -340,6 +368,10 @@ static const GF_FF_CIDREG FF2GPAC_CodecIDs[] =
 #ifdef FFMPEG_ENABLE_VVC
 	{AV_CODEC_ID_VVC, GF_CODECID_VVC, 0},
 #endif
+
+	{AV_CODEC_ID_V210, GF_CODECID_V210, 0},
+
+	{AV_CODEC_ID_TRUEHD, GF_CODECID_TRUEHD, 0},
 
 	{0}
 };
@@ -710,6 +742,9 @@ second_pass:
 		} else if (type==FF_REG_TYPE_DECODE) {
 			codec = av_codec_next(codec);
 			if (!codec) break;
+			if (!av_codec_is_decoder(codec))
+				continue;
+
 			av_class = codec->priv_class;
 			subname = codec->name;
 #ifndef GPAC_DISABLE_DOC
@@ -757,6 +792,8 @@ second_pass:
 		} else if (type==FF_REG_TYPE_ENCODE) {
 			codec = av_codec_next(codec);
 			if (!codec) break;
+			if (!av_codec_is_encoder(codec))
+				continue;
 			av_class = codec->priv_class;
 			subname = codec->name;
 #ifndef GPAC_DISABLE_DOC
@@ -1259,7 +1296,7 @@ void ffmpeg_set_mx_dmx_flags(const AVDictionary *options, AVFormatContext *ctx)
 void ffmpeg_report_unused_options(GF_Filter *filter, AVDictionary *options)
 {
 	AVDictionaryEntry *prev_e = NULL;
-	while (1) {
+	while (options) {
 		prev_e = av_dict_get(options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
 		if (!prev_e) break;
 		gf_filter_report_unused_meta_option(filter, prev_e->key);

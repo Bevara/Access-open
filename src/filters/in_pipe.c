@@ -380,7 +380,7 @@ static GF_Err pipein_process(GF_Filter *filter)
 				}
 			}
 		}
-		if (! ReadFile(ctx->pipe, ctx->buffer, to_read, &nb_read, ctx->blk ? NULL : &ctx->overlap) ) {
+		if (! ReadFile(ctx->pipe, ctx->buffer, to_read, (LPDWORD) &nb_read, ctx->blk ? NULL : &ctx->overlap) ) {
 			s32 error = GetLastError();
 			if (error == ERROR_PIPE_LISTENING) return GF_OK;
 			else if ((error == ERROR_IO_PENDING) || (error== ERROR_MORE_DATA)) {
@@ -398,7 +398,7 @@ static GF_Err pipein_process(GF_Filter *filter)
 				ctx->is_end = GF_TRUE;
 				return GF_EOS;
 			}
-			else if (error = ERROR_BROKEN_PIPE) {
+			else if (error == ERROR_BROKEN_PIPE) {
 				GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] Pipe closed by remote side, reopening!\n"));
 				CloseHandle(ctx->pipe);
 				ctx->pipe = INVALID_HANDLE_VALUE;
@@ -469,7 +469,7 @@ static GF_Err pipein_process(GF_Filter *filter)
 
 static const GF_FilterArgs PipeInArgs[] =
 {
-	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(src), "name of source pipe", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(block_size), "buffer size used to read pipe", GF_PROP_UINT, "5000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ext), "indicate file extension of pipe data", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(mime), "indicate mime type of pipe data", GF_PROP_STRING, NULL, NULL, 0},
@@ -493,7 +493,7 @@ GF_FilterRegister PipeInRegister = {
 		"Note: Unless disabled at session level (see [-no-probe](CORE) ), file extensions are usually ignored and format probing is done on the first data block.\n"
 		"\n"
 		"# stdin pipe\n"
-		"The filter can handle reading from stdin, by using `-`or `stdin` as input file name.\n"
+		"The filter can handle reading from stdin, by using `-` or `stdin` as input file name.\n"
 		"EX gpac -i - vout\n"
 		"EX gpac -i stdin vout\n"
 		"\n"

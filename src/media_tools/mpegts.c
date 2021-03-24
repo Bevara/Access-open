@@ -86,9 +86,16 @@ const char *gf_m2ts_get_stream_name(u32 streamType)
 		return "MHVC Video";
 	case GF_M2TS_VIDEO_MHVC_TEMPORAL:
 		return "MHVC Video Temporal Sublayer";
-
+	case GF_M2TS_VIDEO_VVC:
+		return "VVC Video";
+	case GF_M2TS_VIDEO_VVC_TEMPORAL:
+		return "VVC Video Temporal Sublayer";
+	case GF_M2TS_VIDEO_VC1:
+		return "SMPTE VC-1 Video";
 	case GF_M2TS_AUDIO_AC3:
 		return "Dolby AC3 Audio";
+	case GF_M2TS_AUDIO_EC3:
+		return "Dolby E-AC3 Audio";
 	case GF_M2TS_AUDIO_DTS:
 		return "Dolby DTS Audio";
 	case GF_M2TS_SUBTITLE_DVB:
@@ -158,7 +165,8 @@ static void add_text(char **buffer, u32 *size, u32 *pos, char *msg, u32 msg_len)
 	if (! *buffer)
 		return;
 
-	strncpy((*buffer)+(*pos), msg, msg_len);
+	memcpy((*buffer)+(*pos), msg, msg_len);
+	(*buffer)[*pos+msg_len] = 0;
 	*pos += msg_len;
 }
 
@@ -1335,12 +1343,14 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		case GF_M2TS_VIDEO_MHVC_TEMPORAL:
 		case GF_M2TS_VIDEO_VVC:
 		case GF_M2TS_VIDEO_VVC_TEMPORAL:
+		case GF_M2TS_VIDEO_VC1:
 			inherit_pcr = 1;
 		case GF_M2TS_AUDIO_MPEG1:
 		case GF_M2TS_AUDIO_MPEG2:
 		case GF_M2TS_AUDIO_AAC:
 		case GF_M2TS_AUDIO_LATM_AAC:
 		case GF_M2TS_AUDIO_AC3:
+		case GF_M2TS_AUDIO_EC3:
 		case GF_M2TS_AUDIO_DTS:
 		case GF_M2TS_MHAS_MAIN:
 		case GF_M2TS_MHAS_AUX:
@@ -1451,7 +1461,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 
 		while (desc_len) {
 			if (pos + 2 > data_size) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Broken PMT descriptor! size %d but position %d and need at least 2 bytes to parse descritpor\n", data_size, pos));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Broken PMT descriptor! size %d but position %d and need at least 2 bytes to parse descriptor\n", data_size, pos));
 				break;
 			}
 			u8 tag = data[0];
@@ -2227,7 +2237,7 @@ static void gf_m2ts_get_adaptation_field(GF_M2TS_Demuxer *ts, GF_M2TS_Adaptation
 	af_extension = data + 1;
 
 	if (paf->PCR_flag == 1) {
-		u32 base = (data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4];
+		u32 base = ((u32)data[1] << 24) | ((u32)data[2] << 16) | ((u32)data[3] << 8) | (u32) data[4];
 		u64 PCR = (u64) base;
 		paf->PCR_base = (PCR << 1) | (data[5] >> 7);
 		paf->PCR_ext = ((data[5] & 1) << 8) | data[6];
@@ -2629,16 +2639,24 @@ GF_Err gf_m2ts_process_data(GF_M2TS_Demuxer *ts, u8 *data, u32 data_size)
 	if (ts->buffer_size) {
 		//we are sync, copy remaining bytes
 		if ( (ts->buffer[0]==0x47) && (ts->buffer_size<200)) {
+			u32 copy_size;
 			pck_size = ts->prefix_present ? 192 : 188;
 
 			if (ts->alloc_size < 200) {
 				ts->alloc_size = 200;
 				ts->buffer = (char*)gf_realloc(ts->buffer, sizeof(char)*ts->alloc_size);
 			}
-			memcpy(ts->buffer + ts->buffer_size, data, pck_size - ts->buffer_size);
+			copy_size = pck_size - ts->buffer_size;
+			if (copy_size > data_size) {
+				memcpy(ts->buffer + ts->buffer_size, data, data_size);
+				ts->buffer_size += data_size;
+				return GF_OK;
+			}
+			memcpy(ts->buffer + ts->buffer_size, data, copy_size);
 			e |= gf_m2ts_process_packet(ts, (unsigned char *)ts->buffer);
-			data += (pck_size - ts->buffer_size);
-			data_size = data_size - (pck_size - ts->buffer_size);
+			data += copy_size;
+			data_size = data_size - copy_size;
+			assert((s32)data_size >= 0);
 		}
 		//not sync, copy over the complete buffer
 		else {
@@ -2802,6 +2820,23 @@ void gf_m2ts_reset_parsers(GF_M2TS_Demuxer *ts)
 	gf_m2ts_section_filter_reset(ts->eit);
 	gf_m2ts_section_filter_reset(ts->tdt_tot);
 
+}
+
+void gf_m2ts_mark_seg_start(GF_M2TS_Demuxer *ts)
+{
+	u32 i;
+	for (i=0; i<GF_M2TS_MAX_STREAMS; i++) {
+		GF_M2TS_ES *es = (GF_M2TS_ES *) ts->ess[i];
+		if (!es) continue;
+
+		if (es->flags & GF_M2TS_ES_IS_SECTION) {
+			GF_M2TS_SECTION_ES *ses = (GF_M2TS_SECTION_ES *)es;
+			ses->is_seg_start = GF_TRUE;
+		} else {
+			GF_M2TS_PES *pes = (GF_M2TS_PES *)es;
+			pes->is_seg_start = GF_TRUE;
+		}
+	}
 }
 
 
@@ -3086,11 +3121,12 @@ Bool gf_m2ts_probe_file(const char *fileName)
 
 	if (!strncmp(fileName, "gmem://", 7)) {
 		u8 *mem_address;
-		if (gf_blob_get_data(fileName, &mem_address, &size) != GF_OK) {
+		if (gf_blob_get(fileName, &mem_address, &size, NULL) != GF_OK) {
 			return GF_FALSE;
 		}
 		if (size>M2TS_PROBE_SIZE) size = M2TS_PROBE_SIZE;
 		memcpy(buf, mem_address, size);
+        gf_blob_release(fileName);
 	} else {
 		FILE *t = gf_fopen(fileName, "rb");
 		if (!t) return 0;

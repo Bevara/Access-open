@@ -21,7 +21,7 @@ LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../modules
 
 LOCAL_LDLIBS    += -L$(LOCAL_PATH)/../../../../extra_lib/lib/android/$(TARGET_ARCH_ABI)
 LOCAL_LDLIBS    += -lGLESv2 -ldl
-LOCAL_LDLIBS    += -lft2 -ljpegdroid -lopenjpeg -lpng -lfaad -lmad -lz
+LOCAL_LDLIBS    += -lft2 -ljpegdroid -lopenjpeg -lpng -lfaad -lmad -lnghttp2 -lz
 
 #ffmpeg
 LOCAL_LDLIBS    += -lavcodec -lavformat -lswresample -lavfilter -lavutil -lavdevice -lswscale
@@ -196,7 +196,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/filelist.c \
 	../../../../src/filters/hevcmerge.c \
 	../../../../src/filters/hevcsplit.c \
-	../../../../src/filters/in_atsc.c \
+	../../../../src/filters/in_route.c \
 	../../../../src/filters/in_dvb4linux.c \
 	../../../../src/filters/in_file.c \
 	../../../../src/filters/in_http.c \
@@ -207,6 +207,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/in_rtp_stream.c \
 	../../../../src/filters/in_sock.c \
 	../../../../src/filters/inspect.c \
+	../../../../src/filters/io_fcryp.c \
 	../../../../src/filters/isoffin_load.c \
 	../../../../src/filters/isoffin_read.c \
 	../../../../src/filters/isoffin_read_ch.c \
@@ -221,6 +222,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/out_audio.c \
 	../../../../src/filters/out_file.c \
 	../../../../src/filters/out_http.c \
+	../../../../src/filters/out_route.c \
 	../../../../src/filters/out_rtp.c \
 	../../../../src/filters/out_rtsp.c \
 	../../../../src/filters/out_sock.c \
@@ -240,6 +242,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/reframe_qcp.c \
 	../../../../src/filters/reframe_rawpcm.c \
 	../../../../src/filters/reframe_rawvid.c \
+	../../../../src/filters/reframe_truehd.c \
 	../../../../src/filters/reframer.c \
 	../../../../src/filters/resample_audio.c \
 	../../../../src/filters/rewind.c \
@@ -249,6 +252,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/rewrite_nalu.c \
 	../../../../src/filters/rewrite_obu.c \
 	../../../../src/filters/tileagg.c \
+	../../../../src/filters/tilesplit.c \
 	../../../../src/filters/tssplit.c \
 	../../../../src/filters/unit_test_filter.c \
 	../../../../src/filters/vcrop.c \
@@ -308,7 +312,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/laser/lsr_enc.c \
 	../../../../src/laser/lsr_tables.c \
 	../../../../src/media_tools/ait.c \
-	../../../../src/media_tools/atsc_dmx.c \
+	../../../../src/media_tools/route_dmx.c \
 	../../../../src/media_tools/avilib.c \
 	../../../../src/media_tools/av_parsers.c \
 	../../../../src/media_tools/crypt_tools.c \

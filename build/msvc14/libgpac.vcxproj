@@ -36,7 +36,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\gpac\ait.h" />
-    <ClInclude Include="..\..\include\gpac\atsc.h" />
+    <ClInclude Include="..\..\include\gpac\route.h" />
     <ClInclude Include="..\..\include\gpac\avparse.h" />
     <ClInclude Include="..\..\include\gpac\base_coding.h" />
     <ClInclude Include="..\..\include\gpac\bifs.h" />
@@ -295,7 +295,7 @@
     <ClCompile Include="..\..\src\filters\hevcmerge.c" />
     <ClCompile Include="..\..\src\filters\hevcsplit.c" />
     <ClCompile Include="..\..\src\filters\inspect.c" />
-    <ClCompile Include="..\..\src\filters\in_atsc.c" />
+    <ClCompile Include="..\..\src\filters\in_route.c" />
     <ClCompile Include="..\..\src\filters\in_dvb4linux.c" />
     <ClCompile Include="..\..\src\filters\in_file.c" />
     <ClCompile Include="..\..\src\filters\in_http.c" />
@@ -306,6 +306,7 @@
     <ClCompile Include="..\..\src\filters\in_rtp_signaling.c" />
     <ClCompile Include="..\..\src\filters\in_rtp_stream.c" />
     <ClCompile Include="..\..\src\filters\in_sock.c" />
+    <ClCompile Include="..\..\src\filters\io_fcryp.c" />
     <ClCompile Include="..\..\src\filters\isoffin_load.c" />
     <ClCompile Include="..\..\src\filters\isoffin_read.c" />
     <ClCompile Include="..\..\src\filters\isoffin_read_ch.c" />
@@ -321,6 +322,7 @@
     <ClCompile Include="..\..\src\filters\out_file.c" />
     <ClCompile Include="..\..\src\filters\out_http.c" />
     <ClCompile Include="..\..\src\filters\out_pipe.c" />
+    <ClCompile Include="..\..\src\filters\out_route.c" />
     <ClCompile Include="..\..\src\filters\out_rtp.c" />
     <ClCompile Include="..\..\src\filters\out_rtsp.c" />
     <ClCompile Include="..\..\src\filters\out_sock.c" />
@@ -342,6 +344,7 @@
     <ClCompile Include="..\..\src\filters\reframe_qcp.c" />
     <ClCompile Include="..\..\src\filters\reframe_rawpcm.c" />
     <ClCompile Include="..\..\src\filters\reframe_rawvid.c" />
+    <ClCompile Include="..\..\src\filters\reframe_truehd.c" />
     <ClCompile Include="..\..\src\filters\resample_audio.c" />
     <ClCompile Include="..\..\src\filters\rewind.c" />
     <ClCompile Include="..\..\src\filters\rewrite_adts.c" />
@@ -350,6 +353,7 @@
     <ClCompile Include="..\..\src\filters\rewrite_nalu.c" />
     <ClCompile Include="..\..\src\filters\rewrite_obu.c" />
     <ClCompile Include="..\..\src\filters\tileagg.c" />
+    <ClCompile Include="..\..\src\filters\tilesplit.c" />
     <ClCompile Include="..\..\src\filters\tssplit.c" />
     <ClCompile Include="..\..\src\filters\unit_test_filter.c" />
     <ClCompile Include="..\..\src\filters\vcrop.c" />
@@ -431,7 +435,7 @@
     <ClCompile Include="..\..\src\evg\stencil.c" />
     <ClCompile Include="..\..\src\evg\surface.c" />
     <ClCompile Include="..\..\src\media_tools\ait.c" />
-    <ClCompile Include="..\..\src\media_tools\atsc_dmx.c" />
+    <ClCompile Include="..\..\src\media_tools\route_dmx.c" />
     <ClCompile Include="..\..\src\media_tools\avilib.c" />
     <ClCompile Include="..\..\src\media_tools\av_parsers.c" />
     <ClCompile Include="..\..\src\media_tools\dash_client.c" />

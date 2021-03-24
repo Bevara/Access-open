@@ -42,7 +42,7 @@ typedef struct
 	Double start, speed;
 	char *dst, *mime, *ext, *ifce;
 	Bool listen;
-	u32 maxc, port, sockbuf, ka, kp, rate;
+	u32 maxc, port, sockbuf, ka, kp, rate, ttl;
 	GF_Fraction pckr, pckd;
 
 	GF_Socket *socket;
@@ -197,7 +197,8 @@ static GF_Err sockout_initialize(GF_Filter *filter)
 	}
 
 	if (gf_sk_is_multicast_address(url)) {
-		e = gf_sk_setup_multicast(ctx->socket, url, port, 0, 0, ctx->ifce);
+		//server socket, do not bind
+		e = gf_sk_setup_multicast(ctx->socket, url, port, ctx->ttl, GF_TRUE, ctx->ifce);
 		ctx->listen = GF_FALSE;
 	} else if ((sock_type == GF_SOCK_TYPE_UDP)
 #ifdef GPAC_HAS_SOCK_UN
@@ -214,7 +215,7 @@ static GF_Err sockout_initialize(GF_Filter *filter)
 			gf_sk_server_mode(ctx->socket, GF_TRUE);
 		}
 	} else {
-		e = gf_sk_connect(ctx->socket, url, port, ctx->ifce);
+		e = gf_sk_connect(ctx->socket, url, port, NULL);
 	}
 
 	if (str) str[0] = ':';
@@ -331,8 +332,11 @@ static GF_Err sockout_process(GF_Filter *filter)
 				u64 diff = ctx->nb_bytes_sent*8*1000000 / ctx->rate - now;
 				gf_filter_ask_rt_reschedule(filter, (u32) MAX(diff, 1000) );
 				return GF_OK;
-			} else {
-				fprintf(stderr, "[SockOut] Sending at "LLU" kbps                       \r", ctx->nb_bytes_sent*8*1000/now);
+			} else if (gf_filter_reporting_enabled(filter)) {
+				char szMsg[200];
+				snprintf(szMsg, 199, "Sending at "LLU" kbps\r", ctx->nb_bytes_sent*8*1000/now);
+				szMsg[199] = 0;
+				gf_filter_update_status(filter, 0, szMsg);
 			}
 		}
 	}
@@ -508,7 +512,7 @@ static GF_FilterProbeScore sockout_probe_url(const char *url, const char *mime)
 
 static const GF_FilterArgs SockOutArgs[] =
 {
-	{ OFFS(dst), "location of destination file", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(dst), "URL of destination - see filter help", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(sockbuf), "block size used to read file", GF_PROP_UINT, "65536", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(port), "default port if not specified", GF_PROP_UINT, "1234", NULL, 0},
 	{ OFFS(ifce), "default multicast interface", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -523,6 +527,7 @@ static const GF_FilterArgs SockOutArgs[] =
 	{ OFFS(rate), "set send rate in bps, disabled by default (as fast as possible)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(pckr), "reverse packet every N - see filter help", GF_PROP_FRACTION, "0/0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(pckd), "drop packet every N - see filter help", GF_PROP_FRACTION, "0/0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(ttl), "multicast TTL", GF_PROP_UINT, "0", "0-127", GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -556,7 +561,7 @@ GF_FilterRegister SockOutRegister = {
 		"\n"
 		"When ports are specified in the URL and the default option separators are used (see `gpac -h doc`), the URL must either:\n"
 		"- have a trailing '/', eg `udp://localhost:1234/[:opts]`\n"
-		"- use `gpac` '/', eg `udp://localhost:1234[:gpac:opts]\n"
+		"- use `gpac` '/', eg `udp://localhost:1234[:gpac:opts]`\n"
 		"\n"
 		"The socket output can be configured to drop or revert packet order for test purposes.\n"
 		"For both mode, a window size in packets is specified as the drop/revert fraction denominator, and the index of the packet to drop/revert is given as the numerator/\n"

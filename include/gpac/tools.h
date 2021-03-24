@@ -67,7 +67,7 @@ Macro transforming its input name into a string
 \brief 4CC Formatting
 \hideinitializer
 
-Macro formating a 4-character code (or 4CC) "abcd" as 0xAABBCCDD
+Macro formatting a 4-character code (or 4CC) "abcd" as 0xAABBCCDD
 */
 #ifndef GF_4CC
 #define GF_4CC(a,b,c,d) ((((u32)a)<<24)|(((u32)b)<<16)|(((u32)c)<<8)|((u32)d))
@@ -81,6 +81,12 @@ Macro formating a 4-character code (or 4CC) "abcd" as 0xAABBCCDD
 \return a printable form of the code
 */
 const char *gf_4cc_to_str(u32 type);
+
+/*! converts a 4CC string to its 32 bits value
+\param val  four character string
+\return code value or 0 if error
+*/
+u32 gf_4cc_parse(const char *val);
 
 /*! @} */
 
@@ -143,6 +149,9 @@ typedef enum
 	GF_REMOTE_SERVICE_ERROR					= -14,
 	/*! The desired stream could not be found in the service*/
 	GF_STREAM_NOT_FOUND						= -15,
+    /*! The URL no longer exists*/
+    GF_URL_REMOVED                          = -16,
+
 	/*! The IsoMedia file is not a valid one*/
 	GF_ISOM_INVALID_FILE					= -20,
 	/*! The IsoMedia file is not complete. Either the file is being downloaded, or it has been truncated*/
@@ -218,9 +227,9 @@ const char *gf_error_to_string(GF_Err e);
 Macro allocating memory and zero-ing it
 */
 #define GF_SAFEALLOC(__ptr, __struct) {\
-		__ptr = (__struct *) gf_malloc(sizeof(__struct));\
+		(__ptr) = (__struct *) gf_malloc(sizeof(__struct));\
 		if (__ptr) {\
-			memset((void *) __ptr, 0, sizeof(__struct));\
+			memset((void *) (__ptr), 0, sizeof(__struct));\
 		}\
 	}
 
@@ -231,9 +240,9 @@ Macro allocating memory and zero-ing it
 Macro allocating memory for n structures and zero-ing it
 */
 #define GF_SAFE_ALLOC_N(__ptr, __n, __struct) {\
-		__ptr = (__struct *) gf_malloc( __n * sizeof(__struct));\
+		(__ptr) = (__struct *) gf_malloc( __n * sizeof(__struct));\
 		if (__ptr) {\
-			memset((void *) __ptr, 0, __n * sizeof(__struct));\
+			memset((void *) (__ptr), 0, __n * sizeof(__struct));\
 		}\
 	}
 
@@ -582,8 +591,8 @@ typedef enum
 	GF_LOG_FILTER,
 	/*! Log for filter scheduler only */
 	GF_LOG_SCHEDULER,
-	/*! Log for all ATSC3 message */
-	GF_LOG_ATSC,
+	/*! Log for all ROUTE message */
+	GF_LOG_ROUTE,
 	/*! Log for all messages coming from GF_Terminal or script alert()*/
 	GF_LOG_CONSOLE,
 	/*! Log for all messages coming the application, not used by libgpac or the modules*/
@@ -846,6 +855,13 @@ Parses 128 bit from string
  */
 GF_Err gf_bin128_parse(const char *string, bin128 value);
 
+
+enum
+{
+    GF_BLOB_IN_TRANSFER = 1,
+    GF_BLOB_CORRUPTED = 1<<1,
+};
+
 /*!
  * Blob structure used to pass data pointer around
  */
@@ -855,16 +871,28 @@ typedef struct
 	u8 *data;
 	/*! size of blob */
 	u32 size;
+    /*! blob flags */
+    u32 flags;
+    /*! blob mutex for multi-thread access */
+    struct __tag_mutex *mx;
 } GF_Blob;
 
 /*!
- * Retrieves data associated with a blob url
+ * Retrieves data associated with a blob url. If success, \ref gf_blob_release must be called after this
 \param blob_url URL of blob object (ie gmem://%p)
 \param out_data if success, set to blob data pointer
 \param out_size if success, set to blob data size
+\param blob_flags if success, set to blob flags - may be NULL
 \return error code
  */
-GF_Err gf_blob_get_data(const char *blob_url, u8 **out_data, u32 *out_size);
+GF_Err gf_blob_get(const char *blob_url, u8 **out_data, u32 *out_size, u32 *blob_flags);
+
+/*!
+ * Releases blob data
+\param blob_url URL of blob object (ie gmem://%p)
+\return error code
+ */
+GF_Err gf_blob_release(const char *blob_url);
 
 /*!
 \addtogroup time_grp
@@ -956,6 +984,14 @@ Gets timezone adjustment in seconds, with localtime - timezone = UTC time
 \return timezone shift in seconds
  */
 s32 gf_net_get_timezone();
+
+/*!
+\brief gets timezone daylight saving time status
+
+Gets timezone daylight saving time
+\return GF_TRUE if DST is active
+ */
+Bool gf_net_time_is_dst();
 
 /*!
 \brief gets time from UTC timestamp
@@ -1769,6 +1805,13 @@ void gf_sha1_finish(GF_SHA1Context *ctx, u8 digest[GF_SHA1_DIGEST_SIZE] );
 */
 GF_Err gf_sha1_file(const char *filename, u8 digest[GF_SHA1_DIGEST_SIZE]);
 
+/*! gets SHA1 message digest of a opened file
+\param file  handle to open file
+\param digest buffer to store message digest
+\return error if any
+*/
+GF_Err gf_sha1_file_ptr(FILE *file, u8 digest[GF_SHA1_DIGEST_SIZE] );
+
 /*! gets SHA-1 of input buffer
 \param buf input buffer to hash
 \param buflen sizeo of input buffer in bytes
@@ -1947,13 +1990,16 @@ typedef struct _gl_texture_wrap
 	struct _gf_filter_frame_interface *frame_ifce;
 	Bool first_tx_load;
 
-	//PBO state - must be managed by caller, especially if using seperated push and texImg steps through gf_gl_txw_setup calls
+	//PBO state - must be managed by caller, especially if using separated push and texImg steps through gf_gl_txw_setup calls
 	GF_GLPBOState pbo_state;
 	Bool flip;
+	//YUV is full video range
+	Bool fullrange;
+	s32 mx_cicp;
 } GF_GLTextureWrapper;
 
 Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source);
-Bool gf_gl_txw_setup(GF_GLTextureWrapper *tx, u32 pix_fmt, u32 width, u32 height, u32 stride, u32 uv_stride, Bool linear_interp, struct _gf_filter_frame_interface *frame_ifce);
+Bool gf_gl_txw_setup(GF_GLTextureWrapper *tx, u32 pix_fmt, u32 width, u32 height, u32 stride, u32 uv_stride, Bool linear_interp, struct _gf_filter_frame_interface *frame_ifce, Bool full_range, s32 matrix_coef_or_neg);
 Bool gf_gl_txw_upload(GF_GLTextureWrapper *tx, const u8 *data, struct _gf_filter_frame_interface *frame_ifce);
 Bool gf_gl_txw_bind(GF_GLTextureWrapper *tx, const char *tx_name, u32 gl_program, u32 texture_unit);
 void gf_gl_txw_reset(GF_GLTextureWrapper *tx);

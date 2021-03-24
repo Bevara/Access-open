@@ -565,6 +565,9 @@ static Bool gf_filter_aggregate_packets(GF_FilterPidInst *dst)
 	count=gf_list_count(dst->pck_reassembly);
 	//no packet to reaggregate
 	if (!count) return GF_FALSE;
+
+	dst->nb_reagg_pck++;
+
 	//single packet, update PID buffer and dispatch to packet queue
 	if (count==1) {
 		GF_FilterPacketInstance *pcki = gf_list_pop_back(dst->pck_reassembly);
@@ -702,6 +705,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 	s64 duration=0;
 	u32 timescale=0;
 	GF_FilterClockType cktype;
+	Bool is_cmd_pck;
 #ifdef GPAC_MEMORY_TRACKING
 	u32 nb_allocs=0, nb_reallocs=0, prev_nb_allocs=0, prev_nb_reallocs=0;
 #endif
@@ -747,10 +751,12 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 
 	gf_rmt_begin(pck_send, GF_RMT_AGGREGATE);
 
+	is_cmd_pck = (pck->info.flags & GF_PCK_CMD_MASK);
 	//send from filter, update flags
 	if (from_filter) {
-		Bool is_cmd = (pck->info.flags & GF_PCK_CKTYPE_MASK) ? GF_TRUE : GF_FALSE;
-		if (! is_cmd ) {
+		Bool is_cmd = (pck->info.flags & GF_PCK_CMD_MASK) ? GF_TRUE : GF_FALSE;
+		//not a clock, flush any pending clock
+		if (!  (pck->info.flags & GF_PCK_CKTYPE_MASK) ) {
 			gf_filter_forward_clock(pck->pid->filter);
 		}
 		if ( (pck->info.flags & GF_PCK_CMD_MASK) == GF_PCK_CMD_PID_EOS) {
@@ -771,13 +777,13 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		//a new property map was created -  flag the packet; don't do this if first packet dispatched on pid
 		pck->info.flags &= ~GF_PCKF_PROPS_CHANGED;
 
-		if (!pid->request_property_map && !(pck->info.flags & GF_PCK_CMD_MASK) && (pid->nb_pck_sent || pid->props_changed_since_connect) ) {
+		if (!pid->request_property_map && !is_cmd_pck && (pid->nb_pck_sent || pid->props_changed_since_connect) ) {
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s PID %s properties modified, marking packet\n", pck->pid->filter->name, pck->pid->name));
 
 			pck->info.flags |= GF_PCKF_PROPS_CHANGED;
 		}
 		//any new pid_set_property after this packet will trigger a new property map
-		if (! (pck->info.flags & GF_PCK_CMD_MASK)) {
+		if (! is_cmd_pck) {
 			pid->request_property_map = GF_TRUE;
 			pid->props_changed_since_connect = GF_FALSE;
 		}
@@ -817,7 +823,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 	pck->src_filter = NULL;
 
 	assert(pck->pid);
-	if (! (pck->info.flags & GF_PCK_CMD_MASK) ) {
+	if (! is_cmd_pck ) {
 		pid->nb_pck_sent++;
 		if (pck->data_length) {
 			pid->filter->nb_pck_sent++;
@@ -825,10 +831,9 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		} else if (pck->frame_ifce) {
 			pid->filter->nb_hw_pck_sent++;
 		}
-		if (pck->info.cts!=GF_FILTER_NO_TS) {
+		if (timescale && (pck->info.cts!=GF_FILTER_NO_TS)) {
 			pid->last_ts_sent.num = pck->info.cts;
-			assert(pck->pid_props);
-			pid->last_ts_sent.den = pck->pid_props->timescale;
+			pid->last_ts_sent.den = timescale;
 		}
 	}
 
@@ -966,7 +971,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		Bool post_task=GF_FALSE;
 		GF_FilterPacketInstance *inst;
 		GF_FilterPidInst *dst = gf_list_get(pck->pid->destinations, i);
-		if (!dst->filter || dst->filter->finalized || dst->filter->removed || !dst->filter->freg->process) continue;
+		if (!dst->filter || dst->filter->finalized || (dst->filter->removed==1) || !dst->filter->freg->process) continue;
 
 		if (dst->discard_inputs) {
 			//in discard input mode, we drop all input packets but trigger reconfigure as they happen
@@ -1052,6 +1057,8 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 				//single block packet, direct dispatch in packet queue (aggregation done before)
 				else {
 					assert(dst->last_block_ended);
+					if (!is_cmd_pck)
+						dst->nb_reagg_pck++;
 
 					if (pck->info.duration && timescale) {
 						duration = ((u64)pck->info.duration) * 1000000;
@@ -1059,7 +1066,6 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 						safe_int64_add(&dst->buffer_duration, duration);
 					}
 					inst->pck->info.flags |= GF_PCKF_BLOCK_START;
-
 					safe_int_inc(&dst->filter->pending_packets);
 					gf_fq_add(dst->packets, inst);
 				}
@@ -1136,7 +1142,6 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 				duration /= timescale;
 				safe_int64_add(&dst->buffer_duration, duration);
 			}
-
 			safe_int_inc(&dst->filter->pending_packets);
 //
 			gf_fq_add(dst->packets, inst);

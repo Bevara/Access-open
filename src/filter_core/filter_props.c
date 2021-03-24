@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2019
+ *			Copyright (c) Telecom ParisTech 2017-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -28,6 +28,64 @@
 //for binxml parsing
 #include <gpac/xml.h>
 
+typedef u32(*cst_parse_proto)(const char *val);
+typedef const char *(*cst_name_proto)(u32 val);
+
+static struct {
+	u32 type;
+	u32 (*cst_parse)(const char *val);
+	const char *(*cst_name)(u32 val);
+	const char *(*cst_all_names)();
+} EnumProperties[] = {
+	{GF_PROP_PIXFMT, (cst_parse_proto) gf_pixel_fmt_parse, (cst_name_proto) gf_pixel_fmt_name, gf_pixel_fmt_all_names},
+	{GF_PROP_PCMFMT, (cst_parse_proto) gf_audio_fmt_parse, (cst_name_proto) gf_audio_fmt_name, gf_audio_fmt_all_names},
+	{GF_PROP_CICP_COL_PRIM, gf_cicp_parse_color_primaries, gf_cicp_color_primaries_name, gf_cicp_color_primaries_all_names},
+	{GF_PROP_CICP_COL_TFC, gf_cicp_parse_color_transfer, gf_cicp_color_transfer_name, gf_cicp_color_transfer_all_names},
+	{GF_PROP_CICP_COL_MX, gf_cicp_parse_color_matrix, gf_cicp_color_matrix_name, gf_cicp_color_matrix_all_names},
+};
+
+GF_EXPORT
+u32 gf_props_parse_enum(u32 type, const char *value)
+{
+	u32 i, count = GF_ARRAY_LENGTH(EnumProperties);
+	for (i=0; i<count; i++) {
+		if (EnumProperties[i].type==type)
+			return EnumProperties[i].cst_parse(value);
+	}
+	GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Unrecognized constant type %d\n", type));
+	return 0;
+}
+
+GF_EXPORT
+const char *gf_props_enum_name(u32 type, u32 value)
+{
+	u32 i, count = GF_ARRAY_LENGTH(EnumProperties);
+	for (i=0; i<count; i++) {
+		if (EnumProperties[i].type==type)
+			return EnumProperties[i].cst_name(value);
+	}
+	GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Unrecognized constant type %d\n", type));
+	return NULL;
+}
+
+GF_EXPORT
+const char *gf_props_enum_all_names(u32 type)
+{
+	u32 i, count = GF_ARRAY_LENGTH(EnumProperties);
+	for (i=0; i<count; i++) {
+		if (EnumProperties[i].type==type)
+			return EnumProperties[i].cst_all_names();
+	}
+	GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Unrecognized constant type %d\n", type));
+	return NULL;
+}
+GF_EXPORT
+Bool gf_props_type_is_enum(GF_PropType type)
+{
+	if ((type>=GF_PROP_FIRST_ENUM) && (type < GF_PROP_LAST_DEFINED)) return GF_TRUE;
+	return GF_FALSE;
+}
+
 GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *value, const char *enum_values, char list_sep_char)
 {
 	GF_PropertyValue p;
@@ -41,12 +99,23 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 	unit_sep = NULL;
 	if (value) {
 		u32 len = (u32) strlen(value);
-		unit_sep = len ? strrchr("kKgGmM", value[len-1]) : NULL;
+		unit_sep = len ? strrchr("kKgGmMsS", value[len-1]) : NULL;
 		if (unit_sep) {
 			u8 unit_char = unit_sep[0];
 			if ((unit_char=='k') || (unit_char=='K')) unit = 1000;
 			else if ((unit_char=='m') || (unit_char=='M')) unit = 1000000;
-			if ((unit_char=='G') || (unit_char=='g')) unit = 1000000000;
+			else if ((unit_char=='G') || (unit_char=='g')) unit = 1000000000;
+			else if ((unit_char=='s') || (unit_char=='S')) unit = 1000;
+		}
+		else if (type==GF_PROP_UINT) {
+			unit_sep = strstr(value, "sec");
+			if (unit_sep && strlen(unit_sep)==3)
+				unit = 1000;
+			else {
+				unit_sep = strstr(value, "min");
+				if (unit_sep && strlen(unit_sep)==3)
+					unit = 60000;
+			}
 		}
 	}
 
@@ -72,12 +141,19 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 		}
 		break;
 	case GF_PROP_UINT:
-		if (value && !strcmp(value, "+I")) p.value.sint = 0xFFFFFFFF;
-		else if (!value) {
+		if (value && !strcmp(value, "+I")) {
+			p.value.sint = 0xFFFFFFFF;
+			break;
+		}
+
+		if (!value && !enum_values) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s - using 0\n", value, name));
 			p.value.uint = 0;
-		} else if (enum_values && strchr(enum_values, '|')) {
-			u32 a_len = (u32) strlen(value);
+			break;
+		}
+
+		if (enum_values && strchr(enum_values, '|')) {
+			u32 a_len = value ? (u32) strlen(value) : 0;
 			u32 val = 0;
 			char *str_start = (char *) enum_values;
 			while (str_start) {
@@ -88,7 +164,13 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				} else {
 					len = (u32) strlen(str_start);
 				}
-				if ((a_len == len) && !strncmp(str_start, value, len))
+				if (!a_len && len) {
+					char szVal[50];
+					gf_strlcpy(szVal, str_start, MIN(len+1, 50) );
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s enum %s - using `%s`\n", value, name, enum_values, szVal));
+					break;
+				}
+				if ((a_len == len) && value && !strncmp(str_start, value, len))
 					break;
 				if (!sep) {
 					str_start = NULL;
@@ -98,27 +180,45 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				val++;
 			}
 			if (!str_start) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s enum %s - using 0\n", value, name, enum_values));
-				p.value.uint = 0;
+				//special case for enums with default set to -1
+				if (value && !strcmp(value, "-1")) {
+					p.value.uint = (u32) -1;
+				} else {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s enum %s - using 0\n", value, name, enum_values));
+					p.value.uint = 0;
+				}
 			} else {
 				p.value.uint = val;
 			}
-		} else if (!strnicmp(value, "0x", 2)) {
+		} else if (value && !strnicmp(value, "0x", 2)) {
 			if (sscanf(value, "0x%x", &p.value.uint)!=1) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s - using 0\n", value, name));
 			} else if (unit) {
 				p.value.uint *= unit;
 			}
-		} else if (sscanf(value, "%d", &p.value.uint)!=1) {
-			if (strlen(value)==4) {
-				p.value.uint = GF_4CC(value[0],value[1],value[2],value[3]);
-			} else {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s - using 0\n", value, name));
+		} else if (value) {
+			if (sscanf(value, "%d", &p.value.uint)!=1) {
+				if (strlen(value)==4) {
+					p.value.uint = GF_4CC(value[0],value[1],value[2],value[3]);
+				} else {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s - using 0\n", value, name));
+				}
+			} else if (unit) {
+				p.value.uint *= unit;
 			}
-		} else if (unit) {
-			p.value.uint *= unit;
+		} else {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Missing argument value for unsigned int arg %s - using 0\n", name));
 		}
 		break;
+
+	case GF_PROP_4CC:
+		if (value && (strlen(value)==4) ) {
+			p.value.sint = GF_4CC(value[0], value[1], value[2], value[3]);
+		} else {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for 4CC arg %s - using 0\n", value, name));
+		}
+		break;
+
 	case GF_PROP_LSINT:
 		if (value && !strcmp(value, "+I")) p.value.longsint = 0x7FFFFFFFFFFFFFFFUL;
 		else if (value && !strcmp(value, "-I")) p.value.longsint = 0x8000000000000000UL;
@@ -244,29 +344,11 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 			p.value.vec3i.x = p.value.vec3i.y = p.value.vec3i.z = 0;
 		}
 		break;
-	case GF_PROP_VEC3:
-		if (!value || (sscanf(value, "%lgx%lgx%lg", &p.value.vec3.x, &p.value.vec3.y, &p.value.vec3.z) != 3)) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for vec3 arg %s - using {0,0,0}\n", value, name));
-			p.value.vec3.x = p.value.vec3.y = p.value.vec3.z = 0;
-		}
-		break;
 	case GF_PROP_VEC4I:
 		if (!value || (sscanf(value, "%dx%dx%dx%d", &p.value.vec4i.x, &p.value.vec4i.y, &p.value.vec4i.z, &p.value.vec4i.w) != 4)) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for vec4i arg %s - using {0,0,0}\n", value, name));
 			p.value.vec4i.x = p.value.vec4i.y = p.value.vec4i.z = p.value.vec4i.w = 0;
 		}
-		break;
-	case GF_PROP_VEC4:
-		if (!value || (sscanf(value, "%lgx%lgx%lgx%lg", &p.value.vec4.x, &p.value.vec4.y, &p.value.vec4.z, &p.value.vec4.w) != 4)) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for vec4 arg %s - using {0,0,0}\n", value, name));
-			p.value.vec4.x = p.value.vec4.y = p.value.vec4.z = p.value.vec4.w = 0;
-		}
-		break;
-	case GF_PROP_PIXFMT:
-		p.value.uint = gf_pixel_fmt_parse(value);
-		break;
-	case GF_PROP_PCMFMT:
-		p.value.uint = gf_audio_fmt_parse(value);
 		break;
 	case GF_PROP_NAME:
 	case GF_PROP_STRING:
@@ -418,6 +500,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 	}
 		break;
 	case GF_PROP_UINT_LIST:
+	case GF_PROP_4CC_LIST:
 	case GF_PROP_SINT_LIST:
 	case GF_PROP_VEC2I_LIST:
 	{
@@ -437,7 +520,18 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 			szV[len] = 0;
 			if (p.type == GF_PROP_UINT_LIST) {
 				u32 val_uint;
-				sscanf(szV, "%u", &val_uint);
+				if (sscanf(szV, "%u", &val_uint) != 1) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for uint arg %s[%d] - using 0\n", value, name, p.value.uint_list.nb_items));
+					val_uint = 0;
+				}
+				p.value.uint_list.vals = gf_realloc(p.value.uint_list.vals, (p.value.uint_list.nb_items+1) * sizeof(u32));
+				p.value.uint_list.vals[p.value.uint_list.nb_items] = val_uint;
+			} else if (p.type == GF_PROP_4CC_LIST) {
+				u32 val_uint = gf_4cc_parse(szV);
+				if (!val_uint) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for 4CC arg %s[%d] - using 0\n", value, name, p.value.uint_list.nb_items));
+					val_uint = 0;
+				}
 				p.value.uint_list.vals = gf_realloc(p.value.uint_list.vals, (p.value.uint_list.nb_items+1) * sizeof(u32));
 				p.value.uint_list.vals[p.value.uint_list.nb_items] = val_uint;
 			} else if (p.type == GF_PROP_SINT_LIST) {
@@ -462,6 +556,10 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 		break;
 	case GF_PROP_FORBIDEN:
 	default:
+		if (gf_props_type_is_enum(type)) {
+			p.value.uint = gf_props_parse_enum(type, value);
+			break;
+		}
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Forbidden property type %d for arg %s - ignoring\n", type, name));
 		p.type=GF_PROP_FORBIDEN;
 		break;
@@ -471,21 +569,45 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 	return p;
 }
 
-Bool gf_props_equal(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
+static u32 get_prop_base_type(u32 type)
+{
+	switch (type) {
+	case GF_PROP_STRING:
+	case GF_PROP_NAME:
+	case GF_PROP_STRING_NO_COPY:
+		return GF_PROP_STRING;
+	case GF_PROP_DATA_NO_COPY:
+	case GF_PROP_DATA:
+	case GF_PROP_CONST_DATA:
+		return GF_PROP_DATA;
+	case GF_PROP_UINT:
+	case GF_PROP_4CC:
+		return GF_PROP_UINT;
+	case GF_PROP_4CC_LIST:
+	case GF_PROP_UINT_LIST:
+		return GF_PROP_UINT_LIST;
+	default:
+		//we declare const as UINT in caps
+		if (gf_props_type_is_enum(type))
+			return GF_PROP_UINT;
+		return type;
+	}
+}
+
+Bool gf_props_equal_internal(const GF_PropertyValue *p1, const GF_PropertyValue *p2, Bool strict_compare)
 {
 	if (p1->type!=p2->type) {
-		if ((p1->type == GF_PROP_STRING) && (p2->type == GF_PROP_NAME) ) {
-		} else if ((p2->type == GF_PROP_STRING) && (p1->type == GF_PROP_NAME) ) {
-		} else {
+		u32 p1_base = get_prop_base_type(p1->type);
+		u32 p2_base = get_prop_base_type(p2->type);
+
+		if (p1_base != p2_base)
 			return GF_FALSE;
-		}
 	}
 
 	switch (p1->type) {
 	case GF_PROP_SINT: return (p1->value.sint==p2->value.sint) ? GF_TRUE : GF_FALSE;
-	case GF_PROP_PIXFMT:
-	case GF_PROP_PCMFMT:
 	case GF_PROP_UINT:
+	case GF_PROP_4CC:
 	 	return (p1->value.uint==p2->value.uint) ? GF_TRUE : GF_FALSE;
 	case GF_PROP_LSINT: return (p1->value.longsint==p2->value.longsint) ? GF_TRUE : GF_FALSE;
 	case GF_PROP_LUINT: return (p1->value.longuint==p2->value.longuint) ? GF_TRUE : GF_FALSE;
@@ -503,20 +625,18 @@ Bool gf_props_equal(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
 		return ((p1->value.vec2.x==p2->value.vec2.x) && (p1->value.vec2.y==p2->value.vec2.y)) ? GF_TRUE : GF_FALSE;
 	case GF_PROP_VEC3I:
 		return ((p1->value.vec3i.x==p2->value.vec3i.x) && (p1->value.vec3i.y==p2->value.vec3i.y) && (p1->value.vec3i.z==p2->value.vec3i.z)) ? GF_TRUE : GF_FALSE;
-	case GF_PROP_VEC3:
-		return ((p1->value.vec3.x==p2->value.vec3.x) && (p1->value.vec3.y==p2->value.vec3.y) && (p1->value.vec3.z==p2->value.vec3.z)) ? GF_TRUE : GF_FALSE;
 	case GF_PROP_VEC4I:
 		return ((p1->value.vec4i.x==p2->value.vec4i.x) && (p1->value.vec4i.y==p2->value.vec4i.y) && (p1->value.vec4i.z==p2->value.vec4i.z) && (p1->value.vec4i.w==p2->value.vec4i.w)) ? GF_TRUE : GF_FALSE;
-	case GF_PROP_VEC4:
-		return ((p1->value.vec4.x==p2->value.vec4.x) && (p1->value.vec4.y==p2->value.vec4.y) && (p1->value.vec4.z==p2->value.vec4.z) && (p1->value.vec4.w==p2->value.vec4.w)) ? GF_TRUE : GF_FALSE;
-
 
 	case GF_PROP_STRING:
+	case GF_PROP_STRING_NO_COPY:
 	case GF_PROP_NAME:
 		if (!p1->value.string) return p2->value.string ? GF_FALSE : GF_TRUE;
 		if (!p2->value.string) return GF_FALSE;
-		if (!strcmp(p1->value.string, "*")) return GF_TRUE;
-		if (!strcmp(p2->value.string, "*")) return GF_TRUE;
+		if (!strict_compare) {
+			if (!strcmp(p1->value.string, "*")) return GF_TRUE;
+			if (!strcmp(p2->value.string, "*")) return GF_TRUE;
+		}
 		if (strchr(p2->value.string, '|')) {
 			u32 len = (u32) strlen(p1->value.string);
 			char *cur = p2->value.string;
@@ -545,6 +665,7 @@ Bool gf_props_equal(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
 		return !strcmp(p1->value.string, p2->value.string) ? GF_TRUE : GF_FALSE;
 
 	case GF_PROP_DATA:
+	case GF_PROP_DATA_NO_COPY:
 	case GF_PROP_CONST_DATA:
 		if (!p1->value.data.ptr) return p2->value.data.ptr ? GF_FALSE : GF_TRUE;
 		if (!p2->value.data.ptr) return GF_FALSE;
@@ -569,26 +690,42 @@ Bool gf_props_equal(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
 		return GF_TRUE;
 	}
 	case GF_PROP_UINT_LIST:
+	case GF_PROP_4CC_LIST:
 	case GF_PROP_SINT_LIST:
 	case GF_PROP_VEC2I_LIST:
 	{
 		size_t it_size = sizeof(u32);
 		if (p1->type==GF_PROP_UINT_LIST) it_size = sizeof(u32);
+		else if (p1->type==GF_PROP_4CC_LIST) it_size = sizeof(u32);
 		else if (p1->type==GF_PROP_SINT_LIST) it_size = sizeof(s32);
 		else if (p1->type==GF_PROP_VEC2I_LIST) it_size = sizeof(GF_PropVec2i);
 		//use uint list for checking
 		if (p1->value.uint_list.nb_items != p2->value.uint_list.nb_items) return GF_FALSE;
-		if (memcmp(p1->value.uint_list.vals, p2->value.uint_list.vals, it_size * p1->value.uint_list.nb_items)) return GF_FALSE;
+		if (p1->value.uint_list.nb_items && memcmp(p1->value.uint_list.vals, p2->value.uint_list.vals, it_size * p1->value.uint_list.nb_items))
+			return GF_FALSE;
 		return GF_TRUE;
 	}
 
 	//user-managed pointer
-	case GF_PROP_POINTER: return (p1->value.ptr==p2->value.ptr) ? GF_TRUE : GF_FALSE;
+	case GF_PROP_POINTER:
+		return (p1->value.ptr==p2->value.ptr) ? GF_TRUE : GF_FALSE;
 	default:
+		if (gf_props_type_is_enum(p1->type)) {
+			return (p1->value.uint==p2->value.uint) ? GF_TRUE : GF_FALSE;
+		}
+
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Comparing forbidden property type %d\n", p1->type));
 		break;
 	}
 	return GF_FALSE;
+}
+Bool gf_props_equal(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
+{
+	return gf_props_equal_internal(p1, p2, GF_FALSE);
+}
+Bool gf_props_equal_strict(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
+{
+	return gf_props_equal_internal(p1, p2, GF_TRUE);
 }
 
 #if GF_PROPS_HASHTABLE_SIZE
@@ -644,7 +781,7 @@ void gf_props_reset_single(GF_PropertyValue *p)
 		p->value.data.size = 0;
 	}
 	//use uint_list as base type for list
-	else if ((p->type==GF_PROP_UINT_LIST) || (p->type==GF_PROP_SINT_LIST) || (p->type==GF_PROP_VEC2I_LIST)) {
+	else if ((p->type==GF_PROP_UINT_LIST) || (p->type==GF_PROP_4CC_LIST) || (p->type==GF_PROP_SINT_LIST) || (p->type==GF_PROP_VEC2I_LIST)) {
 		gf_free(p->value.uint_list.vals);
 		p->value.uint_list.vals = NULL;
 		p->value.uint_list.nb_items = 0;
@@ -689,7 +826,7 @@ void gf_props_del_property(GF_PropertyEntry *it)
 			it->prop.value.string_list.nb_items = 0;
 		}
 		//use uint_list as base type for list
-		else if ((it->prop.type==GF_PROP_UINT_LIST) || (it->prop.type==GF_PROP_SINT_LIST) || (it->prop.type==GF_PROP_VEC2I_LIST)) {
+		else if ((it->prop.type==GF_PROP_UINT_LIST) || (it->prop.type==GF_PROP_4CC_LIST) || (it->prop.type==GF_PROP_SINT_LIST) || (it->prop.type==GF_PROP_VEC2I_LIST)) {
 			if (it->prop.value.uint_list.vals)
 				gf_free(it->prop.value.uint_list.vals);
 			it->prop.value.uint_list.nb_items = 0;
@@ -758,6 +895,7 @@ void gf_props_del(GF_PropertyMap *map)
 
 	gf_props_reset(map);
 	map->reference_count = 0;
+	map->timescale = 0;
 	if (map->session->prop_maps_reservoir) {
 		gf_fq_add(map->session->prop_maps_reservoir, map);
 	} else {
@@ -842,13 +980,15 @@ static void gf_props_assign_value(GF_PropertyEntry *prop, const GF_PropertyValue
 		assert(prop->alloc_size);
 	}
 	//use uint_list as base type for list
-	else if ((prop->prop.type == GF_PROP_UINT_LIST) || (prop->prop.type == GF_PROP_SINT_LIST) || (prop->prop.type == GF_PROP_VEC2I_LIST)) {
+	else if ((prop->prop.type == GF_PROP_UINT_LIST) || (prop->prop.type == GF_PROP_4CC_LIST) || (prop->prop.type == GF_PROP_SINT_LIST) || (prop->prop.type == GF_PROP_VEC2I_LIST)) {
 		size_t it_size = sizeof(u32);
 		if (prop->prop.type == GF_PROP_UINT_LIST) it_size = sizeof(u32);
+		else if (prop->prop.type == GF_PROP_4CC_LIST) it_size = sizeof(u32);
 		else if (prop->prop.type == GF_PROP_SINT_LIST) it_size = sizeof(s32);
 		else if (prop->prop.type == GF_PROP_VEC2I_LIST) it_size = sizeof(GF_PropVec2i);
 		prop->prop.value.uint_list.vals = gf_malloc(it_size * value->value.uint_list.nb_items);
-		memcpy(prop->prop.value.uint_list.vals, value->value.uint_list.vals, it_size * value->value.uint_list.nb_items);
+		if (value->value.uint_list.nb_items)
+			memcpy(prop->prop.value.uint_list.vals, value->value.uint_list.vals, it_size * value->value.uint_list.nb_items);
 		prop->prop.value.uint_list.nb_items = value->value.uint_list.nb_items;
 	}
 }
@@ -1076,6 +1216,7 @@ GF_PropTypeDef PropTypes[] =
 {
 	{GF_PROP_SINT, "sint", "signed 32 bit integer"},
 	{GF_PROP_UINT, "uint", "unsigned 32 bit integer"},
+	{GF_PROP_4CC, "4cc", "Four character code"},
 	{GF_PROP_LSINT, "lsint", "signed 64 bit integer"},
 	{GF_PROP_LUINT, "luint", "unsigned 32 bit integer"},
 	{GF_PROP_FRACTION, "frac", "32/32 bit fraction"},
@@ -1091,17 +1232,19 @@ GF_PropTypeDef PropTypes[] =
 	{GF_PROP_CONST_DATA, "cmem", "const data buffer"},
 	{GF_PROP_POINTER, "ptr", "32 or 64 bit pointer"},
 	{GF_PROP_VEC2I, "v2di", "2D 32-bit integer vector"},
-	{GF_PROP_VEC2, "v2df", "2D 32-bit float vector"},
+	{GF_PROP_VEC2, "v2d", "2D 64-bit float vector"},
 	{GF_PROP_VEC3I, "v3di", "3D 32-bit integer vector"},
-	{GF_PROP_VEC3, "v3df", "3D 32-bit float vector"},
 	{GF_PROP_VEC4I, "v4di", "4D 32-bit integer vector"},
-	{GF_PROP_VEC4, "v4df", "4D 32-bit float vector"},
-	{GF_PROP_PIXFMT, "pfmt", "raw pixel format"},
-	{GF_PROP_PCMFMT, "afmt", "raw audio format"},
 	{GF_PROP_STRING_LIST, "strl", "UTF-8 string list"},
 	{GF_PROP_UINT_LIST, "uintl", "unsigned 32 bit integer list"},
+	{GF_PROP_4CC_LIST, "4ccl", "four-character codes list"},
 	{GF_PROP_SINT_LIST, "sintl", "signed 32 bit integer list"},
-	{GF_PROP_VEC2I_LIST, "v2il", "2D 32-bit integer vector list"}
+	{GF_PROP_VEC2I_LIST, "v2il", "2D 32-bit integer vector list"},
+	{GF_PROP_PIXFMT, "pfmt", "raw pixel format"},
+	{GF_PROP_PCMFMT, "afmt", "raw audio format"},
+	{GF_PROP_CICP_COL_PRIM, "cprm", "color primaries, string or int value from ISO/IEC 23091-2"},
+	{GF_PROP_CICP_COL_TFC, "ctfc", "color transfer characteristics, string or int value from ISO/IEC 23091-2"},
+	{GF_PROP_CICP_COL_MX, "cmxc", "color matrix coefficients, string or int value from ISO/IEC 23091-2"}
 };
 
 GF_EXPORT
@@ -1151,12 +1294,13 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_PLAYBACK_MODE, "PlaybackMode", "Playback mode supported:\n- 0: no time control\n- 1: play/pause/seek,speed=1\n- 2: play/pause/seek,speed>=0\n- 3: play/pause/seek, reverse playback", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_SCALABLE, "Scalable", "Scalable stream", GF_PROP_BOOL},
 	{ GF_PROP_PID_TILE_BASE, "TileBase", "Tile base stream", GF_PROP_BOOL},
+	{ GF_PROP_PID_TILE_ID, "TileID", "ID of the tile for hvt1/hvt2 PIDs", GF_PROP_UINT},
 	{ GF_PROP_PID_LANGUAGE, "Language", "Language code: ISO639 2/3 character code or RFC 4646", GF_PROP_NAME},
 	{ GF_PROP_PID_SERVICE_NAME, "ServiceName", "Name of parent service", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_SERVICE_PROVIDER, "ServiceProvider", "Provider of parent service", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_STREAM_TYPE, "StreamType", "Media stream type", GF_PROP_UINT},
-	{ GF_PROP_PID_SUBTYPE, "StreamSubtype", "Media subtype 4CC (auxiliary, pic sequence, etc ..)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_ISOM_SUBTYPE, "ISOMSubtype", "ISOM media subtype 4CC (avc1 avc2...)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_SUBTYPE, "StreamSubtype", "Media subtype 4CC (auxiliary, pic sequence, etc ..)", GF_PROP_4CC, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_SUBTYPE, "ISOMSubtype", "ISOM media subtype 4CC (avc1 avc2...)", GF_PROP_4CC, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ORIG_STREAM_TYPE, "OrigStreamType", "Original stream type before encryption", GF_PROP_UINT},
 	{ GF_PROP_PID_CODECID, "CodecID", "Codec ID (MPEG-4 OTI or ISOBMFF 4CC)", GF_PROP_UINT},
 	{ GF_PROP_PID_IN_IOD, "InitialObjectDescriptor", "Indicates if pid is declared in the IOD for MPEG-4", GF_PROP_BOOL},
@@ -1181,7 +1325,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_CHANNEL_LAYOUT, "ChannelLayout", "Channel Layout mask", GF_PROP_LUINT},
 	{ GF_PROP_PID_AUDIO_FORMAT, "AudioFormat", "Audio sample format", GF_PROP_PCMFMT},
 	{ GF_PROP_PID_AUDIO_SPEED, "AudioPlaybackSpeed", "Audio playback speed, only used for audio output reconfiguration", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_DELAY, "Delay", "Delay of presentation compared to composition timestamps, in media timescale. Positive value imply holding (delaying) the stream. Negative value imply skipping the beginning of stream", GF_PROP_SINT},
+	{ GF_PROP_PID_DELAY, "Delay", "Delay of presentation compared to composition timestamps, in media timescale. Positive value imply holding (delaying) the stream. Negative value imply skipping the beginning of stream", GF_PROP_LSINT},
 	{ GF_PROP_PID_CTS_SHIFT, "CTSShift", "CTS offset to apply in case of negative ctts", GF_PROP_UINT},
 	{ GF_PROP_PID_WIDTH, "Width", "Visual Width (video / text / graphics)", GF_PROP_UINT},
 	{ GF_PROP_PID_HEIGHT, "Height", "Visual Height (video / text / graphics)", GF_PROP_UINT},
@@ -1229,7 +1373,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_DOWN_BYTES, "DownBytes", "Number of bytes downloaded - changes are signaled through pid info (no reconfigure)", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_FILE_RANGE, "ByteRange", "Byte range of resource", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DISABLE_PROGRESSIVE, "DisableProgressive", "indicates that some blocks in file need patching (replace or insertion) upon closing, potentially disabling progressive upload", GF_PROP_UINT, 0},
-	{ GF_PROP_PID_ISOM_BRANDS, "IsoAltBrands", "indicates ISOBMFF brands associated with PID/file", GF_PROP_UINT_LIST, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_BRANDS, "IsoAltBrands", "indicates ISOBMFF brands associated with PID/file", GF_PROP_4CC_LIST, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_MBRAND, "IsoBrand", "indicates ISOBMFF major brand associated with PID/file", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_MOVIE_TIME, "MovieTime", "indicates ISOBMFF movie header duration and timescale", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_HAS_SYNC, "HasSync", "indicates ISOBMFF track has sync points", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
@@ -1242,7 +1386,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_AUDIO_VOLUME, "AudioVolume", "Volume of audio", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_AUDIO_PAN, "AudioPan", "Balance/Pan of audio", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_AUDIO_PRIORITY, "AudioPriority", "Audio thread priority", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_PROTECTION_SCHEME_TYPE, "ProtectionScheme", "Protection scheme type (4CC) used", GF_PROP_UINT},
+	{ GF_PROP_PID_PROTECTION_SCHEME_TYPE, "ProtectionScheme", "Protection scheme type (4CC) used", GF_PROP_4CC},
 	{ GF_PROP_PID_PROTECTION_SCHEME_VERSION, "SchemeVersion", "Protection scheme version used", GF_PROP_UINT},
 	{ GF_PROP_PID_PROTECTION_SCHEME_URI, "SchemeURI", "Protection scheme URI", GF_PROP_STRING},
 	{ GF_PROP_PID_PROTECTION_KMS_URI, "KMS_URI", "URI for key management system", GF_PROP_STRING},
@@ -1262,11 +1406,9 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_OMA_PREVIEW_RANGE, "OMAPreview", "OMA Preview range ", GF_PROP_LUINT},
 	{ GF_PROP_PID_CENC_PSSH, "CENC_PSSH", "PSSH blob for CENC, formatted as (u32)NbSystems [ (bin128)SystemID(u32)version(u32)KID_count[ (bin128)keyID ] (u32)priv_size(char*priv_size)priv_data]", GF_PROP_DATA},
 	{ GF_PROP_PCK_CENC_SAI, "CENC_SAI", "CENC SAI for the packet, formated as (char(IV_Size))IV(u16)NbSubSamples [(u16)ClearBytes(u32)CryptedBytes]", GF_PROP_DATA, GF_PROP_FLAG_PCK},
-	{ GF_PROP_PID_KID, "KID", "Key ID for packets of the PID - changes are signaled through pid_set_info (no reconfigure)", GF_PROP_DATA},
-	{ GF_PROP_PID_CENC_IV_SIZE, "IVSize", "IV size for packets of the PID", GF_PROP_UINT},
-	{ GF_PROP_PID_CENC_IV_CONST, "ConstantIV", "Constant IV for packets of the PID", GF_PROP_DATA},
+	{ GF_PROP_PID_CENC_KEY_INFO, "KeyInfo", "Multi key info formatted as:\n `is_mkey(u8);\nnb_keys(u16);\n[\n\tIV_size(u8);\n\tKID(bin128);\n\tif (!IV_size) {;\n\t\tconst_IV_size(u8);\n\t\tconstIV(const_IV_size);\n}\n]\n`", GF_PROP_DATA},
 	{ GF_PROP_PID_CENC_PATTERN, "CENCPattern", "CENC crypt pattern, CENC pattern, skip as frac.num crypt as frac.den", GF_PROP_FRACTION},
-	{ GF_PROP_PID_CENC_STORE, "CENCStore", "Storage location 4CC of SAI data", GF_PROP_UINT},
+	{ GF_PROP_PID_CENC_STORE, "CENCStore", "Storage location 4CC of SAI data", GF_PROP_4CC},
 	{ GF_PROP_PID_CENC_STSD_MODE, "CENCstsdMode", "Mode for CENC sample description when using clear samples:\n"
 	"- 0: single sample description is used\n"
 	"- 1: a clear clone of the sample description is created, inserted before the CENC sample description\n"
@@ -1301,7 +1443,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_AS_ID, "ASID", "ID of parent DASH AS", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_MUX_SRC, "MuxSrc", "Name of mux source(s), set by dasher to direct its outputs", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MODE, "DashMode", "DASH mode to be used by muxer if any, set by dasher. 0 is no DASH, 1 is regular DASH, 2 is VoD", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_DASH_DUR, "DashDur", "DASH target segment duration in seconds to muxer if any, set by dasher", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_DASH_DUR, "DashDur", "DASH target segment duration in seconds to muxer if any, set by dasher", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MULTI_PID, NULL, "Pointer to the GF_List of input pids for multi-stsd entries segments, set by dasher", GF_PROP_POINTER, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MULTI_PID_IDX, NULL, "1-based index of PID in the multi PID list, set by dasher", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MULTI_TRACK, NULL, "Pointer to the GF_List of input pids for multi-tracks segments, set by dasher", GF_PROP_POINTER, GF_PROP_FLAG_GSF_REM},
@@ -1311,10 +1453,10 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_AS_ANY_DESC, "ASCDesc", "List of common descriptors for the DASH AdaptationSet containing this pid", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_REP_DESC, "RDesc", "List of descriptors for the DASH Representation containing this pid", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_BASE_URL, "BUrl", "List of base URLs for this pid", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_TEMPLATE, "Template", "Template to use for DASH generation for this pid", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_START_NUMBER, "StartNumber", "Start number to use for this pid - cf dasher help", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_TEMPLATE, "Template", "Template to use for DASH generation for this pid", GF_PROP_STRING, 0},
+	{ GF_PROP_PID_START_NUMBER, "StartNumber", "Start number to use for this pid - cf dasher help", GF_PROP_UINT, 0},
 	{ GF_PROP_PID_XLINK, "xlink", "Remote period URL for DASH - cf dasher help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_CLAMP_DUR, "CDur", "Max media duration to process from pid in DASH mode", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_CLAMP_DUR, "ClampDur", "Max media duration to process from pid in DASH mode", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_HLS_PLAYLIST, "HLSPL", "Name of the HLS variant playlist for this media", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_HLS_GROUPID, "HLSGroup", "Name of HLS Group of a stream", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_CUE, "DCue", "Name of a cue list file for this pid - see dasher help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
@@ -1324,22 +1466,30 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_SINGLE_SCALE, "SingleScale", "Indicates the movie header should use the media timescale of the first track added", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_UDP, "RequireReorder", "Indicates the PID packets come from source with losses and reordering happening (UDP)", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_PRIMARY_ITEM, "Primary", "Indicates this is a primary item in isobmf", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_DASH_FWD, "DFMode", "Indicates that forward mode is used for this PID. If 2, indicates the manifest is also carried in packet propery", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_DASH_MANIFEST, "DFManifest", "Value of manifest in forward mode", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_HLS_VARIANT, "DFVariant", "Value of variant playlist in forward mode", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_HLS_VARIANT_NAME, "DFVariantName", "Value of variant playlist name in forward mode", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_DASH_PERIOD_START, "DFPStart", "Value of active period start time in forward mode", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_HLS_KMS, "HLSKey", "URI, KEYFORMAT and KEYFORMATVERSIONS for HLS", GF_PROP_STRING},
 
-	{ GF_PROP_PID_COLR_PRIMARIES, "ColorPrimaries", "Indicate color primaries for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_COLR_TRANSFER, "ColorTransfer", "Indicate color transfer characteristics for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_COLR_MX, "ColorMatrixCoef", "Indicate color matrix coeficient for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_COLR_RANGE, "FullRange", "Indicate color full range flag for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_COLR_PRIMARIES, "ColorPrimaries", "Indicate color primaries for a visual pid", GF_PROP_CICP_COL_PRIM, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_COLR_TRANSFER, "ColorTransfer", "Indicate color transfer characteristics for a visual pid", GF_PROP_CICP_COL_TFC, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_COLR_MX, "ColorMatrix", "Indicate color matrix coeficient for a visual pid ", GF_PROP_CICP_COL_MX, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_COLR_RANGE, "FullRange", "Indicate color full range flag for a visual pid", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_COLR_CHROMALOC, "ChromaLoc", "Indicate chrom location for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_SRC_MAGIC, "SrcMagic", "Indicate a magic number to store in the track, only used by importers", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_MUX_INDEX, "MuxIndex", "Indicate target track index in destination file, stored by lowest value first (not set by demuxers)", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_NO_TS_LOOP, "NoTSLoop", "Indicate the timestamps on this PID are adjusted in case of loops (used by TS muxer output)", GF_PROP_BOOL, 0},
 	{ GF_PROP_PID_MHA_COMPATIBLE_PROFILES, "MHAProfiles", "Indicate a list of compatible profiles for this MPEG-H Audio object", GF_PROP_UINT_LIST, GF_PROP_FLAG_GSF_REM},
 
-	{ GF_PROP_PCK_FRAG_START, "FragStart", "Indicate if packet is a fragment start (value 1) or a segment start (value 2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PCK_FRAG_RANGE, "FragRange", "Indicate start and end position in bytes of fragment if packet is a fragment or segment start", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PCK_SIDX_RANGE, "SIDXRange", "Indicate start and end position in bytes of sidx if packet is a fragment or segment start", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_FRAG_START, "FragStart", "Indicate if packet is a fragment start (value 1) or a segment start (value 2)", GF_PROP_UINT, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_FRAG_RANGE, "FragRange", "Indicate start and end position in bytes of fragment if packet is a fragment or segment start", GF_PROP_FRACTION64, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_SIDX_RANGE, "SIDXRange", "Indicate start and end position in bytes of sidx if packet is a fragment or segment start", GF_PROP_FRACTION64, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM},
 
-	{ GF_PROP_PCK_MOOF_TEMPLATE, "MoofTemplate", "Serialized moof box corresponding to the start of a movie fragment or segment (with styp and optionally sidx)", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_MOOF_TEMPLATE, "MoofTemplate", "Serialized moof box corresponding to the start of a movie fragment or segment (with styp and optionally sidx)", GF_PROP_DATA, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM},
+
+	{ GF_PROP_PCK_INIT, "InitSeg", "Set to true if packet is a complete DASH init segment file", GF_PROP_BOOL, GF_PROP_FLAG_PCK},
 
 	{ GF_PROP_PID_RAWGRAB, "RawGrab", "Indicate PID is a raw media grabber (webcam, microphone, etc...)", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_KEEP_AFTER_EOS, "KeepAfterEOS", "Indicate the PID must be kept alive after EOS (LASeR and BIFS)", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
@@ -1350,6 +1500,19 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_RE_BUFFER, "ReBuffer", "Indicate rebuffer threshold in ms, 0 disable rebuffering", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_VIEW_IDX, "ViewIdx", "Indicate view index for multiview (1 being left)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ORIG_FRAG_URL, "FragURL", "Indicate fragment URL (without '#') of original URL (used by dash demux to set the property on media PIDs)", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+
+	{ GF_PROP_PID_ROUTE_IP, "ROUTEIP", "Indicate ROUTE session IP address", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ROUTE_PORT, "ROUTEPort", "Indicate ROUTE session port number", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ROUTE_NAME, "ROUTEName", "Name (location) of raw file to advertise in ROUTE session", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ROUTE_CAROUSEL, "ROUTECarousel", "Carousel period in seconds of raw file in ROUTE session", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ROUTE_SENDTIME, "ROUTEUpload", "Upload time in seconds of raw file in ROUTE session", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM},
+
+	{ GF_PROP_PID_STEREO_TYPE, "Stereo", "Stereo type of video", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_PROJECTION_TYPE, "Projection", "Projection type of video", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_VR_POSE, "InitalPose", "Initial pose for 360 video, in degrees expressed as 16.16 bits (x is yaw, y is pitch, z is roll)", GF_PROP_VEC3I, GF_PROP_FLAG_GSF_REM},
+
+	{ GF_PROP_PID_CUBE_MAP_PAD, "CMPad", "Number of pixels to pad from egde of each face in cube map", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_EQR_CLAMP, "EQRClamp", "Clamping of frame for EQR as 0.32 fixed point (x is top, y is bottom, z is left and w is right)", GF_PROP_VEC4I, GF_PROP_FLAG_GSF_REM},
 };
 
 GF_EXPORT
@@ -1417,7 +1580,8 @@ Bool gf_props_4cc_check_props()
 	return res;
 }
 
-static const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], u32 dump_data_type, const char *min_max_enum, Bool is_4cc)
+GF_EXPORT
+const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], u32 dump_data_type, const char *min_max_enum)
 {
 	switch (att->type) {
 	case GF_PROP_NAME:
@@ -1463,6 +1627,9 @@ static const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[G
 			sprintf(dump, "%u", att->value.uint);
 		}
 		break;
+	case GF_PROP_4CC:
+		sprintf(dump, "%s", gf_4cc_to_str(att->value.uint) );
+		break;
 	case GF_PROP_LSINT:
 		sprintf(dump, ""LLD, att->value.longsint);
 		break;
@@ -1503,19 +1670,9 @@ static const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[G
 	case GF_PROP_VEC3I:
 		sprintf(dump, "%dx%dx%d", att->value.vec3i.x, att->value.vec3i.y, att->value.vec3i.z);
 		break;
-	case GF_PROP_VEC3:
-		sprintf(dump, "%lgx%lgx%lg", att->value.vec3.x, att->value.vec3.y, att->value.vec3.y);
-		break;
 	case GF_PROP_VEC4I:
 		sprintf(dump, "%dx%dx%dx%d", att->value.vec4i.x, att->value.vec4i.y, att->value.vec4i.z, att->value.vec4i.w);
 		break;
-	case GF_PROP_VEC4:
-		sprintf(dump, "%lgx%lgx%lgx%lg", att->value.vec4.x, att->value.vec4.y, att->value.vec4.y, att->value.vec4.w);
-		break;
-	case GF_PROP_PIXFMT:
-		return gf_pixel_fmt_name(att->value.uint);
-	case GF_PROP_PCMFMT:
-		return gf_audio_fmt_name(att->value.uint);
 	case GF_PROP_NAME:
 	case GF_PROP_STRING:
 	case GF_PROP_STRING_NO_COPY:
@@ -1561,6 +1718,7 @@ static const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[G
 		return dump;
 	}
 	case GF_PROP_UINT_LIST:
+	case GF_PROP_4CC_LIST:
 	case GF_PROP_SINT_LIST:
 	case GF_PROP_VEC2I_LIST:
 	{
@@ -1570,11 +1728,9 @@ static const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[G
 		for (i=0; i<count; i++) {
 			char szItem[1024];
 			if (att->type==GF_PROP_UINT_LIST) {
-				if (is_4cc) {
-					sprintf(szItem, "%s", gf_4cc_to_str(att->value.uint_list.vals[i]) );
-				} else {
-					sprintf(szItem, "%u", att->value.uint_list.vals[i]);
-				}
+				sprintf(szItem, "%u", att->value.uint_list.vals[i]);
+			} else if (att->type==GF_PROP_4CC_LIST) {
+				sprintf(szItem, "%s", gf_4cc_to_str(att->value.uint_list.vals[i]) );
 			} else if (att->type==GF_PROP_SINT_LIST) {
 				sprintf(szItem, "%d", att->value.sint_list.vals[i]);
 			} else {
@@ -1600,47 +1756,36 @@ static const char *gf_props_dump_val_ex(const GF_PropertyValue *att, char dump[G
 	case GF_PROP_LAST_DEFINED:
 		sprintf(dump, "lastDefined");
 		break;
+	default:
+		if (gf_props_type_is_enum(att->type)) {
+			return gf_props_enum_name(att->type, att->value.uint);
+		}
 	}
 	return dump;
 }
 
 GF_EXPORT
-const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], u32 dump_data_mode, const char *min_max_enum)
-{
-	return gf_props_dump_val_ex(att, dump, dump_data_mode, min_max_enum, GF_FALSE);
-}
-
-GF_EXPORT
 const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], u32 dump_data_mode)
 {
-	Bool is_4cc = GF_FALSE;
-
 	switch (p4cc) {
 	case GF_PROP_PID_STREAM_TYPE:
 	case GF_PROP_PID_ORIG_STREAM_TYPE:
 		return gf_stream_type_name(att->value.uint);
 	case GF_PROP_PID_CODECID:
 		return gf_codecid_name(att->value.uint);
-	case GF_PROP_PID_PIXFMT:
-		return gf_pixel_fmt_name(att->value.uint);
-	case GF_PROP_PID_AUDIO_FORMAT:
-		return gf_audio_fmt_name(att->value.uint);
-	case GF_PROP_PID_PROTECTION_SCHEME_TYPE:
-	case GF_PROP_PID_CENC_STORE:
-	case GF_PROP_PID_SUBTYPE:
-	case GF_PROP_PID_ISOM_SUBTYPE:
-	case GF_PROP_PID_ISOM_MBRAND:
-		return gf_4cc_to_str(att->value.uint);
+
 	case GF_PROP_PID_PLAYBACK_MODE:
 		if (att->value.uint == GF_PLAYBACK_MODE_SEEK) return "seek";
 		else if (att->value.uint == GF_PLAYBACK_MODE_REWIND) return "rewind";
 		else if (att->value.uint == GF_PLAYBACK_MODE_FASTFORWARD) return "forward";
 		else return "none";
-	case GF_PROP_PID_ISOM_BRANDS:
-		is_4cc = GF_TRUE;
-
 	default:
-		return gf_props_dump_val_ex(att, dump, dump_data_mode, NULL, is_4cc);
+		if (att->type==GF_PROP_UINT) {
+			u32 type = gf_props_4cc_get_type(p4cc);
+			if (gf_props_type_is_enum(type))
+				return gf_props_enum_name(type, att->value.uint);
+		}
+		return gf_props_dump_val(att, dump, dump_data_mode, NULL);
 	}
 	return "";
 }

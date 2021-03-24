@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2018
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -119,6 +119,8 @@ const GF_FilterRegister *filelist_register(GF_FilterSession *session);
 const GF_FilterRegister *tsmux_register(GF_FilterSession *session);
 const GF_FilterRegister *dasher_register(GF_FilterSession *session);
 const GF_FilterRegister *tileagg_register(GF_FilterSession *session);
+const GF_FilterRegister *tilesplit_register(GF_FilterSession *session);
+
 #if !defined(GPAC_CONFIG_ANDROID)
 const GF_FilterRegister *pipein_register(GF_FilterSession *session);
 const GF_FilterRegister *pipeout_register(GF_FilterSession *session);
@@ -131,7 +133,7 @@ const GF_FilterRegister *obumx_register(GF_FilterSession *session);
 #if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID)
 const GF_FilterRegister *nvdec_register(GF_FilterSession *session);
 #endif
-const GF_FilterRegister *atscin_register(GF_FilterSession *session);
+const GF_FilterRegister *routein_register(GF_FilterSession *session);
 const GF_FilterRegister *rtpout_register(GF_FilterSession *session);
 const GF_FilterRegister *rtspout_register(GF_FilterSession *session);
 const GF_FilterRegister *hevcsplit_register(GF_FilterSession *session);
@@ -154,6 +156,10 @@ const GF_FilterRegister *proresdmx_register(GF_FilterSession *session);
 const GF_FilterRegister *bsrw_register(GF_FilterSession *session);
 const GF_FilterRegister *mhas_dmx_register(GF_FilterSession *session);
 const GF_FilterRegister *mhasmx_register(GF_FilterSession *session);
+const GF_FilterRegister *routeout_register(GF_FilterSession *session);
+const GF_FilterRegister *truehd_register(GF_FilterSession *session);
+const GF_FilterRegister *cryptfin_register(GF_FilterSession *session);
+const GF_FilterRegister *cryptfout_register(GF_FilterSession *session);
 
 void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 {
@@ -245,6 +251,8 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, tsmux_register(a_sess) );
 	gf_fs_add_filter_register(fsess, dasher_register(a_sess) );
 	gf_fs_add_filter_register(fsess, tileagg_register(a_sess) );
+	gf_fs_add_filter_register(fsess, tilesplit_register(a_sess) );
+
 #if !defined(GPAC_CONFIG_ANDROID)
 	gf_fs_add_filter_register(fsess, pipein_register(a_sess) );
 	gf_fs_add_filter_register(fsess, pipeout_register(a_sess) );
@@ -257,7 +265,7 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 #if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID)
 	gf_fs_add_filter_register(fsess, nvdec_register(a_sess));
 #endif
-	gf_fs_add_filter_register(fsess, atscin_register(a_sess));
+	gf_fs_add_filter_register(fsess, routein_register(a_sess));
 	gf_fs_add_filter_register(fsess, rtpout_register(a_sess));
 	gf_fs_add_filter_register(fsess, rtspout_register(a_sess));
 	gf_fs_add_filter_register(fsess, httpout_register(a_sess));
@@ -280,6 +288,10 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, ffavf_register(a_sess) );
 
 	gf_fs_add_filter_register(fsess, jsfilter_register(a_sess) );
+	gf_fs_add_filter_register(fsess, routeout_register(a_sess) );
+	gf_fs_add_filter_register(fsess, truehd_register(a_sess) );
+	gf_fs_add_filter_register(fsess, cryptfin_register(a_sess) );
+	gf_fs_add_filter_register(fsess, cryptfout_register(a_sess) );
 
 #if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
 	gf_fs_add_filter_register(fsess, dtout_register(a_sess) );

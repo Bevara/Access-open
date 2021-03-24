@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / force reframer filter
@@ -58,6 +58,8 @@ enum
 	EXTRACT_DUR,
 };
 
+#define RT_PRECISION_US	2000
+
 typedef struct
 {
 	GF_FilterPid *ipid, *opid;
@@ -73,7 +75,7 @@ typedef struct
 	u64 ts_at_range_end;
 
 	GF_List *pck_queue;
-	//0: not comuted, 1: computed and valid TS, 2: end of stream on pid
+	//0: not computed, 1: computed and valid TS, 2: end of stream on pid
 	u32 range_start_computed;
 	u64 range_end_reached_ts;
 	u64 prev_sap_ts;
@@ -82,14 +84,16 @@ typedef struct
 	u64 sap_ts_plus_one;
 	Bool first_pck_sent;
 
-	u32 tk_delay;
+	u64 tk_delay;
 	Bool in_eos;
 	u32 split_start;
 	u32 split_end;
 
 	GF_FilterPacket *split_pck;
-	GF_FilterPacket *resinsert_single_pck;
+	GF_FilterPacket *reinsert_single_pck;
 	Bool is_playing;
+
+	u32 codec_id, stream_type;
 } RTStream;
 
 typedef struct
@@ -103,7 +107,7 @@ typedef struct
 	Double speed;
 	Bool raw;
 	GF_PropStringList xs, xe;
-	Bool nosap, splitrange, xadjust;
+	Bool nosap, splitrange, xadjust, tcmdrw;
 	u32 xround;
 	Double seeksafe;
 
@@ -145,6 +149,9 @@ typedef struct
 	u32 wait_video_range_adjust;
 	Bool is_eos, has_seen_eos;
 	u32 nb_non_saps;
+
+	u32 nb_video_frames_since_start_at_range_start;
+	u32 nb_video_frames_since_start;
 } GF_ReframerCtx;
 
 static void reframer_reset_stream(GF_ReframerCtx *ctx, RTStream *st)
@@ -157,7 +164,7 @@ static void reframer_reset_stream(GF_ReframerCtx *ctx, RTStream *st)
 		gf_list_del(st->pck_queue);
 	}
 	if (st->split_pck) gf_filter_pck_unref(st->split_pck);
-	if (st->resinsert_single_pck) gf_filter_pck_unref(st->resinsert_single_pck);
+	if (st->reinsert_single_pck) gf_filter_pck_unref(st->reinsert_single_pck);
 	gf_free(st);
 }
 GF_Err reframer_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
@@ -169,7 +176,8 @@ GF_Err reframer_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 
 	if (is_remove) {
 		if (st) {
-			gf_filter_pid_remove(st->opid);
+			if (st->opid)
+				gf_filter_pid_remove(st->opid);
 			gf_list_del_item(ctx->streams, st);
 			reframer_reset_stream(ctx, st);
 		}
@@ -205,25 +213,28 @@ GF_Err reframer_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	}
 	st->can_split = GF_FALSE;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_STREAM_TYPE);
-	if (p) {
-		switch (p->value.uint) {
-		case GF_STREAM_TEXT:
-			st->can_split = GF_TRUE;
-			break;
-		}
+	st->stream_type = p ? p->value.uint : 0;
+	switch (st->stream_type) {
+	case GF_STREAM_TEXT:
+		st->can_split = GF_TRUE;
+		break;
 	}
+
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CODECID);
+	st->codec_id = p ? p->value.uint : 0;
+
 	st->needs_adjust = ctx->xadjust ? GF_TRUE : GF_FALSE;
 
 	st->tk_delay = 0;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
 	if (p) {
 		//delay negative is skip: this is CTS adjustment for B-frames: we keep that notif in the stream
-		if (p->value.sint<0) {
+		if (p->value.longsint<0) {
 			st->tk_delay = 0;
 		}
 		//delay positive is delay, we keep the value for RT regulation and range
 		else {
-			st->tk_delay = (u32) p->value.sint;
+			st->tk_delay = (u64) p->value.longsint;
 			//if range processing, we drop frames not in the target playback range so do not forward delay
 			if (ctx->range_type) {
 				gf_filter_pid_set_property(st->opid, GF_PROP_PID_DELAY, NULL);
@@ -238,8 +249,14 @@ GF_Err reframer_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	ctx->filter_sap1 = ctx->filter_sap2 = ctx->filter_sap3 = ctx->filter_sap4 = ctx->filter_sap_none = GF_FALSE;
 	for (i=0; i<ctx->saps.nb_items; i++) {
 		switch (ctx->saps.vals[i]) {
-		case 1: ctx->filter_sap1 = GF_TRUE; break;
-		case 2: ctx->filter_sap2 = GF_TRUE; break;
+		case 1:
+			ctx->filter_sap1 = GF_TRUE;
+			gf_filter_pid_set_property(st->opid, GF_PROP_PID_HAS_SYNC, &PROP_BOOL(GF_FALSE)); //false: all samples are sync
+			break;
+		case 2:
+			ctx->filter_sap2 = GF_TRUE;
+			gf_filter_pid_set_property(st->opid, GF_PROP_PID_HAS_SYNC, &PROP_BOOL(GF_FALSE)); //false: all samples are sync
+			break;
 		case 3: ctx->filter_sap3 = GF_TRUE; break;
 		case 4: ctx->filter_sap4 = GF_TRUE; break;
 		default: ctx->filter_sap_none = GF_TRUE; break;
@@ -336,6 +353,8 @@ static void reframer_load_range(GF_ReframerCtx *ctx)
 	u64 prev_frame = ctx->start_frame_idx_plus_one;
 	GF_Fraction64 prev_end;
 	char *start_date=NULL, *end_date=NULL;
+
+	ctx->nb_video_frames_since_start_at_range_start = ctx->nb_video_frames_since_start;
 
 	if (ctx->extract_mode==EXTRACT_DUR) {
 		ctx->cur_start.num += (ctx->extract_dur.num * ctx->cur_start.den) / ctx->extract_dur.den;
@@ -542,9 +561,11 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 				else if (ctx->speed<0) diff = (u64) ( diff / -ctx->speed);
 
 				clock -= st->sys_clock_at_init;
-				if (clock + 1000 >= diff) {
+				if (clock + RT_PRECISION_US >= diff) {
 					do_send = GF_TRUE;
-					GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Reframer] Sending packet "LLU" us too late (clock diff "LLU" - CTS diff "LLU")\n", 1000+clock - diff, clock, diff));
+					if (clock > diff) {
+						GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Reframer] Sending packet "LLU" us too late (clock diff "LLU" - CTS diff "LLU")\n", 1000+clock - diff, clock, diff));
+					}
 				} else {
 					diff -= clock;
 					if (!ctx->reschedule_in)
@@ -578,8 +599,26 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 
 	//range processing
 	if (st->ts_at_range_start_plus_one) {
+		Bool is_split = GF_FALSE;
 		s64 ts;
-		GF_FilterPacket *new_pck = gf_filter_pck_new_ref(st->opid, 0, 0, pck);
+		GF_FilterPacket *new_pck;
+
+		//tmcd, rewrite sample
+		if (ctx->tcmdrw && (st->codec_id==GF_CODECID_TMCD) && st->split_start && ctx->nb_video_frames_since_start_at_range_start) {
+			GF_BitStream *bs;
+			u32 nb_frames;
+			u8 *tcmd_data = NULL;
+			new_pck = gf_filter_pck_new_copy(st->opid, pck, &tcmd_data);
+			bs = gf_bs_new(tcmd_data, 4, GF_BITSTREAM_READ);
+			nb_frames = gf_bs_read_u32(bs);
+			gf_bs_del(bs);
+			bs = gf_bs_new(tcmd_data, 4, GF_BITSTREAM_WRITE);
+			gf_bs_seek(bs, 0);
+			gf_bs_write_u32(bs, nb_frames+ctx->nb_video_frames_since_start_at_range_start);
+			gf_bs_del(bs);
+		} else {
+			new_pck = gf_filter_pck_new_ref(st->opid, 0, 0, pck);
+		}
 		gf_filter_pck_merge_properties(pck, new_pck);
 
 		//signal chunk start boundary
@@ -667,27 +706,49 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 				gf_filter_pck_set_dts(new_pck, (u64) ts);
 			}
 		}
+		//packet was split or was re-inserted
 		if (st->split_start) {
 			u32 dur = gf_filter_pck_get_duration(pck);
-			assert(dur>st->split_start);
-			dur -= st->split_start;
+			//can happen if source packet is less than split period duration, we just copy with no timing adjustment
+			if (dur > st->split_start)
+				dur -= st->split_start;
 			gf_filter_pck_set_duration(new_pck, dur);
 			st->ts_at_range_start_plus_one += st->split_start;
 			st->split_start = 0;
+			is_split = GF_TRUE;
 		}
 		//last packet and forced duration
 		if (st->split_end && (gf_list_count(st->pck_queue)==1)) {
 			gf_filter_pck_set_duration(new_pck, st->split_end);
 			st->split_end = 0;
+			is_split = GF_TRUE;
+		}
+		//packet reinserted (not split), adjust duration and store offset in split start
+		if (!st->can_split && !is_split && st->reinsert_single_pck) {
+			u32 dur = gf_filter_pck_get_duration(pck);
+			u64 ndur = st->range_end_reached_ts;
+			ndur -= st->ts_at_range_start_plus_one-1;
+			if (ndur && (ndur < dur))
+				gf_filter_pck_set_duration(new_pck, (u32) ndur);
+			st->split_start = (u32) ndur;
 		}
 
 		gf_filter_pck_send(new_pck);
+
 	} else {
 		gf_filter_pck_forward(pck, st->opid);
 	}
 
+
 	reframer_drop_packet(ctx, st, pck, pck_is_ref);
 	st->nb_frames++;
+
+	if (st->stream_type==GF_STREAM_VISUAL) {
+		if (st->nb_frames > ctx->nb_video_frames_since_start) {
+			ctx->nb_video_frames_since_start = st->nb_frames;
+		}
+	}
+
 	return GF_TRUE;
 }
 
@@ -735,7 +796,7 @@ void reframer_purge_queues(GF_ReframerCtx *ctx, u64 ts, u32 timescale)
 	for (i=0; i<count; i++) {
 		RTStream *st = gf_list_get(ctx->streams, i);
 		u64 ts_rescale = ts;
-		if (st->resinsert_single_pck)
+		if (st->reinsert_single_pck)
 			continue;
 
 		if (st->timescale != timescale) {
@@ -806,7 +867,7 @@ static void check_gop_split(GF_ReframerCtx *ctx)
 			}
 			//in SAP split, flush as soon as we no longer have 2 consecutive saps
 			if (!last_sap_ts) {
-				if (st->in_eos && !flush_all && !st->resinsert_single_pck) {
+				if (st->in_eos && !flush_all && !st->reinsert_single_pck) {
 					flush_all = GF_TRUE;
 				} else if (!st->all_saps) {
 					wait_for_sap = GF_TRUE;
@@ -879,7 +940,7 @@ static void check_gop_split(GF_ReframerCtx *ctx)
 			GF_FilterPacket *pck;
 			RTStream *st = gf_list_get(ctx->streams, i);
 			if (st->range_start_computed==2) continue;
-			if (st->resinsert_single_pck) continue;
+			if (st->reinsert_single_pck) continue;
 			pck = gf_list_last(st->pck_queue);
 			assert(pck);
 			ts = gf_filter_pck_get_dts(pck);
@@ -1087,11 +1148,11 @@ GF_Err reframer_process(GF_Filter *filter)
 				if (gf_filter_pid_is_eos(ipid)) {
 					//special case for PIDs with a single packet, we reinsert them at the begining of each extracted range
 					//this allows dealing with BIFS/OD/JPEG/PNG tracks
-					if (st->resinsert_single_pck) {
+					if (st->reinsert_single_pck) {
 						if (!ctx->in_range && !st->range_start_computed) {
 							st->range_start_computed = 3;
 							if (!gf_list_count(st->pck_queue)) {
-								pck = st->resinsert_single_pck;
+								pck = st->reinsert_single_pck;
 								gf_filter_pck_ref(&pck);
 								gf_list_add(st->pck_queue, pck);
 								if (!ctx->is_range_extraction) {
@@ -1164,10 +1225,10 @@ GF_Err reframer_process(GF_Filter *filter)
 				//keep ref to first packet until we see a second one
 				if (st->nb_frames_range==1) {
 					gf_filter_pck_ref(&pck);
-					st->resinsert_single_pck = pck;
-				} else if (st->resinsert_single_pck) {
-					gf_filter_pck_unref(st->resinsert_single_pck);
-					st->resinsert_single_pck = NULL;
+					st->reinsert_single_pck = pck;
+				} else if (st->reinsert_single_pck) {
+					gf_filter_pck_unref(st->reinsert_single_pck);
+					st->reinsert_single_pck = NULL;
 				}
 				continue;
 			}
@@ -1191,7 +1252,7 @@ GF_Err reframer_process(GF_Filter *filter)
 					reframer_purge_queues(ctx, ts, st->timescale);
 				}
 
-				//packet in range and global context not yet in range, mark which SAP will be the begining of our range
+				//packet in range and global context not yet in range, mark which SAP will be the beginning of our range
 				if (!ctx->in_range && (pck_in_range==1)) {
 					if (ctx->xround==REFRAME_ROUND_CLOSEST) {
 						Bool cur_closer = GF_FALSE;
@@ -1290,10 +1351,10 @@ GF_Err reframer_process(GF_Filter *filter)
 				//keep ref to first packet until we see a second one
 				if (st->nb_frames_range==1) {
 					gf_filter_pck_ref(&pck);
-					st->resinsert_single_pck = pck;
-				} else if (st->resinsert_single_pck) {
-					gf_filter_pck_unref(st->resinsert_single_pck);
-					st->resinsert_single_pck = NULL;
+					st->reinsert_single_pck = pck;
+				} else if (st->reinsert_single_pck) {
+					gf_filter_pck_unref(st->reinsert_single_pck);
+					st->reinsert_single_pck = NULL;
 				}
 			} else {
 				assert(pck == st->split_pck);
@@ -1429,8 +1490,8 @@ GF_Err reframer_process(GF_Filter *filter)
 								&& ctx->splitrange
 								&& (ctx->cur_range_idx>1)
 							) {
-								s32 delay = (s32) ((s64) ots - (s64) orig);
-								gf_filter_pid_set_property(st->opid, GF_PROP_PID_DELAY, &PROP_SINT(delay) );
+								s64 delay = (s64) ots - (s64) orig;
+								gf_filter_pid_set_property(st->opid, GF_PROP_PID_DELAY, &PROP_LONGSINT(delay) );
 							}
 							start_found = GF_TRUE;
 							break;
@@ -1588,7 +1649,7 @@ load_next_range:
 			RTStream *st = gf_filter_pid_get_udta(ipid);
 			//we reinsert the same PCK, so the ts_at_range_start_plus is always the packet cts
 			//we therefore need to compute the ts at and as the target end time minus the target start time
-			if (st->resinsert_single_pck) {
+			if (st->reinsert_single_pck) {
 				u64 start = ctx->cur_start.num;
 				start *= st->timescale;
 				start /= ctx->cur_start.den;
@@ -1623,11 +1684,25 @@ load_next_range:
 	if (nb_eos==count) return GF_EOS;
 
 	if (ctx->rt) {
-		if (ctx->reschedule_in>2000) {
-			gf_filter_ask_rt_reschedule(filter, (u32) (ctx->reschedule_in - 2000));
+		//while technically correct this increases the CPU load by shuffing the task around and querying gf_sys_clock_high_res too often
+		//needs more investigation
+		//using a simple callback every RT_PRECISION_US is a good workaround
+#if 0
+		u32 rsus = 0;
+		if (ctx->reschedule_in > RT_PRECISION_US) {
+			rsus = (u32) (ctx->reschedule_in - RT_PRECISION_US);
+			if (rsus<RT_PRECISION_US) rsus = RT_PRECISION_US;
 		} else if (ctx->reschedule_in>1000) {
-			gf_filter_ask_rt_reschedule(filter, (u32) (ctx->reschedule_in / 2));
+			rsus = (u32) (ctx->reschedule_in / 2);
 		}
+		if (rsus) {
+			gf_filter_ask_rt_reschedule(filter, rsus);
+		}
+#else
+		if (ctx->reschedule_in) {
+			gf_filter_ask_rt_reschedule(filter, RT_PRECISION_US);
+		}
+#endif
 	}
 
 	return GF_OK;
@@ -1739,6 +1814,7 @@ static const GF_FilterArgs ReframerArgs[] =
 	{ OFFS(nosap), "do not cut at SAP when extracting range (may result in broken streams)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(splitrange), "signal file boundary at each extraction first packet for template-base file generation", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(seeksafe), "rewind play requests by given seconds (to make sur I-frame preceeding start is catched)", GF_PROP_DOUBLE, "10.0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(tcmdrw), "rewrite TCMD samples when splitting", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -1777,7 +1853,7 @@ GF_FilterRegister ReframerRegister = {
 		"- 'T'H:M:S.MS: specify time in hours, minutes, seconds and milliseconds\n"
 		"- INT: specify time in millisecond\n"
 		"- NUM/DEN: specify time in seconds as fraction\n"
-		"- FNUM: specify time as frame number\n"
+		"- 'F'NUM: specify time as frame number\n"
 		"In this mode, the timestamps are rewritten to form a continuous timeline.\n"
 		"When multiple ranges are given, the filter will try to seek if supported by source."
 		"\n"

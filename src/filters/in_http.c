@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / HTTP input filter using GPAC http stack
@@ -34,8 +34,17 @@ typedef enum
 	GF_HTTPIN_STORE_DISK=0,
 	GF_HTTPIN_STORE_DISK_KEEP,
 	GF_HTTPIN_STORE_MEM,
+	GF_HTTPIN_STORE_MEM_KEEP,
 	GF_HTTPIN_STORE_NONE,
+	GF_HTTPIN_STORE_NONE_KEEP,
 } GF_HTTPInStoreMode;
+
+enum
+{
+	HTTP_PCK_NONE=0,
+	HTTP_PCK_OUT=1,
+	HTTP_PCK_OUT_EOS=2,
+};
 
 typedef struct
 {
@@ -57,13 +66,17 @@ typedef struct
 	GF_DownloadSession *sess;
 
 	char *block;
-	Bool pck_out, is_end;
+	u32 pck_out;
+	Bool is_end;
 	u64 nb_read, file_size;
 	FILE *cached;
+	u32 blob_size;
 
 	Bool do_reconfigure;
 	Bool full_file_only;
 	GF_Err last_state;
+	Bool is_source_switch;
+	Bool prev_was_init_segment;
 } GF_HTTPInCtx;
 
 static void httpin_notify_error(GF_Filter *filter, GF_HTTPInCtx *ctx, GF_Err e)
@@ -93,9 +106,20 @@ static GF_Err httpin_initialize(GF_Filter *filter)
 	ctx->block = gf_malloc(ctx->block_size +1);
 
 	flags = GF_NETIO_SESSION_NOT_THREADED | GF_NETIO_SESSION_PERSISTENT;
-	if (ctx->cache==GF_HTTPIN_STORE_MEM) flags |= GF_NETIO_SESSION_MEMORY_CACHE;
-	else if (ctx->cache==GF_HTTPIN_STORE_NONE) flags |= GF_NETIO_SESSION_NOT_CACHED;
-	else if (ctx->cache==GF_HTTPIN_STORE_DISK_KEEP) flags |= GF_NETIO_SESSION_KEEP_CACHE;
+	if (ctx->cache==GF_HTTPIN_STORE_MEM)
+		flags |= GF_NETIO_SESSION_MEMORY_CACHE;
+	else if (ctx->cache==GF_HTTPIN_STORE_NONE)
+		flags |= GF_NETIO_SESSION_NOT_CACHED;
+	else if (ctx->cache==GF_HTTPIN_STORE_DISK_KEEP)
+		flags |= GF_NETIO_SESSION_KEEP_CACHE;
+	else if (ctx->cache==GF_HTTPIN_STORE_MEM_KEEP) {
+		flags |= GF_NETIO_SESSION_MEMORY_CACHE|GF_NETIO_SESSION_KEEP_FIRST_CACHE;
+		ctx->cache = GF_HTTPIN_STORE_MEM;
+	}
+	else if (ctx->cache==GF_HTTPIN_STORE_NONE_KEEP) {
+		flags |= GF_NETIO_SESSION_NOT_CACHED|GF_NETIO_SESSION_MEMORY_CACHE|GF_NETIO_SESSION_KEEP_FIRST_CACHE;
+		ctx->cache = GF_HTTPIN_STORE_NONE;
+	}
 
 	server = strstr(ctx->src, "://");
 	if (server) server += 3;
@@ -110,7 +134,7 @@ static GF_Err httpin_initialize(GF_Filter *filter)
 		ctx->initial_ack_done = GF_TRUE;
 		return e;
 	}
-	if (ctx->range.den) {
+	if (ctx->range.num || ctx->range.den) {
 		gf_dm_sess_set_range(ctx->sess, ctx->range.num, ctx->range.den, GF_TRUE);
 	}
 
@@ -121,6 +145,18 @@ static GF_Err httpin_initialize(GF_Filter *filter)
 
 	return GF_OK;
 }
+
+
+static void httpin_set_eos(GF_HTTPInCtx *ctx)
+{
+	//no pending packets, signal eos right away
+	if (!ctx->pck_out) {
+		gf_filter_pid_set_eos(ctx->pid);
+	}
+	else
+		ctx->pck_out = HTTP_PCK_OUT_EOS;
+}
+
 
 void httpin_finalize(GF_Filter *filter)
 {
@@ -143,7 +179,11 @@ static GF_FilterProbeScore httpin_probe_url(const char *url, const char *mime_ty
 static void httpin_rel_pck(GF_Filter *filter, GF_FilterPid *pid, GF_FilterPacket *pck)
 {
 	GF_HTTPInCtx *ctx = (GF_HTTPInCtx *) gf_filter_get_udta(filter);
-	ctx->pck_out = GF_FALSE;
+
+	if (ctx->pck_out==HTTP_PCK_OUT_EOS) {
+		gf_filter_pid_set_eos(ctx->pid);
+	}
+	ctx->pck_out = HTTP_PCK_NONE;
 	//ready to process again
 	gf_filter_post_process_task(filter);
 }
@@ -156,20 +196,22 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	if (evt->base.on_pid && (evt->base.on_pid != ctx->pid)) return GF_FALSE;
 
 	switch (evt->base.type) {
+	//we only check PLAY for full_file_only hint
 	case GF_FEVT_PLAY:
-		ctx->is_end = GF_FALSE;
 		ctx->full_file_only = evt->play.full_file_only;
+		//do NOT reset is_end to false, restarting the session is always done via a source_seek event
 		return GF_TRUE;
 	case GF_FEVT_STOP:
 		if (!ctx->is_end) {
-			//abort session
-			gf_filter_pid_set_eos(ctx->pid);
 			ctx->is_end = GF_TRUE;
+			//abort session
 			if (ctx->sess) {
+				GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTPIn] Stop requested, aborting download %s (pck out %d) this %p\n", ctx->src, ctx->pck_out, ctx) );
 				gf_dm_sess_abort(ctx->sess);
 				gf_dm_sess_del(ctx->sess);
 				ctx->sess = NULL;
 			}
+			httpin_set_eos(ctx);
 		}
 		return GF_TRUE;
 	case GF_FEVT_SOURCE_SEEK:
@@ -194,21 +236,39 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		} else {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPIn] Requested seek outside file range !\n") );
 			ctx->is_end = GF_TRUE;
-			gf_filter_pid_set_eos(ctx->pid);
+
+			httpin_set_eos(ctx);
 		}
 		return GF_TRUE;
 	case GF_FEVT_SOURCE_SWITCH:
-		assert(ctx->is_end);
-		assert(!ctx->pck_out);
 		if (evt->seek.source_switch) {
-			if (ctx->src && ctx->sess && (ctx->cache!=GF_HTTPIN_STORE_DISK_KEEP) && !evt->seek.previous_is_init_segment) {
+			assert(ctx->is_end);
+			assert(!ctx->pck_out);
+			if (ctx->src && ctx->sess && (ctx->cache!=GF_HTTPIN_STORE_DISK_KEEP) && !ctx->prev_was_init_segment) {
 				gf_dm_delete_cached_file_entry_session(ctx->sess, ctx->src);
 			}
+			GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTPIn] Switch from %s to %s\n", gf_file_basename(ctx->src), gf_file_basename(evt->seek.source_switch) ));
 			if (ctx->src) gf_free(ctx->src);
 			ctx->src = gf_strdup(evt->seek.source_switch);
+		} else {
+			if (!ctx->is_end) {
+				gf_filter_pid_set_eos(ctx->pid);
+				ctx->is_end = GF_TRUE;
+				if (ctx->sess) {
+					gf_dm_sess_abort(ctx->sess);
+					gf_dm_sess_del(ctx->sess);
+					ctx->sess = NULL;
+				}
+			}
+			if (ctx->src) gf_free(ctx->src);
+			ctx->src = NULL;
+			return GF_TRUE;
 		}
 		if (ctx->cached) gf_fclose(ctx->cached);
 		ctx->cached = NULL;
+		ctx->blob_size = 0;
+		ctx->is_source_switch = GF_TRUE;
+		ctx->prev_was_init_segment = GF_FALSE;
 
 		//handle isobmff:// url
 		if (!strncmp(ctx->src, "isobmff://", 10)) {
@@ -224,6 +284,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			gf_filter_pid_set_eos(ctx->pid);
 			return GF_TRUE;
 		}
+		ctx->prev_was_init_segment = evt->seek.is_init_segment;
 
 		//abort type
 		if (evt->seek.start_offset == (u64) -1) {
@@ -231,7 +292,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 				if (ctx->sess)
 					gf_dm_sess_abort(ctx->sess);
 				ctx->is_end = GF_TRUE;
-				gf_filter_pid_set_eos(ctx->pid);
+				httpin_set_eos(ctx);
 			}
 			ctx->nb_read = 0;
 			ctx->last_state = GF_OK;
@@ -239,20 +300,30 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		}
 		ctx->last_state = GF_OK;
 		if (ctx->sess) {
+			if ((ctx->cache==GF_HTTPIN_STORE_MEM) && evt->seek.is_init_segment)
+				gf_dm_sess_force_memory_mode(ctx->sess, 2);
 			e = gf_dm_sess_setup_from_url(ctx->sess, ctx->src, evt->seek.skip_cache_expiration);
 		} else {
 			u32 flags;
 
 			flags = GF_NETIO_SESSION_NOT_THREADED | GF_NETIO_SESSION_PERSISTENT;
-			if (ctx->cache==GF_HTTPIN_STORE_MEM) flags |= GF_NETIO_SESSION_MEMORY_CACHE;
+			if (ctx->cache==GF_HTTPIN_STORE_MEM) {
+				flags |= GF_NETIO_SESSION_MEMORY_CACHE;
+				if (evt->seek.is_init_segment)
+					flags |= GF_NETIO_SESSION_KEEP_FIRST_CACHE;
+			}
 			else if (ctx->cache==GF_HTTPIN_STORE_NONE) flags |= GF_NETIO_SESSION_NOT_CACHED;
 
 			ctx->sess = gf_dm_sess_new(ctx->dm, ctx->src, flags, NULL, NULL, &e);
 		}
 
-		if (!e) e = gf_dm_sess_set_range(ctx->sess, evt->seek.start_offset, evt->seek.end_offset, GF_TRUE);
-		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPIn] Cannot resetup session from URL %s: %s\n", ctx->src, gf_error_to_string(e) ) );
+		if (!e && (evt->seek.start_offset || evt->seek.end_offset))
+            e = gf_dm_sess_set_range(ctx->sess, evt->seek.start_offset, evt->seek.end_offset, GF_TRUE);
+		
+        if (e) {
+			//use info and not error, as source switch is done by dashin and can be scheduled too early in live cases
+			//but recovered later, so we let DASH report the error
+			GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTPIn] Cannot resetup session from URL %s: %s\n", ctx->src, gf_error_to_string(e) ) );
 			httpin_notify_error(filter, ctx, e);
 			ctx->is_end = GF_TRUE;
 			if (ctx->src) gf_free(ctx->src);
@@ -264,12 +335,15 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		ctx->is_end = GF_FALSE;
 		ctx->last_state = GF_OK;
 		gf_filter_post_process_task(filter);
+		gf_filter_pid_set_property(ctx->pid, GF_PROP_PID_FILE_CACHED, &PROP_BOOL(GF_FALSE) );
 		return GF_TRUE;
 	default:
 		break;
 	}
 	return GF_TRUE;
 }
+
+
 
 static GF_Err httpin_process(GF_Filter *filter)
 {
@@ -293,7 +367,8 @@ static GF_Err httpin_process(GF_Filter *filter)
 		return GF_EOS;
 
 	if (!ctx->pid) {
-		if (ctx->nb_read) return GF_SERVICE_ERROR;
+		if (ctx->nb_read)
+            return GF_SERVICE_ERROR;
 	} else {
 		//TODO: go on fetching data to cache even when not consuming, and reread from cache
 		if (gf_filter_pid_would_block(ctx->pid))
@@ -319,15 +394,38 @@ static GF_Err httpin_process(GF_Filter *filter)
 			gf_filter_pck_set_framing(pck, is_start, ctx->is_end);
 
 			//mark packet out BEFORE sending, since the call to send() may destroy the packet if cloned
-			ctx->pck_out = GF_TRUE;
+			ctx->pck_out = HTTP_PCK_OUT;
 			gf_filter_pck_send(pck);
 
-			gf_filter_pid_set_eos(ctx->pid);
+			httpin_set_eos(ctx);
 			return GF_EOS;
 		}
 		nb_read = (u32) gf_fread(ctx->block, to_read, ctx->cached);
 		bytes_per_sec = 0;
+	}
+	else if (ctx->blob_size) {
+		u8 *b_data;
+		u32 b_size;
+		const char *cached = gf_dm_sess_get_cache_name(ctx->sess);
+		assert(cached);
 
+		gf_blob_get(cached, &b_data, &b_size, NULL);
+		assert(ctx->nb_read <= b_size);
+		nb_read = b_size - (u32) ctx->nb_read;
+		if (nb_read>ctx->block_size)
+			nb_read = ctx->block_size;
+
+		if (nb_read) {
+			memcpy(ctx->block, b_data + ctx->nb_read, nb_read);
+			e = GF_OK;
+		} else {
+			if (b_size == ctx->blob_size) {
+				e = gf_dm_sess_fetch_data(ctx->sess, ctx->block, ctx->block_size, &nb_read);
+			} else {
+				ctx->blob_size = b_size;
+			}
+		}
+        gf_blob_release(cached);
 	}
 	//we read from network
 	else {
@@ -346,34 +444,65 @@ static GF_Err httpin_process(GF_Filter *filter)
 				httpin_notify_error(filter, ctx, e);
 
 			ctx->is_end = GF_TRUE;
-			if (ctx->pid)
+
+			//do not return an error if first fetch after source switch fails with removed or 404, this happens in DASH dynamic
+			//and the error might be absorbed by the dash demux later
+			//also do not signal eos in that case, this could trigger the consuming filter (dashdmx, filein) to consider the stream is in regular EOS
+			//and not wait for notify failure
+			if (ctx->is_source_switch && !ctx->nb_read && ((e==GF_URL_REMOVED) || (e==GF_URL_ERROR)))
+				return GF_OK;
+
+			//no packet out, we can signal eos, except for source switch failures
+			if (ctx->pid) {
 				gf_filter_pid_set_eos(ctx->pid);
+			}
+
+			gf_dm_sess_abort(ctx->sess);
+			ctx->is_source_switch = GF_FALSE;
 			return e;
 		}
 		gf_dm_sess_get_stats(ctx->sess, NULL, NULL, &total_size, &bytes_done, &bytes_per_sec, &net_status);
 
 		//wait until we have some data to declare the pid
-		if ((e!= GF_EOS) && !nb_read) return GF_OK;
+        if ((e!= GF_EOS) && !nb_read) {
+            gf_filter_ask_rt_reschedule(filter, 1000);
+            return GF_OK;
+        }
 
 		if (!ctx->pid || ctx->do_reconfigure) {
 			u32 idx;
+			GF_Err cfg_e;
 			const char *hname, *hval;
 			const char *cached = gf_dm_sess_get_cache_name(ctx->sess);
 
 			ctx->do_reconfigure = GF_FALSE;
 
-			if ((e==GF_EOS) && cached && strnicmp(cached, "gmem://", 7)) {
-				ctx->cached = gf_fopen(cached, "rb");
-				if (ctx->cached) {
-					nb_read = (u32) gf_fread(ctx->block, ctx->block_size, ctx->cached);
+			if ((e==GF_EOS) && cached) {
+				if (!strnicmp(cached, "gmem://", 7)) {
+					u8 *b_data;
+					u32 b_size, b_flags;
+					gf_blob_get(cached, &b_data, &b_size, &b_flags);
+					if (b_size>ctx->block_size) {
+						ctx->blob_size = b_size;
+						b_size = ctx->block_size;
+						e = GF_OK;
+					}
+					assert(! (b_flags&GF_BLOB_IN_TRANSFER));
+					memcpy(ctx->block, b_data, b_size);
+					nb_read = b_size;
+					gf_blob_release(cached);
 				} else {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPIn] Failed to open cached file %s\n", cached));
+					ctx->cached = gf_fopen(cached, "rb");
+					if (ctx->cached) {
+						nb_read = (u32) gf_fread(ctx->block, ctx->block_size, ctx->cached);
+					} else {
+						GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPIn] Failed to open cached file %s\n", cached));
+					}
 				}
 			}
-			ctx->file_size = total_size;
 			ctx->block[nb_read] = 0;
-			e = gf_filter_pid_raw_new(filter, ctx->src, cached, ctx->mime ? ctx->mime : gf_dm_sess_mime_type(ctx->sess), ctx->ext, ctx->block, nb_read, ctx->mime ? GF_TRUE : GF_FALSE, &ctx->pid);
-			if (e) return e;
+			cfg_e = gf_filter_pid_raw_new(filter, ctx->src, cached, ctx->mime ? ctx->mime : gf_dm_sess_mime_type(ctx->sess), ctx->ext, ctx->block, nb_read, ctx->mime ? GF_TRUE : GF_FALSE, &ctx->pid);
+			if (cfg_e) return cfg_e;
 
 			gf_filter_pid_set_property(ctx->pid, GF_PROP_PID_FILE_CACHED, &PROP_BOOL(GF_FALSE) );
 
@@ -390,6 +519,8 @@ static GF_Err httpin_process(GF_Filter *filter)
 				}
 			}
 		}
+		//update file size at each call to get_stats, since we may use a dynamic blob in case of route
+		ctx->file_size = total_size;
 
 		gf_filter_pid_set_info(ctx->pid, GF_PROP_PID_DOWN_RATE, &PROP_UINT(8*bytes_per_sec) );
 		if (ctx->range.num && ctx->file_size) {
@@ -405,7 +536,8 @@ static GF_Err httpin_process(GF_Filter *filter)
 
 	ctx->nb_read += nb_read;
 	if (ctx->file_size && (ctx->nb_read==ctx->file_size)) {
-		ctx->is_end = GF_TRUE;
+		if (net_status!=GF_NETIO_DATA_EXCHANGE)
+			ctx->is_end = GF_TRUE;
 	} else if (e==GF_EOS) {
 		ctx->is_end = GF_TRUE;
 	}
@@ -420,7 +552,7 @@ static GF_Err httpin_process(GF_Filter *filter)
 	gf_filter_pck_set_byte_offset(pck, byte_offset);
 
 	//mark packet out BEFORE sending, since the call to send() may destroy the packet if cloned
-	ctx->pck_out = GF_TRUE;
+	ctx->pck_out = HTTP_PCK_OUT;
 	gf_filter_pck_send(pck);
 
 	if (ctx->file_size && gf_filter_reporting_enabled(filter)) {
@@ -436,7 +568,7 @@ static GF_Err httpin_process(GF_Filter *filter)
 		if (cached)
 			gf_filter_pid_set_property(ctx->pid, GF_PROP_PID_FILE_CACHED, &PROP_BOOL(GF_TRUE) );
 
-		gf_filter_pid_set_eos(ctx->pid);
+		httpin_set_eos(ctx);
 		return GF_EOS;
 	}
 
@@ -449,13 +581,16 @@ static GF_Err httpin_process(GF_Filter *filter)
 
 static const GF_FilterArgs HTTPInArgs[] =
 {
-	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(src), "URL of source content", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(block_size), "block size used to read file", GF_PROP_UINT, "100000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(cache), "set cache mode\n"
 	"- disk: cache to disk,  discard once session is no longer used\n"
 	"- keep: cache to disk and keep\n"
 	"- mem: stores to memory, discard once session is no longer used\n"
-	"- none: no cache", GF_PROP_UINT, "disk", "disk|keep|mem|none", GF_FS_ARG_HINT_ADVANCED},
+	"- mem_keep: stores to memory, keep after session is reassigned but move to `mem` after first download\n"
+	"- none: no cache\n"
+	"- none_keep: stores to memory, keep after session is reassigned but move to `none` after first download"
+	, GF_PROP_UINT, "disk", "disk|keep|mem|mem_keep|none|none_keep", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(range), "set byte range, as fraction", GF_PROP_FRACTION64, "0-0", NULL, 0},
 	{ OFFS(ext), "override file extension", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(mime), "set file mime type", GF_PROP_NAME, NULL, NULL, 0},

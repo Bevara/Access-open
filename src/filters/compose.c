@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / compositor filter
@@ -332,7 +332,7 @@ static GF_Err compose_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 			//we are attaching an inline, create the subscene if not done already
 			if (!sns->owner->subscene && ((mtype==GF_STREAM_OD) || (mtype==GF_STREAM_SCENE)) ) {
 				//ignore system PIDs from subservice - this is typically the case when playing a bt/xmt file
-				//created from a container (mp4) and still refering to that container for the media streams
+				//created from a container (mp4) and still referring to that container for the media streams
 				if (sns->owner->ignore_sys) {
 					GF_FEVT_INIT(evt, GF_FEVT_PLAY, pid);
 					gf_filter_pid_send_event(pid, &evt);
@@ -424,10 +424,18 @@ static GF_Err compose_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	//scene is dynamic
 	if (scene->is_dynamic_scene) {
 		Bool reset = GF_FALSE;
+		u32 scene_vr_type = 0;
 		char *sep = scene->root_od->scene_ns->url_frag;
 		if (sep && ( !strnicmp(sep, "LIVE360", 7) || !strnicmp(sep, "360", 3) || !strnicmp(sep, "VR", 2) ) ) {
-			if (scene->vr_type != 1) reset = GF_TRUE;
-			scene->vr_type = 1;
+			scene_vr_type = 1;
+		}
+		if (!sep) {
+			prop = gf_filter_pid_get_property(pid, GF_PROP_PID_PROJECTION_TYPE);
+			if (prop && (prop->value.uint==GF_PROJ360_EQR)) scene_vr_type = 1;
+		}
+		if (scene_vr_type) {
+			if (scene->vr_type != scene_vr_type) reset = GF_TRUE;
+			scene->vr_type = scene_vr_type;
 		}
 		if (reset)
 			gf_sg_reset(scene->graph);
@@ -565,7 +573,7 @@ static Bool compose_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			odm = gf_filter_pid_get_udta(evt->base.on_pid);
 			if ((down_size!=odm->last_filesize_signaled) || (down_size != tot_size)) {
 				odm->last_filesize_signaled = down_size;
-				gf_odm_service_media_event_with_download(odm, GF_EVENT_MEDIA_PROGRESS, down_size, tot_size, bps/8);
+				gf_odm_service_media_event_with_download(odm, GF_EVENT_MEDIA_PROGRESS, down_size, tot_size, bps/8, 0, 0);
 			}
 		}
 
@@ -636,12 +644,13 @@ static GF_Err compose_initialize(GF_Filter *filter)
 		ctx->vfr = GF_TRUE;
 	}
 
-	if (ctx->buf > ctx->mbuf)
-		ctx->buf = ctx->mbuf;
-	if (ctx->rbuf > ctx->mbuf)
-		ctx->buf = ctx->mbuf;
-	if (ctx->rbuf >= ctx->buf)
-		ctx->rbuf = 0;
+	//playout buffer not greater than max buffer
+	if (ctx->buffer > ctx->mbuffer)
+		ctx->buffer = ctx->mbuffer;
+
+	//rebuffer level not greater than playout buffer
+	if (ctx->rbuffer >= ctx->buffer)
+		ctx->rbuffer = 0;
 
     if (ctx->player) {
 		if (ctx->ogl == GF_SC_GLMODE_AUTO)
@@ -714,10 +723,13 @@ static GF_Err compose_initialize(GF_Filter *filter)
 	gf_filter_set_event_target(filter, GF_TRUE);
 	if (ctx->player==2) {
 		const char *gui_path = gf_opts_get_key("General", "StartupFile");
-		if (gui_path)
+		if (gui_path) {
 			gf_sc_connect_from_time_ex(ctx, gui_path, 0, 0, 0, NULL);
+			gf_opts_set_key("temp", "gui_load_url", ctx->src);
+		}
 	}
-	else if (!ctx->player && ctx->src) {
+	//src set, connect it (whether player mode or not)
+	else if (ctx->src) {
 		gf_sc_connect_from_time_ex(ctx, ctx->src, 0, 0, 0, NULL);
 	}
 	return GF_OK;
@@ -800,9 +812,9 @@ static GF_FilterArgs CompositorArgs[] =
 	{ OFFS(max_aspeed), "silence audio if playback speed is greater than sepcified value", GF_PROP_DOUBLE, "2.0", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(max_vspeed), "move to i-frame only decoding if playback speed is greater than sepcified value", GF_PROP_DOUBLE, "4.0", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
 
-	{ OFFS(buf), "playout buffer in ms. overridden by BufferLenth property of input pid", GF_PROP_UINT, "3000", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(rbuf), "rebuffer trigger in ms. overridden by RebufferLenth property of input pid", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(mbuf), "max buffer in ms (must be greater than playout buffer). overridden by BufferMaxOccupancy property of input pid", GF_PROP_UINT, "3000", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(buffer), "playout buffer in ms. overridden by BufferLenth property of input pid", GF_PROP_UINT, "3000", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(rbuffer), "rebuffer trigger in ms. overridden by RebufferLenth property of input pid", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(mbuffer), "max buffer in ms (must be greater than playout buffer). overridden by BufferMaxOccupancy property of input pid", GF_PROP_UINT, "3000", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(ntpsync), "ntp resync threshold in ms (drops frame if their NTP is more than the given threshold above local ntp), 0 disables ntp drop", GF_PROP_UINT, "0", NULL, GF_FS_ARG_UPDATE},
 
 	{ OFFS(nojs), "disable javascript", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -810,7 +822,7 @@ static GF_FilterArgs CompositorArgs[] =
 
 #ifndef GPAC_DISABLE_3D
 	{ OFFS(ogl), "specify 2D rendering mode\n"\
-				"- auto: automatically decides betwwen on, off and hybrid based on content\n"\
+				"- auto: automatically decides between on, off and hybrid based on content\n"\
 				"- off: disables OpenGL; 3D will not be rendered\n"\
 				"- on: uses OpenGL for all graphics; this will involve polygon tesselation and 2D graphics will not look as nice as 2D mode\n"\
 				"- hybrid: the compositor performs software drawing of 2D graphics with no textures (better quality) and uses OpenGL for all 2D objects with textures and 3D objects"\
@@ -882,8 +894,11 @@ static GF_FilterArgs CompositorArgs[] =
 	{ OFFS(rview), "reverse view order", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
 
 	{ OFFS(tvtn), "number of point sampling for tile visibility algo", GF_PROP_UINT, "30", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(tvtt), "number of points above which the tile is considered visible", GF_PROP_UINT, "0", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(tvtd), "disable the tile having full coverage of the SRD, only displaying partial tiles", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(tvtt), "number of points above which the tile is considered visible", GF_PROP_UINT, "8", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(tvtd), "debug tiles and full coverage SRD\n"
+		"- off: regular draw\n"
+		"- partial: only displaying partial tiles, not the full sphere video\n"
+		"- full: only display the full sphere video", GF_PROP_UINT, "off", "off|partial|full", GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(tvtf), "force all tiles to be considered visible, regardless of viewpoint", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(fov), "default field of view for VR", GF_PROP_FLOAT, "1.570796326794897", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(vertshader), "path to vertex shader file", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT },
@@ -918,7 +933,11 @@ static GF_FilterArgs CompositorArgs[] =
 				"- yes: always loads a graphics driver. Output pixel format will be RGB\n"\
 				"- auto: decides based on the loaded content"\
 			, GF_PROP_UINT, "auto", "no|yes|auto", GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(src), "URL of source content", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+
+	{ OFFS(gaze_x), "horizontal gaze coordinate (0=left, width=right)", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
+	{ OFFS(gaze_y), "vertical gaze coordinate (0=top, height=bottom)", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
+	{ OFFS(gazer_enabled), "enable gaze event dispatch", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 	{0}
 };
 
@@ -981,7 +1000,7 @@ const GF_FilterRegister CompositorFilterRegister = {
 	"- views:// : creates an auto-stereo scene of N views from `views://v1:.:vN`. vN can be any type of URL supported by GPAC.\n"
 	"- mosaic:// : creates a mosaic of N views from `mosaic://v1:.:vN`. vN can be any type of URL supported by GPAC.\n"
 	"\n"
-	"The compositor can act as a source filter when the [-src]() option is explicitly set:\n"
+	"The compositor can act as a source filter when the [-src]() option is explicitly set, independently from the operating mode:\n"
 	"EX gpac compositor:src=source.mp4 vout\n"
 	"\n"
 	"The compositor can act as a source filter when the source url uses one of the compositor buildin protocol schemes:\n"

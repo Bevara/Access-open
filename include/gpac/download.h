@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -154,7 +154,12 @@ typedef enum
 	/*!signal that the session has been deconnected*/
 	GF_NETIO_DISCONNECTED,
 	/*!downloader session failed (error code set) or done/destroyed (no error code)*/
-	GF_NETIO_STATE_ERROR
+	GF_NETIO_STATE_ERROR,
+	/*!signal that a new session is being requested on that same connection (h2, h3)
+	This is only used for server sessions*/
+	GF_NETIO_REQUEST_SESSION,
+	/*! stream has been canceled by remote peer*/
+	GF_NETIO_CANCEL_STREAM,
 } GF_NetIOStatus;
 
 /*!session download flags*/
@@ -174,6 +179,8 @@ typedef enum
 	GF_NETIO_SESSION_MEMORY_CACHE = 1<<4,
 	/*! do not delete files after download*/
 	GF_NETIO_SESSION_KEEP_CACHE = 1<<5,
+	/*! do not delete files after download of first resource (used for init segments)*/
+	GF_NETIO_SESSION_KEEP_FIRST_CACHE = 1<<6,
 } GF_NetIOFlags;
 
 
@@ -488,11 +495,12 @@ GF_Err gf_dm_sess_get_header_sizes_and_times(GF_DownloadSession *sess, u32 *req_
 
 Forces session to use memory storage for future downloads
 \param sess the current session
+\param force_cache_type if 1, cache will be kept even if session is reassigned. If 2, cache will ne kept for next resource downloaded, then no caching for subsequent resources (used for init segments)
  */
-void gf_dm_sess_force_memory_mode(GF_DownloadSession *sess);
+void gf_dm_sess_force_memory_mode(GF_DownloadSession *sess, u32 force_cache_type);
 
 /*!
-Registers a locacl cache provider (bypassing the http session), used when populating cache from input data (atsc for example)
+Registers a local cache provider (bypassing the http session), used when populating cache from input data (ROUTE for example)
 
 \param dm the download manager
 \param local_cache_url_provider_cbk callback function to the cache provider. The callback function shall return GF_TRUE if the requested URL is provided by this local cache
@@ -506,8 +514,7 @@ Adds a local entry in the cache
 
 \param dm the download manager
 \param szURL the URL this resource is caching
-\param data data of the resource
-\param size size of the resource
+\param blob blob object holding the data of the resource
 \param start_range start range of the data in the resource
 \param end_range start range of the data in the resource. If both start_range and end_range are 0, the data is the complete resource
 \param mime associated MIME type if any
@@ -515,7 +522,7 @@ Adds a local entry in the cache
 \param download_time_ms indicates the download time of the associated resource, if known, 0 otherwise.
 \return a cache entry structure
  */
-const DownloadedCacheEntry gf_dm_add_cache_entry(GF_DownloadManager *dm, const char *szURL, u8 *data, u64 size, u64 start_range, u64 end_range,  const char *mime, Bool clone_memory, u32 download_time_ms);
+const DownloadedCacheEntry gf_dm_add_cache_entry(GF_DownloadManager *dm, const char *szURL, GF_Blob *blob, u64 start_range, u64 end_range,  const char *mime, Bool clone_memory, u32 download_time_ms);
 
 /*!
 Forces HTTP headers for a given cache entry

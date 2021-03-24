@@ -578,7 +578,8 @@ static GFINLINE void gf_mixer_map_channels(s32 *inChan, u32 nb_in, u64 in_ch_lay
 		}
 	} else if (nb_in==2) {
 		if (nb_out==1) {
-			inChan[0] = (inChan[0]+inChan[1])/2;
+			s64 sum = (s64)inChan[0] + (s64) inChan[1];
+			inChan[0] = (s32) (sum/2);
 		} else {
 			for (i=2; i<nb_out; i++) inChan[i] = 0;
 		}
@@ -797,6 +798,10 @@ u32 gf_mixer_get_output(GF_AudioMixer *am, void *buffer, u32 buffer_size, u32 de
 			gf_mixer_reconfig(am);
 			gf_mixer_lock(am, GF_FALSE);
 			return 0;
+		} else {
+			gf_mixer_reconfig(am);
+			gf_mixer_lock(am, GF_FALSE);
+			return 0;
 		}
 	}
 
@@ -963,7 +968,11 @@ do_mix:
 		/*only write what has been filled in the source buffer (may be less than output size)*/
 		for (j = 0; j < in->out_samples_written; j++) {
 			for (k = 0; k < am->nb_channels; k++) {
-				(*out_mix) += *(in->ch_buf[k] + j);
+				s64 oval = (*out_mix);
+				oval += *(in->ch_buf[k] + j);
+				if (oval>GF_INT_MAX) oval = GF_INT_MAX;
+				else if (oval<GF_INT_MIN) oval = GF_INT_MIN;
+				(*out_mix) = (s32) oval;
 				out_mix += 1;
 			}
 		}

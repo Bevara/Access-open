@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2018
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -496,7 +496,7 @@ void gf_scene_disconnect(GF_Scene *scene, Bool for_shutdown)
 
 	gf_scene_reset_addons(scene);
 
-	/*release the scene - at this stage, we no longer have any node stack refering to our media objects */
+	/*release the scene - at this stage, we no longer have any node stack referring to our media objects */
 
 	gf_sc_node_destroy(scene->compositor, NULL, scene->graph);
 	gf_sg_reset(scene->graph);
@@ -702,33 +702,38 @@ void gf_scene_remove_object(GF_Scene *scene, GF_ObjectManager *odm, u32 for_shut
 
 
 //browse all channels and update buffering info
-void gf_scene_buffering_info(GF_Scene *scene)
+void gf_scene_buffering_info(GF_Scene *scene, Bool rebuffer_done)
 {
 	GF_ODMExtraPid *xpid;
 	u32 i, j;
-	u64 max_buffer, cur_buffer, max_buff_val=0;
+	u64 max_buffer, cur_buffer, min_time, max_buff_val=0;
 	u64 buf_val;
 	GF_Event evt;
 	GF_ObjectManager *odm;
 	if (!scene) return;
 
 	max_buffer = cur_buffer = 0;
+	min_time = (u64) -1;
 
 	/*get buffering on root OD*/
 	odm = scene->root_od;
-	if (odm->pid && odm->buffer_playout_us) {
-		if (max_buff_val < odm->buffer_playout_us)
-			max_buff_val = odm->buffer_playout_us;
+	if (!scene->is_dynamic_scene && odm->pid && odm->buffer_playout_ms) {
+		if (max_buff_val < odm->buffer_playout_ms)
+			max_buff_val = odm->buffer_playout_ms;
 
 		if (odm->nb_buffering) {
-			max_buffer += odm->buffer_playout_us;
-			buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE);
+			max_buffer += odm->buffer_playout_ms;
+			buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE) / 1000;
+			if (min_time>buf_val) min_time = buf_val;
+
 			if (buf_val > max_buffer) buf_val = max_buffer;
 			cur_buffer += (buf_val>0) ? buf_val : 1;
 			i=0;
 			while ((xpid = gf_list_enum(odm->extra_pids, &i))) {
-				max_buffer += odm->buffer_playout_us;
-				buf_val = gf_filter_pid_query_buffer_duration(xpid->pid, GF_FALSE);
+				max_buffer += odm->buffer_playout_ms;
+				buf_val = gf_filter_pid_query_buffer_duration(xpid->pid, GF_FALSE) / 1000;
+				if (min_time>buf_val) min_time = buf_val;
+
 				if (buf_val > max_buffer) buf_val = max_buffer;
 				cur_buffer += (buf_val>0) ? buf_val : 1;
 			}
@@ -738,20 +743,24 @@ void gf_scene_buffering_info(GF_Scene *scene)
 	/*get buffering on all ODs*/
 	i=0;
 	while ((odm = (GF_ObjectManager*)gf_list_enum(scene->resources, &i))) {
-		if (!odm->buffer_playout_us) continue;
-		if (max_buff_val < odm->buffer_playout_us)
-			max_buff_val = odm->buffer_playout_us;
+		if (!odm->buffer_playout_ms) continue;
+		if (max_buff_val < odm->buffer_playout_ms)
+			max_buff_val = odm->buffer_playout_ms;
 
 		if (!odm->nb_buffering) continue;
 
-		max_buffer += odm->buffer_playout_us;
-		buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE);
+		max_buffer += odm->buffer_playout_ms;
+		buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE) / 1000;
+		if (min_time>buf_val) min_time = buf_val;
+
 		if (buf_val > max_buffer) buf_val = max_buffer;
 		cur_buffer += (buf_val>0) ? buf_val : 1;
 		j=0;
 		while ((xpid = gf_list_enum(odm->extra_pids, &j))) {
-			max_buffer += odm->buffer_playout_us;
-			buf_val = gf_filter_pid_query_buffer_duration(xpid->pid, GF_FALSE);
+			max_buffer += odm->buffer_playout_ms;
+			buf_val = gf_filter_pid_query_buffer_duration(xpid->pid, GF_FALSE) / 1000;
+			if (min_time>buf_val) min_time = buf_val;
+
 			if (buf_val > max_buffer) buf_val = max_buffer;
 			cur_buffer += (buf_val>0) ? buf_val : 1;
 		}
@@ -762,6 +771,11 @@ void gf_scene_buffering_info(GF_Scene *scene)
 	//destruction
 	if (!scene->root_od->scene_ns)
 		return;
+
+	//if buffering, fire GF_EVENT_MEDIA_PROGRESS - use the min buffer we just computed
+	if ((rebuffer_done || scene->nb_buffering) && max_buffer) {
+		gf_odm_service_media_event_with_download(scene->root_od, GF_EVENT_MEDIA_PROGRESS, 0, 0, 0, (u32) (100 * cur_buffer / max_buffer) + 1, (u32) min_time);
+	}
 
 	evt.type = GF_EVENT_PROGRESS;
 	evt.progress.progress_type = 0;
@@ -779,7 +793,7 @@ void gf_scene_buffering_info(GF_Scene *scene)
 
 
 
-void gf_scene_notify_event(GF_Scene *scene, u32 event_type, GF_Node *n, void *_event, GF_Err code, Bool no_queueing)
+void gf_scene_notify_event(GF_Scene *scene, u32 event_type, GF_Node *n, void *_event, GF_Err code, Bool no_queuing)
 {
 	/*fire resize event*/
 #ifndef GPAC_DISABLE_SVG
@@ -820,14 +834,14 @@ void gf_scene_notify_event(GF_Scene *scene, u32 event_type, GF_Node *n, void *_e
 		evt.error_state = code;
 	}
 	if (n) {
-		if (no_queueing) {
+		if (no_queuing) {
 			gf_dom_event_fire(n, dom_event);
 		} else {
 			gf_sc_queue_dom_event(scene->compositor, n, dom_event);
 		}
 	} else {
 		if (root) {
-			if (no_queueing) {
+			if (no_queuing) {
 				gf_dom_event_fire(root, dom_event);
 			} else {
 				gf_sc_queue_dom_event(scene->compositor, root, dom_event);
@@ -837,7 +851,7 @@ void gf_scene_notify_event(GF_Scene *scene, u32 event_type, GF_Node *n, void *_e
 		count=scene->root_od->mo ? gf_mo_event_target_count(scene->root_od->mo) : 0;
 		for (i=0; i<count; i++) {
 			GF_Node *an = gf_event_target_get_node(gf_mo_event_target_get(scene->root_od->mo, i));
-			if (no_queueing) {
+			if (no_queuing) {
 				gf_dom_event_fire(an, dom_event);
 			} else {
 				gf_sc_queue_dom_event(scene->compositor, an, dom_event);

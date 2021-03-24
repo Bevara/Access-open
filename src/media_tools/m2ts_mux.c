@@ -57,7 +57,6 @@ enum
 	GF_SEG_BOUNDARY_FORCE_PCR,
 };
 
-
 static GFINLINE Bool gf_m2ts_time_less(GF_M2TS_Time *a, GF_M2TS_Time *b) {
 	if (a->sec>b->sec) return GF_FALSE;
 	if (a->sec==b->sec) return (a->nanosec<b->nanosec) ? GF_TRUE : GF_FALSE;
@@ -1352,7 +1351,10 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 			gf_bs_write_int(bs, cfg.base_object_type-1, 2);
 			gf_bs_write_int(bs, cfg.base_sr_index, 4);
 			gf_bs_write_int(bs, 0, 1);
-			gf_bs_write_int(bs, cfg.nb_chan, 3);
+			if (cfg.program_config_element_present)
+				gf_bs_write_int(bs, 0, 3);
+			else
+				gf_bs_write_int(bs, cfg.chan_cfg, 3);
 #else
 			gf_bs_write_int(bs, GF_M4A_AAC_LC-1, 2);
 			gf_bs_write_int(bs, 1, 4); //FIXME
@@ -1363,15 +1365,27 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 			gf_bs_write_int(bs, 0, 4);
 			gf_bs_write_int(bs, 7+stream->curr_pck.data_len, 13);
 			gf_bs_write_int(bs, 0x7FF, 11);
-			gf_bs_write_int(bs, 0, 2);
+
+			/*base reframe overhead*/
+			stream->reframe_overhead = 7;
+
+#ifndef GPAC_DISABLE_AV_PARSERS
+			if (cfg.program_config_element_present) {
+				gf_bs_write_int(bs, 2, 2);
+
+				u32 cpe_size = (u32) gf_bs_get_position(bs);
+				gf_m4a_write_program_config_element_bs(bs, &cfg);
+				stream->reframe_overhead += (u32) gf_bs_get_position(bs) - cpe_size;
+			} else
+#endif
+				gf_bs_write_int(bs, 0, 2);
+
 
 			gf_bs_write_data(bs, stream->curr_pck.data, stream->curr_pck.data_len);
 			gf_bs_align(bs);
 			gf_free(stream->curr_pck.data);
 			gf_bs_get_content(bs, &stream->curr_pck.data, &stream->curr_pck.data_len);
 			gf_bs_del(bs);
-			/*constant reframe overhead*/
-			stream->reframe_overhead = 7;
 		}
 		/*since we reallocated the packet data buffer, force a discard in pull mode*/
 		stream->discard_data = GF_TRUE;
@@ -1457,6 +1471,7 @@ void gf_m2ts_stream_update_data_following(GF_M2TS_Mux_Stream *stream)
 	Bool ignore_next = GF_FALSE;
 	stream->next_payload_size = 0;
 	stream->next_next_payload_size = 0;
+	stream->next_next_next_payload_size = 0;
 
 	stream->next_pck_flags = 0;
 	stream->next_pck_sap = 0;
@@ -1490,8 +1505,11 @@ void gf_m2ts_stream_update_data_following(GF_M2TS_Mux_Stream *stream)
 			if (!stream->pck_first->next && stream->ifce->input_ctrl) stream->ifce->input_ctrl(stream->ifce, GF_ESI_INPUT_DATA_FLUSH, NULL);
 			if (stream->pck_first->next) {
 				stream->next_next_payload_size = stream->pck_first->next->data_len;
+				if (!stream->pck_first->next->next && stream->ifce->input_ctrl) stream->ifce->input_ctrl(stream->ifce, GF_ESI_INPUT_DATA_FLUSH, NULL);
+				if (stream->pck_first->next->next) {
+					stream->next_next_next_payload_size = stream->pck_first->next->next->data_len;
+				}
 			}
-
 		}
 	}
 	/*consider we don't have the next AU if:
@@ -1515,8 +1533,12 @@ void gf_m2ts_stream_update_data_following(GF_M2TS_Mux_Stream *stream)
 
 	if (stream->next_payload_size) {
 		stream->next_payload_size += stream->reframe_overhead;
-		if (stream->next_next_payload_size)
+		if (stream->next_next_payload_size) {
 			stream->next_next_payload_size += stream->reframe_overhead;
+			if (stream->next_next_next_payload_size) {
+				stream->next_next_next_payload_size += stream->reframe_overhead;
+			}
+		}
 
 		gf_m2ts_remap_timestamps_for_pes(stream, stream->next_pck_flags, &stream->next_pck_dts, &stream->next_pck_cts, NULL);
 
@@ -1556,6 +1578,13 @@ Bool gf_m2ts_stream_compute_pes_length(GF_M2TS_Mux_Stream *stream, u32 payload_l
 		else if (stream->next_payload_size) {
 			/*how much more TS packets do we need to send next AU ?*/
 			while (ts_bytes < pck_size + stream->next_payload_size) {
+				//check we have enough bytes in the next 3 AUs if we increase by 1 TS packet the PES
+				//bytes_to_copy from next will be: ts_bytes + 184 - pck_size
+				//check bytes_to_copy is <= next_payload_size + next_next_payload_size + next_next_next_payload_size
+				//if not, do not add - we do not want to take the risk of having no data while filling a PES packet with an announced length
+				if (ts_bytes + 184 > pck_size + stream->next_payload_size + stream->next_next_payload_size + stream->next_next_next_payload_size)
+					break;
+
 				ts_bytes += 184;
 			}
 			/*don't end next AU in next PES if we don't want to start 2 AUs in one PES
@@ -1573,6 +1602,10 @@ Bool gf_m2ts_stream_compute_pes_length(GF_M2TS_Mux_Stream *stream, u32 payload_l
 		/*that's how much bytes we copy from the following AUs*/
 		if (ts_bytes >= pck_size) {
 			stream->copy_from_next_packets = ts_bytes - pck_size;
+			//very low rate case, we didn't enter the previous while loop:
+			//we can't fill the complete TS packet with the next two AUs, do not copy over
+			if (stream->copy_from_next_packets > stream->next_payload_size + stream->next_next_payload_size + stream->next_next_next_payload_size)
+				stream->copy_from_next_packets = 0;
 		} else {
 			u32 skipped = pck_size-ts_bytes;
 			if (stream->pes_data_len > skipped)
@@ -2112,7 +2145,8 @@ GF_Err gf_m2ts_output_ctrl(GF_ESInterface *_self, u32 ctrl_type, void *param)
 		stream->force_new = (esi_pck->flags & GF_ESI_DATA_AU_END) ? GF_TRUE : GF_FALSE;
 
 		stream->pck_reassembler->data = (char*)gf_realloc(stream->pck_reassembler->data , sizeof(char)*(stream->pck_reassembler->data_len+esi_pck->data_len) );
-		memcpy(stream->pck_reassembler->data + stream->pck_reassembler->data_len, esi_pck->data, esi_pck->data_len);
+		if (esi_pck->data_len)
+			memcpy(stream->pck_reassembler->data + stream->pck_reassembler->data_len, esi_pck->data, esi_pck->data_len);
 		stream->pck_reassembler->data_len += esi_pck->data_len;
 
 		stream->pck_reassembler->flags |= esi_pck->flags;
@@ -2388,6 +2422,9 @@ GF_M2TS_Mux_Stream *gf_m2ts_program_stream_add(GF_M2TS_Mux_Program *program, str
 			/*make sure we send AU delim NALU in same PES as first VCL NAL: 7 bytes (4 start code + 2 nal header + 1 AU delim)
 			+ 4 byte start code + first nal header*/
 			stream->min_bytes_copy_from_next = 12;
+			break;
+		case GF_CODECID_SMPTE_VC1:
+			stream->mpeg2_stream_type = GF_M2TS_VIDEO_VC1;
 			break;
 		default:
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts video type for codec %s, signaling as PES private using codec 4CC in registration descriptor\n", gf_codecid_name(ifce->codecid) ));

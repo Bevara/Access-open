@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / NVidia Hardware decoder filter
@@ -28,7 +28,7 @@
 #include <gpac/constants.h>
 #include <gpac/filters.h>
 
-#if (defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)) 
+#if !defined(GPAC_STATIC_BUILD) && (defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)) 
 
 #include "dec_nvdec_sdk.h"
 
@@ -558,8 +558,10 @@ static GF_Err nvdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	NVDecCtx *ctx = (NVDecCtx *) gf_filter_get_udta(filter);
 
 	if (is_remove) {
-		if (ctx->opid) gf_filter_pid_remove(ctx->opid);
-		ctx->opid = NULL;
+		if (ctx->opid) {
+			gf_filter_pid_remove(ctx->opid);
+			ctx->opid = NULL;
+		}
 		ctx->ipid = NULL;
 
 		if (ctx->unload == 2) {
@@ -1460,7 +1462,7 @@ static const GF_FilterArgs NVDecArgs[] =
 		"- dxva: go through DXVA internally if possible (requires D3D9 interop)", GF_PROP_UINT, "cuvid", "cuvid|cuda|dxva", GF_FS_ARG_HINT_ADVANCED },
 	{ OFFS(fmode), "frame output mode\n"
 		"- copy: each frame is copied and dispatched\n"
-		"- single: frame data is only retrieved when used, single memory space for all frames (not safe if multiple consummers)\n"
+		"- single: frame data is only retrieved when used, single memory space for all frames (not safe if multiple consumers)\n"
 		"- gl: frame data is mapped to an OpenGL texture"
 	, GF_PROP_UINT, "gl", "copy|single|gl", 0 },
 
@@ -1503,6 +1505,6 @@ const GF_FilterRegister *nvdec_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-#endif // defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)
+#endif // !defined(GPAC_STATIC_BUILD) && (defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)) 
 
 

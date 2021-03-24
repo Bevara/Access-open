@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2010-2017
+ *			Copyright (c) Telecom ParisTech 2010-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / OpenHEVC decoder filter
@@ -297,11 +297,15 @@ static GF_Err ohevcdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	if (is_remove) {
 		if (ctx->streams[0].ipid == pid) {
 			memset(ctx->streams, 0, HEVC_MAX_STREAMS*sizeof(GF_HEVCStream));
-			if (ctx->opid) gf_filter_pid_remove(ctx->opid);
-			ctx->opid = NULL;
+			if (ctx->opid) {
+				gf_filter_pid_remove(ctx->opid);
+				ctx->opid = NULL;
+			}
 			ctx->nb_streams = 0;
-			if (ctx->codec) oh_close(ctx->codec);
-			ctx->codec = NULL;
+			if (ctx->codec) {
+				oh_close(ctx->codec);
+				ctx->codec = NULL;
+			}
 			return GF_OK;
 		} else {
 			for (i=0; i<ctx->nb_streams; i++) {
@@ -1094,7 +1098,7 @@ static GF_Err ohevcdec_process(GF_Filter *filter)
 
 			if (got_pic) {
 				ohevcdec_flush_picture(ctx);
-				//we are in direct output mode, wait for frame to be consummed before flushing next frame
+				//we are in direct output mode, wait for frame to be consumed before flushing next frame
 				if (ctx->frame_out) return GF_OK;
 			}
 			else
@@ -1212,6 +1216,8 @@ static GF_Err ohevcdec_initialize(GF_Filter *filter)
 		}
 	}
 	ctx->src_packets = gf_list_new();
+	ctx->sar.num = 1;
+	ctx->sar.den = 1;
 	return GF_OK;
 }
 
@@ -1284,6 +1290,7 @@ GF_FilterRegister OHEVCDecRegister = {
 
 #endif // defined(GPAC_HAS_OPENHEVC) && !defined(GPAC_DISABLE_AV_PARSERS)
 
+#ifdef GPAC_HAS_OPENHEVC
 
 #ifndef GPAC_OPENHEVC_STATIC
 
@@ -1300,3 +1307,5 @@ const GF_FilterRegister *ohevcdec_register(GF_FilterSession *session)
 	return NULL;
 #endif
 }
+
+#endif

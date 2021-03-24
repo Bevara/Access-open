@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2018
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -75,7 +75,7 @@ CodecIDReg CodecRegistry [] = {
 	{GF_CODECID_MPEG1, GF_CODECID_MPEG1, GF_STREAM_VISUAL, "MPEG-1 Video", "m1v", "mp1v", "video/mp1v-es"},
 	{GF_CODECID_JPEG, GF_CODECID_JPEG, GF_STREAM_VISUAL, "JPEG Image", "jpg|jpeg", "jpeg", "image/jpeg"},
 	{GF_CODECID_PNG, GF_CODECID_PNG, GF_STREAM_VISUAL, "PNG Image", "png", "png ", "image/png"},
-	{GF_CODECID_J2K, 0x6E, GF_STREAM_VISUAL, "JPEG200 Image", "jp2|j2k", "mjp2", "image/jp2"},
+	{GF_CODECID_J2K, 0x6E, GF_STREAM_VISUAL, "JPEG2000 Image", "jp2|j2k", "mjp2", "image/jp2"},
 	{GF_CODECID_AAC_MPEG4, GF_CODECID_AAC_MPEG4, GF_STREAM_AUDIO, "MPEG-4 AAC Audio", "aac", "mp4a", "audio/aac"},
 	{GF_CODECID_AAC_MPEG2_MP, GF_CODECID_AAC_MPEG2_MP, GF_STREAM_AUDIO, "MPEG-2 AAC Audio Main", "aac|aac2m", "mp4a", "audio/aac", GF_CODECID_AAC_MPEG4},
 	{GF_CODECID_AAC_MPEG2_LCP, GF_CODECID_AAC_MPEG2_LCP, GF_STREAM_AUDIO, "MPEG-2 AAC Audio Low Complexity", "aac|aac2l", "mp4a", "audio/aac", GF_CODECID_AAC_MPEG4},
@@ -96,6 +96,7 @@ CodecIDReg CodecRegistry [] = {
 	{GF_CODECID_DIRAC, 0xA4, GF_STREAM_VISUAL, "Dirac Video", "dirac", NULL, "video/dirac"},
 	{GF_CODECID_AC3, 0xA5, GF_STREAM_AUDIO, "AC3 Audio", "ac3", "ac-3", "audio/ac3"},
 	{GF_CODECID_EAC3, 0xA6, GF_STREAM_AUDIO, "Enhanced AC3 Audio", "eac3", "ec-3", "audio/eac3"},
+	{GF_CODECID_TRUEHD, 0, GF_STREAM_AUDIO, "Dolby TrueHD", "mlp", "mlpa", "audio/truehd"},
 	{GF_CODECID_DRA, 0xA7, GF_STREAM_AUDIO, "DRA Audio", "dra", NULL, "audio/dra"},
 	{GF_CODECID_G719, 0xA8, GF_STREAM_AUDIO, "G719 Audio", "g719", NULL, "audio/g719"},
 	{GF_CODECID_DTS_CA, 0xA9, GF_STREAM_AUDIO, "DTS Coherent Acoustics Audio", "dstca", NULL, "audio/dts"},
@@ -155,6 +156,10 @@ CodecIDReg CodecRegistry [] = {
 
 	{GF_CODECID_TMCD, 0, GF_STREAM_METADATA, "QT TimeCode", "tmcd", NULL, NULL},
 	{GF_CODECID_VVC, 0, GF_STREAM_VISUAL, "VVC Video", "vvc|266|h266", "vvc1", "video/vvc"},
+	{GF_CODECID_USAC, GF_CODECID_AAC_MPEG4, GF_STREAM_AUDIO, "xHEAAC / USAC Audio", "usac|xheaac", "mp4a", "audio/x-xheaac"},
+	{GF_CODECID_V210, 0, GF_STREAM_VISUAL, "v210 YUV 422 10 bits", "v210", "v210", "video/x-raw-v210"},
+
+
 };
 
 
@@ -229,6 +234,8 @@ GF_CodecID gf_codec_id_from_isobmf(u32 isobmftype)
 	case GF_ISOM_SUBTYPE_VVC1:
 	case GF_ISOM_SUBTYPE_VVI1:
 		return GF_CODECID_VVC;
+	case GF_QT_SUBTYPE_YUV422_10:
+		return GF_CODECID_V210;
 
 	case GF_QT_SUBTYPE_APCH:
 		return GF_CODECID_APCH;
@@ -254,6 +261,8 @@ GF_CodecID gf_codec_id_from_isobmf(u32 isobmftype)
 		return GF_CODECID_RAW;
 	case GF_QT_SUBTYPE_IN32:
 		return GF_CODECID_RAW;
+	case GF_ISOM_SUBTYPE_MLPA:
+		return GF_CODECID_TRUEHD;
 	default:
 		break;
 	}
@@ -425,9 +434,12 @@ u32 gf_stream_type_by_name(const char *val)
 	return GF_STREAM_UNKNOWN;
 }
 
+#if 0
 static char szAllStreamTypes[500] = {0};
 
-GF_EXPORT
+/*! Gets the list of names of all stream types defined
+\return names of all stream types defined
+ */
 const char *gf_stream_type_all_names()
 {
 	if (!szAllStreamTypes[0]) {
@@ -450,6 +462,8 @@ const char *gf_stream_type_all_names()
 	}
 	return szAllStreamTypes;
 }
+#endif
+
 
 GF_EXPORT
 u32 gf_stream_types_enum(u32 *idx, const char **name, const char **desc)
@@ -751,8 +765,8 @@ typedef struct
 
 static const GF_CICPAudioLayout GF_CICPLayouts[] =
 {
-	{1, "1/0.0", GF_AUDIO_CH_FRONT_CENTER },
-	{2, "2/0.0", GF_AUDIO_CH_FRONT_LEFT | GF_AUDIO_CH_FRONT_RIGHT },
+	{1, "mono"/*"1/0.0"*/, GF_AUDIO_CH_FRONT_CENTER },
+	{2, "stereo"/*"2/0.0"*/, GF_AUDIO_CH_FRONT_LEFT | GF_AUDIO_CH_FRONT_RIGHT },
 	{3, "3/0.0", GF_AUDIO_CH_FRONT_LEFT | GF_AUDIO_CH_FRONT_RIGHT | GF_AUDIO_CH_FRONT_CENTER },
 	{4, "3/1.0", GF_AUDIO_CH_FRONT_LEFT | GF_AUDIO_CH_FRONT_RIGHT | GF_AUDIO_CH_FRONT_CENTER | GF_AUDIO_CH_REAR_CENTER },
 	{5, "3/2.0", GF_AUDIO_CH_FRONT_LEFT | GF_AUDIO_CH_FRONT_RIGHT | GF_AUDIO_CH_FRONT_CENTER | GF_AUDIO_CH_REAR_SURROUND_LEFT | GF_AUDIO_CH_REAR_SURROUND_RIGHT },
@@ -807,6 +821,19 @@ const char *gf_audio_fmt_get_layout_name(u64 ch_layout)
 }
 
 GF_EXPORT
+u64 gf_audio_fmt_get_layout_from_name(const char *name)
+{
+	u32 i, nb_cicp = sizeof(GF_CICPLayouts) / sizeof(GF_CICPAudioLayout);
+	if (!name) return 0;
+	for (i = 0; i < nb_cicp; i++) {
+		if (!strcmp(GF_CICPLayouts[i].name, name))
+			return GF_CICPLayouts[i].channel_mask;
+	}
+	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported audio layout name %s\n", name));
+	return 0;
+}
+
+GF_EXPORT
 u32 gf_audio_fmt_get_cicp_from_layout(u64 chan_layout)
 {
 	u32 i, nb_cicp = sizeof(GF_CICPLayouts) / sizeof(GF_CICPAudioLayout);
@@ -828,6 +855,7 @@ u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout)
 	return nb_chan;
 }
 
+GF_EXPORT
 u16 gf_audio_fmt_get_dolby_chanmap(u32 cicp)
 {
 	u16 res = 0;
@@ -845,7 +873,7 @@ u16 gf_audio_fmt_get_dolby_chanmap(u32 cicp)
 	//Cs
 	if (layout & GF_AUDIO_CH_REAR_CENTER) res |= (1<<8); //7
 	//Ts
-	if (layout & GF_AUDIO_CH_REAR_CENTER) res |= (1<<7); //8
+	if (layout & GF_AUDIO_CH_REAR_CENTER_TOP) res |= (1<<7); //8
 	//Lsd/Rsd
 	if (layout & GF_AUDIO_CH_SIDE_SURROUND_LEFT) res |= (1<<6); //9
 	//Lw/Rw
@@ -873,9 +901,11 @@ typedef struct
 	const char *sname; //short name, as used in gpac
 } GF_PixFmt;
 
+//DO NOT CHANGE ORDER, YUV formats first !
 static const GF_PixFmt GF_PixelFormats[] =
 {
 	{GF_PIXEL_YUV, "yuv420", "Planar YUV 420 8 bit", "yuv"},
+	{GF_PIXEL_YVU, "yvu420", "Planar YVU 420 8 bit", "yvu"},
 	{GF_PIXEL_YUV_10, "yuv420_10", "Planar YUV 420 10 bit", "yuvl"},
 	{GF_PIXEL_YUV422, "yuv422", "Planar YUV 422 8 bit", "yuv2"},
 	{GF_PIXEL_YUV422_10, "yuv422_10", "Planar YUV 422 10 bit", "yp2l"},
@@ -885,6 +915,10 @@ static const GF_PixFmt GF_PixelFormats[] =
 	{GF_PIXEL_VYUY, "vyuy", "Packed VYUV 422 8 bit"},
 	{GF_PIXEL_YUYV, "yuyv", "Packed YUYV 422 8 bit"},
 	{GF_PIXEL_YVYU, "yvyu", "Packed YVYU 422 8 bit"},
+	{GF_PIXEL_UYVY_10, "uyvl", "Packed UYVY 422 10->16 bit"},
+	{GF_PIXEL_VYUY_10, "vyul", "Packed VYUV 422 10->16 bit"},
+	{GF_PIXEL_YUYV_10, "yuyl", "Packed YUYV 422 10->16 bit"},
+	{GF_PIXEL_YVYU_10, "yvyl", "Packed YVYU 422 10->16 bit"},
 	{GF_PIXEL_NV12, "nv12", "Semi-planar YUV 420 8 bit, Y plane and UV packed plane"},
 	{GF_PIXEL_NV21, "nv21", "Semi-planar YUV 420 8 bit, Y plane and VU packed plane"},
 	{GF_PIXEL_NV12_10, "nv1l", "Semi-planar YUV 420 10 bit, Y plane and UV plane"},
@@ -892,6 +926,11 @@ static const GF_PixFmt GF_PixelFormats[] =
 	{GF_PIXEL_YUVA, "yuva", "Planar YUV+alpha 420 8 bit"},
 	{GF_PIXEL_YUVD, "yuvd", "Planar YUV+depth  420 8 bit"},
 	{GF_PIXEL_YUVA444, "yuv444a", "Planar YUV+alpha 444 8 bit", "yp4a"},
+	{GF_PIXEL_YUV444_PACK, "yuv444p", "Packed YUV 444 8 bit", "yv4p"},
+	{GF_PIXEL_YUVA444_PACK, "yuv444ap", "Packed YUV+alpha 444 8 bit", "y4ap"},
+	{GF_PIXEL_YUV444_10_PACK, "yuv444p_10", "Packed YUV 444 10 bit", "y4lp"},
+
+	//first non-yuv format
 	{GF_PIXEL_GREYSCALE, "grey", "Greyscale 8 bit"},
 	{GF_PIXEL_ALPHAGREY, "algr", "Alpha+Grey 8 bit"},
 	{GF_PIXEL_GREYALPHA, "gral", "Grey+Alpha 8 bit"},
@@ -960,7 +999,7 @@ const char *gf_pixel_fmt_sname(GF_PixelFormat pfmt)
 }
 
 GF_EXPORT
-u32 gf_pixel_fmt_enum(u32 *idx, const char **name, const char **fileext, const char **description)
+GF_PixelFormat gf_pixel_fmt_enum(u32 *idx, const char **name, const char **fileext, const char **description)
 {
 	u32 nb_pfmt = sizeof(GF_PixelFormats) / sizeof(GF_PixFmt);
 	if (*idx >= nb_pfmt) return 0;
@@ -975,6 +1014,18 @@ u32 gf_pixel_fmt_enum(u32 *idx, const char **name, const char **fileext, const c
 	return nb_pfmt;
 }
 
+
+GF_EXPORT
+Bool gf_pixel_fmt_is_yuv(GF_PixelFormat pfmt)
+{
+	u32 i=0;
+	while (GF_PixelFormats[i].pixfmt) {
+		if (GF_PixelFormats[i].pixfmt==pfmt) return GF_TRUE;
+		if (GF_PixelFormats[i].pixfmt==GF_PIXEL_GREYSCALE) return GF_FALSE;
+		i++;
+	}
+	return GF_FALSE;
+}
 
 static char szAllPixelFormats[5000] = {0};
 
@@ -1100,6 +1151,7 @@ Bool gf_pixel_get_size_info(GF_PixelFormat pixfmt, u32 width, u32 height, u32 *o
 		planes=1;
 		break;
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
 		stride = no_in_stride ? width : *out_stride;
 		uv_height = height / 2;
 		if (height % 2) uv_height++;
@@ -1194,6 +1246,30 @@ Bool gf_pixel_get_size_info(GF_PixelFormat pixfmt, u32 width, u32 height, u32 *o
 		planes=1;
 		size = height * stride;
 		break;
+	case GF_PIXEL_UYVY_10:
+	case GF_PIXEL_VYUY_10:
+	case GF_PIXEL_YUYV_10:
+	case GF_PIXEL_YVYU_10:
+		stride = no_in_stride ? 4*width : *out_stride;
+		planes=1;
+		size = height * stride;
+		break;
+	case GF_PIXEL_YUV444_PACK:
+		stride = no_in_stride ? 3 * width : *out_stride;
+		planes=1;
+		size = height * stride;
+		break;
+	case GF_PIXEL_YUVA444_PACK:
+		stride = no_in_stride ? 4 * width : *out_stride;
+		planes=1;
+		size = height * stride;
+		break;
+	case GF_PIXEL_YUV444_10_PACK:
+		stride = no_in_stride ? 4 * width : *out_stride;
+		planes = 1;
+		size = height * stride;
+		break;
+
 	case GF_PIXEL_GL_EXTERNAL:
 		planes = 1;
 		size = 0;
@@ -1243,6 +1319,7 @@ u32 gf_pixel_get_bytes_per_pixel(GF_PixelFormat pixfmt)
 	case GF_PIXEL_RGBS:
 		return 3;
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
 	case GF_PIXEL_YUVA:
 	case GF_PIXEL_YUVA444:
 	case GF_PIXEL_YUVD:
@@ -1268,6 +1345,16 @@ u32 gf_pixel_get_bytes_per_pixel(GF_PixelFormat pixfmt)
 	case GF_PIXEL_YUYV:
 	case GF_PIXEL_YVYU:
 		return 1;
+	case GF_PIXEL_UYVY_10:
+	case GF_PIXEL_VYUY_10:
+	case GF_PIXEL_YUYV_10:
+	case GF_PIXEL_YVYU_10:
+		return 2;
+	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_YUV444_10_PACK:
+		return 1;
+
 	case GF_PIXEL_GL_EXTERNAL:
 		return 1;
 	default:
@@ -1313,6 +1400,7 @@ u32 gf_pixel_get_nb_comp(GF_PixelFormat pixfmt)
 	case GF_PIXEL_RGBS:
 		return 4;
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
 		return 3;
 	case GF_PIXEL_YUVA:
 	case GF_PIXEL_YUVA444:
@@ -1340,6 +1428,18 @@ u32 gf_pixel_get_nb_comp(GF_PixelFormat pixfmt)
 	case GF_PIXEL_YUYV:
 	case GF_PIXEL_YVYU:
 		return 3;
+	case GF_PIXEL_UYVY_10:
+	case GF_PIXEL_VYUY_10:
+	case GF_PIXEL_YUYV_10:
+	case GF_PIXEL_YVYU_10:
+		return 3;
+	case GF_PIXEL_YUV444_PACK:
+		return 3;
+	case GF_PIXEL_YUVA444_PACK:
+		return 4;
+	case GF_PIXEL_YUV444_10_PACK:
+		return 3;
+
 	case GF_PIXEL_GL_EXTERNAL:
 		return 1;
 	default:
@@ -1349,36 +1449,102 @@ u32 gf_pixel_get_nb_comp(GF_PixelFormat pixfmt)
 	return 0;
 }
 
+static struct pixfmt_to_qt
+{
+	GF_PixelFormat pfmt;
+	u32 qt4cc;
+} PixelsToQT[] = {
+	{GF_PIXEL_RGB, GF_QT_SUBTYPE_RAW},
+	{GF_PIXEL_YUYV, GF_QT_SUBTYPE_YUYV},
+	{GF_PIXEL_UYVY, GF_QT_SUBTYPE_UYVY},
+	{GF_PIXEL_YUV444_PACK, GF_QT_SUBTYPE_YUV444},
+	{GF_PIXEL_YUVA444_PACK, GF_QT_SUBTYPE_YUVA444},
+	{GF_PIXEL_UYVY_10, GF_QT_SUBTYPE_YUV422_16},
+	{GF_PIXEL_YVYU, GF_QT_SUBTYPE_YVYU},
+	{GF_PIXEL_YUV444_10_PACK, GF_QT_SUBTYPE_YUV444_10},
+	{GF_PIXEL_YUV, GF_QT_SUBTYPE_YUV420},
+	{GF_PIXEL_YUV, GF_QT_SUBTYPE_I420},
+	{GF_PIXEL_YUV, GF_QT_SUBTYPE_IYUV},
+	{GF_PIXEL_YVU, GF_QT_SUBTYPE_YV12},
+	{GF_PIXEL_RGBA, GF_QT_SUBTYPE_RGBA},
+	{GF_PIXEL_ABGR, GF_QT_SUBTYPE_ABGR}
+};
 
+GF_EXPORT
+GF_PixelFormat gf_pixel_fmt_from_qt_type(u32 qt_code)
+{
+	u32 i, count = GF_ARRAY_LENGTH(PixelsToQT);
+	for (i=0; i<count; i++) {
+		if (PixelsToQT[i].qt4cc==qt_code) return PixelsToQT[i].pfmt;
+	}
+	return 0;
+}
 
+GF_EXPORT
+u32 gf_pixel_fmt_to_qt_type(GF_PixelFormat pix_fmt)
+{
+	u32 i, count = GF_ARRAY_LENGTH(PixelsToQT);
+	for (i=0; i<count; i++) {
+		if (PixelsToQT[i].pfmt==pix_fmt) return PixelsToQT[i].qt4cc;
+	}
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unknown mapping to QT/ISOBMFF for pixel format %s\n", gf_pixel_fmt_name(pix_fmt)));
+	return 0;
+}
 
 
 static struct _itags {
 	const char *name;
+	const char *alt_name;
 	u32 itag;
 	u32 id3tag;
 	u32 type;
+	Bool match_substr;
 } itunes_tags[] = {
 
-	{"album", GF_ISOM_ITUNE_ALBUM, GF_ID3V2_FRAME_TALB, GF_ITAG_STR},
-	{"artist", GF_ISOM_ITUNE_ARTIST, GF_ID3V2_FRAME_TPE1, GF_ITAG_STR},
-	{"comment", GF_ISOM_ITUNE_COMMENT, 0, GF_ITAG_SUBSTR},
-	{"complilation", GF_ISOM_ITUNE_COMPILATION, GF_ID3V2_FRAME_TCMP, GF_ITAG_BOOL},
-	{"composer", GF_ISOM_ITUNE_COMPOSER, GF_ID3V2_FRAME_TCOM, GF_ITAG_STR},
-	{"year", GF_ISOM_ITUNE_CREATED, GF_ID3V2_FRAME_TDRC, GF_ITAG_STR},
-	{"disk", GF_ISOM_ITUNE_DISK, GF_ID3V2_FRAME_TPOS, GF_ITAG_STR},
-	{"tool", GF_ISOM_ITUNE_TOOL, 0, GF_ITAG_STR},
-	{"genre", GF_ISOM_ITUNE_GENRE, GF_ID3V2_FRAME_TCON, GF_ITAG_STR},
-	{"contentgroup", GF_ISOM_ITUNE_GROUP, GF_ID3V2_FRAME_TIT1, GF_ITAG_STR},
-	{"title", GF_ISOM_ITUNE_NAME, GF_ID3V2_FRAME_TIT2, GF_ITAG_STR},
-	{"tempo", GF_ISOM_ITUNE_TEMPO, GF_ID3V2_FRAME_TBPM, GF_ITAG_STR},
-	{"track", GF_ISOM_ITUNE_TRACK, 0, GF_ITAG_STR},
-	{"tracknum", GF_ISOM_ITUNE_TRACKNUMBER, GF_ID3V2_FRAME_TRCK, GF_ITAG_STR},
-	{"writer", GF_ISOM_ITUNE_WRITER, GF_ID3V2_FRAME_TEXT, GF_ITAG_STR},
-	{"encoder", GF_ISOM_ITUNE_ENCODER, GF_ID3V2_FRAME_TSSE, GF_ITAG_STR},
-	{"album_artist", GF_ISOM_ITUNE_ALBUM_ARTIST, GF_ID3V2_FRAME_TPE2, GF_ITAG_SUBSTR},
-	{"gapless", GF_ISOM_ITUNE_GAPLESS, 0, GF_ITAG_BOOL},
-	{"conductor", GF_ISOM_ITUNE_CONDUCTOR, GF_ID3V2_FRAME_TPE3, GF_ITAG_STR},
+	{"title", "name", GF_ISOM_ITUNE_NAME, GF_ID3V2_FRAME_TIT2, GF_ITAG_STR, 0},
+	{"artist", NULL, GF_ISOM_ITUNE_ARTIST, GF_ID3V2_FRAME_TPE1, GF_ITAG_STR, 0},
+	{"album_artist", "albumArtist", GF_ISOM_ITUNE_ALBUM_ARTIST, GF_ID3V2_FRAME_TPE2, GF_ITAG_STR, 1},
+	{"album", NULL, GF_ISOM_ITUNE_ALBUM, GF_ID3V2_FRAME_TALB, GF_ITAG_STR, 0},
+	{"group", "grouping", GF_ISOM_ITUNE_GROUP, GF_ID3V2_FRAME_TIT1, GF_ITAG_STR, 0},
+	{"composer", NULL, GF_ISOM_ITUNE_COMPOSER, GF_ID3V2_FRAME_TCOM, GF_ITAG_STR, 0},
+	{"writer", NULL, GF_ISOM_ITUNE_WRITER, GF_ID3V2_FRAME_TEXT, GF_ITAG_STR, 0},
+	{"conductor", NULL, GF_ISOM_ITUNE_CONDUCTOR, GF_ID3V2_FRAME_TPE3, GF_ITAG_STR, 0},
+	{"comment", "comments", GF_ISOM_ITUNE_COMMENT, GF_ID3V2_FRAME_COMM, GF_ITAG_STR, 1},
+	//mapped dynamically to GF_ISOM_ITUNE_GENRE or GF_ISOM_ITUNE_GENRE_USER
+	{"genre", NULL, GF_ISOM_ITUNE_GENRE, GF_ID3V2_FRAME_TCON, GF_ITAG_ID3_GENRE, 0},
+	{"created", "releaseDate", GF_ISOM_ITUNE_CREATED, GF_ID3V2_FRAME_TYER, GF_ITAG_STR, 1},
+	{"track", NULL, GF_ISOM_ITUNE_TRACK, 0, GF_ITAG_STR, 0},
+	{"tracknum", NULL, GF_ISOM_ITUNE_TRACKNUMBER, GF_ID3V2_FRAME_TRCK, GF_ITAG_FRAC8, 0},
+	{"disk", NULL, GF_ISOM_ITUNE_DISK, GF_ID3V2_FRAME_TPOS, GF_ITAG_FRAC6, 0},
+	{"tempo", NULL, GF_ISOM_ITUNE_TEMPO, GF_ID3V2_FRAME_TBPM, GF_ITAG_INT16, 0},
+	{"complilation", NULL, GF_ISOM_ITUNE_COMPILATION, GF_ID3V2_FRAME_TCMP, GF_ITAG_BOOL, 0},
+	{"show", "tvShow", GF_ISOM_ITUNE_TV_SHOW, 0, GF_ITAG_STR, 0},
+	{"episode_id", "tvEpisodeID", GF_ISOM_ITUNE_TV_EPISODE, 0, GF_ITAG_STR, 0},
+	{"season", "tvSeason", GF_ISOM_ITUNE_TV_SEASON, 0, GF_ITAG_INT32, 0},
+	{"episode", "tvEPisode", GF_ISOM_ITUNE_TV_EPISODE_NUM, 0, GF_ITAG_INT32, 0},
+	{"network", "tvNetwork", GF_ISOM_ITUNE_TV_NETWORK, 0, GF_ITAG_STR, 0},
+	{"sdesc", "description", GF_ISOM_ITUNE_DESCRIPTION, 0, GF_ITAG_STR, 0},
+	{"ldesc", "longDescription", GF_ISOM_ITUNE_LONG_DESCRIPTION, GF_ID3V2_FRAME_TDES, GF_ITAG_STR, 0},
+	{"lyrics", NULL, GF_ISOM_ITUNE_LYRICS, GF_ID3V2_FRAME_USLT, GF_ITAG_STR, 0},
+	{"sort_name", "sortName", GF_ISOM_ITUNE_SORT_NAME, GF_ID3V2_FRAME_TSOT, GF_ITAG_STR, 0},
+	{"sort_artist", "sortArtist", GF_ISOM_ITUNE_SORT_ARTIST, GF_ID3V2_FRAME_TSOP, GF_ITAG_STR, 0},
+	{"sort_album_artist", "sortAlbumArtist", GF_ISOM_ITUNE_SORT_ALB_ARTIST, GF_ID3V2_FRAME_TSO2, GF_ITAG_STR, 0},
+	{"sort_album", "sortAlbum", GF_ISOM_ITUNE_SORT_ALBUM, GF_ID3V2_FRAME_TSOA, GF_ITAG_STR, 0},
+	{"sort_composer", "sortComposer", GF_ISOM_ITUNE_SORT_COMPOSER, GF_ID3V2_FRAME_TSOC, GF_ITAG_STR, 0},
+	{"sort_show", "sortShow", GF_ISOM_ITUNE_SORT_SHOW, 0, GF_ITAG_STR, 0},
+	{"cover", "artwork", GF_ISOM_ITUNE_COVER_ART, 0, GF_ITAG_FILE, 0},
+	{"copyright", NULL, GF_ISOM_ITUNE_COPYRIGHT, GF_ID3V2_FRAME_TCOP, GF_ITAG_STR, 0},
+	{"tool", "encodingTool", GF_ISOM_ITUNE_TOOL, 0, GF_ITAG_STR, 0},
+	{"encoder", "encodedBy", GF_ISOM_ITUNE_ENCODER, GF_ID3V2_FRAME_TENC, GF_ITAG_STR, 0},
+	{"pdate", "purchaseDate", GF_ISOM_ITUNE_PURCHASE_DATE, 0, GF_ITAG_STR, 0},
+	{"podcast", NULL, GF_ISOM_ITUNE_PODCAST, 0, GF_ITAG_BOOL, 0},
+	{"url", "podcastURL", GF_ISOM_ITUNE_PODCAST_URL, 0, GF_ITAG_STR, 0},
+	{"keywords", NULL, GF_ISOM_ITUNE_KEYWORDS, GF_ID3V2_FRAME_TKWD, GF_ITAG_STR, 0},
+	{"category", NULL, GF_ISOM_ITUNE_CATEGORY, GF_ID3V2_FRAME_TCAT, GF_ITAG_STR, 0},
+	{"hdvideo", NULL, GF_ISOM_ITUNE_HD_VIDEO, 0, GF_ITAG_BOOL, 0},
+	{"media", "mediaType", GF_ISOM_ITUNE_MEDIA_TYPE, 0, GF_ITAG_INT8, 0},
+	{"rating", "contentRating", GF_ISOM_ITUNE_RATING, 0, GF_ITAG_INT8, 0},
+	{"gapless", NULL, GF_ISOM_ITUNE_GAPLESS, 0, GF_ITAG_BOOL, 0},
 };
 
 GF_EXPORT
@@ -1409,7 +1575,7 @@ s32 gf_itags_find_by_name(const char *tag_name)
 	for (i=0; i<count; i++) {
 		if (!strcmp(tag_name, itunes_tags[i].name)) {
 			return i;
-		} else if ((itunes_tags[i].type==GF_ITAG_SUBSTR) && !strnicmp(tag_name, itunes_tags[i].name, strlen(itunes_tags[i].name) )) {
+		} else if (itunes_tags[i].match_substr && !strnicmp(tag_name, itunes_tags[i].name, strlen(itunes_tags[i].name) )) {
 			return i;
 		}
 	}
@@ -1417,10 +1583,10 @@ s32 gf_itags_find_by_name(const char *tag_name)
 }
 
 GF_EXPORT
-u32 gf_itags_get_type(u32 tag_idx)
+s32 gf_itags_get_type(u32 tag_idx)
 {
 	u32 count = GF_ARRAY_LENGTH(itunes_tags);
-	if (tag_idx>=count) return 0;
+	if (tag_idx>=count) return -1;
 	return itunes_tags[tag_idx].type;
 }
 
@@ -1430,6 +1596,14 @@ const char *gf_itags_get_name(u32 tag_idx)
 	u32 count = GF_ARRAY_LENGTH(itunes_tags);
 	if (tag_idx>=count) return NULL;
 	return itunes_tags[tag_idx].name;
+}
+
+GF_EXPORT
+const char *gf_itags_get_alt_name(u32 tag_idx)
+{
+	u32 count = GF_ARRAY_LENGTH(itunes_tags);
+	if (tag_idx>=count) return NULL;
+	return itunes_tags[tag_idx].alt_name;
 }
 
 GF_EXPORT
@@ -1499,4 +1673,210 @@ u32 gf_id3_get_genre_tag(const char *name)
 		if (!stricmp(ID3v1Genres[i], name)) return i+1;
 	}
 	return 0;
+}
+
+struct cicp_prim
+{
+	u32 code;
+	const char *name;
+} CICPColorPrimaries[] = {
+	{GF_CICP_PRIM_RESERVED_0, "reserved0"},
+	{GF_CICP_PRIM_BT709, "BT709"},
+	{GF_CICP_PRIM_UNSPECIFIED, "undef"},
+	{GF_CICP_PRIM_RESERVED_3, "reserved3"},
+	{GF_CICP_PRIM_BT470M, "BT470M"},
+	{GF_CICP_PRIM_BT470G, "BT470G"},
+	{GF_CICP_PRIM_SMPTE170, "SMPTE170"},
+	{GF_CICP_PRIM_SMPTE240, "SMPTE240"},
+	{GF_CICP_PRIM_FILM, "FILM"},
+	{GF_CICP_PRIM_BT2020, "BT2020"},
+	{GF_CICP_PRIM_SMPTE428, "SMPTE428"},
+	{GF_CICP_PRIM_SMPTE431, "SMPTE431"},
+	{GF_CICP_PRIM_SMPTE432, "SMPTE432"},
+	{GF_CICP_PRIM_EBU3213, "EBU3213"},
+};
+
+static void cicp_parse_int(const char *val, u32 *ival)
+{
+	if (sscanf(val, "%u", ival)!=1) {
+		*ival = (u32) -1;
+	} else {
+		char szCoef[100];
+		sprintf(szCoef, "%u", *ival);
+		if (stricmp(szCoef, val))
+			*ival = -1;
+	}
+}
+
+GF_EXPORT
+u32 gf_cicp_parse_color_primaries(const char *val)
+{
+	u32 i, ival, count = GF_ARRAY_LENGTH(CICPColorPrimaries);
+	cicp_parse_int(val, &ival);
+	for (i=0; i<count; i++) {
+		if (!stricmp(val, CICPColorPrimaries[i].name) || (ival==CICPColorPrimaries[i].code)) {
+			return CICPColorPrimaries[i].code;
+		}
+	}
+	if (strcmp(val, "-1")) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unknow CICP color primaries type %s\n", val));
+	}
+	return (u32) -1;
+}
+
+GF_EXPORT
+const char *gf_cicp_color_primaries_name(u32 cicp_mx)
+{
+	u32 i, count = GF_ARRAY_LENGTH(CICPColorPrimaries);
+	for (i=0; i<count; i++) {
+		if (CICPColorPrimaries[i].code==cicp_mx) {
+			return CICPColorPrimaries[i].name;
+		}
+	}
+	return "unknwon";
+}
+
+static char szCICPPrimAllNames[1024];
+
+GF_EXPORT
+const char *gf_cicp_color_primaries_all_names()
+{
+	if (szCICPPrimAllNames[0] == 0) {
+		u32 i, count = GF_ARRAY_LENGTH(CICPColorPrimaries);
+		for (i=0; i<count; i++) {
+			if (i) strcat(szCICPPrimAllNames, ",");
+			strcat(szCICPPrimAllNames, CICPColorPrimaries[i].name);
+		}
+	}
+	return szCICPPrimAllNames;
+}
+
+
+struct cicp_trans
+{
+	u32 code;
+	const char *name;
+} CICPColorTransfer[] = {
+	{GF_CICP_TRANSFER_RESERVED_0, "reserved0"},
+	{GF_CICP_TRANSFER_BT709, "BT709"},
+	{GF_CICP_TRANSFER_UNSPECIFIED, "undef"},
+	{GF_CICP_TRANSFER_RESERVED_3, "reserved3"},
+	{GF_CICP_TRANSFER_BT470M, "BT470M"},
+	{GF_CICP_TRANSFER_BT470BG, "BT470BG"},
+	{GF_CICP_TRANSFER_SMPTE170, "SMPTE170"},
+	{GF_CICP_TRANSFER_SMPTE240, "SMPTE249"},
+	{GF_CICP_TRANSFER_LINEAR, "Linear"},
+	{GF_CICP_TRANSFER_LOG100, "Log100"},
+	{GF_CICP_TRANSFER_LOG316, "Log316"},
+	{GF_CICP_TRANSFER_IEC61966, "IEC61966"},
+	{GF_CICP_TRANSFER_BT1361, "BT1361"},
+	{GF_CICP_TRANSFER_SRGB, "sRGB"},
+	{GF_CICP_TRANSFER_BT2020_10, "BT2020_10"},
+	{GF_CICP_TRANSFER_BT2020_12, "BT2020_12"},
+	{GF_CICP_TRANSFER_SMPTE2084, "SMPTE2084"},
+	{GF_CICP_TRANSFER_SMPTE428, "SMPTE428"},
+	{GF_CICP_TRANSFER_STDB67, "STDB67"}
+};
+
+GF_EXPORT
+u32 gf_cicp_parse_color_transfer(const char *val)
+{
+	u32 i, ival, count = GF_ARRAY_LENGTH(CICPColorTransfer);
+	cicp_parse_int(val, &ival);
+	for (i=0; i<count; i++) {
+		if (!stricmp(val, CICPColorTransfer[i].name) || (CICPColorTransfer[i].code==ival)) {
+			return CICPColorTransfer[i].code;
+		}
+	}
+	if (strcmp(val, "-1")) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unknow CICP color transfer type %s\n", val));
+	}
+	return (u32) -1;
+}
+
+GF_EXPORT
+const char *gf_cicp_color_transfer_name(u32 cicp_mx)
+{
+	u32 i, count = GF_ARRAY_LENGTH(CICPColorTransfer);
+	for (i=0; i<count; i++) {
+		if (CICPColorTransfer[i].code==cicp_mx) {
+			return CICPColorTransfer[i].name;
+		}
+	}
+	return "unknwon";
+}
+
+static char szCICPTFCAllNames[1024];
+
+GF_EXPORT
+const char *gf_cicp_color_transfer_all_names()
+{
+	if (szCICPTFCAllNames[0] == 0) {
+		u32 i, count = GF_ARRAY_LENGTH(CICPColorTransfer);
+		for (i=0; i<count; i++) {
+			if (i) strcat(szCICPTFCAllNames, ",");
+			strcat(szCICPTFCAllNames, CICPColorTransfer[i].name);
+		}
+	}
+	return szCICPTFCAllNames;
+}
+
+struct cicp_mx
+{
+	u32 code;
+	const char *name;
+} CICPColorMatrixCoefficients[] = {
+	{GF_CICP_MX_IDENTITY, "GBR"},
+	{GF_CICP_MX_BT709, "BT709"},
+	{GF_CICP_MX_UNSPECIFIED, "undef"},
+	{GF_CICP_MX_FCC47, "FCC"},
+	{GF_CICP_MX_BT601_625, "BT601"},
+	{GF_CICP_MX_SMPTE170, "SMPTE170"},
+	{GF_CICP_MX_SMPTE240, "SMPTE240"},
+	{GF_CICP_MX_YCgCo, "YCgCo"},
+	{GF_CICP_MX_BT2020, "BT2020"},
+	{GF_CICP_MX_BT2020_CL, "BT2020cl"},
+	{GF_CICP_MX_YDzDx, "YDzDx"},
+};
+
+GF_EXPORT
+u32 gf_cicp_parse_color_matrix(const char *val)
+{
+	u32 i, ival, count = GF_ARRAY_LENGTH(CICPColorMatrixCoefficients);
+	cicp_parse_int(val, &ival);
+	for (i=0; i<count; i++) {
+		if (!stricmp(val, CICPColorMatrixCoefficients[i].name) || (ival==CICPColorMatrixCoefficients[i].code)) {
+			return CICPColorMatrixCoefficients[i].code;
+		}
+	}
+	if (strcmp(val, "-1")) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unknow CICP color matrix type %s\n", val));
+	}
+	return (u32) -1;
+}
+
+GF_EXPORT
+const char *gf_cicp_color_matrix_name(u32 cicp_mx)
+{
+	u32 i, count = GF_ARRAY_LENGTH(CICPColorMatrixCoefficients);
+	for (i=0; i<count; i++) {
+		if (CICPColorMatrixCoefficients[i].code==cicp_mx) {
+			return CICPColorMatrixCoefficients[i].name;
+		}
+	}
+	return "unknwon";
+}
+
+static char szCICPMXAllNames[1024];
+GF_EXPORT
+const char *gf_cicp_color_matrix_all_names()
+{
+	if (szCICPMXAllNames[0] == 0) {
+		u32 i, count = GF_ARRAY_LENGTH(CICPColorMatrixCoefficients);
+		for (i=0; i<count; i++) {
+			if (i) strcat(szCICPMXAllNames, ",");
+			strcat(szCICPMXAllNames, CICPColorMatrixCoefficients[i].name);
+		}
+	}
+	return szCICPMXAllNames;
 }

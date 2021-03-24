@@ -640,7 +640,11 @@ GF_RTPHinter *gf_hinter_track_new(GF_ISOFile *file, u32 TrackNum,
 	if (hintType==GF_RTP_PAYT_MPEG4) {
 		tmp->rtp_p->slMap.CodecID = codecid;
 		/*set this SL for extraction.*/
-		gf_isom_set_extraction_slc(file, TrackNum, 1, &my_sl);
+		*e = gf_isom_set_extraction_slc(file, TrackNum, 1, &my_sl);
+		if (*e) {
+			gf_hinter_track_del(tmp);
+			return NULL;
+		}
 	}
 	tmp->bandwidth = bandwidth;
 
@@ -657,8 +661,6 @@ GF_RTPHinter *gf_hinter_track_new(GF_ISOFile *file, u32 TrackNum,
 	gf_isom_set_track_priority_in_group(file, TrackNum, InterleaveGroupPriority+1);
 	gf_isom_set_track_priority_in_group(file, tmp->HintTrack, InterleaveGroupPriority);
 
-#if 0
-#endif
 	*e = GF_OK;
 	return tmp;
 }
@@ -793,8 +795,12 @@ GF_Err gf_hinter_track_process(GF_RTPHinter *tkHint)
 				}
 				remain -= size;
 				tkHint->rtp_p->sl_header.accessUnitEndFlag = remain ? 0 : 1;
-				e = gf_rtp_builder_process(tkHint->rtp_p, ptr, size, (u8) !remain, samp->dataLength, duration, (u8) (descIndex + GF_RTP_TX3G_SIDX_OFFSET) );
-				ptr += size;
+				if (!size) {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_RTP, ("[rtp hinter] Broken AVC nalu encapsulation: NALU size is 0, ignoring it\n", size));
+				} else {
+					e = gf_rtp_builder_process(tkHint->rtp_p, ptr, size, (u8) !remain, samp->dataLength, duration, (u8) (descIndex + GF_RTP_TX3G_SIDX_OFFSET) );
+					ptr += size;
+				}
 				tkHint->rtp_p->sl_header.accessUnitStartFlag = 0;
 			}
 		} else {
@@ -967,6 +973,8 @@ GF_Err gf_hinter_track_finalize(GF_RTPHinter *tkHint, Bool AddSystemInfo)
 		if (avcc) {
 			sprintf(sdpLine, "a=fmtp:%d profile-level-id=%02X%02X%02X; packetization-mode=1", tkHint->rtp_p->PayloadType, avcc->AVCProfileIndication, avcc->profile_compatibility, avcc->AVCLevelIndication);
 		} else {
+			if (!svcc)
+				return GF_ISOM_INVALID_FILE;
 			sprintf(sdpLine, "a=fmtp:%d profile-level-id=%02X%02X%02X; packetization-mode=1", tkHint->rtp_p->PayloadType, svcc->AVCProfileIndication, svcc->profile_compatibility, svcc->AVCLevelIndication);
 		}
 

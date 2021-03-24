@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019
+ *			Copyright (c) Telecom ParisTech 2019-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / QuickJS bindings for GF_Filter
@@ -156,6 +156,7 @@ enum
 	JSF_PID_FILTER_SRC,
 	JSF_PID_FILTER_ARGS,
 	JSF_PID_FILTER_SRC_ARGS,
+	JSF_PID_FILTER_UNICITY_ARGS,
 	JSF_PID_MAX_BUFFER,
 	JSF_PID_LOOSE_CONNECT,
 	JSF_PID_FRAMING_MODE,
@@ -482,9 +483,10 @@ JSValue jsf_NewProp(JSContext *ctx, const GF_PropertyValue *new_val)
 	case GF_PROP_BOOL:
 		return JS_NewBool(ctx, new_val->value.boolean);
 	case GF_PROP_UINT:
-		return JS_NewInt32(ctx, new_val->value.uint);
 	case GF_PROP_SINT:
 		return JS_NewInt32(ctx, new_val->value.sint);
+	case GF_PROP_4CC:
+		return JS_NewString(ctx, gf_4cc_to_str(new_val->value.uint) );
 	case GF_PROP_LUINT:
 		return JS_NewInt64(ctx, new_val->value.longuint);
 	case GF_PROP_LSINT:
@@ -502,19 +504,6 @@ JSValue jsf_NewProp(JSContext *ctx, const GF_PropertyValue *new_val)
 		res = JS_NewObject(ctx);
 		JS_SetPropertyStr(ctx, res, "x", JS_NewFloat64(ctx, new_val->value.vec2.x));
 		JS_SetPropertyStr(ctx, res, "y", JS_NewFloat64(ctx, new_val->value.vec2.y));
-		return res;
-	case GF_PROP_VEC3:
-		res = JS_NewObject(ctx);
-		JS_SetPropertyStr(ctx, res, "x", JS_NewFloat64(ctx, new_val->value.vec3.x));
-		JS_SetPropertyStr(ctx, res, "y", JS_NewFloat64(ctx, new_val->value.vec3.y));
-		JS_SetPropertyStr(ctx, res, "z", JS_NewFloat64(ctx, new_val->value.vec3.z));
-		return res;
-	case GF_PROP_VEC4:
-		res = JS_NewObject(ctx);
-		JS_SetPropertyStr(ctx, res, "x", JS_NewFloat64(ctx, new_val->value.vec4.x));
-		JS_SetPropertyStr(ctx, res, "y", JS_NewFloat64(ctx, new_val->value.vec4.y));
-		JS_SetPropertyStr(ctx, res, "z", JS_NewFloat64(ctx, new_val->value.vec4.z));
-		JS_SetPropertyStr(ctx, res, "w", JS_NewFloat64(ctx, new_val->value.vec4.w));
 		return res;
 	case GF_PROP_VEC2I:
 		res = JS_NewObject(ctx);
@@ -544,14 +533,16 @@ JSValue jsf_NewProp(JSContext *ctx, const GF_PropertyValue *new_val)
 		JS_SetPropertyStr(ctx, res, "n", JS_NewInt64(ctx, new_val->value.lfrac.num));
 		JS_SetPropertyStr(ctx, res, "d", JS_NewInt64(ctx, new_val->value.lfrac.den));
 		return res;
-	case GF_PROP_PIXFMT:
-		return JS_NewString(ctx, gf_pixel_fmt_name(new_val->value.uint));
-	case GF_PROP_PCMFMT:
-		return JS_NewString(ctx, gf_audio_fmt_name(new_val->value.uint));
 	case GF_PROP_UINT_LIST:
 		res = JS_NewArray(ctx);
 		for (i=0; i<new_val->value.uint_list.nb_items; i++) {
         	JS_SetPropertyUint32(ctx, res, i, JS_NewInt64(ctx, new_val->value.uint_list.vals[i]) );
+		}
+		return res;
+	case GF_PROP_4CC_LIST:
+		res = JS_NewArray(ctx);
+		for (i=0; i<new_val->value.uint_list.nb_items; i++) {
+        	JS_SetPropertyUint32(ctx, res, i, JS_NewString(ctx, gf_4cc_to_str(new_val->value.uint_list.vals[i]) ) );
 		}
 		return res;
 	case GF_PROP_SINT_LIST:
@@ -579,6 +570,9 @@ JSValue jsf_NewProp(JSContext *ctx, const GF_PropertyValue *new_val)
 		return JS_NewArrayBufferCopy(ctx, new_val->value.data.ptr, new_val->value.data.size);
 
 	default:
+		if (gf_props_type_is_enum(new_val->type)) {
+			return JS_NewString(ctx, gf_props_enum_name(new_val->type, new_val->value.uint));
+		}
 		return JS_NULL;
 	}
 }
@@ -602,11 +596,8 @@ JSValue jsf_NewPropTranslate(JSContext *ctx, const GF_PropertyValue *prop, u32 p
 	case GF_PROP_PID_STREAM_TYPE:
 		res = JS_NewString(ctx, gf_stream_type_name(prop->value.uint));
 		break;
-	case GF_PROP_PID_AUDIO_FORMAT:
-		res = JS_NewString(ctx, gf_audio_fmt_name(prop->value.uint));
-		break;
-	case GF_PROP_PID_PIXFMT:
-		res = JS_NewString(ctx, gf_pixel_fmt_name(prop->value.uint));
+	case GF_PROP_PID_CHANNEL_LAYOUT:
+		res = JS_NewString(ctx, gf_audio_fmt_get_layout_name(prop->value.longuint));
 		break;
 	default:
 		res = jsf_NewProp(ctx, prop);
@@ -632,6 +623,9 @@ GF_Err jsf_ToProp_ex(GF_Filter *filter, JSContext *ctx, JSValue value, u32 p4cc,
 		} else if (p4cc==GF_PROP_PID_CODECID) {
 			prop->type = GF_PROP_UINT;
 			prop->value.uint = gf_codecid_parse(val_str);
+		} else if (p4cc==GF_PROP_PID_CHANNEL_LAYOUT) {
+			prop->type = GF_PROP_LUINT;
+			prop->value.longuint = gf_audio_fmt_get_layout_from_name(val_str);
 		} else {
 			*prop = gf_props_parse_value(type, NULL, val_str, NULL, gf_filter_get_sep(filter, GF_FS_SEP_LIST));
 		}
@@ -703,33 +697,27 @@ GF_Err jsf_ToProp_ex(GF_Filter *filter, JSContext *ctx, JSValue value, u32 p4cc,
 		}
 	}
 	else if (JS_IsObject(value)) {
-		u32 is_vec4 = 0;
-		u32 is_vec3 = 0;
+		Bool is_vec4 = 0;
+		Bool is_vec3 = 0;
 		u32 is_vec2 = 0;
 		u32 is_frac = 0;
 		Bool is_vec = GF_FALSE;
-		GF_PropVec4 val_d;
+		GF_PropVec2 val_d;
 		GF_PropVec4i val_i;
 		GF_Fraction frac;
 		GF_Fraction64 frac_l;
 
 		JSValue res = JS_GetPropertyStr(ctx, value, "w");
 		if (!JS_IsUndefined(res)) {
+			JS_ToInt32(ctx, &val_i.w, res);
 			is_vec4 = 1;
-			if (JS_ToFloat64(ctx, &val_d.w, res)) {
-				JS_ToInt32(ctx, &val_i.w, res);
-				is_vec4 = 2;
-			}
 		}
 		JS_FreeValue(ctx, res);
 
 		res = JS_GetPropertyStr(ctx, value, "z");
 		if (!JS_IsUndefined(res)) {
+			JS_ToInt32(ctx, &val_i.z, res);
 			is_vec3 = 1;
-			if (JS_ToFloat64(ctx, &val_d.z, res)) {
-				JS_ToInt32(ctx, &val_i.z, res);
-				is_vec3 = 2;
-			}
 		}
 		JS_FreeValue(ctx, res);
 
@@ -776,30 +764,22 @@ GF_Err jsf_ToProp_ex(GF_Filter *filter, JSContext *ctx, JSValue value, u32 p4cc,
 		}
 
 		if (is_vec) {
-			if (is_vec4==2) {
+			if (is_vec4) {
 				prop->type = GF_PROP_VEC4I;
 				prop->value.vec4i = val_i;
-			} else if (is_vec4==1) {
-				prop->type = GF_PROP_VEC4;
-				prop->value.vec4 = val_d;
-			} else if (is_vec3==2) {
+			} else if (is_vec3) {
 				prop->type = GF_PROP_VEC3I;
 				prop->value.vec3i.x = val_i.x;
 				prop->value.vec3i.y = val_i.y;
 				prop->value.vec3i.z = val_i.z;
-			} else if (is_vec3==1) {
-				prop->type = GF_PROP_VEC3;
-				prop->value.vec3.x = val_d.x;
-				prop->value.vec3.y = val_d.y;
-				prop->value.vec3.z = val_d.z;
 			} else if (is_vec2==2) {
 				prop->type = GF_PROP_VEC2I;
-				prop->value.vec3i.x = val_i.x;
-				prop->value.vec3i.y = val_i.y;
+				prop->value.vec2i.x = val_i.x;
+				prop->value.vec2i.y = val_i.y;
 			} else if (is_vec2==1) {
 				prop->type = GF_PROP_VEC2;
-				prop->value.vec3.x = val_d.x;
-				prop->value.vec3.y = val_d.y;
+				prop->value.vec2.x = val_d.x;
+				prop->value.vec2.y = val_d.y;
 			}
 		} else if (is_frac) {
 			if (is_frac==2) {
@@ -1023,6 +1003,7 @@ static JSValue jsf_filter_prop_get(JSContext *ctx, JSValueConst this_val, int ma
 	{
 		GF_Fraction64 frac;
 		gf_filter_get_clock_hint(jsf->filter, NULL, &frac);
+		if (!frac.den) return JS_NULL;
 		dval = ((Double)frac.num) / frac.den;
 	}
 		return JS_NewFloat64(ctx, dval);
@@ -1639,6 +1620,14 @@ static JSValue jsf_filter_block_eos(JSContext *ctx, JSValueConst this_val, int a
 }
 
 
+static JSValue jsf_filter_abort(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	GF_JSFilterCtx *jsf = JS_GetOpaque(this_val, jsf_filter_class_id);
+    if (!jsf) return JS_EXCEPTION;
+	gf_filter_abort(jsf->filter);
+	return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry jsf_filter_funcs[] = {
     JS_CGETSET_MAGIC_DEF("initialize", jsf_filter_prop_get, jsf_filter_prop_set, JSF_EVT_INITIALIZE),
     JS_CGETSET_MAGIC_DEF("finalize", jsf_filter_prop_get, jsf_filter_prop_set, JSF_EVT_FINALIZE),
@@ -1700,11 +1689,12 @@ static const JSCFunctionListEntry jsf_filter_funcs[] = {
     JS_CFUNC_DEF("make_sticky", 0, jsf_filter_make_sticky),
 	JS_CFUNC_DEF("prevent_blocking", 1, jsf_filter_prevent_blocking),
 	JS_CFUNC_DEF("block_eos", 1, jsf_filter_block_eos),
+    JS_CFUNC_DEF("abort", 0, jsf_filter_abort),
 };
 
 
 
-static JSValue jsf_filter_set_source_id(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+static JSValue jsf_filter_set_source_internal(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, Bool use_restricted)
 {
 	GF_Err e=GF_OK;
 	const char *source_id=NULL;
@@ -1720,12 +1710,25 @@ static JSValue jsf_filter_set_source_id(JSContext *ctx, JSValueConst this_val, i
     	source_id = JS_ToCString(ctx, argv[2]);
 		if (!source_id) return JS_EXCEPTION;
 	}
-	
-	e = gf_filter_set_source(f_inst->filter, fi_from ? fi_from->filter : f_from->filter, source_id);
+
+	if (use_restricted)
+		e = gf_filter_set_source_restricted(f_inst->filter, fi_from ? fi_from->filter : f_from->filter, source_id);
+	else
+		e = gf_filter_set_source(f_inst->filter, fi_from ? fi_from->filter : f_from->filter, source_id);
 
 	JS_FreeCString(ctx, source_id);
 	if (e) return js_throw_err(ctx, e);
 	return JS_UNDEFINED;
+}
+
+static JSValue jsf_filter_set_source(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	return jsf_filter_set_source_internal(ctx, this_val, argc, argv, GF_FALSE);
+}
+
+static JSValue jsf_filter_set_source_restricted(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	return jsf_filter_set_source_internal(ctx, this_val, argc, argv, GF_TRUE);
 }
 
 static JSValue jsf_filter_reset_source(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
@@ -1744,6 +1747,8 @@ static JSValue jsf_filter_remove(JSContext *ctx, JSValueConst this_val, int argc
 		gf_filter_remove_src(jsfi->jsf->filter, jsfi->filter);
 	return JS_UNDEFINED;
 }
+
+
 
 static JSValue jsf_filter_has_pid_connections_pending(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -1840,14 +1845,14 @@ static const JSCFunctionListEntry jsf_filter_inst_funcs[] = {
     JS_CFUNC_DEF("send_event", 0, jsf_filter_send_event),
     JS_CFUNC_DEF("get_info", 0, jsf_filter_get_info),
     JS_CFUNC_DEF("send_update", 0, jsf_filter_send_update),
-    JS_CFUNC_DEF("set_source", 0, jsf_filter_set_source_id),
+    JS_CFUNC_DEF("set_source", 0, jsf_filter_set_source),
+    JS_CFUNC_DEF("set_source_restricted", 0, jsf_filter_set_source_restricted),
     JS_CFUNC_DEF("remove", 0, jsf_filter_remove),
     JS_CFUNC_DEF("has_pid_connections_pending", 0, jsf_filter_has_pid_connections_pending),
     JS_CFUNC_DEF("get_arg", 0, jsf_filter_inst_get_arg),
     JS_CFUNC_DEF("disable_probe", 0, jsf_filter_inst_disable_probe),
     JS_CFUNC_DEF("disable_inputs", 0, jsf_filter_inst_disable_inputs),
     JS_CFUNC_DEF("reset_source", 0, jsf_filter_reset_source),
-
 };
 
 
@@ -1922,7 +1927,9 @@ static JSValue jsf_pid_get_prop(JSContext *ctx, JSValueConst this_val, int magic
 	case JSF_PID_FILTER_ARGS:
 		return JS_NewString(ctx, gf_filter_pid_get_args(pctx->pid) );
 	case JSF_PID_FILTER_SRC_ARGS:
-		return JS_NewString(ctx, gf_filter_pid_orig_src_args(pctx->pid) );
+		return JS_NewString(ctx, gf_filter_pid_orig_src_args(pctx->pid, GF_FALSE) );
+	case JSF_PID_FILTER_UNICITY_ARGS:
+		return JS_NewString(ctx, gf_filter_pid_orig_src_args(pctx->pid, GF_TRUE) );
 	case JSF_PID_MAX_BUFFER:
 		return JS_NewInt32(ctx, gf_filter_pid_get_max_buffer(pctx->pid) );
 	case JSF_PID_BUFFER:
@@ -2527,12 +2534,25 @@ static JSValue jsf_pid_negociate_prop(JSContext *ctx, JSValueConst this_val, int
 	return jsf_pid_set_property_ex(ctx, this_val, argc, argv, 2);
 }
 
+static JSValue jsf_pid_ignore_blocking(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	Bool do_ignore = GF_TRUE;
+	GF_JSPidCtx *pctx = JS_GetOpaque(this_val, jsf_pid_class_id);
+    if (!pctx) return JS_EXCEPTION;
+    if (argc) do_ignore = JS_ToBool(ctx, argv[0]) ? GF_TRUE : GF_FALSE;
+    gf_filter_pid_ignore_blocking(pctx->pid, do_ignore);
+	return JS_UNDEFINED;
+
+}
+
 static JSValue jsf_pid_remove(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
 	GF_JSPidCtx *pctx = JS_GetOpaque(this_val, jsf_pid_class_id);
     if (!pctx) return JS_EXCEPTION;
-    gf_filter_pid_remove(pctx->pid);
-    pctx->pid = NULL;
+    if (pctx->pid) {
+		gf_filter_pid_remove(pctx->pid);
+		pctx->pid = NULL;
+    }
     JS_SetOpaque(this_val, NULL);
 	return JS_UNDEFINED;
 }
@@ -2583,6 +2603,7 @@ static const JSCFunctionListEntry jsf_pid_funcs[] = {
     JS_CGETSET_MAGIC_DEF("src_name", jsf_pid_get_prop, NULL, JSF_PID_FILTER_SRC),
     JS_CGETSET_MAGIC_DEF("args", jsf_pid_get_prop, NULL, JSF_PID_FILTER_ARGS),
     JS_CGETSET_MAGIC_DEF("src_args", jsf_pid_get_prop, NULL, JSF_PID_FILTER_SRC_ARGS),
+    JS_CGETSET_MAGIC_DEF("unicity_args", jsf_pid_get_prop, NULL, JSF_PID_FILTER_UNICITY_ARGS),
     JS_CGETSET_MAGIC_DEF("max_buffer", jsf_pid_get_prop, jsf_pid_set_prop, JSF_PID_MAX_BUFFER),
     JS_CGETSET_MAGIC_DEF("loose_connect", NULL, jsf_pid_set_prop, JSF_PID_LOOSE_CONNECT),
     JS_CGETSET_MAGIC_DEF("framing", NULL, jsf_pid_set_prop, JSF_PID_FRAMING_MODE),
@@ -2624,6 +2645,7 @@ static const JSCFunctionListEntry jsf_pid_funcs[] = {
     JS_CFUNC_DEF("copy_props", 0, jsf_pid_copy_props),
     JS_CFUNC_DEF("forward", 0, jsf_pid_forward),
     JS_CFUNC_DEF("negociate_prop", 0, jsf_pid_negociate_prop),
+    JS_CFUNC_DEF("ignore_blocking", 0, jsf_pid_ignore_blocking),
 };
 
 enum
@@ -3971,11 +3993,7 @@ void js_load_constants(JSContext *ctx, JSValue global_obj)
 	DEF_CONST(GF_PROP_VEC2I)
 	DEF_CONST(GF_PROP_VEC2)
 	DEF_CONST(GF_PROP_VEC3I)
-	DEF_CONST(GF_PROP_VEC3)
 	DEF_CONST(GF_PROP_VEC4I)
-	DEF_CONST(GF_PROP_VEC4)
-	DEF_CONST(GF_PROP_PCMFMT)
-	DEF_CONST(GF_PROP_PIXFMT)
 	DEF_CONST(GF_PROP_STRING)
 	DEF_CONST(GF_PROP_STRING)
 	DEF_CONST(GF_PROP_STRING_NO_COPY)
@@ -3988,6 +4006,14 @@ void js_load_constants(JSContext *ctx, JSValue global_obj)
 	DEF_CONST(GF_PROP_UINT_LIST)
 	DEF_CONST(GF_PROP_SINT_LIST)
 	DEF_CONST(GF_PROP_VEC2I_LIST)
+	DEF_CONST(GF_PROP_4CC)
+	DEF_CONST(GF_PROP_4CC_LIST)
+
+	DEF_CONST(GF_PROP_PIXFMT)
+	DEF_CONST(GF_PROP_PCMFMT)
+	DEF_CONST(GF_PROP_CICP_COL_PRIM)
+	DEF_CONST(GF_PROP_CICP_COL_TFC)
+	DEF_CONST(GF_PROP_CICP_COL_MX)
 
 
 	DEF_CONST(GF_FEVT_PLAY)
@@ -4553,7 +4579,7 @@ static GF_Err jsfilter_update_arg(GF_Filter *filter, const char *arg_name, const
 	if (!arg_name && !new_val) {
 		gf_js_lock(jsf->ctx, GF_TRUE);
 		if (gf_opts_get_bool("temp", "helponly")) {
-			jsf->disable_filter = 1;
+			jsf->disable_filter = GF_TRUE;
 		} else if (JS_IsFunction(jsf->ctx, jsf->funcs[JSF_EVT_INITIALIZE]) ) {
 			ret = JS_Call(jsf->ctx, jsf->funcs[JSF_EVT_INITIALIZE], jsf->filter_obj, 0, NULL);
 			if (JS_IsException(ret)) {

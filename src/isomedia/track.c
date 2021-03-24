@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2020
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -387,7 +387,7 @@ GF_Err SetTrackDuration(GF_TrackBox *trak)
 	if (e) return e;
 
 	//assert the timeScales are non-NULL
-	if (!trak->moov->mvhd->timeScale || !trak->Media->mediaHeader->timeScale) return GF_ISOM_INVALID_FILE;
+	if (!trak->moov->mvhd || !trak->moov->mvhd->timeScale || !trak->Media->mediaHeader->timeScale) return GF_ISOM_INVALID_FILE;
 	trackDuration = (trak->Media->mediaHeader->duration * trak->moov->mvhd->timeScale) / trak->Media->mediaHeader->timeScale;
 
 	//if we have an edit list, the duration is the sum of all the editList
@@ -403,6 +403,9 @@ GF_Err SetTrackDuration(GF_TrackBox *trak)
 	}
 	if (!trackDuration) {
 		trackDuration = (trak->Media->mediaHeader->duration * trak->moov->mvhd->timeScale) / trak->Media->mediaHeader->timeScale;
+	}
+	if (!trak->Header) {
+		return GF_OK;
 	}
 	trak->Header->duration = trackDuration;
 	if (!trak->moov->mov->keep_utc && !gf_sys_is_test_mode() )
@@ -775,7 +778,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 				moof_template = NULL;
 				moof_template_size = 0;
 			}
-			if (ent->nb_pack) {
+			if (ent->nb_pack>1) {
 				j+= ent->nb_pack-1;
 				traf_duration += ent->nb_pack*duration;
 				continue;
@@ -845,7 +848,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 		GF_List *groups;
 		GF_List *groupDescs;
 		Bool is_identical_sgpd = GF_TRUE;
-		u32 *new_idx = NULL;
+		u32 *new_idx = NULL, new_idx_count=0;
 
 		if (!trak->Media->information->sampleTable->sampleGroups)
 			trak->Media->information->sampleTable->sampleGroups = gf_list_new();
@@ -878,7 +881,8 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 				if (is_identical_sgpd)
 					continue;
 
-				new_idx = (u32 *)gf_malloc(gf_list_count(sgdesc->group_descriptions)*sizeof(u32));
+				new_idx_count = gf_list_count(sgdesc->group_descriptions);
+				new_idx = (u32 *)gf_malloc(new_idx_count * sizeof(u32));
 				if (!new_idx) return GF_OUT_OF_MEM;
 
 				count = 0;
@@ -950,8 +954,17 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 			} else {
 				stbl_group->sample_entries = gf_realloc(stbl_group->sample_entries, sizeof(GF_SampleGroupEntry) * (stbl_group->entry_count + frag_group->entry_count));
 				//adjust sgpd index
-				for (j = 0; j < frag_group->entry_count; j++)
-					frag_group->sample_entries[j].group_description_index = new_idx[j];
+				for (j = 0; j < frag_group->entry_count; j++) {
+					u32 sgidx = frag_group->sample_entries[j].group_description_index;
+					if (sgidx > 0x10000) {
+						sgidx -= 0x10001;
+						if (sgidx>=new_idx_count) {
+							GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[isobmf] corrupted sample group index in fragment %d but only %d group descriptions in fragment\n", sgidx, new_idx_count));
+						} else {
+							frag_group->sample_entries[j].group_description_index = new_idx[sgidx];
+						}
+					}
+				}
 				memcpy(&stbl_group->sample_entries[stbl_group->entry_count], &frag_group->sample_entries[0], sizeof(GF_SampleGroupEntry) * frag_group->entry_count);
 				stbl_group->entry_count += frag_group->entry_count;
 			}
@@ -966,9 +979,8 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 		|| traf->sample_encryption) {
 		/*Merge sample auxiliary encryption information*/
 		GF_SampleEncryptionBox *senc = NULL;
-		GF_List *sais = NULL;
 		u32 scheme_type;
-		gf_isom_get_cenc_info(trak->moov->mov, track_num, DescIndex, NULL, &scheme_type, NULL, NULL);
+		gf_isom_get_cenc_info(trak->moov->mov, track_num, DescIndex, NULL, &scheme_type, NULL);
 
 		if (traf->sample_encryption) {
 			for (i = 0; i < gf_list_count(trak->Media->information->sampleTable->child_boxes); i++) {
@@ -988,7 +1000,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 				senc = trak->sample_encryption;
 
 			if (!senc) {
-				if (traf->sample_encryption->is_piff) {
+				if (traf->sample_encryption->piff_type==1) {
 					senc = (GF_SampleEncryptionBox *)gf_isom_create_piff_psec_box(1, 0x2, 0, 0, NULL);
 				} else {
 					senc = gf_isom_create_samp_enc_box(1, 0x2);
@@ -1000,8 +1012,6 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 				if (!trak->child_boxes) trak->child_boxes = gf_list_new();
 				gf_list_add(trak->child_boxes, senc);
 			}
-
-			sais = traf->sample_encryption->samp_aux_info;
 		}
 
 		/*get sample auxiliary information by saiz/saio rather than by parsing senc box*/
@@ -1041,15 +1051,15 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 					break;
 				}
 			}
-			if (saiz && saio) {
+			if (saiz && saio && senc) {
 				for (i = 0; i < saiz->sample_count; i++) {
 					GF_CENCSampleAuxInfo *sai;
-
+					const u8 *key_info=NULL;
+					u32 key_info_size;
 					u64 cur_position;
 					if (nb_saio != 1)
 						offset = saio->offsets[i] + moof_offset;
 					size = saiz->default_sample_info_size ? saiz->default_sample_info_size : saiz->sample_info_size[i];
-
 
 					cur_position = gf_bs_get_position(trak->moov->mov->movieFileMap->bs);
 					gf_bs_seek(trak->moov->mov->movieFileMap->bs, offset);
@@ -1057,55 +1067,44 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 					GF_SAFEALLOC(sai, GF_CENCSampleAuxInfo);
 					if (!sai) return GF_OUT_OF_MEM;
 
-					e = gf_isom_get_sample_cenc_info_ex(trak, traf, senc, i+1, &is_encrypted, &sai->IV_size, NULL, NULL, NULL, NULL, NULL);
+					e = gf_isom_get_sample_cenc_info_internal(trak, traf, senc, i+1, &is_encrypted, NULL, NULL, &key_info, &key_info_size);
 					if (e) {
 						GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isobmf] could not get cenc info for sample %d: %s\n", i+1, gf_error_to_string(e) ));
 						return e;
 					}
 
 					if (is_encrypted) {
-						gf_bs_read_data(trak->moov->mov->movieFileMap->bs, (char *)sai->IV, sai->IV_size);
-						if (size > sai->IV_size) {
-							sai->subsample_count = gf_bs_read_u16(trak->moov->mov->movieFileMap->bs);
-							sai->subsamples = (GF_CENCSubSampleEntry *)gf_malloc(sizeof(GF_CENCSubSampleEntry)*sai->subsample_count);
-							if (!sai->subsamples) return GF_OUT_OF_MEM;
-							for (j = 0; j < sai->subsample_count; j++) {
-								sai->subsamples[j].bytes_clear_data = gf_bs_read_u16(trak->moov->mov->movieFileMap->bs);
-								sai->subsamples[j].bytes_encrypted_data = gf_bs_read_u32(trak->moov->mov->movieFileMap->bs);
-							}
-						}
+						sai->cenc_data_size = size;
+						sai->cenc_data = gf_malloc(sizeof(u8)*size);
+						if (!sai->cenc_data) return GF_OUT_OF_MEM;
+						gf_bs_read_data(trak->moov->mov->movieFileMap->bs, sai->cenc_data, sai->cenc_data_size);
 					} else {
-						sai->IV_size=0;
-						sai->subsample_count=0;
+						sai->isNotProtected=1;
 					}
+
+					if (key_info) {
+						//not multikey
+						if (!key_info[0]) {
+							//size greater than IV
+							if (size > key_info[3])
+								senc->flags = 0x00000002;
+						}
+						//multikey, always use subsamples
+						else {
+							senc->flags = 0x00000002;
+						}
+					}
+
 
 					gf_bs_seek(trak->moov->mov->movieFileMap->bs, cur_position);
 
 					gf_list_add(senc->samp_aux_info, sai);
-					if (sai->subsample_count) senc->flags = 0x00000002;
+
 					e = gf_isom_cenc_merge_saiz_saio(senc, trak->Media->information->sampleTable, offset, size);
 					if (e) return e;
 					if (nb_saio == 1)
 						offset += size;
 				}
-			}
-		} else if (sais) {
-			for (i = 0; i < gf_list_count(sais); i++) {
-				GF_CENCSampleAuxInfo *sai, *new_sai;
-
-				sai = (GF_CENCSampleAuxInfo *)gf_list_get(sais, i);
-
-				new_sai = (GF_CENCSampleAuxInfo *)gf_malloc(sizeof(GF_CENCSampleAuxInfo));
-				if (!new_sai) return GF_OUT_OF_MEM;
-				new_sai->IV_size = sai->IV_size;
-				memmove((char *)new_sai->IV, (const char*)sai->IV, 16);
-				new_sai->subsample_count = sai->subsample_count;
-				new_sai->subsamples = (GF_CENCSubSampleEntry *)gf_malloc(new_sai->subsample_count*sizeof(GF_CENCSubSampleEntry));
-				if (!new_sai->subsamples) return GF_OUT_OF_MEM;
-				memmove(new_sai->subsamples, sai->subsamples, new_sai->subsample_count*sizeof(GF_CENCSubSampleEntry));
-
-				gf_list_add(senc->samp_aux_info, new_sai);
-				if (sai->subsample_count) senc->flags = 0x00000002;
 			}
 		} else if (traf->sample_encryption) {
 			senc_Parse(trak->moov->mov->movieFileMap->bs, trak, traf, traf->sample_encryption);
@@ -1114,6 +1113,8 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 				trak->sample_encryption->IV_size = traf->sample_encryption->IV_size;
 			if (!trak->sample_encryption->samp_aux_info) trak->sample_encryption->samp_aux_info = gf_list_new();
 			gf_list_transfer(trak->sample_encryption->samp_aux_info, traf->sample_encryption->samp_aux_info);
+			if (traf->sample_encryption->flags & 0x00000002)
+				trak->sample_encryption->flags |= 0x00000002;
 		}
 	}
 	return GF_OK;
@@ -1189,25 +1190,25 @@ GF_Err NewMedia(GF_MediaBox **mdia, u32 MediaType, u32 TimeScale)
 	if (!mdhd) {
 		mdhd = (GF_MediaHeaderBox *) gf_isom_box_new_parent( & ((*mdia)->child_boxes), GF_ISOM_BOX_TYPE_MDHD);
 		if (! mdhd) { e = GF_OUT_OF_MEM; goto err_exit; }
-		e = mdia_on_child_box((GF_Box*)*mdia, (GF_Box *) mdhd);
+		e = mdia_on_child_box((GF_Box*)*mdia, (GF_Box *) mdhd, GF_FALSE);
 		if (e) goto err_exit;
 	}
 	if (!hdlr) {
 		hdlr = (GF_HandlerBox *) gf_isom_box_new_parent(& ((*mdia)->child_boxes), GF_ISOM_BOX_TYPE_HDLR);
 		if (! hdlr) { e = GF_OUT_OF_MEM; goto err_exit; }
-		e = mdia_on_child_box((GF_Box*)*mdia, (GF_Box *) hdlr);
+		e = mdia_on_child_box((GF_Box*)*mdia, (GF_Box *) hdlr, GF_FALSE);
 		if (e) goto err_exit;
 	}
 	if (!minf) {
 		minf = (GF_MediaInformationBox *) gf_isom_box_new_parent(& ((*mdia)->child_boxes), GF_ISOM_BOX_TYPE_MINF);
 		if (! minf) { e = GF_OUT_OF_MEM; goto err_exit; }
-		e = mdia_on_child_box((GF_Box*)*mdia, (GF_Box *) minf);
+		e = mdia_on_child_box((GF_Box*)*mdia, (GF_Box *) minf, GF_FALSE);
 		if (e) goto err_exit;
 	}
 	if (!dinf) {
 		dinf = (GF_DataInformationBox *) gf_isom_box_new_parent(&minf->child_boxes, GF_ISOM_BOX_TYPE_DINF);
 		if (! dinf) { e = GF_OUT_OF_MEM; goto err_exit; }
-		e = minf_on_child_box((GF_Box*)minf, (GF_Box *) dinf);
+		e = minf_on_child_box((GF_Box*)minf, (GF_Box *) dinf, GF_FALSE);
 		if (e) goto err_exit;
 	}
 
@@ -1293,7 +1294,7 @@ GF_Err NewMedia(GF_MediaBox **mdia, u32 MediaType, u32 TimeScale)
 		if (!minf->child_boxes) minf->child_boxes = gf_list_new();
 		gf_list_add(minf->child_boxes, mediaInfo);
 
-		e = minf_on_child_box((GF_Box*)minf, (GF_Box *) mediaInfo);
+		e = minf_on_child_box((GF_Box*)minf, (GF_Box *) mediaInfo, GF_FALSE);
 		if (e) goto err_exit;
 	}
 
@@ -1306,7 +1307,7 @@ GF_Err NewMedia(GF_MediaBox **mdia, u32 MediaType, u32 TimeScale)
 		//Create a data reference WITHOUT DATA ENTRY (we don't know anything yet about the media Data)
 		dref = (GF_DataReferenceBox *) gf_isom_box_new_parent(&dinf->child_boxes, GF_ISOM_BOX_TYPE_DREF);
 		if (! dref) { e = GF_OUT_OF_MEM; goto err_exit; }
-		e = dinf_on_child_box((GF_Box*)dinf, (GF_Box *)dref);
+		e = dinf_on_child_box((GF_Box*)dinf, (GF_Box *)dref, GF_FALSE);
 		if (e) goto err_exit;
 	}
 
@@ -1315,7 +1316,7 @@ GF_Err NewMedia(GF_MediaBox **mdia, u32 MediaType, u32 TimeScale)
 		stbl = (GF_SampleTableBox *) gf_isom_box_new_parent(&minf->child_boxes, GF_ISOM_BOX_TYPE_STBL);
 		if (! stbl) { e = GF_OUT_OF_MEM; goto err_exit; }
 
-		e = minf_on_child_box((GF_Box*)minf, (GF_Box *) stbl);
+		e = minf_on_child_box((GF_Box*)minf, (GF_Box *) stbl, GF_FALSE);
 		if (e) goto err_exit;
 	}
 	if (!stbl->SampleDescription) {
@@ -1387,7 +1388,7 @@ GF_Err Track_SetStreamDescriptor(GF_TrackBox *trak, u32 StreamDescriptionIndex, 
 		if (!trak->References) {
 			tref = (GF_TrackReferenceBox *) gf_isom_box_new_parent(&trak->child_boxes, GF_ISOM_BOX_TYPE_TREF);
 			if (!tref) return GF_OUT_OF_MEM;
-			e = trak_on_child_box((GF_Box*)trak, (GF_Box *)tref);
+			e = trak_on_child_box((GF_Box*)trak, (GF_Box *)tref, GF_FALSE);
 			if (e) return e;
 		}
 		tref = trak->References;
@@ -1464,7 +1465,7 @@ GF_Err Track_SetStreamDescriptor(GF_TrackBox *trak, u32 StreamDescriptionIndex, 
 		esd->langDesc = NULL;
 	}
 
-	//we have a streamDescritpionIndex, use it
+	//we have a streamDescriptionIndex, use it
 	if (StreamDescriptionIndex) {
 		u32 entry_type;
 		entry = (GF_MPEGSampleEntryBox*)gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, StreamDescriptionIndex - 1);
@@ -1539,9 +1540,12 @@ GF_Err Track_SetStreamDescriptor(GF_TrackBox *trak, u32 StreamDescriptionIndex, 
 		//need to check we're not in URL mode where only ONE description is allowed...
 		StreamDescriptionIndex = gf_list_count(trak->Media->information->sampleTable->SampleDescription->child_boxes);
 		if (StreamDescriptionIndex) {
+			GF_ESD *old_esd=NULL;
 			entry = (GF_MPEGSampleEntryBox*)gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, StreamDescriptionIndex - 1);
 			if (!entry) return GF_ISOM_INVALID_FILE;
-			if (entry->esd && entry->esd->desc->URLString) return GF_BAD_PARAM;
+			//get ESD (only if present, do not emulate)
+			Media_GetESD(trak->Media, StreamDescriptionIndex, &old_esd, GF_TRUE);
+			if (old_esd && old_esd->URLString) return GF_BAD_PARAM;
 		}
 
 		//OK, check the handler and create the entry
@@ -1628,7 +1632,7 @@ GF_Err Track_SetStreamDescriptor(GF_TrackBox *trak, u32 StreamDescriptionIndex, 
 			trak->Media->information->sampleTable->SampleDescription->child_boxes = gf_list_new();
 		gf_list_add(trak->Media->information->sampleTable->SampleDescription->child_boxes, entry);
 		
-		e = stsd_on_child_box((GF_Box*)trak->Media->information->sampleTable->SampleDescription, (GF_Box *) entry);
+		e = stsd_on_child_box((GF_Box*)trak->Media->information->sampleTable->SampleDescription, (GF_Box *) entry, GF_FALSE);
 		if (e) return e;
 		if(outStreamIndex) *outStreamIndex = gf_list_count(trak->Media->information->sampleTable->SampleDescription->child_boxes);
 	}

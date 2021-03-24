@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2017
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / AAC ADTS reframer filter
@@ -70,6 +70,10 @@ typedef struct
 	LATMIdx *indexes;
 	u32 index_alloc_size, index_size;
 	u32 resume_from;
+
+	Bool prev_sap;
+	u32 bitrate;
+	GF_Err in_error;
 } GF_LATMDmxCtx;
 
 
@@ -193,7 +197,10 @@ GF_Err latm_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 
 	if (is_remove) {
 		ctx->ipid = NULL;
-		gf_filter_pid_remove(ctx->opid);
+		if (ctx->opid) {
+			gf_filter_pid_remove(ctx->opid);
+			ctx->opid = NULL;
+		}
 		return GF_OK;
 	}
 	if (! gf_filter_pid_check_caps(pid))
@@ -217,7 +224,7 @@ static void latm_dmx_check_dur(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	FILE *stream;
 	GF_BitStream *bs;
 	GF_M4ADecSpecInfo acfg;
-	u64 duration, cur_dur, cur_pos;
+	u64 duration, cur_dur, cur_pos, rate;
 	s32 sr_idx = -1;
 	const GF_PropertyValue *p;
 	if (!ctx->opid || ctx->timescale || ctx->file_loaded) return;
@@ -271,6 +278,7 @@ static void latm_dmx_check_dur(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 
 		cur_pos = gf_bs_get_position(bs);
 	}
+	rate = gf_bs_get_position(bs);
 	gf_bs_del(bs);
 	gf_fclose(stream);
 
@@ -280,6 +288,12 @@ static void latm_dmx_check_dur(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 			ctx->duration.den = GF_M4ASampleRates[sr_idx];
 
 			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+
+			if (duration && !gf_sys_is_test_mode() ) {
+				rate *= 8 * ctx->duration.den;
+				rate /= ctx->duration.num;
+				ctx->bitrate = (u32) rate;
+			}
 		}
 	}
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
@@ -291,19 +305,28 @@ static void latm_dmx_check_pid(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 {
 	u8 *dsi_b;
 	u32 dsi_s, sr, timescale=0;
-
+	u32 codecid;
 	if (!ctx->opid) {
 		ctx->opid = gf_filter_pid_new(filter);
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		latm_dmx_check_dur(filter, ctx);
 	}
+	if (!GF_M4ASampleRates[ctx->acfg.base_sr_index]) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[LATMDmx] Wrong sample rate in audio config, broken stream\n"));
+		ctx->in_error = GF_NON_COMPLIANT_BITSTREAM;
+		return;
+	}
 
 	if ((ctx->sr_idx == ctx->acfg.base_sr_index) && (ctx->nb_ch == ctx->acfg.nb_chan )
 		&& (ctx->base_object_type == ctx->acfg.base_object_type) ) return;
 
+	if (ctx->acfg.base_object_type==GF_M4A_USAC)
+		codecid = GF_CODECID_USAC;
+	else
+		codecid = GF_CODECID_AAC_MPEG4;
 	//copy properties at init or reconfig
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT( GF_STREAM_AUDIO));
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT( GF_CODECID_AAC_MPEG4));
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT( codecid));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAMPLES_PER_FRAME, & PROP_UINT(ctx->frame_size) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, & PROP_BOOL(GF_FALSE) );
 	if (ctx->is_file && ctx->index) {
@@ -326,8 +349,6 @@ static void latm_dmx_check_pid(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	}
 	ctx->sr_idx = ctx->acfg.base_sr_index;
 
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(GF_CODECID_AAC_MPEG4) );
-
 	ctx->dts_inc = ctx->frame_size;
 	gf_m4a_write_config(&ctx->acfg, &dsi_b, &dsi_s);
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, & PROP_DATA_NO_COPY(dsi_b, dsi_s) );
@@ -339,6 +360,9 @@ static void latm_dmx_check_pid(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->timescale ? ctx->timescale : timescale));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_NUM_CHANNELS, & PROP_UINT(ctx->nb_ch) );
 
+	if (ctx->bitrate) {
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_BITRATE, & PROP_UINT(ctx->bitrate));
+	}
 }
 
 static Bool latm_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
@@ -428,6 +452,9 @@ GF_Err latm_dmx_process(GF_Filter *filter)
 	u32 pck_size, prev_pck_size;
 	u64 cts = GF_FILTER_NO_TS;
 
+	if (ctx->in_error)
+		return ctx->in_error;
+
 	//always reparse duration
 	if (!ctx->duration.num)
 		latm_dmx_check_dur(filter, ctx);
@@ -514,11 +541,13 @@ GF_Err latm_dmx_process(GF_Filter *filter)
 			gf_filter_pck_set_framing(dst_pck, GF_TRUE, GF_TRUE);
 
 			/*xHE-AAC, check RAP*/
-			if (ctx->acfg.base_object_type==42) {
-				if (latm_frame_size && (output[0] & 0x80)) {
+			if (ctx->acfg.base_object_type==GF_CODECID_USAC) {
+				if (latm_frame_size && (output[0] & 0x80) && !ctx->prev_sap) {
 					sap = GF_FILTER_SAP_1;
+					ctx->prev_sap = GF_TRUE;
 				} else {
 					sap = GF_FILTER_SAP_NONE;
+					ctx->prev_sap = GF_FALSE;
 				}
 			}
 			gf_filter_pck_set_sap(dst_pck, sap);
@@ -564,18 +593,29 @@ static void latm_dmx_finalize(GF_Filter *filter)
 static const char *latm_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeScore *score)
 {
 	u32 nb_frames=0;
+	u32 nb_skip=0;
 	GF_M4ADecSpecInfo acfg;
 	GF_BitStream *bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
 	while (1) {
 		u32 nb_skipped = 0;
 		if (!latm_dmx_sync_frame_bs(bs, &acfg, 0, NULL, &nb_skipped)) break;
-		if (nb_skipped)
-			nb_frames=0;
+		if (! GF_M4ASampleRates[acfg.base_sr_index]) {
+			nb_frames = 0;
+			break;
+		}
+
+		if (nb_skipped) {
+			if (nb_skip) {
+				nb_frames = 0;
+				break;
+			}
+			nb_skip++;
+		}
 		nb_frames++;
 	}
 	gf_bs_del(bs);
 	if (nb_frames>=2) {
-		*score = GF_FPROBE_SUPPORTED;
+		*score = nb_skip ? GF_FPROBE_MAYBE_SUPPORTED : GF_FPROBE_SUPPORTED;
 		return "audio/aac+latm";
 	}
 	return NULL;

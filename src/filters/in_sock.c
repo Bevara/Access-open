@@ -152,7 +152,7 @@ static GF_Err sockin_initialize(GF_Filter *filter)
 		}
 
 	} else {
-		e = gf_sk_connect(ctx->sock_c.socket, url, port, ctx->ifce);
+		e = gf_sk_connect(ctx->sock_c.socket, url, port, NULL);
 	}
 
 	if (str) str[0] = ':';
@@ -478,7 +478,7 @@ static GF_Err sockin_process(GF_Filter *filter)
 
 static const GF_FilterArgs SockInArgs[] =
 {
-	{ OFFS(src), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(src), "address of source content - see filter help", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(block_size), "block size used to read socket", GF_PROP_UINT, "10000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(sockbuf), "socket max buffer size", GF_PROP_UINT, "65536", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(port), "default port if not specified", GF_PROP_UINT, "1234", NULL, 0},
@@ -519,7 +519,7 @@ GF_FilterRegister SockInRegister = {
 		"\n"
 		"When ports are specified in the URL and the default option separators are used (see `gpac -h doc`), the URL must either:\n"
 		"- have a trailing '/', eg `udp://localhost:1234/[:opts]`\n"
-		"- use `gpac` separator, eg `udp://localhost:1234[:gpac:opts]\n"
+		"- use `gpac` separator, eg `udp://localhost:1234[:gpac:opts]`\n"
 #ifdef GPAC_CONFIG_DARWIN
 	"\nOn OSX with VM packet replay you will need to force multicast routing, eg: route add -net 239.255.1.4/32 -interface vboxnet0"
 #endif

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *					Authors: Pierre Souchay - Jean Le Feuvre - Romain Bouqueau
- *			Copyright (c) Telecom ParisTech 2010-2012, Romain Bouqueau
+ *			Copyright (c) Telecom ParisTech 2010-2021
  *					All rights reserved
  *
  *  This file is part of GPAC
@@ -45,6 +45,7 @@ struct s_playList {
 	int current_media_seq;
 	int media_seq_min;
 	int media_seq_max;
+	int discontinuity;
 	double target_duration;
 	double computed_duration;
 	Bool is_ended;
@@ -54,7 +55,7 @@ typedef struct s_playList Playlist;
 
 typedef enum e_playlistElementType  { TYPE_PLAYLIST, TYPE_MEDIA, TYPE_UNKNOWN } PlaylistElementType;
 
-typedef enum e_playlistElementDRMMethod { DRM_NONE, DRM_AES_128 } PlaylistElementDRMMethod;
+typedef enum e_playlistElementDRMMethod { DRM_NONE, DRM_AES_128, DRM_CENC } PlaylistElementDRMMethod;
 
 typedef enum _e_MediaType {
 	MEDIA_TYPE_UNKNOWN         = 0,
@@ -71,7 +72,7 @@ struct s_playlistElement {
 	MediaType media_type;
 	double duration_info;
 	u64 byte_range_start, byte_range_end;
-	int bandwidth, width, height;
+	int bandwidth, width, height, low_lat_chunk, independent_chunk;
 	char *title;
 	char *codecs;
 	char *language;
@@ -80,8 +81,9 @@ struct s_playlistElement {
 	char *url;
 	char *init_segment_url;
 	u64 init_byte_range_start, init_byte_range_end;
+	//informative UTC start time
 	u64 utc_start_time;
-
+	u32 discontinuity;
 	PlaylistElementDRMMethod drm_method;
 	char *key_uri;
 	bin128 key_iv;
@@ -108,7 +110,7 @@ struct s_masterPlaylist {
 	GF_List *streams; /*Stream*/
 	int current_stream;
 	Bool playlist_needs_refresh;
-	Bool independent_segments;
+	Bool independent_segments, low_latency;
 };
 typedef struct s_masterPlaylist MasterPlaylist;
 

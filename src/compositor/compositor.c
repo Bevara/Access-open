@@ -962,7 +962,7 @@ void gf_sc_unload(GF_Compositor *compositor)
 
 	if (compositor->focus_highlight) {
 		gf_node_unregister(compositor->focus_highlight->node, NULL);
-		drawable_del_ex(compositor->focus_highlight, compositor);
+		drawable_del_ex(compositor->focus_highlight, compositor, GF_FALSE);
 	}
 	if (compositor->selected_text) gf_free(compositor->selected_text);
 	if (compositor->sel_buffer) gf_free(compositor->sel_buffer);
@@ -3099,7 +3099,7 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 	if (compositor->no_regulation)
 		return;
 
-	/*we are in bench mode, just release for a moment the composition, oherwise we will constantly lock the compositor wich may have impact on scene decoding*/
+	/*we are in bench mode, just release for a moment the composition, oherwise we will constantly lock the compositor which may have impact on scene decoding*/
 	if (compositor->bench_mode) {
 		gf_sleep(0);
 		return;
@@ -3416,11 +3416,11 @@ static Bool gf_sc_on_event_ex(GF_Compositor *compositor , GF_Event *event, Bool 
 	}
 	break;
 	case GF_EVENT_SIZE:
-		/*user consummed the resize event, do nothing*/
+		/*user consumed the resize event, do nothing*/
 		if ( gf_sc_send_event(compositor, event) )
 			return GF_TRUE;
 
-		/*not consummed and compositor "owns" the output window (created by the output module), resize*/
+		/*not consumed and compositor "owns" the output window (created by the output module), resize*/
 		if (!compositor->os_wnd) {
 			/*EXTRA CARE HERE: the caller (video output) is likely a different thread than the compositor one, and the
 			compositor may be locked on the video output (flush or whatever)!!

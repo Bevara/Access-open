@@ -465,6 +465,7 @@ static Bool tx_setup_format(GF_TextureHandler *txh)
 		break;
 #endif
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
     case GF_PIXEL_YUV_10:
 	case GF_PIXEL_YUV422:
 	case GF_PIXEL_YUV422_10:
@@ -517,12 +518,22 @@ static Bool tx_setup_format(GF_TextureHandler *txh)
 	if (!txh->tx_io->tx.nb_textures) {
 		u32 pfmt = txh->pixelformat;
 		u32 stride = txh->stride;
+		Bool full_range = GF_FALSE;
+		s32 cmx = GF_CICP_MX_UNSPECIFIED;
+		if (txh->stream && txh->stream->odm && txh->stream->odm->pid) {
+			const GF_PropertyValue *p;
+			p = gf_filter_pid_get_property(txh->stream->odm->pid, GF_PROP_PID_COLR_RANGE);
+			if (p && p->value.boolean) full_range = GF_TRUE;
+			p = gf_filter_pid_get_property(txh->stream->odm->pid, GF_PROP_PID_COLR_MX);
+			if (p) cmx = p->value.uint;
+		}
+		
 		txh->tx_io->tx.pbo_state = (txh->compositor->gl_caps.pbo && txh->compositor->pbo) ? GF_GL_PBO_BOTH : GF_GL_PBO_NONE;
 		if (txh->tx_io->conv_format) {
 			stride = txh->tx_io->conv_stride;
 			pfmt = txh->tx_io->conv_format;
 		}
-		gf_gl_txw_setup(&txh->tx_io->tx, pfmt, txh->width, txh->height, stride, 0, GF_TRUE, NULL);
+		gf_gl_txw_setup(&txh->tx_io->tx, pfmt, txh->width, txh->height, stride, 0, GF_TRUE, NULL, full_range, cmx);
 	}
 	return 1;
 }
@@ -599,6 +610,7 @@ common:
 		txh->tx_io->flags |= TX_IS_FLIPPED;
 		return 1;
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
 	case GF_PIXEL_YUV_10:
 	case GF_PIXEL_YUV422:
 	case GF_PIXEL_YUV422_10:
@@ -659,6 +671,7 @@ common:
 	switch (txh->pixelformat) {
 	case GF_PIXEL_YUYV:
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
 	case GF_PIXEL_YUV_10:
 	case GF_PIXEL_YUV422:
 	case GF_PIXEL_YUV422_10:

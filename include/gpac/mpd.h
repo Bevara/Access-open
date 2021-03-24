@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre - Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2010-2012
+ *			Copyright (c) Telecom ParisTech 2010-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / 3GPP/MPEG Media Presentation Description input module
@@ -109,16 +109,10 @@ Some elments are typically overloaded in XML, we keep the attributes / children 
 The children list is NULL if no extensions were found, otherwise it is a list of GF_XMLNode
 */
 #define MPD_EXTENSIBLE	\
-	GF_List *attributes;	\
-	GF_List *children;	\
+	GF_List *x_attributes;	\
+	GF_List *x_children;	\
 
-/*! basic extensible MPD element*/
-typedef struct
-{
-	MPD_EXTENSIBLE
-} GF_MPD_ExtensibleVirtual;
-
-/*! basic extensible MPD descritpor*/
+/*! basic extensible MPD descriptor*/
 typedef struct
 {
 	MPD_EXTENSIBLE
@@ -210,15 +204,6 @@ typedef struct
 	s64 mediaOffset;
 } GF_MPD_ISOBMFInfo;
 
-
-/*! other XML descriptors*/
-typedef struct
-{
-	/*! list of XML descriptors*/
-	char *xml_desc;
-} GF_MPD_other_descriptors;
-
-
 /*! macro for MPD segment base*/
 #define GF_MPD_SEGMENT_BASE	\
 	u32 timescale;	\
@@ -274,8 +259,16 @@ typedef struct
 	char *key_url;
 	/*! key IV of segment, HLS only*/
 	bin128 key_iv;
-	/*! UTC start time of segment, HLS only*/
-	u64 hls_utc_start_time;
+	/*! sequence number of segment, HLS only*/
+	u32 hls_seq_num;
+	/*! informative UTC start time of segment, HLS only*/
+	u64 hls_utc_time;
+	/*! 0: full segment, 1: LL-HLS part, 2: independent LL-HLS part */
+	u8 hls_ll_chunk_type;
+	/*! merge flag for byte-range subsegs 0: cannot merge, 1: can merge */
+	u8 can_merge;
+	/*! merge flag for byte-range subsegs 0: cannot merge, 1: can merge */
+	u8 is_first_part;
 } GF_MPD_SegmentURL;
 
 /*! SegmentList*/
@@ -290,10 +283,12 @@ typedef struct
 	/*! xlink evaluation on load if set, otherwise on use*/
 	Bool xlink_actuate_on_load;
 
-	/*! GPAC intenral, number of consecutive xlink while solving*/
+	/*! GPAC internal, number of consecutive xlink while solving*/
 	u32 consecutive_xlink_count;
-	/*! GPAC intenral, we store the segment template here*/
+	/*! GPAC internal, we store the segment template here*/
 	char *dasher_segment_name;
+	/*! GPAC internal, we store the previous xlink before resolution*/
+	char *previous_xlink_href;
 } GF_MPD_SegmentList;
 
 /*! SegmentTemplate*/
@@ -309,6 +304,9 @@ typedef struct
 	char *initialization;
 	/*! bitstream switching segment template*/
 	char *bitstream_switching;
+
+	/*! internal, for HLS generation*/
+	const char *hls_init_name;
 } GF_MPD_SegmentTemplate;
 
 /*! MPD scan types*/
@@ -337,6 +335,8 @@ MANDATORY:
 	codecs
 */
 #define GF_MPD_COMMON_ATTRIBUTES_ELEMENTS	\
+	GF_List *x_attributes;	\
+	GF_List *x_children;	\
 	char *profiles;	\
 	u32 width;	\
 	u32 height;	\
@@ -440,8 +440,15 @@ typedef struct
 	u32 enhancement_rep_index_plus_one;
 	/*! set to true if the representation comes from a broadcast link (ATSC3, eMBMS)*/
 	Bool broadcast_flag;
+
+	/*! start of segment name in full url*/
+	const char *init_seg_name_start;
 	/*! opaque data*/
 	void *udta;
+	/*! SHA1 digest for xlinks / m3u8*/
+	u8 xlink_digest[GF_SHA1_DIGEST_SIZE];
+	/*! set to TRUE if not modified in the update of an xlink*/
+	Bool not_modified;
 } GF_DASH_RepresentationPlayback;
 
 /*! segment context used by the dasher, GPAC internal*/
@@ -478,7 +485,7 @@ typedef struct
 	/*! indicates if uses multi PID (eg, multiple sample descriptions in init segment)*/
 	Bool multi_pids;
 	/*! target segment duration for this stream*/
-	Double dash_dur;
+	GF_Fraction dash_dur;
 	/*! estimated next segment start time in MPD timescale*/
 	u64 next_seg_start;
 	/*! first CTS of stream in stream timescale*/
@@ -513,6 +520,19 @@ typedef struct
 	Bool subdur_forced;
 } GF_DASH_SegmenterContext;
 
+/*! fragment context info for LL-HLS*/
+typedef struct
+{
+	/*! frag offset in bytes*/
+	u64 offset;
+	/*! frag size in bytes*/
+	u64 size;
+	/*! frag duration in representation timescale*/
+	u32 duration;
+	/*! fragment contains an IDR*/
+	Bool independent;
+} GF_DASH_FragmentContext;
+
 /*! Segment context - GPAC internal, used to produce HLS manifests and segment lists/timeline*/
 typedef struct
 {
@@ -534,6 +554,20 @@ typedef struct
 	u64 index_offset;
 	/*! segment number */
 	u32 seg_num;
+	/*! number of fragment infos */
+	u32 nb_frags;
+	/*! number of fragment infos */
+	GF_DASH_FragmentContext *frags;
+	/*! HLS LL signaling - 0: disabled, 1: byte range, 2: files */
+	u32 llhls_mode;
+	/*! HLS LL segment done */
+	Bool llhls_done;
+	/*! HLS set to TRUE if encrypted */
+	Bool encrypted;
+	/*! HLS key params (URI and co)*/
+	char *hls_key_uri;
+	/*! HLS IV*/
+	bin128 hls_iv;
 } GF_DASH_SegmentContext;
 
 /*! Representation*/
@@ -563,9 +597,6 @@ typedef struct {
 	/*! number of subrepresentation*/
 	GF_List *sub_representations;
 
-	/*! other MPD descriptors*/
-	GF_List *other_descriptors;
-
 	/*! all the below members are GPAC internal*/
 
 	/*! GPAC playback implementation*/
@@ -574,6 +605,10 @@ typedef struct {
 	u32 m3u8_media_seq_min;
 	/*! internal, HLS: max sequence number of segments in playlist*/
 	u32 m3u8_media_seq_max;
+	/*! internal, HLS: indicate this is a low latency rep*/
+	u32 m3u8_low_latency;
+	/*! internal, HLS:  sequence number of last indeendent  segment or PART in playlist*/
+	u32 m3u8_media_seq_indep_last;
 
 	/*! GPAC dasher context*/
 	GF_DASH_SegmenterContext *dasher_ctx;
@@ -586,7 +621,7 @@ typedef struct {
 	/*! segment manifest timescale (for HLS)*/
 	u32 timescale_mpd;
 	/*! dash duration*/
-	Double dash_dur;
+	GF_Fraction dash_dur;
 	/*! init segment name for HLS single file*/
 	const char *hls_single_file_name;
 	/*! number of audio channels - HLS only*/
@@ -602,6 +637,10 @@ typedef struct {
 	char *m3u8_var_name;
 	/*! temp file for m3u8 generation*/
 	FILE *m3u8_var_file;
+
+	/*! for m3u8: 0: not encrypted, 1: full segment, 2: CENC*/
+	u8 crypto_type;
+	u8 def_kms_used;
 } GF_MPD_Representation;
 
 /*! AdaptationSet*/
@@ -609,8 +648,8 @@ typedef struct
 {
 	/*! inherits common attributes*/
 	GF_MPD_COMMON_ATTRIBUTES_ELEMENTS
-	/*! ID of this set*/
-	u32 id;
+	/*! ID of this set, -1 if not set*/
+	s32 id;
 	/*! group ID for this set, default value is -1: not set in MPD*/
 	s32 group;
 	/*! language*/
@@ -668,8 +707,6 @@ typedef struct
 	char *xlink_href;
 	/*! xlink evaluation on load if set, otherwise on use*/
 	Bool xlink_actuate_on_load;
-	/*! other descriptors*/
-	GF_List *other_descriptors;
 
 	/*! user private, eg used by dasher*/
 	void *udta;
@@ -681,6 +718,12 @@ typedef struct
 	/*! max number of valid chunks in smooth manifest*/
 	u32 smooth_max_chunks;
 
+	/*! INTRA-ONLY trick mode*/
+	Bool intra_only;
+	/*! adaptation set uses HLS LL*/
+	Bool use_hls_ll;
+	/*! target part (cmaf chunk) duration for HLS LL*/
+	Double hls_ll_frag_dur;
 } GF_MPD_AdaptationSet;
 
 /*! MPD offering type*/
@@ -696,6 +739,9 @@ typedef enum {
 /*! Period*/
 typedef struct
 {
+	/*! inherits from extensible*/
+	MPD_EXTENSIBLE
+
 	/*! ID of period*/
 	char *ID;
 	/*! start time in milliseconds, relative to the start of the MPD */
@@ -722,8 +768,6 @@ typedef struct
 	/*! xlink evaluation on load if set, otherwise on use*/
 	Bool xlink_actuate_on_load;
 
-	/*! other descriptors*/
-	GF_List *other_descriptors;
 	/*! original xlink URL before resolution, used to identify already resolved xlinks in MPD updates - GPAC internal*/
 	char *origin_base_url;
 	/*! type of the period - GPAC internal*/
@@ -733,6 +777,9 @@ typedef struct
 /*! Program info*/
 typedef struct
 {
+	/*! inherits from extensible*/
+	MPD_EXTENSIBLE
+
 	/*! languae*/
 	char *lang;
 	/*! title*/
@@ -812,6 +859,8 @@ typedef struct {
 	Bool create_m3u8_files;
 	/*! indicates to insert clock reference in variant playlists*/
 	Bool m3u8_time;
+	/*! indicates  LL-HLS forced generation. 0: regular write, 1: write as byterange, 2: write as independent files*/
+	u32 force_llhls_mode;
 } GF_MPD;
 
 /*! parses an MPD Element (and subtree) from DOM
@@ -951,9 +1000,10 @@ GF_Err gf_m3u8_to_mpd(const char *m3u8_file, const char *base_url, const char *m
 \param getter HTTP interface object
 \param is_static set to GF_TRUE if the variant subplaylist is on demand
 \param duration set to the duration of the parsed subplaylist
-\return error if any
+\param signature SHA1 digest of last solved version, updated if changed
+\return error if any, GF_EOS if no changes
 */
-GF_Err gf_m3u8_solve_representation_xlink(GF_MPD_Representation *rep, GF_FileDownload *getter, Bool *is_static, u64 *duration);
+GF_Err gf_m3u8_solve_representation_xlink(GF_MPD_Representation *rep, GF_FileDownload *getter, Bool *is_static, u64 *duration, u8 signature[GF_SHA1_DIGEST_SIZE]);
 
 /*! creates a segment list from a remote segment list DOM root
 \param mpd the target MPD to write
@@ -1021,6 +1071,8 @@ typedef enum
 	GF_MPD_RESOLVE_URL_MEDIA_TEMPLATE,
 	/*! same as GF_MPD_RESOLVE_URL_MEDIA but does not use startNumber*/
 	GF_MPD_RESOLVE_URL_MEDIA_NOSTART,
+	/*! same as GF_MPD_RESOLVE_URL_MEDIA_TEMPLATE but ignores base URL*/
+	GF_MPD_RESOLVE_URL_MEDIA_TEMPLATE_NO_BASE,
 } GF_MPD_URLResolveType;
 
 /*! resolves a URL based for a given segment, based on the MPD url, the type of resolution
@@ -1040,10 +1092,12 @@ typedef enum
 \param is_in_base_url set to GF_TRUE if the resuloved URL is a sub-part of the baseURL (optional, may be NULL)
 \param out_key_url set to the key URL for the segment for HLS (optional, may be NULL)
 \param key_iv set to the key IV for the segment for HLS (optional, may be NULL)
+\param out_start_number set to the start_number used (optional, may be NULL)
+
 \return error if any
 */
 GF_Err gf_mpd_resolve_url(GF_MPD *mpd, GF_MPD_Representation *rep, GF_MPD_AdaptationSet *set, GF_MPD_Period *period, const char *mpd_url, u32 base_url_index, GF_MPD_URLResolveType resolve_type, u32 item_index, u32 nb_segments_removed,
-                          char **out_url, u64 *out_range_start, u64 *out_range_end, u64 *segment_duration, Bool *is_in_base_url, char **out_key_url, bin128 *key_iv);
+                          char **out_url, u64 *out_range_start, u64 *out_range_end, u64 *segment_duration, Bool *is_in_base_url, char **out_key_url, bin128 *key_iv, u32 *out_start_number);
 
 /*! get duration of the presentation
 \param mpd the target MPD

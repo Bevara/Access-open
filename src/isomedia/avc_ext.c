@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -343,21 +343,8 @@ static GF_ISOSAPType is_sample_idr(GF_MediaBox *mdia, GF_ISOSample *sample, GF_M
 			u8 nal_hdr = gf_bs_read_u8(mdia->nalu_parser);
 			nal_type = nal_hdr & 0x1F;
 
-			switch (nal_type) {
-			/*			case GF_AVC_NALU_SEQ_PARAM:
-						case GF_AVC_NALU_PIC_PARAM:
-						case GF_AVC_NALU_SEQ_PARAM_EXT:
-						case GF_AVC_NALU_SVC_SUBSEQ_PARAM:
-		*/
-			case GF_AVC_NALU_IDR_SLICE:
-				return SAP_TYPE_1;
-			case GF_AVC_NALU_ACCESS_UNIT:
-			case GF_AVC_NALU_FILLER_DATA:
-			case GF_AVC_NALU_SEI:
-				break;
-			default:
-				return RAP_NO;
-			}
+			if (nal_type==GF_AVC_NALU_IDR_SLICE) return SAP_TYPE_1;
+			if (nal_type<GF_AVC_NALU_IDR_SLICE) return RAP_NO;
 			gf_bs_skip_bytes(mdia->nalu_parser, size - 1);
 		}
 	}
@@ -1735,44 +1722,6 @@ GF_Err gf_isom_mvc_config_del(GF_ISOFile *the_file, u32 trackNumber, u32 Descrip
 	return gf_isom_svc_mvc_config_del(the_file, trackNumber, DescriptionIndex, GF_TRUE);
 }
 
-
-GF_EXPORT
-GF_Err gf_isom_set_ipod_compatible(GF_ISOFile *the_file, u32 trackNumber)
-{
-	GF_TrackBox *trak;
-	GF_Err e;
-	GF_MPEGVisualSampleEntryBox *entry;
-
-	e = CanAccessMovie(the_file, GF_ISOM_OPEN_WRITE);
-	if (e) return e;
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
-	if (!trak || !trak->Media) return GF_BAD_PARAM;
-	entry = (GF_MPEGVisualSampleEntryBox*)gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, 0);
-	if (!entry) return GF_OK;
-	switch (entry->type) {
-	case GF_ISOM_BOX_TYPE_AVC1:
-	case GF_ISOM_BOX_TYPE_AVC2:
-	case GF_ISOM_BOX_TYPE_AVC3:
-	case GF_ISOM_BOX_TYPE_AVC4:
-	case GF_ISOM_BOX_TYPE_SVC1:
-	case GF_ISOM_BOX_TYPE_MVC1:
-	case GF_ISOM_BOX_TYPE_HVC1:
-	case GF_ISOM_BOX_TYPE_HEV1:
-	case GF_ISOM_BOX_TYPE_HVT1:
-		break;
-	default:
-		return GF_OK;
-	}
-
-	if (!entry->ipod_ext) {
-		entry->ipod_ext = (GF_UnknownUUIDBox *) gf_isom_box_new_parent(&entry->child_boxes, GF_ISOM_BOX_TYPE_UUID);
-		if (!entry->ipod_ext) return GF_OUT_OF_MEM;
-	}
-	memcpy(entry->ipod_ext->uuid, GF_ISOM_IPOD_EXT, sizeof(u8)*16);
-	entry->ipod_ext->dataSize = 0;
-	return GF_OK;
-}
-
 static GF_Err gf_isom_svc_mvc_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_AVCConfig *cfg, Bool is_mvc, char *URLname, char *URNname, u32 *outDescriptionIndex)
 {
 	GF_TrackBox *trak;
@@ -2492,7 +2441,7 @@ GF_ISOMAVCType gf_isom_get_avc_svc_type(GF_ISOFile *the_file, u32 trackNumber, u
 	GF_TrackBox *trak;
 	GF_MPEGVisualSampleEntryBox *entry;
 	trak = gf_isom_get_track_from_file(the_file, trackNumber);
-	if (!trak || !trak->Media || !DescriptionIndex) return GF_ISOM_AVCTYPE_NONE;
+	if (!trak || !trak->Media || !trak->Media->handler || !DescriptionIndex) return GF_ISOM_AVCTYPE_NONE;
 	if (!gf_isom_is_video_handler_type(trak->Media->handler->handlerType))
 		return GF_ISOM_AVCTYPE_NONE;
 
@@ -2944,15 +2893,15 @@ void hvcc_box_del(GF_Box *s)
 
 GF_Err hvcc_box_read(GF_Box *s, GF_BitStream *bs)
 {
-	u64 consummed;
+	u64 consumed;
 	GF_HEVCConfigurationBox *ptr = (GF_HEVCConfigurationBox *)s;
 
 	if (ptr->config) gf_odf_hevc_cfg_del(ptr->config);
 
-	consummed = gf_bs_get_position(bs);
+	consumed = gf_bs_get_position(bs);
 	ptr->config = gf_odf_hevc_cfg_read_bs(bs, (s->type == GF_ISOM_BOX_TYPE_HVCC) ? GF_FALSE : GF_TRUE);
-	consummed = gf_bs_get_position(bs) - consummed ;
-	ISOM_DECREASE_SIZE(ptr, (u32)consummed)
+	consumed = gf_bs_get_position(bs) - consumed ;
+	ISOM_DECREASE_SIZE(ptr, (u32)consumed)
 
 	return ptr->config ? GF_OK : GF_ISOM_INVALID_FILE;
 }
@@ -3017,15 +2966,15 @@ void vvcc_box_del(GF_Box *s)
 
 GF_Err vvcc_box_read(GF_Box *s, GF_BitStream *bs)
 {
-	u64 consummed;
+	u64 consumed;
 	GF_VVCConfigurationBox *ptr = (GF_VVCConfigurationBox *)s;
 
 	if (ptr->config) gf_odf_vvc_cfg_del(ptr->config);
 
-	consummed = gf_bs_get_position(bs);
+	consumed = gf_bs_get_position(bs);
 	ptr->config = gf_odf_vvc_cfg_read_bs(bs);
-	consummed = gf_bs_get_position(bs) - consummed ;
-	ISOM_DECREASE_SIZE(ptr, (u32)consummed)
+	consumed = gf_bs_get_position(bs) - consumed ;
+	ISOM_DECREASE_SIZE(ptr, (u32)consumed)
 
 	return ptr->config ? GF_OK : GF_ISOM_INVALID_FILE;
 }

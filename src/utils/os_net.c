@@ -271,10 +271,10 @@ static struct addrinfo *gf_sk_get_ipv6_addr(const char *PeerName, u16 PortNumber
 		service = (char *)portstring;
 	}
 	if (PeerName) {
-		strncpy(node, PeerName, MAX_PEER_NAME_LEN);
+		strncpy(node, PeerName, MAX_PEER_NAME_LEN-1);
 		if (node[0]=='[') {
 			node[strlen(node)-1] = 0;
-			strncpy(node, &node[1], MAX_PEER_NAME_LEN);
+			memmove(node, &node[1], MAX_PEER_NAME_LEN-1);
 		}
 		node[MAX_PEER_NAME_LEN - 1] = 0;
 		dest = (char *) node;
@@ -498,6 +498,17 @@ void gf_sk_set_usec_wait(GF_Socket *sock, u32 usec_wait)
 	sock->usec_wait = (usec_wait>=1000000) ? 500 : usec_wait;
 }
 
+#ifdef GPAC_STATIC_BUILD
+struct hostent *gf_gethostbyname(const char *PeerName)
+{
+	GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("Static GPAC build has no DNS support, cannot resolve host %s !\n", PeerName));
+	return NULL;
+}
+#else
+#define gf_gethostbyname gethostbyname
+#endif
+
+
 //connects a socket to a remote peer on a given port
 GF_EXPORT
 GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, const char *local_ip)
@@ -618,7 +629,7 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 	sock->dest_addr.sin_addr.s_addr = inet_addr(PeerName);
 	if (sock->dest_addr.sin_addr.s_addr==INADDR_NONE) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Solving %s address\n", PeerName));
-		Host = gethostbyname(PeerName);
+		Host = gf_gethostbyname(PeerName);
 		if (Host == NULL) {
 			GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Failed to retrieve host %s address: %s\n", PeerName, gf_errno_str(LASTSOCKERROR) ));
 			switch (LASTSOCKERROR) {
@@ -685,10 +696,12 @@ GF_Err gf_sk_bind(GF_Socket *sock, const char *local_ip, u16 port, const char *p
 	struct sockaddr_in LocalAdd;
 	struct hostent *Host = NULL;
 #endif
-	s32 ret;
+	s32 ret = 0;
 	s32 optval;
 
 	if (!sock || sock->socket) return GF_BAD_PARAM;
+	if (local_ip && !strcmp(local_ip, "127.0.0.1"))
+		local_ip = NULL;
 
 	if (sock->flags & GF_SOCK_IS_UN) {
 #ifdef GPAC_HAS_SOCK_UN
@@ -821,7 +834,7 @@ GF_Err gf_sk_bind(GF_Socket *sock, const char *local_ip, u16 port, const char *p
 		buf[0] = 0;
 		ret = gethostname(buf, GF_MAX_IP_NAME_LEN);
 		/*get the IP address*/
-		Host = gethostbyname(buf);
+		Host = gf_gethostbyname(buf);
 		if (Host != NULL) {
 			memcpy((char *) &LocalAdd.sin_addr, Host->h_addr_list[0], sizeof(LocalAdd.sin_addr));
 			ip_add = LocalAdd.sin_addr.s_addr;
@@ -864,13 +877,13 @@ GF_Err gf_sk_bind(GF_Socket *sock, const char *local_ip, u16 port, const char *p
 			ret = GF_IP_CONNECTION_FAILURE;
 		}
 	}
-	
+
 	if (peer_name && peer_port) {
 		sock->dest_addr.sin_port = htons(peer_port);
 		sock->dest_addr.sin_family = AF_INET;
 		sock->dest_addr.sin_addr.s_addr = inet_addr(peer_name);
 		if (sock->dest_addr.sin_addr.s_addr == INADDR_NONE) {
-			Host = gethostbyname(peer_name);
+			Host = gf_gethostbyname(peer_name);
 			if (Host == NULL) ret = GF_IP_ADDRESS_NOT_FOUND;
 			else memcpy((char *) &sock->dest_addr.sin_addr, Host->h_addr_list[0], sizeof(u32));
 		}
@@ -969,6 +982,55 @@ GF_Err gf_sk_send(GF_Socket *sock, const u8 *buffer, u32 length)
 		count += res;
 	}
 	return GF_OK;
+}
+
+GF_Err gf_sk_select(GF_Socket *sock, u32 mode)
+{
+#ifndef __SYMBIAN32__
+	int ready;
+	struct timeval timeout;
+	fd_set RGroup;
+	fd_set WGroup;
+#endif
+
+	//the socket must be bound or connected
+	if (!sock || !sock->socket)
+		return GF_BAD_PARAM;
+
+#ifndef __SYMBIAN32__
+	//can we write?
+	FD_ZERO(&RGroup);
+	FD_ZERO(&WGroup);
+	if (mode != GF_SK_SELECT_WRITE)
+		FD_SET(sock->socket, &RGroup);
+	if (mode != GF_SK_SELECT_READ)
+		FD_SET(sock->socket, &WGroup);
+	timeout.tv_sec = 0;
+	timeout.tv_usec = sock->usec_wait;
+
+	//TODO CHECK IF THIS IS CORRECT
+	ready = select((int) sock->socket+1, &RGroup, &WGroup, NULL, &timeout);
+	if (ready == SOCKET_ERROR) {
+		switch (LASTSOCKERROR) {
+		case EAGAIN:
+			return GF_IP_SOCK_WOULD_BLOCK;
+		default:
+			GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[socket] select failure: %s\n", gf_errno_str(LASTSOCKERROR)));
+			return GF_IP_NETWORK_FAILURE;
+		}
+	}
+
+	//should never happen (to check: is writeability is guaranteed for not-connected sockets)
+	if (!ready)
+		return GF_IP_SOCK_WOULD_BLOCK;
+	if ((mode != GF_SK_SELECT_WRITE) && !FD_ISSET(sock->socket, &RGroup))
+		return GF_IP_SOCK_WOULD_BLOCK;
+	if ((mode != GF_SK_SELECT_READ) && !FD_ISSET(sock->socket, &WGroup))
+		return GF_IP_SOCK_WOULD_BLOCK;
+	return GF_OK;
+#else
+	return GF_IP_SOCK_WOULD_BLOCK;
+#endif
 }
 
 
@@ -1261,7 +1323,7 @@ GF_Err gf_sk_group_select(GF_SockGroup *sg, u32 usec_wait, GF_SockSelectMode mod
 
 	if (!gf_list_count(sg->sockets))
 		return GF_IP_NETWORK_EMPTY;
-		
+
 	FD_ZERO(&sg->rgroup);
 	FD_ZERO(&sg->wgroup);
 
@@ -1377,12 +1439,12 @@ GF_Err gf_sk_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *By
 	}
 #endif
 	if (!buffer) return GF_OK;
-	
+
 	if (sock->flags & GF_SOCK_HAS_PEER)
 		res = (s32) recvfrom(sock->socket, (char *) buffer, length, 0, (struct sockaddr *)&sock->dest_addr, &sock->dest_addr_len);
 	else {
 		res = (s32) recv(sock->socket, (char *) buffer, length, 0);
-		if (res == 0)
+		if (!do_select && (res == 0))
 			return GF_IP_CONNECTION_CLOSED;
 	}
 
@@ -1659,7 +1721,7 @@ GF_Err gf_sk_send_to(GF_Socket *sock, const char *buffer, u32 length, char *remo
 		//setup the address
 		remote_add.sin_port = htons(remotePort);
 		//get the server IP
-		Host = gethostbyname(remoteHost);
+		Host = gf_gethostbyname(remoteHost);
 		if (Host == NULL) return GF_IP_ADDRESS_NOT_FOUND;
 		memcpy((char *) &remote_add.sin_addr, Host->h_addr_list[0], sizeof(u32));
 	} else {
@@ -1719,9 +1781,21 @@ GF_Err gf_sk_probe(GF_Socket *sock)
 	}
 #endif
 	res = (s32) recv(sock->socket, buffer, 1, MSG_PEEK);
-	if (res == 0) {
+	if (res > 0) return GF_OK;
+#if 0
+	res = LASTSOCKERROR;
+	switch (res) {
+	case 0:
+	case EAGAIN:
+		return GF_IP_NETWORK_EMPTY;
+	default:
+		GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[socket] probe error: %s\n", gf_errno_str(res)));
 		return GF_IP_CONNECTION_CLOSED;
 	}
+#else
+	return GF_IP_CONNECTION_CLOSED;
+#endif
+
 	return GF_OK;
 }
 

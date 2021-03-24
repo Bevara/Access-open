@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / NHML stream to file filter
@@ -115,6 +115,7 @@ GF_Err nhmldump_config_side_stream(GF_Filter *filter, GF_NHMLDumpCtx *ctx)
 
 	} else if (ctx->opid_info) {
 		gf_filter_pid_remove(ctx->opid_info);
+		ctx->opid_info = NULL;
 	}
 	if (ctx->info_file) gf_free(ctx->info_file);
 	ctx->info_file = NULL;
@@ -193,9 +194,18 @@ GF_Err nhmldump_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 
 	if (is_remove) {
 		ctx->ipid = NULL;
-		gf_filter_pid_remove(ctx->opid_nhml);
-		gf_filter_pid_remove(ctx->opid_mdia);
-		if (ctx->opid_info) gf_filter_pid_remove(ctx->opid_info);
+		if (ctx->opid_nhml) {
+			gf_filter_pid_remove(ctx->opid_nhml);
+			ctx->opid_nhml = NULL;
+		}
+		if (ctx->opid_mdia) {
+			gf_filter_pid_remove(ctx->opid_mdia);
+			ctx->opid_mdia = NULL;
+		}
+		if (ctx->opid_info) {
+			gf_filter_pid_remove(ctx->opid_info);
+			ctx->opid_info = NULL;
+		}
 		return GF_OK;
 	}
 	if (! gf_filter_pid_check_caps(pid))
@@ -395,12 +405,11 @@ static void nhmldump_send_header(GF_NHMLDumpCtx *ctx)
 	else if (ctx->sr && ctx->chan) {
 		sprintf(nhml, "sampleRate=\"%d\" numChannels=\"%d\" ", ctx->sr, ctx->chan);
 		gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
-		sprintf(nhml, "sampleRate=\"%d\" numChannels=\"%d\" ", ctx->sr, ctx->chan);
-		gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
 		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_AUDIO_FORMAT);
-		if (p)
+		if (p) {
 			sprintf(nhml, "bitsPerSample=\"%d\" ", gf_audio_fmt_bit_depth(p->value.uint));
-		gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
+			gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
+		}
 	}
 
 	NHML_PRINT_4CC(0, "codec_vendor", "codecVendor")
@@ -513,9 +522,12 @@ static void nhmldump_send_dims(GF_NHMLDumpCtx *ctx, char *data, u32 data_size, G
 		if (pos+size+2 > data_size)
 			break;
 
-		prev = data[pos+2+size];
-		data[pos+2+size] = 0;
 
+		prev = 0;
+		if (pos+2+size<data_size) {
+			prev = data[pos+2+size];
+			data[pos+2+size] = 0;
+		}
 
 		sprintf(nhml, "<DIMSUnit time=\""LLU"\"", cts);
 		gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
@@ -579,6 +591,8 @@ static void nhmldump_send_dims(GF_NHMLDumpCtx *ctx, char *data, u32 data_size, G
 #else
 			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("Error: your version of GPAC was compiled with no libz support."));
 			gf_bs_del(ctx->bs_r);
+			if (prev)
+				data[pos+2+size] = prev;
 			return;
 #endif
 		} else {
@@ -587,7 +601,8 @@ static void nhmldump_send_dims(GF_NHMLDumpCtx *ctx, char *data, u32 data_size, G
 		sprintf(nhml, "</DIMSUnit>\n");
 		gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
 
-		data[pos+2+size] = prev;
+		if (prev)
+			data[pos+2+size] = prev;
 		gf_bs_skip_bytes(ctx->bs_r, size-1);
 	}
 

@@ -75,6 +75,7 @@ rsync -r --exclude=.git $source_path/share/gui ./tmpdmg/GPAC.app/Contents/MacOS/
 rsync -r --exclude=.git $source_path/share/vis ./tmpdmg/GPAC.app/Contents/MacOS/share/
 rsync -r --exclude=.git $source_path/share/shaders ./tmpdmg/GPAC.app/Contents/MacOS/share/
 rsync -r --exclude=.git $source_path/share/scripts ./tmpdmg/GPAC.app/Contents/MacOS/share/
+rsync -r --exclude=.git $source_path/share/python ./tmpdmg/GPAC.app/Contents/MacOS/share/
 cp $source_path/share/default.cfg ./tmpdmg/GPAC.app/Contents/MacOS/share/
 
 echo Building DMG
@@ -94,7 +95,7 @@ then
 	full_version="$full_version-rev$rev"
 else
 	#if no revision can be extracted, use date
-   	$rev = $(date +%Y%m%d)
+   	rev = $(date +%Y%m%d)
 fi
 
 sed 's/<string>.*<\/string><!-- VERSION_REV_REPLACE -->/<string>'"$version"'<\/string>/' tmpdmg/GPAC.app/Contents/Info.plist > tmpdmg/GPAC.app/Contents/Info.plist.new && sed 's/<string>.*<\/string><!-- BUILD_REV_REPLACE -->/<string>'"$rev"'<\/string>/' tmpdmg/GPAC.app/Contents/Info.plist.new > tmpdmg/GPAC.app/Contents/Info.plist && rm tmpdmg/GPAC.app/Contents/Info.plist.new

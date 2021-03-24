@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2018
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -107,7 +107,7 @@ static void init_reader(ISOMChannel *ch)
 		ch->disable_seek = GF_TRUE;
 		ch->au_seq_num = ch->sample_num;
 	} else {
-		//if seek is disabled, get the next closest sample for this time; otherwose, get the previous RAP sample for this time
+		//if seek is disabled, get the next closest sample for this time; otherwise, get the previous RAP sample for this time
 		u32 mode = ch->disable_seek ? GF_ISOM_SEARCH_BACKWARD : GF_ISOM_SEARCH_SYNC_BACKWARD;
 
 		/*take care of seeking out of the track range*/
@@ -178,6 +178,91 @@ static void init_reader(ISOMChannel *ch)
 	ch->owner->no_order_check = ch->speed < 0 ? GF_TRUE : GF_FALSE;
 }
 
+
+static void isor_update_cenc_info(ISOMChannel *ch, Bool for_item)
+{
+	GF_Err e;
+	Bool Is_Encrypted;
+	u32 out_size;
+	u8 crypt_byte_block, skip_byte_block;
+	u8 piff_info[20];
+	u8 *key_info = NULL;
+	u32 key_info_size = 0;
+	u8 item_mkey = 0;
+
+	//this will be skipped anyways, don't fectch ...
+	if (ch->owner->stsd && (ch->last_sample_desc_index != ch->owner->stsd) && ch->sample) {
+		return;
+	}
+
+
+	out_size = ch->sai_alloc_size;
+	if (for_item) {
+		u32 aux_info_param=0;
+		e = gf_isom_extract_meta_item_get_cenc_info(ch->owner->mov, GF_TRUE, 0, ch->item_id, &Is_Encrypted, &skip_byte_block, &crypt_byte_block, (const u8 **) &key_info, &key_info_size, &aux_info_param, &ch->sai_buffer, &out_size, &ch->sai_alloc_size);
+
+		/*The ienc property is always exposed as a multiple key info in GPAC
+		However the type of SAI may be single-key (aux_info_param==0) or multiple-key (aux_info_param==1) for the same ienc used
+		We therefore temporary force the key info type to single key if v0 SAI CENC are used
+		Note that this is thread safe as this filter is the only one using the opened file
+		*/
+		if (aux_info_param==0) {
+			item_mkey = key_info[0];
+		}
+	} else {
+		e = gf_isom_get_sample_cenc_info(ch->owner->mov, ch->track, ch->sample_num, &Is_Encrypted, &crypt_byte_block, &skip_byte_block, (const u8 **) &key_info, &key_info_size);
+	}
+	if (!key_info) {
+		piff_info[0] = 0;
+		piff_info[1] = 0;
+		piff_info[2] = 0;
+		piff_info[3] = key_info_size;
+		memset(piff_info + 4, 0, 16);
+		key_info_size = 20;
+		key_info = (u8 *) piff_info;
+	}
+
+
+	if (!for_item && (e==GF_OK) && Is_Encrypted) {
+		e = gf_isom_cenc_get_sample_aux_info(ch->owner->mov, ch->track, ch->sample_num, ch->last_sample_desc_index, NULL, &ch->sai_buffer, &out_size);
+	}
+
+	if (out_size > ch->sai_alloc_size) ch->sai_alloc_size = out_size;
+	ch->sai_buffer_size = out_size;
+
+	if (e) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[IsoMedia] Failed to fetch CENC auxiliary info for %s %d: %s\n", for_item ? "item" : "track", for_item ? ch->item_id : ch->track, gf_error_to_string(e) ));
+		return;
+	}
+
+	ch->pck_encrypted = Is_Encrypted;
+
+	/*notify change of IV/KID only when packet is encrypted
+	1- these info are ignored when packet is not encrypted
+	2- this allows us to define the initial CENC state for multi-stsd cases*/
+	if (Is_Encrypted) {
+		u32 ki_crc;
+
+		if ((ch->crypt_byte_block != crypt_byte_block) || (ch->skip_byte_block != skip_byte_block)) {
+			ch->crypt_byte_block = crypt_byte_block;
+			ch->skip_byte_block = skip_byte_block;
+
+			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CENC_PATTERN, &PROP_FRAC_INT(ch->skip_byte_block, ch->crypt_byte_block) );
+		}
+		if (item_mkey)
+			key_info[0] = 0;
+
+		ki_crc = gf_crc_32(key_info, key_info_size);
+		if (ch->key_info_crc != ki_crc) {
+			ch->key_info_crc = ki_crc;
+			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CENC_KEY_INFO, &PROP_DATA((u8 *)key_info, key_info_size) );
+		}
+
+		if (item_mkey)
+			key_info[0] = item_mkey;
+	}
+}
+
 void isor_reader_get_sample_from_item(ISOMChannel *ch)
 {
 	if (ch->au_seq_num) {
@@ -194,8 +279,13 @@ void isor_reader_get_sample_from_item(ISOMChannel *ch)
 
 	ch->sample = ch->static_sample;
 	ch->sample->IsRAP = RAP;
+	ch->au_duration = 1000;
 	ch->dts = ch->cts = 1000 * ch->au_seq_num;
 	gf_isom_extract_meta_item_mem(ch->owner->mov, GF_TRUE, 0, ch->item_id, &ch->sample->data, &ch->sample->dataLength, &ch->static_sample->alloc_size, NULL, GF_FALSE);
+
+	if (ch->is_encrypted && ch->is_cenc) {
+		isor_update_cenc_info(ch, GF_TRUE);
+	}
 }
 
 void isor_reader_get_sample(ISOMChannel *ch)
@@ -282,7 +372,13 @@ void isor_reader_get_sample(ISOMChannel *ch)
 							u32 time_diff = gf_isom_get_sample_duration(ch->owner->mov, ch->track, sample_num);
 							e = gf_isom_get_sample_for_movie_time(ch->owner->mov, ch->track, ch->sample_time + time_diff, &sample_desc_index, GF_ISOM_SEARCH_FORWARD, &ch->static_sample, &ch->sample_num, &ch->sample_data_offset);
 							if (e==GF_OK) {
-								ch->sample = ch->static_sample;
+								if (ch->sample_num == prev_sample) {
+									ch->sample_time += time_diff;
+									ch->sample = NULL;
+									return;
+								} else {
+									ch->sample = ch->static_sample;
+								}
 							}
 						}
 					}
@@ -359,6 +455,9 @@ void isor_reader_get_sample(ISOMChannel *ch)
 		/*incomplete file - check if we're still downloading or not*/
 		if (gf_isom_get_missing_bytes(ch->owner->mov, ch->track)) {
 			ch->last_state = GF_ISOM_INCOMPLETE_FILE;
+			if (ch->owner->mem_load_mode==2)
+				ch->owner->force_fetch = GF_TRUE;
+
 			if (!ch->owner->input_loaded) {
 				ch->last_state = GF_OK;
 				if (!ch->has_edit_list && ch->sample_num)
@@ -410,31 +509,35 @@ void isor_reader_get_sample(ISOMChannel *ch)
 	ch->sap_3 = GF_FALSE;
 	ch->sap_4_type = 0;
 	ch->roll = 0;
-	if (ch->sample) {
-		gf_isom_get_sample_rap_roll_info(ch->owner->mov, ch->track, ch->sample_num, &ch->sap_3, &ch->sap_4_type, &ch->roll);
-	}
-
-	/*still seeking or not ?
-	 1- when speed is negative, the RAP found is "after" the seek point in playback order since we used backward RAP search: nothing to do
-	 2- otherwise set DTS+CTS to start value
-	 */
-	if ((ch->speed < 0) || (ch->start <= ch->sample->DTS + ch->sample->CTS_Offset)) {
-		ch->dts = ch->sample->DTS;
-		ch->cts = ch->sample->DTS + ch->sample->CTS_Offset;
-		ch->seek_flag = 0;
-	} else {
-		ch->cts = ch->start;
-		ch->seek_flag = 1;
-		ch->dts = ch->start;
-	}
 	ch->set_disc = ch->owner->clock_discontinuity ? 2 : 0;
 	ch->owner->clock_discontinuity = 0;
 
-	if (ch->end && (ch->end < ch->sample->DTS + ch->sample->CTS_Offset + ch->au_duration)) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[IsoMedia] End of Channel "LLD" (CTS "LLD")\n", ch->end, ch->sample->DTS + ch->sample->CTS_Offset));
-		ch->last_state = GF_EOS;
-		ch->playing = GF_FALSE;
+	if (ch->sample) {
+		gf_isom_get_sample_rap_roll_info(ch->owner->mov, ch->track, ch->sample_num, &ch->sap_3, &ch->sap_4_type, &ch->roll);
+
+		/*still seeking or not ?
+		 1- when speed is negative, the RAP found is "after" the seek point in playback order since we used backward RAP search: nothing to do
+		 2- otherwise set DTS+CTS to start value
+		 */
+		if ((ch->speed < 0) || (ch->start <= ch->sample->DTS + ch->sample->CTS_Offset)) {
+			ch->dts = ch->sample->DTS;
+			ch->cts = ch->sample->DTS + ch->sample->CTS_Offset;
+			ch->seek_flag = 0;
+		} else {
+			ch->cts = ch->start;
+			ch->seek_flag = 1;
+			ch->dts = ch->start;
+		}
+
+		if (ch->end && (ch->end < ch->sample->DTS + ch->sample->CTS_Offset + ch->au_duration)) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[IsoMedia] End of Channel "LLD" (CTS "LLD")\n", ch->end, ch->sample->DTS + ch->sample->CTS_Offset));
+			ch->sample = NULL;
+			ch->last_state = GF_EOS;
+			ch->playing = 2;
+			return;
+		}
 	}
+
 	if (ch->owner->last_sender_ntp && ch->cts==ch->owner->cts_for_last_sender_ntp) {
 		ch->sender_ntp = ch->owner->last_sender_ntp;
 		ch->ntp_at_server_ntp = ch->owner->ntp_at_last_sender_ntp;
@@ -452,54 +555,7 @@ void isor_reader_get_sample(ISOMChannel *ch)
 	if (ch->is_encrypted) {
 		/*in case of CENC: we write sample auxiliary information to slh->sai; its size is in saiz*/
 		if (gf_isom_is_cenc_media(ch->owner->mov, ch->track, ch->last_sample_desc_index)) {
-			Bool Is_Encrypted;
-			u32 out_size;
-			u8 IV_size;
-			bin128 KID;
-			u8 crypt_byte_block, skip_byte_block;
-			u8 constant_IV_size;
-			bin128 constant_IV;
-
-			ch->cenc_state_changed = 0;
-			gf_isom_get_sample_cenc_info(ch->owner->mov, ch->track, ch->sample_num, &Is_Encrypted, &IV_size, &KID, &crypt_byte_block, &skip_byte_block, &constant_IV_size, &constant_IV);
-
-			if (Is_Encrypted != ch->pck_encrypted) {
-				ch->pck_encrypted = Is_Encrypted;
-				ch->cenc_state_changed = 1;
-			}
-			/*notify change of IV/KID only when packet is encrypted
-			1- these info are ignored when packet is not encrypted
-			2- this allows us to define the initial CENC state for multi-stsd cases*/
-			if (Is_Encrypted) {
-				if (ch->IV_size != IV_size) {
-					ch->IV_size = IV_size;
-					ch->cenc_state_changed = 1;
-				}
-				if ((ch->crypt_byte_block != crypt_byte_block) || (ch->skip_byte_block != skip_byte_block)) {
-					ch->crypt_byte_block = crypt_byte_block;
-					ch->skip_byte_block = skip_byte_block;
-					ch->cenc_state_changed = 1;
-				}
-				if (!ch->IV_size) {
-					if (ch->constant_IV_size != constant_IV_size) {
-						ch->constant_IV_size = constant_IV_size;
-						ch->cenc_state_changed = 1;
-					} else if (memcmp(ch->constant_IV, constant_IV, ch->constant_IV_size)) {
-						ch->cenc_state_changed = 1;
-					}
-					memmove(ch->constant_IV, constant_IV, ch->constant_IV_size);
-				}
-				if (memcmp(ch->KID, KID, sizeof(bin128))) {
-					memcpy(ch->KID, KID, sizeof(bin128));
-					ch->cenc_state_changed = 1;
-				}
-			}
-
-			out_size = ch->sai_alloc_size;
-
-			gf_isom_cenc_get_sample_aux_info_buffer(ch->owner->mov, ch->track, ch->sample_num, ch->last_sample_desc_index, NULL, &ch->sai_buffer, &out_size);
-			if (out_size > ch->sai_alloc_size) ch->sai_alloc_size = out_size;
-			ch->sai_buffer_size = out_size;
+			isor_update_cenc_info(ch, GF_FALSE);
 
 		} else if (gf_isom_is_media_encrypted(ch->owner->mov, ch->track, ch->last_sample_desc_index)) {
 			ch->pck_encrypted = GF_TRUE;
@@ -534,9 +590,10 @@ enum
 	RESET_STATE_SPS=1<<1,
 	RESET_STATE_PPS=1<<2,
 	RESET_STATE_SPS_EXT=1<<3,
+	RESET_STATE_DCI=1<<4,
 };
 
-static void isor_replace_nal(GF_AVCConfig *avcc, GF_HEVCConfig *hvcc, u8 *data, u32 size, u8 nal_type, u32 *reset_state)
+static void isor_replace_nal(GF_AVCConfig *avcc, GF_HEVCConfig *hvcc, GF_VVCConfig *vvcc, u8 *data, u32 size, u8 nal_type, u32 *reset_state)
 {
 	u32 i, count, state=0;
 	GF_NALUFFParam *sl;
@@ -552,7 +609,8 @@ static void isor_replace_nal(GF_AVCConfig *avcc, GF_HEVCConfig *hvcc, u8 *data, 
 			list = avcc->sequenceParameterSetExtensions;
 			state=RESET_STATE_SPS_EXT;
 		} else return;
-	} else if (hvcc) {
+	}
+	else if (hvcc) {
 		GF_NALUFFParamArray *hvca=NULL;
 		count = gf_list_count(hvcc->param_array);
 		for (i=0; i<count; i++) {
@@ -583,6 +641,40 @@ static void isor_replace_nal(GF_AVCConfig *avcc, GF_HEVCConfig *hvcc, u8 *data, 
 			break;
 		}
 	}
+	else if (vvcc) {
+		GF_NALUFFParamArray *vvca=NULL;
+		count = gf_list_count(vvcc->param_array);
+		for (i=0; i<count; i++) {
+			vvca = gf_list_get(vvcc->param_array, i);
+			if (vvca->type==nal_type) {
+				list = vvca->nalus;
+				break;
+			}
+			vvca = NULL;
+		}
+		if (!vvca) {
+			GF_SAFEALLOC(vvca, GF_NALUFFParamArray);
+			if (vvca) {
+				list = vvca->nalus = gf_list_new();
+				vvca->type = nal_type;
+				gf_list_add(vvcc->param_array, vvca);
+			}
+		}
+		switch (nal_type) {
+		case GF_VVC_NALU_VID_PARAM:
+			state = RESET_STATE_VPS;
+			break;
+		case GF_VVC_NALU_SEQ_PARAM:
+			state = RESET_STATE_SPS;
+			break;
+		case GF_VVC_NALU_PIC_PARAM:
+			state = RESET_STATE_PPS;
+			break;
+		case GF_VVC_NALU_DEC_PARAM:
+			state = RESET_STATE_DCI;
+			break;
+		}
+	}
 
 	count = gf_list_count(list);
 	for (i=0; i<count; i++) {
@@ -604,7 +696,7 @@ static void isor_replace_nal(GF_AVCConfig *avcc, GF_HEVCConfig *hvcc, u8 *data, 
 void isor_reader_check_config(ISOMChannel *ch)
 {
 	u32 nalu_len, reset_state;
-	if (!ch->check_hevc_ps && !ch->check_avc_ps && !ch->check_mhas_pl) return;
+	if (!ch->check_hevc_ps && !ch->check_avc_ps && !ch->check_vvc_ps && !ch->check_mhas_pl) return;
 
 	if (!ch->sample) return;
 	//we cannot touch the payload if encrypted !!
@@ -625,7 +717,11 @@ void isor_reader_check_config(ISOMChannel *ch)
 
 	if (ch->owner->analyze) return;
 	
-	nalu_len = ch->hvcc ? ch->hvcc->nal_unit_size : (ch->avcc ? ch->avcc->nal_unit_size : 4);
+	nalu_len = 4;
+	if (ch->avcc) nalu_len = ch->avcc->nal_unit_size;
+	else if (ch->hvcc) nalu_len = ch->hvcc->nal_unit_size;
+	else if (ch->vvcc) nalu_len = ch->vvcc->nal_unit_size;
+
 	reset_state = 0;
 
 	if (!ch->nal_bs) ch->nal_bs = gf_bs_new(ch->sample->data, ch->sample->dataLength, GF_BITSTREAM_READ);
@@ -636,9 +732,11 @@ void isor_reader_check_config(ISOMChannel *ch)
 		u8 nal_type=0;
 		u32 pos = (u32) gf_bs_get_position(ch->nal_bs);
 		u32 size = gf_bs_read_int(ch->nal_bs, nalu_len*8);
+		//this takes care of size + pos + nalu_len > 0 but (s32) size < 0 ...
+		if (ch->sample->dataLength < size) break;
 		if (ch->sample->dataLength < size + pos + nalu_len) break;
-		u8 hdr = gf_bs_peek_bits(ch->nal_bs, 8, 0);
 		if (ch->check_avc_ps) {
+			u8 hdr = gf_bs_peek_bits(ch->nal_bs, 8, 0);
 			nal_type = hdr & 0x1F;
 			switch (nal_type) {
 			case GF_AVC_NALU_SEQ_PARAM:
@@ -648,7 +746,8 @@ void isor_reader_check_config(ISOMChannel *ch)
 				break;
 			}
 		}
-		if (ch->check_hevc_ps) {
+		else if (ch->check_hevc_ps) {
+			u8 hdr = gf_bs_peek_bits(ch->nal_bs, 8, 0);
 			nal_type = (hdr & 0x7E) >> 1;
 			switch (nal_type) {
 			case GF_HEVC_NALU_VID_PARAM:
@@ -658,11 +757,23 @@ void isor_reader_check_config(ISOMChannel *ch)
 				break;
 			}
 		}
+		else if (ch->check_vvc_ps) {
+			u8 hdr = gf_bs_peek_bits(ch->nal_bs, 8, 1);
+			nal_type = hdr >> 3;
+			switch (nal_type) {
+			case GF_VVC_NALU_VID_PARAM:
+			case GF_VVC_NALU_SEQ_PARAM:
+			case GF_VVC_NALU_PIC_PARAM:
+			case GF_VVC_NALU_DEC_PARAM:
+				replace_nal = GF_TRUE;
+				break;
+			}
+		}
 		gf_bs_skip_bytes(ch->nal_bs, size);
 
 		if (replace_nal) {
 			u32 move_size = ch->sample->dataLength - size - pos - nalu_len;
-			isor_replace_nal(ch->avcc, ch->hvcc, ch->sample->data + pos + nalu_len, size, nal_type, &reset_state);
+			isor_replace_nal(ch->avcc, ch->hvcc, ch->vvcc, ch->sample->data + pos + nalu_len, size, nal_type, &reset_state);
 			if (move_size)
 				memmove(ch->sample->data + pos, ch->sample->data + pos + size + nalu_len, ch->sample->dataLength - size - pos - nalu_len);
 
@@ -680,6 +791,9 @@ void isor_reader_check_config(ISOMChannel *ch)
 		}
 		else if (ch->check_hevc_ps) {
 			gf_odf_hevc_cfg_write(ch->hvcc, &dsi, &dsi_size);
+		}
+		else if (ch->check_vvc_ps) {
+			gf_odf_vvc_cfg_write(ch->vvcc, &dsi, &dsi_size);
 		}
 		if (dsi && dsi_size) {
 			u32 dsi_crc = gf_crc_32(dsi, dsi_size);

@@ -28,12 +28,20 @@
 #include <gpac/constants.h>
 #include <gpac/xml.h>
 
+enum
+{
+	FOUT_CAT_NONE = 0,
+	FOUT_CAT_AUTO,
+	FOUT_CAT_ALL
+};
+
 typedef struct
 {
 	//options
 	Double start, speed;
 	char *dst, *mime, *ext;
-	Bool append, dynext, cat, ow, redund;
+	Bool append, dynext, ow, redund;
+	u32 cat;
 	u32 mvbk;
 
 	//only one input pid
@@ -54,6 +62,8 @@ typedef struct
 	u64 offset_at_seg_start;
 	const char *original_url;
 	GF_FileIO *gfio_ref;
+
+	FILE *hls_chunk;
 } GF_FileOutCtx;
 
 #ifdef WIN32
@@ -61,11 +71,20 @@ typedef struct
 #include <fcntl.h>
 #endif //WIN32
 
+static void fileout_close_hls_chunk(GF_FileOutCtx *ctx, Bool final_flush)
+{
+	if (!ctx->hls_chunk) return;
+	gf_fclose(ctx->hls_chunk);
+	ctx->hls_chunk = NULL;
+}
+
 static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const char *ext, u32 file_idx, Bool explicit_overwrite, char *file_suffix)
 {
 	if (ctx->file && !ctx->is_std) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileOut] closing output file %s\n", ctx->szFileName));
 		gf_fclose(ctx->file);
+
+		fileout_close_hls_chunk(ctx, GF_FALSE);
 	}
 	ctx->file = NULL;
 
@@ -83,9 +102,8 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 #endif
 
 	} else {
-		char szName[GF_MAX_PATH], szFinalName[GF_MAX_PATH];
+		char szFinalName[GF_MAX_PATH];
 		Bool append = ctx->append;
-		Bool check_templates = GF_FALSE;
 		const char *url = filename;
 
 		if (!strncmp(filename, "gfio://", 7))
@@ -102,28 +120,29 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 		} else {
 			strcpy(szFinalName, url);
 		}
-		if (ctx->dst && !strcmp(filename, ctx->dst)) {
-			strcpy(szName, szFinalName);
-			check_templates = GF_TRUE;
-		} else if (ctx->use_templates) {
-			char *basename = ctx->dst ? gf_file_basename(ctx->dst) : NULL;
-			if (basename && (basename == ctx->dst)) {
+
+		if (ctx->use_templates) {
+			GF_Err e;
+			char szName[GF_MAX_PATH];
+			assert(ctx->dst);
+			if (!strcmp(filename, ctx->dst)) {
 				strcpy(szName, szFinalName);
+				e = gf_filter_pid_resolve_file_template(ctx->pid, szName, szFinalName, file_idx, file_suffix);
 			} else {
+				char szFileName[GF_MAX_PATH];
+				strcpy(szFileName, szFinalName);
 				strcpy(szName, ctx->dst);
-				basename = gf_file_basename(szName);
-				if (basename) basename[0] = 0;
-				strcat(szName, szFinalName);
+				e = gf_filter_pid_resolve_file_template_ex(ctx->pid, szName, szFinalName, file_idx, file_suffix, szFileName);
 			}
-		} else {
-			strcpy(szName, szFinalName);
+			if (e) {
+				return ctx->is_error = e;
+			}
 		}
 
-		gf_filter_pid_resolve_file_template(ctx->pid, szName, szFinalName, file_idx, file_suffix);
-		if (check_templates && strcmp(szName, szFinalName))
-			ctx->use_templates = GF_TRUE;
-
 		if (!gf_file_exists(szFinalName)) append = GF_FALSE;
+
+		if (!strcmp(szFinalName, ctx->szFileName) && (ctx->cat==FOUT_CAT_AUTO))
+			append = GF_TRUE;
 
 		if (!ctx->ow && gf_file_exists(szFinalName) && !append) {
 			char szRes[21];
@@ -140,8 +159,8 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 		GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileOut] opening output file %s\n", szFinalName));
 		ctx->file = gf_fopen_ex(szFinalName, ctx->original_url, append ? "a+b" : "w+b");
 
-		if (!strcmp(szFinalName, ctx->szFileName) && !ctx->append && ctx->nb_write && !explicit_overwrite) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[FileOut] re-opening in write mode output file %s, content overwrite\n", szFinalName));
+		if (!strcmp(szFinalName, ctx->szFileName) && !append && ctx->nb_write && !explicit_overwrite) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[FileOut] re-opening in write mode output file %s, content overwrite (use `cat` option to enable append)\n", szFinalName));
 		}
 		strcpy(ctx->szFileName, szFinalName);
 	}
@@ -156,17 +175,36 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 
 static void fileout_setup_file(GF_FileOutCtx *ctx, Bool explicit_overwrite)
 {
+	const char *dst = ctx->dst;
 	const GF_PropertyValue *p, *ext;
 	p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_OUTPATH);
 	ext = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_FILE_EXT);
 
 	if (p && p->value.string) {
 		fileout_open_close(ctx, p->value.string, (ext && ctx->dynext) ? ext->value.string : NULL, 0, explicit_overwrite, NULL);
-	} else if (ctx->dynext) {
+		return;
+	}
+	if (!dst) {
+		p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_FILEPATH);
+		if (p && p->value.string) {
+			dst = p->value.string;
+			char *sep = strstr(dst, "://");
+			if (sep) {
+				dst = strchr(sep+3, '/');
+				if (!dst) return;
+			} else {
+				if (!strncmp(dst, "./", 2)) dst+= 2;
+				else if (!strncmp(dst, ".\\", 2)) dst+= 2;
+				else if (!strncmp(dst, "../", 3)) dst+= 3;
+				else if (!strncmp(dst, "..\\", 3)) dst+= 3;
+			}
+		}
+	}
+	if (ctx->dynext) {
 		p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PCK_FILENUM);
 		if (!p) {
 			if (ext && ext->value.string) {
-				fileout_open_close(ctx, ctx->dst, ext->value.string, 0, explicit_overwrite, NULL);
+				fileout_open_close(ctx, dst, ext->value.string, 0, explicit_overwrite, NULL);
 			}
 		}
 	} else if (ctx->dst) {
@@ -206,7 +244,7 @@ static GF_Err fileout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 
 static GF_Err fileout_initialize(GF_Filter *filter)
 {
-	char *ext=NULL;
+	char *ext=NULL, *sep;
 	const char *dst;
 	GF_FileOutCtx *ctx = (GF_FileOutCtx *) gf_filter_get_udta(filter);
 
@@ -241,6 +279,12 @@ static GF_Err fileout_initialize(GF_Filter *filter)
 		ctx->original_url = ctx->dst;
 	} else {
 		dst = ctx->dst;
+	}
+
+	sep = dst ? strchr(dst, '$') : NULL;
+	if (sep) {
+		sep = strchr(sep+1, '$');
+		if (sep) ctx->use_templates = GF_TRUE;
 	}
 
 	if (ctx->dynext) return GF_OK;
@@ -282,6 +326,9 @@ static void fileout_finalize(GF_Filter *filter)
 {
 	GF_Err e;
 	GF_FileOutCtx *ctx = (GF_FileOutCtx *) gf_filter_get_udta(filter);
+
+	fileout_close_hls_chunk(ctx, GF_TRUE);
+
 	fileout_open_close(ctx, NULL, NULL, 0, GF_FALSE, NULL);
 	if (ctx->gfio_ref)
 		gf_fileio_open_url((GF_FileIO *)ctx->gfio_ref, NULL, "unref", &e);
@@ -372,7 +419,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 		return fileout_process(filter);
 	}
 
-	if (ctx->file && start && ctx->cat)
+	if (ctx->file && start && (ctx->cat==FOUT_CAT_ALL))
 		start = GF_FALSE;
 
 	if (ctx->dash_mode) {
@@ -393,7 +440,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 				evt.seg_size.is_init = GF_FALSE;
 				evt.seg_size.media_range_start = ctx->offset_at_seg_start;
 				evt.seg_size.media_range_end = gf_ftell(ctx->file)-1;
-				ctx->offset_at_seg_start = evt.seg_size.media_range_end;
+				ctx->offset_at_seg_start = evt.seg_size.media_range_end+1;
 				gf_filter_pid_send_event(ctx->pid, &evt);
 			}
 			if ( gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENAME))
@@ -431,6 +478,14 @@ static GF_Err fileout_process(GF_Filter *filter)
 		}
 	}
 
+	p = gf_filter_pck_get_property(pck, GF_PROP_PCK_HLS_FRAG_NUM);
+	if (p) {
+		char szHLSChunk[GF_MAX_PATH+21];
+		snprintf(szHLSChunk, GF_MAX_PATH+20, "%s.%d", ctx->szFileName, p->value.uint);
+		if (ctx->hls_chunk) gf_fclose(ctx->hls_chunk);
+		ctx->hls_chunk = gf_fopen_ex(szHLSChunk, ctx->original_url, "w+b");
+	}
+
 	pck_data = gf_filter_pck_get_data(pck, &pck_size);
 	if (ctx->file) {
 		GF_FilterFrameInterface *hwf = gf_filter_pck_get_frame_interface(pck);
@@ -465,7 +520,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 						pos = cur_w;
 						block = gf_malloc(ctx->mvbk);
 						if (!block) {
-							GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] unable to allocate blockof %d bytes\n", ctx->mvbk));
+							GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] unable to allocate block of %d bytes\n", ctx->mvbk));
 						} else {
 							while (cur_r > bo) {
 								u32 move_bytes = ctx->mvbk;
@@ -506,6 +561,13 @@ static GF_Err fileout_process(GF_Filter *filter)
 					GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, pck_size));
 				}
 				ctx->nb_write += nb_write;
+
+				if (ctx->hls_chunk) {
+					nb_write = (u32) gf_fwrite(pck_data, pck_size, ctx->hls_chunk);
+					if (nb_write!=pck_size) {
+						GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, pck_size));
+					}
+				}
 			}
 		} else if (hwf) {
 			u32 w, h, stride, stride_uv, pf;
@@ -605,7 +667,11 @@ static const GF_FilterArgs FileOutArgs[] =
 	{ OFFS(speed), "set playback speed when vsync is on. If speed is negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
 	{ OFFS(ext), "set extension for graph resolution, regardless of file extension", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(mime), "set mime type for graph resolution", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(cat), "cat each file of input pid rather than creating one file per filename", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(cat), "cat each file of input pid rather than creating one file per filename\n"
+			"- none: never cat files\n"
+			"- auto: only cat if files have same names\n"
+			"- all: always cat regardless of file names"
+	, GF_PROP_UINT, "none", "none|auto|all", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ow), "overwrite output if existing", GF_PROP_BOOL, "true", NULL, 0},
 	{ OFFS(mvbk), "block size used when moving parts of the file around in patch mode", GF_PROP_UINT, "8192", NULL, 0},
 	{ OFFS(redund), "keep redundant packet in output file", GF_PROP_BOOL, "false", NULL, 0},
@@ -626,6 +692,7 @@ GF_FilterRegister FileOutRegister = {
 	GF_FS_SET_HELP("The file output filter is used to write output to disk, and does not produce any output PID.\n"
 		"It can work as a null sink when its destination is `null`, dropping all input packets. In this case it accepts ANY type of input pid, not just file ones.\n"
 		"In regular mode, the filter only accept pid of type file. It will dump to file incomming packets (stream type file), starting a new file for each packet having a __frame_start__ flag set, unless operating in [-cat]() mode.\n"
+		"If the output file name is `std` or `stdout`, writes to stdout.\n"
 		"The ouput file name can use gpac templating mechanism, see `gpac -h doc`."
 		"The filter watches the property `FileNumber` on incoming packets to create new files.\n"
 	)

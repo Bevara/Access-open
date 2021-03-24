@@ -165,7 +165,7 @@ typedef struct
 	GF_TSMuxCtx *ctx;
 	u32 last_cv;
 	//ts media skip
-	s32 media_delay, max_media_skip;
+	s64 media_delay, max_media_skip;
 	Bool done;
 
 	GF_List *temi_descs;
@@ -478,9 +478,11 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 		}
 		if (cts != GF_FILTER_NO_TS) {
 			cts += tspid->loop_ts_offset;
+			es_pck.cts = cts;
+		} else {
+			es_pck.cts = 0;
 		}
 
-		es_pck.cts = cts;
 		if (tspid->temi_descs) {
 			u32 i, count=gf_list_count(tspid->temi_descs);
 
@@ -599,17 +601,20 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 		//serialize webvtt cue formatting for TX3G
 		else if (tspid->codec_id == GF_CODECID_WEBVTT) {
 			u32 i;
-			u64 start_ts;
-			void webvtt_write_cue(GF_BitStream *bs, GF_WebVTTCue *cue);
+			u64 start_ts, end_ts;
+			void webvtt_write_cue(GF_BitStream *bs, GF_WebVTTCue *cue, Bool write_srt);
 			GF_List *cues;
 			GF_BitStream *bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 
 			start_ts = es_pck.cts * 1000;
 			start_ts /= tspid->esi.timescale;
-			cues = gf_webvtt_parse_cues_from_data(es_pck.data, es_pck.data_len, start_ts);
+			end_ts = (es_pck.cts + es_pck.duration) * 1000;
+			end_ts /= tspid->esi.timescale;
+
+			cues = gf_webvtt_parse_cues_from_data(es_pck.data, es_pck.data_len, start_ts, end_ts);
 			for (i = 0; i < gf_list_count(cues); i++) {
 				GF_WebVTTCue *cue = (GF_WebVTTCue *)gf_list_get(cues, i);
-				webvtt_write_cue(bs, cue);
+				webvtt_write_cue(bs, cue, GF_FALSE);
 				gf_webvtt_cue_del(cue);
 			}
 			gf_list_del(cues);
@@ -1056,7 +1061,7 @@ static GF_Err tsmux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
 	if (p) {
-		tspid->media_delay = p->value.sint;
+		tspid->media_delay = p->value.longsint;
 
 		//compute max ts skip for this program
 		s64 max_media_skip = 0;
@@ -1064,8 +1069,14 @@ static GF_Err tsmux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		ts_stream = prog->streams;
 		while (ts_stream) {
 			M2Pid *atspid = ts_stream->ifce->input_udta;
-			s64 media_skip = (s64) -atspid->media_delay;
-			if (media_skip  > max_media_skip) {
+			s64 media_skip;
+			if (atspid->media_delay>=0) {
+				ts_stream = ts_stream->next;
+				continue;
+			}
+
+			media_skip = -atspid->media_delay;
+			if (!max_media_skip || (media_skip * max_skip_ts > max_media_skip * atspid->esi.timescale) ) {
 				max_media_skip = media_skip ;
 				max_skip_ts = atspid->esi.timescale;
 			}
@@ -1076,7 +1087,7 @@ static GF_Err tsmux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		while (ts_stream) {
 			M2Pid *atspid = ts_stream->ifce->input_udta;
 			if (max_skip_ts) {
-				atspid->max_media_skip = (s32) (max_media_skip * atspid->esi.timescale / max_skip_ts);
+				atspid->max_media_skip = (max_media_skip * atspid->esi.timescale / max_skip_ts);
 			} else {
 				atspid->max_media_skip = 0;
 			}

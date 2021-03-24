@@ -84,7 +84,6 @@ typedef struct
 	AVIOContext *avio_ctx;
 	FILE *gfio;
 
-
 	u32 cur_file_idx_plus_one;
 } GF_FFMuxCtx;
 
@@ -141,6 +140,12 @@ static int ffavio_write_packet(void *opaque, uint8_t *buf, int buf_size)
 static int64_t ffavio_seek(void *opaque, int64_t offset, int whence)
 {
 	GF_FFMuxCtx *ctx = (GF_FFMuxCtx *)opaque;
+	if (whence==AVSEEK_SIZE) {
+		u64 pos = gf_ftell(ctx->gfio);
+		u64 size = gf_fsize(ctx->gfio);
+		gf_fseek(ctx->gfio, pos, SEEK_SET);
+		return size;
+	}
 	return (int64_t) gf_fseek(ctx->gfio, offset, whence);
 }
 
@@ -825,9 +830,10 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
 		if (p && avst->r_frame_rate.num && avst->r_frame_rate.den) {
-			avst->codecpar->video_delay = p->value.sint;
-			avst->codecpar->video_delay *= avst->r_frame_rate.num;
-			avst->codecpar->video_delay /= avst->r_frame_rate.den;
+			s64 delay = p->value.longsint;
+			delay *= avst->r_frame_rate.num;
+			delay /= avst->r_frame_rate.den;
+			avst->codecpar->video_delay = (s32) delay;
 		}
 
 	}
@@ -858,11 +864,12 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
 		if (p && (p->value.sint<0) && samplerate) {
-			avst->codecpar->initial_padding = p->value.sint;
+			s64 pad = p->value.longsint;
 			if (st->in_scale.den != samplerate) {
-				avst->codecpar->initial_padding *= samplerate;
-				avst->codecpar->initial_padding /= st->in_scale.den;
+				pad *= samplerate;
+				pad /= st->in_scale.den;
 			}
+			avst->codecpar->initial_padding = (s32) pad;
 		}
 		/*
 		//not mapped in gpac
@@ -891,6 +898,9 @@ static void ffmx_finalize(GF_Filter *filter)
 			av_write_trailer(ctx->muxer);
 		}
 		ctx->status = FFMX_STATE_TRAILER_DONE;
+	} 
+	if (!ctx->gfio && ctx->muxer->pb) {
+		ctx->muxer->io_close(ctx->muxer, ctx->muxer->pb);
 	}
 
 	if (ctx->options) av_dict_free(&ctx->options);
@@ -976,10 +986,12 @@ GF_FilterRegister FFMuxRegister = {
 	.name = "ffmx",
 	.version = LIBAVFORMAT_IDENT,
 	GF_FS_SET_DESCRIPTION("FFMPEG muxer")
-	GF_FS_SET_HELP("FFMPEG output for files and streamers.\n"
-		"See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details\n"
+
+	GF_FS_SET_HELP("Muxes files and open output protocols using FFMPEG.\n"
+		"See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details.\n"
+		"To list all supported demuxers for your GPAC build, use `gpac -h ffmx:*`."
 		"\n"
-		"Note: Some URL formats may not be sufficient to derive the multiplexing format, you must then use [-ffmt]() to specify the desired format.\n"
+		"Some URL formats may not be sufficient to derive the multiplexing format, you must then use [-ffmt]() to specify the desired format.\n"
 		"\n"
 		"Unlike other multiplexing filters in GPAC, this filter is a sink filter and does not produce any PID to be redirected in the graph.\n"
 		"The filter can however use template names for its output, using the first input PID to resolve the final name.\n"
@@ -1006,7 +1018,7 @@ GF_FilterRegister FFMuxRegister = {
 
 static const GF_FilterArgs FFMuxArgs[] =
 {
-	{ OFFS(dst), "location of source content", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(dst), "location of destination file or remote URL", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(start), "set playback start offset. Negative value means percent of media dur with -1 <=> dur", GF_PROP_DOUBLE, "0.0", NULL, 0},
 	{ OFFS(speed), "set playback speed. If speed is negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
 	{ OFFS(interleave), "write frame in interleave mode", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},

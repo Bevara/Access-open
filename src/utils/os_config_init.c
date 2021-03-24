@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -89,6 +89,7 @@ static Bool check_file_exists(char *name, char *path, char *outPath)
 {
 	char szPath[GF_MAX_PATH];
 	FILE *f;
+	int concatres;
 
 	if (! gf_dir_exists(path)) return 0;
 
@@ -104,7 +105,11 @@ static Bool check_file_exists(char *name, char *path, char *outPath)
 		return 1;
 	}
 
-	sprintf(szPath, "%s%c%s", path, GF_PATH_SEPARATOR, name);
+	concatres = snprintf(szPath, GF_MAX_PATH, "%s%c%s", path, GF_PATH_SEPARATOR, name);
+	if (concatres<0) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Path too long (limit %d) when trying to concatenate %s and %s\n", GF_MAX_PATH, path, name));
+	}
+
 	//do not use gf_fopen here, we don't want to throw en error if failure
 	f = fopen(szPath, "rb");
 	if (!f) return GF_FALSE;
@@ -202,7 +207,7 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 	}
 	/*modules are stored in the GPAC directory (should be changed to GPAC/modules)*/
 	if (path_type==GF_PATH_MODULES) return GF_TRUE;
-	
+
 	if (path_type == GF_PATH_LIB) {
 		HMODULE hm=NULL;
 		if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -602,6 +607,7 @@ static void gf_ios_refresh_cache_directory( GF_Config *cfg, const char *file_pat
 
 #endif
 
+const char * gf_get_default_cache_directory_ex(Bool do_create);
 
 static GF_Config *create_default_config(char *file_path, const char *profile)
 {
@@ -666,7 +672,7 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	}
 #else
 	/*get default temporary directoy */
-	gf_cfg_set_key(cfg, "core", "cache", gf_get_default_cache_directory());
+	gf_cfg_set_key(cfg, "core", "cache", gf_get_default_cache_directory_ex(GF_FALSE));
 #endif
 
 	gf_cfg_set_key(cfg, "core", "ds-disable-notif", "no");
@@ -757,8 +763,8 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 
 	if (profile && !strcmp(profile, "0")) {
 		GF_Err gf_cfg_set_filename(GF_Config *iniFile, const char * fileName);
-		sprintf(szPath, "%s%c%s", gf_get_default_cache_directory(), GF_PATH_SEPARATOR, CFG_FILE_NAME);
-		gf_cfg_set_filename(cfg, szPath);
+//		sprintf(szPath, "%s%c%s", gf_get_default_cache_directory(), GF_PATH_SEPARATOR, CFG_FILE_NAME);
+		gf_cfg_set_filename(cfg, CFG_FILE_NAME);
 		gf_cfg_discard_changes(cfg);
 		return cfg;
 	}
@@ -961,7 +967,7 @@ skip_cfg:
 
 	if (!gf_cfg_get_key(cfg, "core", "store-dir")) {
 		if (profile && !strcmp(profile, "0")) {
-			strcpy(szPath, gf_get_default_cache_directory() );
+			strcpy(szPath, gf_get_default_cache_directory_ex(GF_FALSE) );
 			strcat(szPath, "/Storage");
 		} else {
 			char *sep;
@@ -1116,6 +1122,7 @@ GF_Err gf_opts_discard_changes()
 #include <gpac/main.h>
 
 GF_GPACArg GPAC_Args[] = {
+ GF_DEF_ARG("tmp", NULL, "specify directory for temporary file creation instead of OS-default temportary file management", NULL, NULL, GF_ARG_STRING, 0),
  GF_DEF_ARG("noprog", NULL, "disable progress messages", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("quiet", NULL, "disable all messages, including errors", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("log-file", "lf", "set output log file", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_LOG),
@@ -1124,7 +1131,7 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("logs", NULL, "set log tools and levels.  \n"\
 			"  \n"\
 			"You can independently log different tools involved in a session.  \n"\
-			"log_args is formatted as a ':'-separated list of `toolX[:toolZ]@levelX`  \n"\
+			"log_args is formatted as a colon (':') separated list of `toolX[:toolZ]@levelX`  \n"\
 	        "`levelX` can be one of:\n"\
 	        "- quiet: skip logs\n"\
 	        "- error: logs only error messages\n"\
@@ -1158,25 +1165,30 @@ GF_GPACArg GPAC_Args[] = {
 	        "- filter: filters debugging\n"\
 	        "- sched: filter session scheduler debugging\n"\
 	        "- mutex: log all mutex calls\n"\
-	        "- atsc: ATSC3 debugging\n"\
+	        "- route: ROUTE (ATSC3) debugging\n"\
 	        "- all: all tools logged - other tools can be specified afterwards.  \n"\
 	        "The special keyword `ncl` can be set to disable color logs.  \n"\
 	        "The special keyword `strict` can be set to exit at first error.  \n"\
 	        "EX -logs all@info:dash@debug:ncl\n"\
 			"This moves all log to info level, dash to debug level and disable color logs"\
  			, NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_LOG),
+ GF_DEF_ARG("proglf", NULL, "use new line at each progress messages", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_LOG),
 
  GF_DEF_ARG("strict-error", "se", "exit after the first error is reported", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("store-dir", NULL, "set storage directory", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("mod-dirs", NULL, "set additional module directories as a semi-colon `;` separated list", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("js-dirs", NULL, "set javascript directories", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-js-mods", NULL, "disable javascript module loading", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
- GF_DEF_ARG("ifce", NULL, "set default multicast interface through interface IP address", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("ifce", NULL, "set default multicast interface through interface IP address (default is 127.0.0.1)", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("lang", NULL, "set preferred language", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_CORE),
- GF_DEF_ARG("cfg", "opt", "set configuration file value. The string parameter can be formatted as:\n"\
+ GF_DEF_ARG("cfg", "opt", "get or set configuration file value. The string parameter can be formatted as:\n"\
 	        "- `section:key=val`: set the key to a new value\n"\
 	        "- `section:key=null`, `section:key`: remove the key\n"\
 	        "- `section:*=null`: remove the section"\
+	        "- no argument: print the entire configuration file\n"\
+	        "- `section`: print the given section\n"\
+	        "- `section:key`: print the given `key` in `section` (section can be set to `*`)"\
+	        "- `*:key`: print the given `key` in all sections"\
 			, NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-save", NULL, "discard any changes made to the config file upon exit", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("version", NULL, "set to GPAC version, used to check config file refresh", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_CORE),
@@ -1190,6 +1202,7 @@ GF_GPACArg GPAC_Args[] = {
  "- desktop: desktop device", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_CORE),
 
  GF_DEF_ARG("bs-cache-size", NULL, "cache size for bitstream read and write from file (0 disable cache, slower IOs)", "512", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("no-check", NULL, "disable compliancy tests for inputs (ISOBMFF for now). This will likely result in random crashes", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("cache", NULL, "cache directory location", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-on", NULL, "enable HTTP proxy", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-name", NULL, "set HTTP proxy address", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
@@ -1207,6 +1220,13 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("user-profile", NULL, "set user profile filename. Content of file is appended as body to HTTP HEAD/GET requests, associated Mime is **text/xml**", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("query-string", NULL, "insert query string (without `?`) to URL on requests", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("dm-threads", NULL, "force using threads for async download requests rather than session scheduler", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("cte-rate-wnd", NULL, "set window analysis length in milliseconds for chunk-transfer encoding rate estimation", "20", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+
+#ifdef GPAC_HAS_HTTP2
+ GF_DEF_ARG("no-h2", NULL, "disable HTTP2", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("no-h2c", NULL, "disable HTTP2 upgrade (i.e. over non-TLS)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("h2-copy", NULL, "enable intermediate copy of data in nghttp2 (default is disabled but may report as broken frames in wireshark)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+#endif
 
  GF_DEF_ARG("dbg-edges", NULL, "log edges status in filter graph before dijkstra resolution (for debug). Edges are logged as edge_source(status, weight, src_cap_idx, dst_cap_idx)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot be linked", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
@@ -1260,7 +1280,7 @@ GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot
  GF_DEF_ARG("font-dirs", NULL, "indicate comma-separated list of directories to scan for fonts", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
  GF_DEF_ARG("rescan-fonts", NULL, "indicate the font directory must be rescanned", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
  GF_DEF_ARG("wait-fonts", NULL, "wait for SVG fonts to be loaded before displaying frames", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
-
+ GF_DEF_ARG("webvtt-hours", NULL, "force writing hour when serializing WebVTT", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
  GF_DEF_ARG("rmt", NULL, "enable profiling through [Remotery](https://github.com/Celtoys/Remotery). A copy of Remotery visualizer is in gpac/share/vis, usually installed in __/usr/share/gpac/vis__ or __Program Files/GPAC/vis__", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_RMT),
  GF_DEF_ARG("rmt-port", NULL, "set remotery port", "17815", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_RMT),
  GF_DEF_ARG("rmt-reuse", NULL, "allow remotery to reuse port", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_RMT),
@@ -1373,7 +1393,7 @@ Bool gf_sys_set_cfg_option(const char *opt_string)
 	sepIdx = strlen(sep2+1);
 	if (sepIdx>=1024)
 		sepIdx = 1023;
-	strncpy(szVal, sep2+1, sepIdx);
+	memcpy(szVal, sep2+1, sepIdx);
 	szVal[sepIdx] = 0;
 
 	if (!stricmp(szKey, "*")) {
@@ -1421,7 +1441,48 @@ Bool gf_opts_load_option(const char *arg_name, const char *val, Bool *consumed_n
 
 	if (!strcmp(arg->name, "cfg")) {
 		*consumed_next = GF_TRUE;
-		if (! gf_sys_set_cfg_option(val)) *e = GF_BAD_PARAM;
+		if (val && strchr(val, '=')) {
+			if (! gf_sys_set_cfg_option(val)) *e = GF_BAD_PARAM;
+		} else {
+			u32 sec_len = 0;
+			char *sep = val ? strchr(val, ':') : NULL;
+			u32 sec_count = gf_opts_get_section_count();
+			if (sep) {
+				sec_len = (u32) (sep - val - 1);
+				sep++;
+			} else if (val) {
+				sec_len = (u32) strlen(val);
+			}
+			for (i=0; i<sec_count; i++) {
+				u32 k, key_count;
+				Bool sec_hdr_done = GF_FALSE;
+				const char *sname = gf_opts_get_section_name(i);
+				key_count = sname ? gf_opts_get_key_count(sname) : 0;
+				if (!key_count) continue;
+
+				if (sec_len) {
+					if (!strncmp(val, "*", sec_len) || !strncmp(val, "@", sec_len)) {
+					} else if (strncmp(val, sname, sec_len) || (sec_len != (u32) strlen(sname) ) ) {
+						continue;
+					}
+				}
+				for (k=0; k<key_count; k++) {
+					const char *kname = gf_opts_get_key_name(sname, k);
+					const char *kval = kname ? gf_opts_get_key(sname, kname) : NULL;
+					if (!kval) continue;
+					if (sep && strcmp(sep, kname)) continue;
+
+					if (!sec_hdr_done) {
+						sec_hdr_done = GF_TRUE;
+						fprintf(stdout, "[%s]\n", sname);
+					}
+					fprintf(stdout, "%s=%s\n", kname, kval);
+				}
+				if (sec_hdr_done)
+					fprintf(stdout, "\n");
+			}
+			exit(0);
+		}
 		return GF_TRUE;
 	}
 	if (!strcmp(arg->name, "strict-error")) {
@@ -1532,7 +1593,7 @@ void gf_sys_print_arg(FILE *helpout, u32 flags, const GF_GPACArg *arg, const cha
 		}
 		sep = strstr(arg->description, ".\n");
 		if (sep) {
-			fprintf(stderr, "\nWARNING: arg %s bad description format \"%s\", should not contain .\\n", arg->name, arg->description);
+			fprintf(stderr, "\nWARNING: arg %s bad description format \"%s\", should not contain .\\n \n", arg->name, arg->description);
 			exit(1);
 		}
 
@@ -1585,7 +1646,10 @@ void gf_sys_print_arg(FILE *helpout, u32 flags, const GF_GPACArg *arg, const cha
 		gf_free(arg_name);
 	}
 
-	if (arg->type==GF_ARG_INT && arg->values && strchr(arg->values, '|')) {
+	if (arg->type==GF_ARG_CUSTOM) {
+		if (arg->val)
+			gf_sys_format_help(helpout, flags, " `%s`", arg->val);
+	} else if (arg->type==GF_ARG_INT && arg->values && strchr(arg->values, '|')) {
 		gf_sys_format_help(helpout, flags, " (Enum");
 		if (arg->val)
 			gf_sys_format_help(helpout, flags, ", default: **%s**", arg->val);
@@ -1598,6 +1662,8 @@ void gf_sys_print_arg(FILE *helpout, u32 flags, const GF_GPACArg *arg, const cha
 		case GF_ARG_DOUBLE: gf_sys_format_help(helpout, flags, "number"); break;
 		case GF_ARG_STRING: gf_sys_format_help(helpout, flags, "string"); break;
 		case GF_ARG_STRINGS: gf_sys_format_help(helpout, flags, "string list"); break;
+		case GF_ARG_4CC: gf_sys_format_help(helpout, flags, "4CC"); break;
+		case GF_ARG_4CCS: gf_sys_format_help(helpout, flags, "4CC list"); break;
 		default: break;
 		}
 		if (arg->val)
@@ -1681,6 +1747,50 @@ static u32 nb_tokens = sizeof(Tokens) / sizeof(struct _token);
 
 static u32 line_pos = 0;
 
+//#define CHECK_BALANCED_SEPS
+
+#ifdef CHECK_BALANCED_SEPS
+static void check_char_balanced(char *buf, char c)
+{
+	char *txt = buf;
+	while (txt) {
+		char *bquote_next;
+		char *bquote = strchr(txt, c);
+		if (!bquote) break;
+		if (c=='\'') {
+			if ((bquote[1]=='s') && (bquote[2]==' ')) {
+				txt = bquote + 1;
+				continue;
+			}
+		}
+		bquote_next = strchr(bquote+1, c);
+		if (!bquote_next) {
+			fprintf(stderr, "Missing closing %c after %s\n", c, bquote);
+			exit(1);
+		}
+		switch (bquote_next[1] ) {
+		case 0:
+		case '\n':
+		case ' ':
+		case ',':
+		case '.':
+		case ')':
+		case ']':
+		case ':':
+			break;
+		default:
+			if (c=='\'') {
+				if ((bquote_next[1]>='A') && (bquote_next[1]<='Z'))
+					break;
+			}
+			fprintf(stderr, "Missing space after closing %c %s\n", c, bquote_next);
+			exit(1);
+		}
+		txt = bquote_next + 1;
+	}
+}
+#endif
+
 GF_EXPORT
 void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 {
@@ -1689,6 +1799,7 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 	va_list vlist;
 	Bool escape_xml = GF_FALSE;
 	Bool escape_pipe = GF_FALSE;
+	Bool prev_was_example = GF_FALSE;
 	u32 gen_doc = 0;
 	u32 is_app_opts = 0;
 	if (flags & GF_PRINTARG_MD) {
@@ -1715,6 +1826,12 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 	vsprintf(help_buf, fmt, vlist);
 	va_end(vlist);
 
+#ifdef CHECK_BALANCED_SEPS
+	if (gen_doc) {
+		check_char_balanced(help_buf, '`');
+		check_char_balanced(help_buf, '\'');
+	}
+#endif
 
 	line = help_buf;
 	while (line[0]) {
@@ -1755,6 +1872,7 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 		} else if ((line[0]=='E') && (line[1]=='X') && (line[2]==' ')) {
 			line+=3;
 			console_code = GF_CONSOLE_YELLOW;
+
 			if (gen_doc==1) {
 				header_string = "Example\n```\n";
 				footer_string = "\n```";
@@ -1763,6 +1881,17 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 				footer_string = "\n.br\n";
 			} else {
 				header_string = "Example:\n";
+			}
+
+			if (prev_was_example) {
+				header_string = NULL;
+			}
+
+			if (next_line && (next_line[1]=='E') && (next_line[2]=='X') && (next_line[3]==' ')) {
+				prev_was_example = GF_TRUE;
+				footer_string = NULL;
+			} else {
+				prev_was_example = GF_FALSE;
 			}
 		} else if (!strncmp(line, "Note: ", 6)) {
 			console_code = GF_CONSOLE_CYAN | GF_CONSOLE_ITALIC;
@@ -2121,7 +2250,7 @@ Bool gf_sys_word_match(const char *orig, const char *dst)
 		return GF_TRUE;
 	if ((dlen>=3) && (dlen<olen) && !strncmp(orig, dst, dlen))
 		return GF_TRUE;
-		
+
 	if (olen*2 < dlen) {
 		char *s1 = strchr(orig, ':');
 		char *s2 = strchr(dst, ':');

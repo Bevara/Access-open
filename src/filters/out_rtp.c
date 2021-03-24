@@ -108,7 +108,7 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 		gf_fprintf(sdp_out, "i=%s\n", info);
 	} else {
 		GF_RTPOutStream *stream = gf_list_get(streams, 0);
-		const char *src = gf_filter_pid_orig_src_args(stream->pid);
+		const char *src = gf_filter_pid_orig_src_args(stream->pid, GF_FALSE);
 		if (!src) src = gf_filter_pid_get_source_filter_name(stream->pid);
 		else {
 			src = gf_file_basename(src);
@@ -479,7 +479,7 @@ GF_Err rtpout_init_streamer(GF_RTPOutStream *stream, const char *ipdest, Bool in
 	}
 
 	p = gf_filter_pid_get_property(stream->pid, GF_PROP_PID_DELAY);
-	stream->ts_delay = p ? p->value.sint : 0;
+	stream->ts_delay = p ? p->value.longsint : 0;
 
 	payt++;
 	stream->microsec_ts_scale_frac.num = 1000000;
@@ -953,16 +953,16 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 	dts += stream->rtp_ts_offset;
 	cts += stream->rtp_ts_offset;
 	if (stream->ts_delay>=0) {
-		dts += stream->ts_delay;
-		cts += stream->ts_delay;
+		dts += (u32) stream->ts_delay;
+		cts += (u32) stream->ts_delay;
 	} else {
 		if ((s32) dts >= -stream->ts_delay)
-			dts += stream->ts_delay;
+			dts += (s32) stream->ts_delay;
 		else
 			dts = 0;
 
 		if ((s32) cts >= -stream->ts_delay )
-			cts += stream->ts_delay;
+			cts += (s32) stream->ts_delay;
 		else
 			cts = 0;
 	}

@@ -377,23 +377,23 @@ void gf_odm_setup_object(GF_ObjectManager *odm, GF_SceneNamespace *parent_ns, GF
 		}
 	}
 
-	if (odm->pid && !odm->buffer_playout_us) {
+	if (odm->pid && !odm->buffer_playout_ms) {
 		GF_FilterEvent evt;
 		const GF_PropertyValue *prop;
 		u32 tsdepth=0;
 		GF_Scene *scene = odm->subscene ? odm->subscene : odm->parentscene;
 
-		odm->buffer_playout_us = scene->compositor->buf * 1000;
-		odm->buffer_min_us = scene->compositor->rbuf * 1000;
-		odm->buffer_max_us = scene->compositor->mbuf * 1000;
+		odm->buffer_playout_ms = scene->compositor->buffer;
+		odm->buffer_min_ms = scene->compositor->rbuffer;
+		odm->buffer_max_ms = scene->compositor->mbuffer;
 
 		//check the same on the pid
 		prop = gf_filter_pid_get_property(for_pid ? for_pid : odm->pid, GF_PROP_PID_PLAY_BUFFER);
-		if (prop) odm->buffer_playout_us = 1000 * prop->value.uint;
+		if (prop) odm->buffer_playout_ms = prop->value.uint;
 		prop = gf_filter_pid_get_property(for_pid ? for_pid : odm->pid, GF_PROP_PID_RE_BUFFER);
-		if (prop) odm->buffer_min_us = 1000 * prop->value.uint;
+		if (prop) odm->buffer_min_ms = prop->value.uint;
 		prop = gf_filter_pid_get_property(for_pid ? for_pid : odm->pid, GF_PROP_PID_MAX_BUFFER);
-		if (prop) odm->buffer_max_us = 1000 * prop->value.uint;
+		if (prop) odm->buffer_max_ms = prop->value.uint;
 
 		prop = gf_filter_pid_get_property(for_pid ? for_pid : odm->pid, GF_PROP_PID_TIMESHIFT_DEPTH);
 		if (prop && prop->value.frac.den) {
@@ -401,22 +401,22 @@ void gf_odm_setup_object(GF_ObjectManager *odm, GF_SceneNamespace *parent_ns, GF
 		}
 		gf_odm_set_timeshift_depth(odm, tsdepth);
 
-		if (odm->buffer_playout_us > odm->buffer_max_us) odm->buffer_max_us = odm->buffer_playout_us;
+		if (odm->buffer_playout_ms > odm->buffer_max_ms) odm->buffer_max_ms = odm->buffer_playout_ms;
 
 		prop = gf_filter_pid_get_property(for_pid ? for_pid : odm->pid, GF_PROP_PID_FILE_CACHED);
-		if (prop) {
-			odm->buffer_playout_us = odm->buffer_max_us = 1000; //1 ms
-			odm->buffer_min_us = 0;
+		if (prop && prop->value.boolean) {
+			odm->buffer_playout_ms = odm->buffer_max_ms = 1; //1 ms
+			odm->buffer_min_ms = 0;
 		}
 
 		GF_FEVT_INIT(evt, GF_FEVT_BUFFER_REQ, for_pid ? for_pid : odm->pid);
-		evt.buffer_req.max_buffer_us = odm->buffer_max_us;
-		evt.buffer_req.min_playout_us = odm->buffer_min_us;
-		evt.buffer_req.max_playout_us = odm->buffer_playout_us;
+		evt.buffer_req.max_buffer_us = odm->buffer_max_ms * 1000;
+		evt.buffer_req.min_playout_us = odm->buffer_min_ms * 1000;
+		evt.buffer_req.max_playout_us = odm->buffer_playout_ms * 1000;
 		gf_filter_pid_send_event(NULL, &evt);
 
-		if (odm->buffer_min_us>evt.buffer_req.max_playout_us)
-			odm->buffer_min_us = 0;
+		if (odm->buffer_min_ms * 1000 > evt.buffer_req.max_playout_us)
+			odm->buffer_min_ms = 0;
 	}
 
 	/*setup mediaobject info except for top-level OD*/
@@ -676,13 +676,13 @@ clock_setup:
 	odm->clock_inherited = clock_inherited;
 
 	prop = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
-	if (prop) {
-		odm->delay = prop->value.sint;
-		prop = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
-		if (prop) {
-			odm->delay *= 1000;
-			odm->delay /= (s32) prop->value.uint;
-		}
+	odm->timestamp_offset = prop ? prop->value.longsint : 0;
+	prop = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
+	//if offset greater than 30sec, move it down to [0s,1s] range to avoid presenting nothing
+	if ((odm->timestamp_offset > 0) && (prop && prop->value.uint) && (odm->timestamp_offset > 30 * prop->value.uint)
+	) {
+		u64 to_rem = odm->timestamp_offset / prop->value.uint;
+		odm->timestamp_offset -= to_rem * prop->value.uint;
 	}
 
 	gf_odm_update_duration(odm, pid);
@@ -769,7 +769,7 @@ void gf_odm_play(GF_ObjectManager *odm)
 		return;
 	}
 
-	if ( !(odm->flags & GF_ODM_INHERIT_TIMELINE) && odm->owns_clock ) {
+	if ( !(odm->flags & (GF_ODM_INHERIT_TIMELINE|GF_ODM_TILED_SHARED_CLOCK) ) && odm->owns_clock ) {
 		gf_clock_reset(clock);
 	}
 
@@ -916,10 +916,12 @@ void gf_odm_play(GF_ObjectManager *odm)
 
 	if (odm->state != GF_ODM_STATE_PLAY) {
 		odm->state = GF_ODM_STATE_PLAY;
+
 		odm->nb_buffering ++;
 		scene->nb_buffering++;
 		//start buffering
 		gf_clock_buffer_on(odm->ck);
+
 		odm->has_seen_eos = GF_FALSE;
 
 		if ((odm->type!=GF_STREAM_VISUAL) && (odm->type!=GF_STREAM_AUDIO)) {
@@ -937,6 +939,7 @@ void gf_odm_play(GF_ObjectManager *odm)
 				xpid->state = GF_ODM_STATE_PLAY;
 				com.base.on_pid = xpid->pid;
 				odm->has_seen_eos = GF_FALSE;
+
 				odm->nb_buffering ++;
 				scene->nb_buffering++;
 				//start buffering
@@ -1042,7 +1045,7 @@ void gf_odm_stop(GF_ObjectManager *odm, Bool force_close)
 			odm->nb_buffering --;
 		}
 		if (!scene->nb_buffering) {
-			gf_scene_buffering_info(scene);
+			gf_scene_buffering_info(scene, GF_TRUE);
 		}
 	}
 
@@ -1450,7 +1453,7 @@ void gf_odm_init_segments(GF_ObjectManager *odm, GF_List *list, MFURL *url)
 static Bool odm_update_buffer(GF_Scene *scene, GF_ObjectManager *odm, GF_FilterPid *pid, Bool *signal_eob)
 {
 	u32 timescale;
-	u64 buffer_duration = gf_filter_pid_query_buffer_duration(pid, GF_TRUE);
+	u64 buffer_duration = gf_filter_pid_query_buffer_duration(pid, GF_FALSE)/1000;
 	if (odm->ck && ! odm->ck->clock_init) {
 		u64 time;
 		GF_FilterPacket *pck = gf_filter_pid_get_packet(pid);
@@ -1464,12 +1467,12 @@ static Bool odm_update_buffer(GF_Scene *scene, GF_ObjectManager *odm, GF_FilterP
 			GF_LOG(GF_LOG_INFO, GF_LOG_SYNC, ("No timestamp on first packet, using 0\n"));
 			time = 0;
 		}
-		if (odm->delay<0) {
-			if (time < (u64) -odm->delay) {
+		if (odm->timestamp_offset<0) {
+			if (time < (u64) -odm->timestamp_offset) {
 				gf_filter_pid_drop_packet(pid);
 				return GF_TRUE;
 			}
-			time-= -odm->delay;
+			time-= -odm->timestamp_offset;
 		}
 
 		time *= 1000;
@@ -1484,13 +1487,10 @@ static Bool odm_update_buffer(GF_Scene *scene, GF_ObjectManager *odm, GF_FilterP
 
 		if (pck && gf_filter_pck_is_blocking_ref(pck))
 			odm->blocking_media = GF_TRUE;
-
-		if (pck && gf_filter_pck_is_blocking_ref(pck))
-			odm->blocking_media = GF_TRUE;
 	}
 
 	//TODO abort buffering when errors are found on the input chain !!
-	if (odm->blocking_media || (buffer_duration >= odm->buffer_playout_us)) {
+	if (odm->blocking_media || (buffer_duration >= odm->buffer_playout_ms)) {
 		odm->nb_buffering --;
 		assert(scene->nb_buffering);
 		scene->nb_buffering--;
@@ -1567,9 +1567,9 @@ Bool gf_odm_check_buffering(GF_ObjectManager *odm, GF_FilterPid *pid)
 			if (an_odm->nb_buffering)
 	 			odm_update_buffer(scene, an_odm, an_odm->pid, &signal_eob);
 		}
-	} else if (!odm->blocking_media && odm->buffer_min_us && odm->pid && odm->ck && odm->ck->clock_init && !gf_filter_pid_has_seen_eos(odm->pid) ) {
-		u64 buffer_duration = gf_filter_pid_query_buffer_duration(odm->pid, GF_TRUE);
-		if (buffer_duration < odm->buffer_min_us) {
+	} else if (!odm->blocking_media && odm->buffer_min_ms && odm->pid && odm->ck && odm->ck->clock_init && !gf_filter_pid_has_seen_eos(odm->pid) ) {
+		u64 buffer_duration = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE)/1000;
+		if (buffer_duration < odm->buffer_min_ms) {
 			gf_clock_buffer_on(odm->ck);
 			odm->nb_buffering++;
 			odm->nb_rebuffer++;
@@ -1579,7 +1579,7 @@ Bool gf_odm_check_buffering(GF_ObjectManager *odm, GF_FilterPid *pid)
 	}
 
 	if (scene->nb_buffering || signal_eob)
-		gf_scene_buffering_info(scene);
+		gf_scene_buffering_info(scene, GF_FALSE);
 
 	//handle both PCR discontinuities or TS looping when no PCR disc is present/signaled
 	if (pck) {
@@ -1590,7 +1590,7 @@ Bool gf_odm_check_buffering(GF_ObjectManager *odm, GF_FilterPid *pid)
 		if (ck_type) {
 			clock_reference *= 1000;
 			clock_reference /= timescale;
-			diff = (s32) clock_time + odm->buffer_playout_us/1000;
+			diff = (s32) clock_time + odm->buffer_playout_ms;
 			diff -= (s32) clock_reference;
 			GF_LOG(GF_LOG_INFO, GF_LOG_SYNC, ("Clock %d (ODM %d) reference found "LLU" ms clock time %d ms - diff %d - type %d\n", odm->ck->clock_id, odm->ID, clock_reference, clock_time, diff, ck_type));
 
@@ -1644,6 +1644,7 @@ Bool gf_odm_check_buffering(GF_ObjectManager *odm, GF_FilterPid *pid)
 
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("Clock %d (ODM %d) received "LLU" type %d clock time %d no pending packets\n", odm->ck->clock_id, odm->ID, clock_reference, ck_type, gf_clock_time(odm->ck)));
 	}
+	//only send event when playing
 	if (!odm->ck->nb_buffering) {
 		gf_odm_service_media_event(odm, GF_EVENT_MEDIA_PROGRESS);
 	}
@@ -1659,7 +1660,7 @@ void gf_odm_collect_buffer_info(GF_SceneNamespace *scene_ns, GF_ObjectManager *o
 
 	if (!odm->pid) return;
 	if (odm->scene_ns != scene_ns) return;
-	if (! odm->buffer_playout_us) {
+	if (! odm->buffer_playout_ms) {
 		media_event->bufferValid = GF_FALSE;
 		return;
 	}
@@ -1667,34 +1668,33 @@ void gf_odm_collect_buffer_info(GF_SceneNamespace *scene_ns, GF_ObjectManager *o
 	if (odm->nb_buffering)
 		media_event->bufferValid = GF_TRUE;
 
-	buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE);
-	if (buf_val > odm->buffer_max_us) buf_val = odm->buffer_max_us;
-	val = (u32) ((buf_val * 100) / odm->buffer_max_us);
+	buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE)/1000;
+	if (buf_val > odm->buffer_max_ms) buf_val = odm->buffer_max_ms;
+	val = (u32) ((buf_val * 100) / odm->buffer_playout_ms);
 	if (*min_buffer > val) (*min_buffer) = val;
 
-	if (*min_time > (u32) buf_val / 1000)
-		*min_time = (u32) buf_val / 1000;
+	if (*min_time > (u32) buf_val)
+		*min_time = (u32) buf_val;
 
 	i=0;
 	while ((xpid = gf_list_enum(odm->extra_pids, &i))) {
 
-		buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE);
-		if (buf_val > odm->buffer_max_us) buf_val = odm->buffer_max_us;
-		val = (u32) ((buf_val * 100) / odm->buffer_playout_us);
+		buf_val = gf_filter_pid_query_buffer_duration(odm->pid, GF_FALSE)/1000;
+		if (buf_val > odm->buffer_max_ms) buf_val = odm->buffer_max_ms;
+		val = (u32) ((buf_val * 100) / odm->buffer_playout_ms);
 		if (*min_buffer > val) (*min_buffer) = val;
 
-		if (*min_time > (u32) buf_val / 1000)
-			*min_time = (u32) buf_val / 1000;
+		if (*min_time > (u32) buf_val)
+			*min_time = (u32) buf_val;
 	}
 }
 #endif
 
-void gf_odm_service_media_event_with_download(GF_ObjectManager *odm, GF_EventType event_type, u64 loaded_size, u64 total_size, u32 bytes_per_sec)
+void gf_odm_service_media_event_with_download(GF_ObjectManager *odm, GF_EventType event_type, u64 loaded_size, u64 total_size, u32 bytes_per_sec, u32 buffer_level_plus_one, u32 min_buffer_time)
 {
 #ifndef GPAC_DISABLE_SVG
 	u32 i, count, min_buffer, min_time;
 	GF_DOM_Event evt;
-	GF_ObjectManager *an_od;
 	GF_Scene *scene;
 
 	if (!odm || !odm->scene_ns) return;
@@ -1721,18 +1721,27 @@ void gf_odm_service_media_event_with_download(GF_ObjectManager *odm, GF_EventTyp
 	evt.media_event.bufferValid = GF_FALSE;
 	evt.media_event.session_name = odm->scene_ns->url;
 
-	min_time = min_buffer = (u32) -1;
 	scene = odm->subscene ? odm->subscene : odm->parentscene;
 	if (!scene) return;
-	
-	/*get buffering on root OD*/
-	gf_odm_collect_buffer_info(odm->scene_ns, scene->root_od, &evt.media_event, &min_time, &min_buffer);
 
-	/*get buffering on all ODs*/
-	i=0;
-	while ((an_od = (GF_ObjectManager*)gf_list_enum(scene->resources, &i))) {
-		if (odm->scene_ns == an_od->scene_ns)
-			gf_odm_collect_buffer_info(odm->scene_ns, an_od, &evt.media_event, &min_time, &min_buffer);
+	if (!buffer_level_plus_one) {
+		GF_ObjectManager *an_od;
+		min_time = min_buffer = (u32) -1;
+
+		/*get buffering on root OD*/
+		if (!scene->is_dynamic_scene)
+			gf_odm_collect_buffer_info(odm->scene_ns, scene->root_od, &evt.media_event, &min_time, &min_buffer);
+
+		/*get buffering on all ODs*/
+		i=0;
+		while ((an_od = (GF_ObjectManager*)gf_list_enum(scene->resources, &i))) {
+			if (odm->scene_ns == an_od->scene_ns)
+				gf_odm_collect_buffer_info(odm->scene_ns, an_od, &evt.media_event, &min_time, &min_buffer);
+		}
+	} else {
+		min_buffer = buffer_level_plus_one - 1;
+		min_time = min_buffer_time;
+		evt.media_event.bufferValid = GF_TRUE;
 	}
 
 	if (min_buffer != (u32) -1) {
@@ -1740,6 +1749,7 @@ void gf_odm_service_media_event_with_download(GF_ObjectManager *odm, GF_EventTyp
 	}
 	if (min_time != (u32) -1)
 		evt.media_event.remaining_time = INT2FIX(min_time) / 60;
+
 	evt.media_event.status = 0;
 	evt.media_event.loaded_size = loaded_size;
 	evt.media_event.total_size = total_size;
@@ -1764,7 +1774,7 @@ void gf_odm_service_media_event_with_download(GF_ObjectManager *odm, GF_EventTyp
 
 void gf_odm_service_media_event(GF_ObjectManager *odm, GF_EventType event_type)
 {
-	gf_odm_service_media_event_with_download(odm, event_type, 0, 0, 0);
+	gf_odm_service_media_event_with_download(odm, event_type, 0, 0, 0, 0, 0);
 }
 
 Bool gf_odm_stop_or_destroy(GF_ObjectManager *odm)
@@ -1874,8 +1884,8 @@ GF_Err gf_odm_get_object_info(GF_ObjectManager *odm, GF_MediaInfo *info)
 
 			if (pid)
 				info->buffer = (u32) gf_filter_pid_query_buffer_duration(pid, GF_FALSE) / 1000;
-			info->max_buffer = odm->buffer_max_us / 1000;
-			info->min_buffer = odm->buffer_min_us / 1000;
+			info->max_buffer = odm->buffer_max_ms;
+			info->min_buffer = odm->buffer_min_ms;
 
 #ifdef FILTER_FIXME
 			info->protection = ch->ipmp_tool ? 1 : 2;

@@ -12,7 +12,7 @@ vpath %.c $(SRC_PATH)
 all:	version
 	$(MAKE) -C src all
 	$(MAKE) -C applications all
-ifneq ($(MP4BOX_STATIC),yes)
+ifneq ($(STATIC_BINARY),yes)
 	$(MAKE) -C modules all
 endif
 
@@ -122,7 +122,7 @@ ifeq ($(DISABLE_ISOFF),no)
 	$(INSTALL) $(INSTFLAGS) -m 755 bin/gcc/MP4Box$(EXE_SUFFIX) "$(DESTDIR)$(prefix)/bin" ; \
 	fi
 endif
-ifneq ($(MP4BOX_STATIC),yes)
+ifneq ($(STATIC_BINARY),yes)
 ifeq ($(DISABLE_PLAYER),no)
 	if [ -f bin/gcc/MP4Client$(EXE_SUFFIX) ] ; then \
 	$(INSTALL) $(INSTFLAGS) -m 755 bin/gcc/MP4Client$(EXE_SUFFIX) "$(DESTDIR)$(prefix)/bin" ; \
@@ -130,7 +130,7 @@ ifeq ($(DISABLE_PLAYER),no)
 endif
 endif
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/$(lib_dir)/$(moddir)"
-ifneq ($(MP4BOX_STATIC),yes)
+ifneq ($(STATIC_BINARY),yes)
 	$(INSTALL) bin/gcc/gm_*$(DYN_LIB_SUFFIX) "$(DESTDIR)$(prefix)/$(lib_dir)/$(moddir)" || true
 	$(INSTALL) bin/gcc/gf_*$(DYN_LIB_SUFFIX) "$(DESTDIR)$(prefix)/$(lib_dir)/$(moddir)" || true
 ifeq ($(CONFIG_OPENHEVC),yes)
@@ -151,6 +151,7 @@ endif
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/gui/extensions"
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/shaders"
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/scripts"
+	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/python"
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/share/gpac/vis"
 	$(INSTALL) $(INSTFLAGS) -m 644 $(SRC_PATH)/share/default.cfg $(DESTDIR)$(prefix)/share/gpac/
 
@@ -172,6 +173,7 @@ ifeq ($(CONFIG_DARWIN),yes)
 	cp -R $(SRC_PATH)/share/gui/extensions/* "$(DESTDIR)$(prefix)/share/gpac/gui/extensions/"
 	cp $(SRC_PATH)/share/shaders/* "$(DESTDIR)$(prefix)/share/gpac/shaders/"
 	cp -R $(SRC_PATH)/share/scripts/* "$(DESTDIR)$(prefix)/share/gpac/scripts/"
+	cp -R $(SRC_PATH)/share/python/* "$(DESTDIR)$(prefix)/share/gpac/python/"
 	cp $(SRC_PATH)/share/res/* "$(DESTDIR)$(prefix)/share/gpac/res/"
 	cp -R $(SRC_PATH)/share/vis/* "$(DESTDIR)$(prefix)/share/gpac/vis/"
 else
@@ -179,6 +181,7 @@ else
 	cp -R --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/gui/extensions/* $(DESTDIR)$(prefix)/share/gpac/gui/extensions/
 	cp --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/shaders/* $(DESTDIR)$(prefix)/share/gpac/shaders/
 	cp -R --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/scripts/* $(DESTDIR)$(prefix)/share/gpac/scripts/
+	cp -R --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/python/* $(DESTDIR)$(prefix)/share/gpac/python/
 	cp --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/res/* $(DESTDIR)$(prefix)/share/gpac/res/
 	cp -R --no-preserve=mode,ownership,timestamp $(SRC_PATH)/share/vis/* $(DESTDIR)$(prefix)/share/gpac/vis/
 endif
@@ -191,7 +194,7 @@ lninstall:
 ifeq ($(DISABLE_ISOFF),no)
 	ln -sf $(BUILD_PATH)/bin/gcc/MP4Box$(EXE_SUFFIX) $(DESTDIR)$(prefix)/bin/MP4Box$(EXE_SUFFIX)
 endif
-ifneq ($(MP4BOX_STATIC),yes)
+ifneq ($(STATIC_BINARY),yes)
 ifeq ($(DISABLE_PLAYER),no)
 	ln -sf $(BUILD_PATH)/bin/gcc/MP4Client$(EXE_SUFFIX) $(DESTDIR)$(prefix)/bin/MP4Client$(EXE_SUFFIX)
 endif
@@ -236,11 +239,13 @@ uninstall:
 
 
 installdylib:
-ifneq ($(MP4BOX_STATIC),yes)
+ifneq ($(STATIC_BINARY),yes)
 
 	$(INSTALL) -d "$(DESTDIR)$(prefix)/$(lib_dir)"
 
 ifeq ($(CONFIG_WIN32),yes)
+	$(INSTALL) -d "$(DESTDIR)$(prefix)/bin"
+
 	$(INSTALL) $(INSTFLAGS) -m 755 bin/gcc/libgpac.dll.a $(DESTDIR)$(prefix)/$(lib_dir)
 	$(INSTALL) $(INSTFLAGS) -m 755 bin/gcc/libgpac.dll $(DESTDIR)$(prefix)/bin
 else

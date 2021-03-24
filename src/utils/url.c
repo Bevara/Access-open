@@ -451,6 +451,43 @@ char *gf_url_percent_encode(const char *path)
 	return outpath;
 }
 
+char *gf_url_percent_decode(const char *path)
+{
+	char *outpath;
+	u32 i, count, len;
+	if (!path) return NULL;
+
+	len = (u32) strlen(path);
+	count = 0;
+	for (i=0; i<len; i++) {
+		u8 c = path[i];
+		if (c=='%') {
+			i+= 2;
+		}
+		count++;
+	}
+	if (!count) return gf_strdup(path);
+	outpath = (char*)gf_malloc(sizeof(char) * (count + 1));
+
+	for (i=0; i<len; i++) {
+		u8 c = path[i];
+		if (c=='%') {
+			u32 res;
+			char szChar[3];
+			szChar[0] = path[i+1];
+			szChar[1] = path[i+1];
+			szChar[2] = 0;
+			sscanf(szChar, "%02X", &res);
+			i += 2;
+			outpath[i] = (char) res;
+		} else {
+			outpath[i] = c;
+		}
+	}
+	outpath[count] = 0;
+	return outpath;
+}
+
 GF_EXPORT
 const char *gf_url_get_resource_name(const char *sURL)
 {
@@ -463,17 +500,13 @@ const char *gf_url_get_resource_name(const char *sURL)
 }
 
 GF_EXPORT
-Bool gf_url_get_resource_path(const char *sURL, char *res_path)
+const char *gf_url_get_path(const char *sURL)
 {
-	char *sep;
-	strcpy(res_path, sURL);
-	sep = strrchr(res_path, '/');
-	if (!sep) sep = strrchr(res_path, '\\');
-	if (sep) {
-		sep[1] = 0;
-		return GF_TRUE;
-	}
-	return GF_FALSE;
+	char *sep = strstr(sURL, "://");
+	if (!sep) return sURL;
+	sep = strchr(sep + 3, '/');
+	if (sep) return sep;
+	return NULL;
 }
 
 

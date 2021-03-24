@@ -63,10 +63,10 @@ u32 gf_media_nalu_next_start_code(const u8 *data, u32 data_len, u32 *sc_size);
 u32 gf_media_nalu_emulation_bytes_remove_count(const u8 *buffer, u32 nal_size);
 u32 gf_media_nalu_remove_emulation_bytes(const u8 *buffer_src, u8 *buffer_dst, u32 nal_size);
 
-u32 gf_bs_get_ue(GF_BitStream *bs);
-s32 gf_bs_get_se(GF_BitStream *bs);
-void gf_bs_set_ue(GF_BitStream *bs, u32 num);
-void gf_bs_set_se(GF_BitStream *bs, s32 num);
+u32 gf_bs_read_ue(GF_BitStream *bs);
+s32 gf_bs_read_se(GF_BitStream *bs);
+void gf_bs_write_ue(GF_BitStream *bs, u32 num);
+void gf_bs_write_se(GF_BitStream *bs, s32 num);
 
 enum
 {
@@ -282,8 +282,47 @@ s32 gf_avc_parse_nalu(GF_BitStream *bs, AVCState *avc);
 u32 gf_media_avc_reformat_sei(u8 *buffer, u32 nal_size, Bool isobmf_rewrite, AVCState *avc);
 
 #ifndef GPAC_DISABLE_ISOM
+
+GF_Err gf_media_get_color_info(GF_ISOFile *file, u32 track, u32 sampleDescriptionIndex, u32 *colour_type, u16 *colour_primaries, u16 *transfer_characteristics, u16 *matrix_coefficients, Bool *full_range_flag);
+
+/*! VUI modification parameters*/
+typedef struct
+{
+	/*! if true, the structure members will be updated to the actual values written or present in bitstream. If still -1, info was not written in bitstream*/
+	Bool update;
+	/*! pixel aspect ratio num
+	a value of 0 in ar_num or ar_den removes PAR
+	a value of -1 in ar_num or ar_den keeps PAR from bitstream
+	positive values change PAR
+	*/
+	s32 ar_num;
+	/*! pixel aspect ratio den*/
+	s32 ar_den;
+
+	//if set all video info is removed
+	Bool remove_video_info;
+	//new fullrange, -1 to use info from bitstream
+	s32 fullrange;
+	//new vidformat flag, -1 to use info from bitstream
+	s32 video_format;
+	//new color primaries flag, -1 to use info from bitstream
+	s32 color_prim;
+	//new color transfer characteristics flag, -1 to use info from bitstream
+	s32 color_tfc;
+	//new color matrix flag, -1 to use info from bitstream
+	s32 color_matrix;
+} GF_VUIInfo;
+
+GF_Err gf_avc_change_vui(GF_AVCConfig *avcc, GF_VUIInfo *vui_info);
+
+//shortucts for the above for API compatibility
 GF_Err gf_media_avc_change_par(GF_AVCConfig *avcc, s32 ar_n, s32 ar_d);
+GF_Err gf_media_avc_change_color(GF_AVCConfig *avcc, s32 fullrange, s32 vidformat, s32 colorprim, s32 transfer, s32 colmatrix);
+
+GF_Err gf_hevc_change_vui(GF_HEVCConfig *hvcc, GF_VUIInfo *vui);
+//shortcu for the above for API compatibility
 GF_Err gf_hevc_change_par(GF_HEVCConfig *hvcc, s32 ar_n, s32 ar_d);
+GF_Err gf_hevc_change_color(GF_HEVCConfig *hvcc, s32 fullrange, s32 vidformat, s32 colorprim, s32 transfer, s32 colmatrix);
 #endif
 
 
@@ -559,6 +598,7 @@ enum
 	GF_VVC_SLICE_TYPE_B = 0,
 	GF_VVC_SLICE_TYPE_P = 1,
 	GF_VVC_SLICE_TYPE_I = 2,
+	GF_VVC_SLICE_TYPE_UNKNOWN = 10,
 };
 
 typedef struct
@@ -589,6 +629,8 @@ typedef struct
 	u8 ph_num_extra_bits, sh_num_extra_bits;
 	u8 log2_max_poc_lsb, poc_msb_cycle_flag;
 	u32 poc_msb_cycle_len;
+
+	u8 alf_enabled_flag;
 } VVC_SPS;
 
 typedef struct
@@ -690,7 +732,7 @@ s32 gf_media_vvc_parse_nalu(u8 *data, u32 size, VVCState *vvc, u8 *nal_unit_type
 
 
 
-GF_Err gf_media_parse_ivf_file_header(GF_BitStream *bs, u32 *width, u32*height, u32 *codec_fourcc, u32 *frame_rate, u32 *time_scale, u32 *num_frames);
+GF_Err gf_media_parse_ivf_file_header(GF_BitStream *bs, u32 *width, u32*height, u32 *codec_fourcc, u32 *timebase_num, u32 *timebase_den, u32 *num_frames);
 
 
 
@@ -763,6 +805,7 @@ typedef struct
 	Bool decoder_model_info_present_flag;
 	u16 OperatingPointIdc;
 	u32 width, height, UpscaledWidth;
+	u32 sequence_width, sequence_height;
 	u32 tb_num, tb_den;
 
 	Bool use_128x128_superblock;

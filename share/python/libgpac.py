@@ -2,7 +2,7 @@
 #          GPAC - Multimedia Framework C SDK
 #
 #          Authors: Jean Le Feuvre
-#          Copyright (c) Telecom Paris 2020
+#          Copyright (c) Telecom Paris 2020-2021
 #                  All rights reserved
 #
 #  Python ctypes bindings for GPAC (core initialization and filters API only)
@@ -53,11 +53,12 @@
 # - when setting a PropVec2i property, pass a PropVec2i object 
 # - when setting a PropVec2iList property, pass a python list of PropVec2i 
 #
+# 4CCs are handled as strings in python, and list of 4CCs are handled as list of strings
+#
 # The following builtin property types are always handled as strings in Python instead of int in libgpac :
 # - StreamType:  string containing the streamtype name
 # - CodecID:  string containing the codec name
-# - PixelFormat:  string containing the pixel format name
-# - AudioFormat:  string containing the audio format name
+# - Enumeration properties (PixelFormat, AudioFormat, ...):  string containing the corresponding name
 #
 # # Basic setup
 #
@@ -124,7 +125,8 @@
 # A custom filter allows your application to interact closely with the media pipeline, but cannot be used in graph resolution.
 # Custom filters can be sources, sinks, or intermediate filters. The following limitations however exist:
 #- custom filters will not be cloned
-#- custom filters cannot be used as destination of filters loading a source or destination filter graph dynamically, such as the dashin or dasher filters.
+#- custom filters cannot be used as sources of filters loading a source filter graph dynamically, such as the dashin filter.
+#- custom filters cannot be used as destination of filters loading a destination filter graph dynamically, such as the dasher filters.
 #
 # A custom filter must implement the \ref FilterCustom class, and optionaly provide the following methods
 # - configure_pid: callback for PID configuration, mandatory if your filter is not a source
@@ -187,6 +189,14 @@
 #
 
 
+## 
+#  \defgroup pycore_grp libgpac core tools
+#  \ingroup pyapi_grp Python APIs
+#  \brief Core tools for libgpac.
+#
+# @{
+
+
 from ctypes import *
 from ctypes.util import find_library
 import datetime
@@ -225,6 +235,24 @@ except OSError:
             print('Failed to locate libgpac (.so/.dll/.dylib) - make sure it is in your system path')
             os._exit(1)
 
+#change this to reflect API we encapsulate. An incomatibility in either of these will throw a warning
+GF_ABI_MAJOR=10
+GF_ABI_MINOR=6
+
+gpac_abi_major=_libgpac.gf_gpac_abi_major()
+gpac_abi_minor=_libgpac.gf_gpac_abi_minor()
+
+## \endcond private
+
+## Set to true if mismatch was detected between the ABI version the Python wrapper was designed and the libgpac shared library ABI version
+# A warning is thrown if mismatched, but it is left up to the pythin script to decide whether it still wants to use libgpac wrapper
+_libgpac_abi_mismatch=False
+
+## \cond private
+if (gpac_abi_major != GF_ABI_MAJOR) or (gpac_abi_minor != GF_ABI_MINOR):
+    abi_mismatch=True
+    print('WARNING: this python wrapper is for GPAC ABI ' + str(GF_ABI_MAJOR) + '.' + str(GF_ABI_MINOR)  + ' but native libgpac ABI is ' + str(gpac_abi_major) + '.'  + str(gpac_abi_minor) + '\n\tUndefined behaviour or crashes might happen, please update libgpac.py')
+
 ## \endcond private
 
 #
@@ -237,13 +265,193 @@ _gf_filter = c_void_p
 _gf_filter_pid = c_void_p
 _gf_filter_packet = c_void_p
 _gf_property_entry = c_void_p
+_gf_list = c_void_p
+gf_bool = c_uint
+
 ##\endcond
 
+
+
+
+##\cond private
+#error to string helper
+_libgpac.gf_error_to_string.argtypes = [c_int]
+_libgpac.gf_error_to_string.restype = c_char_p
+ 
+_libgpac.gf_gpac_version.restype = c_char_p
+_libgpac.gf_gpac_copyright.restype = c_char_p
+_libgpac.gf_gpac_copyright_cite.restype = c_char_p
+
+_libgpac.gf_sys_set_args.argtypes = [c_int, POINTER(POINTER(c_char))]
+
+_libgpac.gf_sys_init.argtypes = [c_int, c_char_p]
+_libgpac.gf_log_set_tools_levels.argtypes = [c_char_p, c_int]
+_libgpac.gf_props_get_type_name.argtypes = [c_uint]
+_libgpac.gf_props_get_type_name.restype = c_char_p
+
+_libgpac.gf_sys_clock.res = c_uint
+_libgpac.gf_sys_clock_high_res.res = c_ulonglong
+
+_libgpac.gf_sys_profiler_send.argtypes = [c_char_p]
+_libgpac.gf_sys_profiler_sampling_enabled.restype = gf_bool
+_libgpac.gf_sys_profiler_enable_sampling.argtypes = [gf_bool]
+
+_libgpac.gf_4cc_to_str.argtypes = [c_uint]
+_libgpac.gf_4cc_to_str.res = c_char_p
+
+_libgpac.gf_4cc_parse.argtypes = [c_char_p]
+_libgpac.gf_4cc_parse.res = c_uint
+
+#\endcond
+
+##libgpac version (string)
+#\hideinitializer
+version = _libgpac.gf_gpac_version().decode("utf-8")
+##libgpac copyright notice (string)
+#\hideinitializer
+copyright = _libgpac.gf_gpac_copyright().decode("utf-8")
+##libgpac full copyright notice (string)
+#\hideinitializer
+copyright_cite = _libgpac.gf_gpac_copyright_cite().decode("utf-8")
+
+## convert error value to string message
+# \param err gpac error code (int)
+# \return string
+def e2s(err):
+    return _libgpac.gf_error_to_string(err).decode('utf-8')
+
+
+mem_track_on=0
+## initialize libgpac - see \ref gf_sys_init
+# \param mem_track
+# \param profile
+# \return
+#
+def init(mem_track=0, profile=None):
+    if mem_track!=0 or profile != None:
+        err = _libgpac.gf_sys_init(mem_track, profile)
+    else:
+        err = _libgpac.gf_sys_init(0, None)
+
+    mem_track_on=mem_track
+    if not hasattr(_libgpac, 'gf_memory_size'):
+        mem_track_on=0
+    else:
+        mem_track_on=mem_track
+    
+    if err<0: 
+        raise Exception('Failed to initialize libgpac: ' + e2s(err))
+
+
+## close libgpac - see \ref gf_sys_close
+# \note Make sure you have destroyed all associated gpac resources before calling this !
+# \return
+#
+def close():
+    _libgpac.gf_sys_close()
+    if mem_track_on:
+        if _libgpac.gf_memory_size() or _libgpac.gf_file_handles_count():
+            set_logs("mem@info")
+            _libgpac.gf_memory_print()
+
+## set log tools and levels - see \ref gf_log_set_tools_levels
+# \note Make sure you have destroyed all associated gpac resources before calling this !
+# \param logs
+# \param reset if true, resets all logs to default
+# \return
+def set_logs(logs, reset=False):
+    _libgpac.gf_log_set_tools_levels(logs.encode('utf-8'), reset)
+
+## get clock - see \ref gf_sys_clock
+# \return clock in milliseconds
+def sys_clock():
+    return _libgpac.gf_sys_clock()
+
+## get high res clock - see \ref gf_sys_clock_high_res
+# \return clock in microseconds
+def sys_clock_high_res():
+    return _libgpac.gf_sys_clock_high_res()
+
+##\cond private
+
+#keep args at libgpac level to avoid python GC
+_libgpac._args=None
+
+##\endcond private
+
+## set libgpac arguments - see \ref gf_sys_set_args
+# \param args list of strings
+# \return
+def set_args(args):
+    nb_args = len(args)
+    _libgpac._args = (POINTER(c_char)*nb_args)()
+    for i, arg in enumerate(args):
+        enc_arg = arg.encode('utf-8')
+        _libgpac._args[i] = create_string_buffer(enc_arg)
+    _libgpac.gf_sys_set_args(nb_args, cast(_libgpac._args, POINTER(POINTER(c_char))) )
+
+
+##\cond private
+_libgpac.gf_sys_profiler_set_callback.argtypes = [py_object, c_void_p]
+@CFUNCTYPE(c_int, c_void_p, c_char_p)
+def rmt_fun_cbk(_udta, text):
+    obj = cast(_udta, py_object).value
+    obj.on_rmt_event(text.decode('utf-8'))
+    return 0
+##\endcond private
+
+
+## set profiler (Remotery) callback - see \ref gf_sys_profiler_set_callback
+# \param callback_obj object to call back, must have a method `on_rmt_event` taking a single string parameter
+# \return True if success, False if no Remotery support
+def set_rmt_fun(callback_obj):
+    if hasattr(callback_obj, 'on_rmt_event')==False:
+        raise Exception('No on_rmt_event function on callback')
+    err = _libgpac.gf_sys_profiler_set_callback(py_object(callback_obj), rmt_fun_cbk)
+    if err<0:
+        return False
+    return True
+
+## send message to profiler (Remotery) - see \ref gf_sys_profiler_send
+# \param text text to send
+# \return True if success, False if no Remotery support
+def rmt_send(text):
+    err = _libgpac.gf_sys_profiler_send(text.encode('utf-8'))
+    if err<0:
+        return False
+    return True
+
+## check if profiler (Remotery) sampling is enabled - see \ref gf_sys_profiler_sampling_enabled
+# \return True if enabled, False otherwise
+def rmt_on():
+    return _libgpac.gf_sys_profiler_sampling_enabled()
+
+## enable or disable sampling in profiler (Remotery) - see \ref gf_sys_profiler_enable_sampling
+# \param value enable or disable sampling
+# \return
+def rmt_enable(value):
+    _libgpac.gf_sys_profiler_enable_sampling(value)
+    
+
+## @}
+
+
+## 
+#  \defgroup pystruct_grp Structure Wrappers
+#  \ingroup pyapi_grp
+#  \brief Python Structures 
+#
+# Python Wrappers for gpac C structures used in this API
+#
+# @{
 
 ## fraction object, as defined in libgpac and usable as a Python object
 #Fields have the same types, names and semantics as \ref GF_Fraction
 class Fraction(Structure):
     ## \cond private
+    def  __init(self, num, den):
+        self.num = num
+        self.den = den
     _fields_ = [ ("num", c_int), ("den", c_uint)]
     def __str__(self):
         return str(self.num)+'/' + str(self.den)
@@ -275,16 +483,16 @@ class FilterStats(Structure):
 		("time_process", c_ulonglong),
 		("percent", c_int),
 		("status", c_char_p),
-		("report_updated", c_bool),
+		("report_updated", gf_bool),
 		("name", c_char_p),
 		("reg_name", c_char_p),
 		("filter_id", c_char_p),
-		("done", c_bool),
+		("done", gf_bool),
 		("nb_pid_in", c_uint),
 		("nb_in_pck", c_ulonglong),
 		("nb_pid_out", c_uint),
 		("nb_out_pck", c_ulonglong),
-		("in_eos", c_bool),
+		("in_eos", gf_bool),
 		("type", c_int),
 		("stream_type", c_int),
 		("codecid", c_int),
@@ -346,28 +554,10 @@ class PropVec3i(Structure):
     ## \endcond
 
 ## filter prop type, as defined in libgpac and usable as a Python object
-#Fields have the same types, names and semantics as \ref GF_PropVec3
-class PropVec3(Structure):
-    ## \cond private
-    _fields_ = [ ("x", c_double), ("y", c_double), ("z", c_double)]
-    def __str__(self):
-        return str(self.x)+'x' + str(self.y)+'x' + str(self.z)
-    ## \endcond
-
-## filter prop type, as defined in libgpac and usable as a Python object
 #Fields have the same types, names and semantics as \ref GF_PropVec4i
 class PropVec4i(Structure):
     ## \cond private
     _fields_ = [("x", c_int), ("y", c_int), ("z", c_int), ("w", c_int)]
-    def __str__(self):
-        return str(self.x)+'x' + str(self.y)+'x' + str(self.z)+'x' + str(self.w)
-    ## \endcond
-
-## filter prop type, as defined in libgpac and usable as a Python object
-#Fields have the same types, names and semantics as \ref GF_PropVec4
-class PropVec4(Structure):
-    ## \cond private
-    _fields_ = [("x", c_double), ("y", c_double), ("z", c_double), ("w", c_double)]
     def __str__(self):
         return str(self.x)+'x' + str(self.y)+'x' + str(self.z)+'x' + str(self.w)
     ## \endcond
@@ -441,7 +631,7 @@ class PropertyValueUnion(Union):
 		("longsint", c_longlong),
 		("sint", c_int),
 		("uint", c_uint),
-		("boolean", c_bool),
+		("boolean", gf_bool),
 		("frac", Fraction),
 		("lfrac", Fraction64),
 		("fnumber", c_float),
@@ -449,9 +639,7 @@ class PropertyValueUnion(Union):
 		("vec2i", PropVec2i),
 		("vec2", PropVec2),
 		("vec3i", PropVec3i),
-		("vec3", PropVec3),
 		("vec4i", PropVec3i),
-		("vec4", PropVec3),
 		("data", PropData),
 		("string", c_char_p),
 		("ptr", c_void_p),
@@ -459,7 +647,6 @@ class PropertyValueUnion(Union):
         ("uint_list", PropUIntList),
 		("int_list", PropIntList),
 		("v2i_list", PropVec2iList)
-		#todo, map string list ...
 	]
 
 ## filter property value, as defined in libgpac and usable as a Python object
@@ -510,7 +697,7 @@ class FEVT_SourceSeek(Structure):
         ("start_offset", c_ulonglong),
         ("end_offset", c_ulonglong),
         ("source_switch", c_char_p),
-        ("previous_is_init_segment", c_ubyte),
+        ("is_init_segment", c_ubyte),
         ("skip_cache_expiration", c_ubyte),
         ("hint_block_size", c_uint)
     ]
@@ -524,7 +711,7 @@ class FEVT_SegmentSize(Structure):
         ("type", c_uint),
         ("on_pid", _gf_filter_pid),
         ("seg_url", c_char_p),
-        ("is_init", c_bool),
+        ("is_init", gf_bool),
         ("media_range_start", c_ulonglong),
         ("media_range_end", c_ulonglong),
         ("idx_range_start", c_ulonglong),
@@ -551,7 +738,7 @@ class FEVT_QualitySwitch(Structure):
     _fields_ =  [
         ("type", c_uint),
         ("on_pid", _gf_filter_pid),
-        ("up", c_bool),
+        ("up", gf_bool),
         ("dependent_group_index", c_uint),
         ("q_idx", c_int),
         ("set_tile_mode_plus_one", c_uint),
@@ -583,7 +770,7 @@ class FEVT_VisibilityHint(Structure):
         ("max_x", c_uint),
         ("min_y", c_uint),
         ("max_y", c_uint),
-        ("is_gaze", c_bool)
+        ("is_gaze", gf_bool)
     ]
     ## \endcond
 
@@ -597,7 +784,7 @@ class FEVT_BufferRequirement(Structure):
         ("max_buffer_us", c_uint),
         ("max_playout_us", c_uint),
         ("min_playout_us", c_uint),
-        ("pid_only", c_bool)
+        ("pid_only", gf_bool)
     ]
     ## \endcond
 
@@ -625,9 +812,34 @@ class FilterEvent(Union):
     ## \endcond
 
 
+## Buffer occupancy object 
+class BufferOccupancy:
+  ##\cond private
+  def __init__(self, max_units, nb_pck, max_dur, dur, is_final_flush):
+  ##\endcond
+    ##maximum number of packets (partial or full AU) allowed in buffer
+    self.max_units = max_units
+    ##number of block allowed in buffer
+    self.nb_pck = nb_pck
+    ##maximum buffer duration in microseconds
+    self.max_dur = max_dur
+    ## buffer duration in microseconds
+    self.dur = dur
+    ##if true, the session has been aborted and this is the final flush for this buffer
+    self.is_final_flush = is_final_flush
+
+
+## @}
+
+
+## 
+#  \defgroup pycst_grp Constants
+#  \ingroup pyapi_grp
+#  \brief Constants definitions
 #
-# Constants definitions
+# Python Wrappers for gpac C constants used in this API
 #
+# @{
 
 
 # scheduler type definitions
@@ -723,54 +935,66 @@ GF_PROP_VEC2=11
 #see \ref GF_PROP_VEC3I
 GF_PROP_VEC3I=12
 ##\hideinitializer
-#see \ref GF_PROP_VEC3
-GF_PROP_VEC3=13
-##\hideinitializer
 #see \ref GF_PROP_VEC4I
-GF_PROP_VEC4I=14
-##\hideinitializer
-#see \ref GF_PROP_VEC4
-GF_PROP_VEC4=15
-##\hideinitializer
-#see \ref GF_PROP_PIXFMT
-GF_PROP_PIXFMT=16
-##\hideinitializer
-#see \ref GF_PROP_PCMFMT
-GF_PROP_PCMFMT=17
+GF_PROP_VEC4I=13
 ##\hideinitializer
 #see \ref GF_PROP_STRING
-GF_PROP_STRING=18
+GF_PROP_STRING=14
 ##\hideinitializer
 #see \ref GF_PROP_STRING_NO_COPY
-GF_PROP_STRING_NO_COPY=19
+GF_PROP_STRING_NO_COPY=15
 ##\hideinitializer
 #see \ref GF_PROP_DATA
-GF_PROP_DATA=20
+GF_PROP_DATA=16
 ##\hideinitializer
 #see \ref GF_PROP_NAME
-GF_PROP_NAME=21
+GF_PROP_NAME=17
 ##\hideinitializer
 #see \ref GF_PROP_DATA_NO_COPY
-GF_PROP_DATA_NO_COPY=22
+GF_PROP_DATA_NO_COPY=18
 ##\hideinitializer
 #see \ref GF_PROP_CONST_DATA
-GF_PROP_CONST_DATA=23
+GF_PROP_CONST_DATA=19
 ##\hideinitializer
 #see \ref GF_PROP_POINTER
-GF_PROP_POINTER=24
+GF_PROP_POINTER=20
 ##\hideinitializer
 #see \ref GF_PROP_STRING_LIST
-GF_PROP_STRING_LIST=25
+GF_PROP_STRING_LIST=21
 ##\hideinitializer
 #see \ref GF_PROP_UINT_LIST
-GF_PROP_UINT_LIST=26
+GF_PROP_UINT_LIST=22
 ##\hideinitializer
 #see \ref GF_PROP_SINT_LIST
-GF_PROP_SINT_LIST=27
+GF_PROP_SINT_LIST=23
 ##\hideinitializer
 #see \ref GF_PROP_VEC2I_LIST
-GF_PROP_VEC2I_LIST=28
+GF_PROP_VEC2I_LIST=24
+##\hideinitializer
+#see \ref GF_PROP_4CC
+GF_PROP_4CC=25
+##\hideinitializer
+#see \ref GF_PROP_4CC_LIST
+GF_PROP_4CC_LIST=26
 
+##\hideinitializer
+#see \ref GF_PROP_FIRST_ENUM
+GF_PROP_FIRST_ENUM=40
+##\hideinitializer
+#see \ref GF_PROP_PIXFMT
+GF_PROP_PIXFMT=GF_PROP_FIRST_ENUM
+##\hideinitializer
+#see \ref GF_PROP_PCMFMT
+GF_PROP_PCMFMT=GF_PROP_FIRST_ENUM+1
+##\hideinitializer
+#see \ref GF_PROP_CICP_COL_PRIM
+GF_PROP_CICP_COL_PRIM=GF_PROP_FIRST_ENUM+2
+##\hideinitializer
+#see \ref GF_PROP_CICP_COL_TFC
+GF_PROP_CICP_COL_TFC=GF_PROP_FIRST_ENUM+3
+##\hideinitializer
+#see \ref GF_PROP_CICP_COL_MX
+GF_PROP_CICP_COL_MX=GF_PROP_FIRST_ENUM+4
 
 ##\hideinitializer
 #see GF_FEVT_PLAY
@@ -973,6 +1197,9 @@ GF_REMOTE_SERVICE_ERROR = -14
 #see \ref GF_STREAM_NOT_FOUND
 GF_STREAM_NOT_FOUND = -15
 ##\hideinitializer
+#see \ref GF_URL_REMOVED
+GF_URL_REMOVED = -16
+##\hideinitializer
 #see \ref GF_IP_ADDRESS_NOT_FOUND
 GF_IP_ADDRESS_NOT_FOUND = -40
 ##\hideinitializer
@@ -1015,153 +1242,14 @@ GF_REQUIRES_NEW_INSTANCE = -56
 #see \ref GF_FILTER_NOT_SUPPORTED
 GF_FILTER_NOT_SUPPORTED = -57
 
+##notification is a setup error, the filter chain was never connected
+GF_SETUP_ERROR=0
+##notification is an error but keep the filter chain connected
+GF_NOTIF_ERROR=1
+##notification is an error and disconnect the filter chain
+GF_NOTIF_ERROR_AND_DISCONNECT=2
 
-
-##\cond private
-#error to string helper
-_libgpac.gf_error_to_string.argtypes = [c_int]
-_libgpac.gf_error_to_string.restype = c_char_p
- 
-_libgpac.gf_gpac_version.restype = c_char_p
-_libgpac.gf_gpac_copyright.restype = c_char_p
-_libgpac.gf_gpac_copyright_cite.restype = c_char_p
-
-_libgpac.gf_sys_set_args.argtypes = [c_int, POINTER(POINTER(c_char))]
-
-_libgpac.gf_sys_init.argtypes = [c_int, c_char_p]
-_libgpac.gf_log_set_tools_levels.argtypes = [c_char_p, c_int]
-_libgpac.gf_props_get_type_name.argtypes = [c_uint]
-_libgpac.gf_props_get_type_name.restype = c_char_p
-
-_libgpac.gf_sys_clock.res = c_uint
-_libgpac.gf_sys_clock_high_res.res = c_ulonglong
-
-_libgpac.gf_sys_profiler_send.argtypes = [c_char_p]
-_libgpac.gf_sys_profiler_sampling_enabled.restype = c_bool
-_libgpac.gf_sys_profiler_enable_sampling.argtypes = [c_bool]
-
-#\endcond
-
-##libgpac version (string)
-#\hideinitializer
-version = _libgpac.gf_gpac_version().decode("utf-8")
-##libgpac copyright notice (string)
-#\hideinitializer
-copyright = _libgpac.gf_gpac_copyright().decode("utf-8")
-##libgpac full copyright notice (string)
-#\hideinitializer
-copyright_cite = _libgpac.gf_gpac_copyright_cite().decode("utf-8")
-
-## convert error value to string message
-# \param err gpac error code (int)
-# \return string
-def e2s(err):
-    return _libgpac.gf_error_to_string(err).decode('utf-8')
-
-
-mem_track_on=0
-## initialize libgpac - see \ref gf_sys_init
-# \param mem_track
-# \param profile
-# \return
-#
-def init(mem_track=0, profile=None):
-    if mem_track!=0 or profile != None:
-        err = _libgpac.gf_sys_init(mem_track, profile)
-    else:
-        err = _libgpac.gf_sys_init(0, None)
-
-    mem_track_on=mem_track
-    if not hasattr(_libgpac, 'gf_memory_size'):
-        mem_track_on=0
-    else:
-        mem_track_on=mem_track
-    
-    if err<0: 
-        raise Exception('Failed to initialize libgpac: ' + e2s(err))
-
-
-## close libgpac - see \ref gf_sys_close
-# \note Make sure you have destroyed all associated gpac resources before calling this !
-# \return
-#
-def close():
-    _libgpac.gf_sys_close()
-    if mem_track_on:
-        if _libgpac.gf_memory_size() or _libgpac.gf_file_handles_count():
-            set_logs("mem@info")
-            _libgpac.gf_memory_print()
-
-## set log tools and levels - see \ref gf_log_set_tools_levels
-# \note Make sure you have destroyed all associated gpac resources before calling this !
-# \param logs
-# \param reset if true, resets all logs to default
-# \return
-def set_logs(logs, reset=False):
-    _libgpac.gf_log_set_tools_levels(logs.encode('utf-8'), reset)
-
-## get clock - see \ref gf_sys_clock
-# \return clock in milliseconds
-def sys_clock():
-    return _libgpac.gf_sys_clock()
-
-## get high res clock - see \ref gf_sys_clock_high_res
-# \return clock in microseconds
-def sys_clock_high_res():
-    return _libgpac.gf_sys_clock_high_res()
-
-## set libgpac arguments - see \ref gf_sys_set_args
-# \param args list of strings
-# \return
-def set_args(args):
-    p = (POINTER(c_char)*len(args))()
-    for i, arg in enumerate(args):
-        enc_arg = arg.encode('utf-8')
-        p[i] = create_string_buffer(enc_arg)
-    _libgpac.gf_sys_set_args(len(args), cast(p, POINTER(POINTER(c_char))) )
-
-
-##\cond private
-_libgpac.gf_sys_profiler_set_callback.argtypes = [py_object, c_void_p]
-@CFUNCTYPE(c_int, c_void_p, c_char_p)
-def rmt_fun_cbk(_udta, text):
-    obj = cast(_udta, py_object).value
-    obj.on_rmt_event(text.decode('utf-8'))
-    return 0
-##\endcond private
-
-
-## set profiler (Remotery) callback - see \ref gf_sys_profiler_set_callback
-# \param callback_obj object to call back, must have a method `on_rmt_event` taking a single string parameter
-# \return True if success, False if no Remotery support
-def set_rmt_fun(callback_obj):
-    if hasattr(callback_obj, 'on_rmt_event')==False:
-        raise Exception('No on_rmt_event function on callback')
-    err = _libgpac.gf_sys_profiler_set_callback(py_object(callback_obj), rmt_fun_cbk)
-    if err<0:
-        return False
-    return True
-
-## send message to profiler (Remotery) - see \ref gf_sys_profiler_send
-# \param text text to send
-# \return True if success, False if no Remotery support
-def rmt_send(text):
-    err = _libgpac.gf_sys_profiler_send(text.encode('utf-8'))
-    if err<0:
-        return False
-    return True
-
-## check if profiler (Remotery) sampling is enabled - see \ref gf_sys_profiler_sampling_enabled
-# \return True if enabled, False otherwise
-def rmt_on():
-    return _libgpac.gf_sys_profiler_sampling_enabled()
-
-## enable or disable sampling in profiler (Remotery) - see \ref gf_sys_profiler_enable_sampling
-# \param value enable or disable sampling
-# \return
-def rmt_enable(value):
-    _libgpac.gf_sys_profiler_enable_sampling(value)
-    
+## @}
 
 ##\cond private
 
@@ -1199,35 +1287,35 @@ _libgpac.gf_fs_post_user_task.argtypes = [_gf_filter_session, c_void_p, py_objec
 _libgpac.gf_fs_post_user_task.restype = c_int
 
 _libgpac.gf_fs_is_last_task.argtypes = [_gf_filter_session]
-_libgpac.gf_fs_is_last_task.restype = c_bool
+_libgpac.gf_fs_is_last_task.restype = gf_bool
 
 _libgpac.gf_fs_get_filters_count.argtypes = [_gf_filter_session]
 _libgpac.gf_fs_get_filter.argtypes = [_gf_filter_session, c_int]
 _libgpac.gf_fs_get_filter.restype = _gf_filter
 
-_libgpac.gf_fs_abort.argtypes = [_gf_filter_session, c_bool]
+_libgpac.gf_fs_abort.argtypes = [_gf_filter_session, gf_bool]
 
 _libgpac.gf_fs_get_http_max_rate.argtypes = [_gf_filter_session]
 _libgpac.gf_fs_get_http_rate.argtypes = [_gf_filter_session]
 _libgpac.gf_fs_set_http_max_rate.argtypes = [_gf_filter_session, c_uint]
 
-_libgpac.gf_fs_lock_filters.argtypes = [_gf_filter_session, c_bool]
-_libgpac.gf_fs_enable_reporting.argtypes = [_gf_filter_session, c_bool]
+_libgpac.gf_fs_lock_filters.argtypes = [_gf_filter_session, gf_bool]
+_libgpac.gf_fs_enable_reporting.argtypes = [_gf_filter_session, gf_bool]
 
 _libgpac.gf_fs_print_stats.argtypes = [_gf_filter_session]
 _libgpac.gf_fs_print_connections.argtypes = [_gf_filter_session]
 
-_libgpac.gf_fs_fire_event.argtypes = [_gf_filter_session, _gf_filter, POINTER(FilterEvent), c_bool]
-_libgpac.gf_fs_fire_event.restype = c_bool
+_libgpac.gf_fs_fire_event.argtypes = [_gf_filter_session, _gf_filter, POINTER(FilterEvent), gf_bool]
+_libgpac.gf_fs_fire_event.restype = gf_bool
 
 _libgpac.gf_fs_is_supported_mime.argtypes = [_gf_filter_session, c_char_p]
-_libgpac.gf_fs_is_supported_mime.restype = c_bool
+_libgpac.gf_fs_is_supported_mime.restype = gf_bool
 
 _libgpac.gf_fs_is_supported_mime.argtypes = [_gf_filter_session, c_char_p]
-_libgpac.gf_fs_is_supported_mime.restype = c_bool
+_libgpac.gf_fs_is_supported_mime.restype = gf_bool
 
 _libgpac.gf_fs_is_supported_source.argtypes = [_gf_filter_session, c_char_p]
-_libgpac.gf_fs_is_supported_source.restype = c_bool
+_libgpac.gf_fs_is_supported_source.restype = gf_bool
 
 
 @CFUNCTYPE(c_int, _gf_filter_session, c_void_p, POINTER(c_uint))
@@ -1239,6 +1327,22 @@ def fs_task_fun(sess, cbk, resched):
     return 0
  resched.contents.value=res
  return 1
+
+
+
+_libgpac.gf_fs_set_filter_creation_callback.argtypes = [_gf_filter_session, c_void_p, py_object]
+@CFUNCTYPE(c_int, c_void_p, _gf_filter, gf_bool)
+def on_filter_new_del(cbk, _filter, is_del):
+ sess = cast(cbk, py_object).value
+ f = sess._to_filter(_filter)
+ if is_del:
+    if hasattr(sess, 'on_filter_del'):
+        sess.on_filter_del(f)
+    sess._filters.remove(f)
+ elif hasattr(sess, 'on_filter_new'):
+    sess.on_filter_new(f)
+
+ return 0
 
 ##\endcond
 
@@ -1278,6 +1382,9 @@ class FilterSession:
             raise Exception('Failed to create new filter session')
         self._filters = []
         self._tasks = []
+
+        _libgpac.gf_fs_set_filter_creation_callback(self._sess, on_filter_new_del, py_object(self))
+
         ##\endcond
         #hack for doxygen to generate member vars (not support for parsing @property)
         if 0:
@@ -1301,6 +1408,17 @@ class FilterSession:
             self._sess=None
         ##\endcond private
 
+    ## called whenever a new filter is added, typically used by classes deriving from FilterSession
+    #\param filter Filter object being added
+    #\return
+    def on_filter_del(self, filter):
+        pass
+
+    ## called whenever a filter is destroyed, typically used by classes deriving from FilterSession
+    #\param filter Filter object being removed
+    #\return
+    def on_filter_del(self, filter):
+        pass
 
     ##\cond private
     def _to_filter(self, f):
@@ -1497,6 +1615,7 @@ _libgpac.gf_filter_get_stats.argtypes = [_gf_filter, POINTER(FilterStats)]
 _libgpac.gf_filter_remove.argtypes = [_gf_filter]
 _libgpac.gf_fs_send_update.argtypes = [_gf_filter_session, c_char_p, _gf_filter, c_char_p, c_char_p, c_uint]
 _libgpac.gf_filter_set_source.argtypes = [_gf_filter, _gf_filter, c_char_p]
+_libgpac.gf_filter_set_source_restricted.argtypes = [_gf_filter, _gf_filter, c_char_p]
 _libgpac.gf_filter_reconnect_output.argtypes = [_gf_filter]
 
 _libgpac.gf_props_get_id.argtypes = [c_char_p]
@@ -1515,6 +1634,8 @@ _libgpac.gf_filter_pid_get_info_str.argtypes = [_gf_filter_pid, c_char_p, POINTE
 _libgpac.gf_filter_pid_get_info_str.restype = POINTER(PropertyValue)
 _libgpac.gf_filter_release_property.argtypes = [POINTER(_gf_property_entry)]
 
+_libgpac.gf_props_type_is_enum.argtypes = [c_uint]
+_libgpac.gf_props_type_is_enum.restype = c_int
 
 _libgpac.gf_pixel_fmt_name.argtypes = [c_uint]
 _libgpac.gf_pixel_fmt_name.restype = c_char_p
@@ -1549,6 +1670,358 @@ _libgpac.gf_filter_get_info_str.argtypes = [_gf_filter, c_char_p, POINTER(POINTE
 _libgpac.gf_filter_get_info_str.restype = POINTER(PropertyValue)
 
 
+_libgpac.gf_filter_bind_dash_algo_callbacks.argtypes = [_gf_filter, py_object, c_void_p, c_void_p, c_void_p, c_void_p]
+@CFUNCTYPE(c_int, c_void_p, c_uint)
+def dash_period_reset(cbk, reset_type):
+    obj = cast(cbk, py_object).value
+    if hasattr(obj, 'on_period_reset'):
+        obj.on_period_reset(reset_type)
+    if not reset_type:
+        obj.groups = []
+    return 0
+
+class DASHQualityInfoNat(Structure):
+    _fields_ = [
+        ("bandwidth", c_uint),
+        ("ID", c_char_p),
+        ("mime", c_char_p),
+        ("codec", c_char_p),
+        ("width", c_uint),
+        ("height", c_uint),
+        ("interlaced", gf_bool),
+        ("fps_num", c_uint),
+        ("fps_den", c_uint),
+        ("sar_num", c_uint),
+        ("sar_den", c_uint),
+        ("sample_rate", c_uint),
+        ("nb_channels", c_uint),
+        ("disabled", gf_bool),
+        ("is_selected", gf_bool),
+        ("ast_offset", c_double),
+        ("avg_duration", c_double),
+        ("sizes", _gf_list),
+    ]
+
+class DASHByteRange(Structure):
+    _fields_ = [
+        ("start", c_ulonglong),
+        ("end", c_ulonglong)
+    ]
+
+class DASHSegURL(Structure):
+    _fields_ = [
+        ("media", c_char_p),
+        ("media_range", POINTER(DASHByteRange))
+            #ignore the rest
+    ]
+
+
+_libgpac.gf_dash_group_get_num_qualities.argtypes = [c_void_p, c_uint]
+_libgpac.gf_dash_get_period_duration.argtypes = [c_void_p]
+_libgpac.gf_dash_group_get_quality_info.argtypes = [c_void_p, c_uint, c_uint, POINTER(DASHQualityInfoNat) ]
+
+_libgpac.gf_dash_group_get_srd_info.argtypes = [c_void_p, c_uint, POINTER(c_uint), POINTER(c_uint), POINTER(c_uint), POINTER(c_uint), POINTER(c_uint), POINTER(c_uint), POINTER(c_uint) ]
+
+_libgpac.gf_list_count.argtypes = [c_void_p]
+_libgpac.gf_list_count.restype = c_uint
+
+_libgpac.gf_list_get.argtypes = [c_void_p, c_uint]
+_libgpac.gf_list_get.restype = c_void_p
+
+
+## \endcond
+
+## 
+#  \defgroup pydash_grp DASH custom algorithm
+#  \ingroup pyapi_grp
+#  \brief Python API for libgpac.
+#
+# @{
+
+## DASH media quality information (Representation info)
+class DASHQualityInfo:
+    ## \cond priv
+    def __init__(self, qinfon):
+    ## \endcond
+        ## bandwidth in bits per second
+        self.bandwidth = qinfon.bandwidth
+        ## ID (representation ID in DASH)
+        self.ID = qinfon.ID.decode('utf-8')
+        ## MIME type
+        self.mime = qinfon.mime.decode('utf-8')
+        ## codec parameter string
+        self.codec = qinfon.codec.decode('utf-8')
+        ## width in pixels, 0 if not visual
+        self.width = qinfon.width
+        ## height in pixels, 0 if not visual
+        self.height = qinfon.height
+        ## interlaced flag, false 0 if not visual
+        self.interlaced = qinfon.interlaced
+        ## Frame Rate (Fraction), 0/0 if not visual
+        self.fps = Fraction(qinfon.fps_num, qinfon.fps_den)
+        ## Sample Aspect Ration (Fraction), 0/0 if not visual
+        self.sar = Fraction(qinfon.sar_num, qinfon.sar_den)
+        ## Samplerate, 0 if not audio
+        self.sample_rate = qinfon.sample_rate
+        ## Number of channels, 0 if not audio
+        self.nb_channels = qinfon.nb_channels
+        ## set to true if quality is disabled (no playback support)
+        self.disabled = qinfon.disabled;
+        ## set to true if quality is selected
+        self.is_selected = qinfon.is_selected
+        ## AST offset for DASH low latency mode, 0 otherwise
+        self.ast_offset = qinfon.ast_offset
+        ## Average segment duration in seconds, 0 if unknown
+        self.avg_duration = qinfon.avg_duration
+        ## list of segment sizes for VoD cases, None otherwise or if unknown
+        self.sizes = None
+        ## \cond priv
+        if qinfon.sizes == None:
+            return
+        count = _libgpac.gf_list_count(qinfon.sizes)
+        self.sizes = []
+        for i in range(count):
+            surl = cast(_libgpac.gf_list_get(qinfon.sizes, i), POINTER(DASHSegURL)).contents
+            self.sizes.append( surl.media_range.contents.end - surl.media_range.contents.start + 1)
+        ## \endcond priv
+
+##DASH Spatial Relation Descriptor object, used for tiling
+class DASHSRD:
+    ## \cond priv
+    def __init__(self, id, x, y, w, h, fw, fh):
+    ## \endcond
+        ## ID of SRD source - all SRD with same source describe the same video composition, possibly with different grid sizes
+        self.id = id
+        ## X coordinate of SRD for this tile
+        self.x = x
+        ## Y coordinate of SRD for this tile
+        self.y = y
+        ## width of SRD for this tile - 0 for tile base track
+        self.w = w
+        ## height of SRD for this tile - 0 for tile base track
+        self.h = h
+        ## total width of SRD descriptor for this tile
+        self.fw = fw
+        ## total height of SRD descriptor for this tile
+        self.fh = fh
+
+##\cond priv
+def make_srd(dashptr, groupidx):
+    srd_id=c_uint(0)
+    srd_x=c_uint(0)
+    srd_y=c_uint(0)
+    srd_w=c_uint(0)
+    srd_h=c_uint(0)
+    srd_fw=c_uint(0)
+    srd_fh=c_uint(0)
+    _libgpac.gf_dash_group_get_srd_info(dashptr, groupidx, byref(srd_id), byref(srd_x), byref(srd_y), byref(srd_w), byref(srd_h), byref(srd_fw), byref(srd_fh) )
+    if not srd_fw.value or not srd_fh.value:
+        return None
+    return DASHSRD(srd_id.value, srd_x.value, srd_y.value, srd_w.value, srd_h.value, srd_fw.value, srd_fh.value)
+
+##\endcond
+
+## DASH group object
+class DASHGroup:
+    ## \cond priv
+    def __init__(self, ptr_dash, groupidx):
+    ## \endcond
+        ## Index of group, as used in callbacks
+        self.idx = groupidx
+        ## List of DASHQualityInfo for group
+        self.qualities = []
+        ## period duration in milliseconds, 0 if unknwon
+        self.duration = _libgpac.gf_dash_get_period_duration(ptr_dash)
+        ## SRD object or None if no SRD defined
+        self.SRD = make_srd(ptr_dash, groupidx)
+        ## \cond priv
+        self._dash = ptr_dash
+        nb_qualities = _libgpac.gf_dash_group_get_num_qualities(ptr_dash, groupidx)
+        for i in range(nb_qualities):
+            qinfo = DASHQualityInfoNat()
+            _libgpac.gf_dash_group_get_quality_info(ptr_dash, groupidx, i, byref(qinfo))
+
+            self.qualities.append( DASHQualityInfo(qinfo) )
+        ## \endcond
+
+## DASH groups statistics object
+class DASHGroupStatistics(Structure):
+    ## \cond priv
+    def __init__(self):
+    ## \endcond
+        ##download rate of last segment in bits per second, divided by current playback speed
+        self.download_rate = 0
+        ##size of last segment in bytes
+        self.filesize = 0
+        ##current playback speed
+        self.speed = 0
+        ##max playback speed based on associated codec runtime statistics
+        self.max_available_speed = 0
+        ##display width in pixels of object
+        self.display_width = 0
+        ##display height in pixels of object
+        self.display_height = 0
+        ##index of current quality
+        self.active_quality_idx = 0
+        ##minimum buffer in milliseconds, below witch rebuffer occurs
+        self.buffer_min = 0
+        ##maximum buffer in milliseconds, algorithm should not fill more than this
+        self.buffer_max = 0
+        ##current buffer in milliseconds
+        self.buffer = 0
+        ##degradation hint, 0 means no degradation, 100 means tile completely hidden
+        self.quality_degradation_hint = 0
+        ##cumulated download rate of all active groups - 0 means all files are local
+        self.total_rate = 0
+
+    ## \cond private
+    _fields_ = [
+        ("download_rate", c_uint),
+        ("filesize", c_uint),
+        ("speed", c_double),
+        ("max_available_speed", c_double),
+        ("display_width", c_uint),
+        ("display_height", c_uint),
+        ("active_quality_idx", c_uint),
+        ("buffer_min", c_uint),
+        ("buffer_max", c_uint),
+        ("buffer", c_uint),
+        ("degradation_hint", c_uint),
+        ("total_rate", c_uint)
+    ]
+    def __str__(self):
+        res = 'active_quality_idx ' + str(self.active_quality_idx)
+        res += ' rate ' + str(self.download_rate) + ' speed ' + str(self.speed) + ' max_speed ' + str(self.max_available_speed)
+        res += ' display_width ' + str(self.display_width) + ' display_height ' + str(self.display_height)
+        res += ' buffer_min ' + str(self.buffer_min) + ' buffer_max ' + str(self.buffer_max) + ' buffer ' + str(self.buffer)
+        return res
+    ## \endcond
+
+## DASH group current segment download statistics object
+class DASHGroupDownloadStatistics(Structure):
+    ## \cond priv
+    def __init__(self):
+    ## \endcond
+        ##download rate of last segment in bits per second
+        self.bits_per_sec = 0
+        ##total number of bytes in segment
+        self.total_bytes = 0
+        ##number of downloaded bytes from segment (starting from first byte)
+        self.bytes_done = 0
+        ##number of microseconds ellapsed since segment was scheduled for download
+        self.time_since_start = 0
+        ##current buffer length in milliseconds
+        self.buffer_dur = 0
+        ##duration of segment being downloaded, in milliseconds - 0 if unknown
+        self.current_seg_dur = 0
+
+    ## \cond private
+    _fields_ = [
+        ("bits_per_sec", c_uint),
+        ("total_bytes", c_ulonglong),
+        ("bytes_done", c_ulonglong),
+        ("time_since_start", c_ulonglong),
+        ("buffer_dur", c_uint),
+        ("current_seg_dur", c_uint),
+    ]
+
+    def __str__(self):
+        res = 'bits_per_sec ' + str(self.bits_per_sec)
+        res += ' - total_bytes ' + str(self.total_bytes) + ' bytes_done ' + str(self.bytes_done);
+        res += ' - time_since_start ' + str(self.time_since_start) + ' us - buffer_dur ' + str(self.buffer_dur) + ' ms - current_seg_dur ' + str(self.current_seg_dur) + ' ms';
+        return res
+    ## \endcond
+
+
+
+## DASH custom algo
+# Upon successfull binding to the dashin filter, the object will be assigned a list member called `groups`, containing the declared group for the active period
+class DASHCustomAlgorithm:
+
+    ##Callback (optional) called upon a period reset.
+    #\param reset_type indicate the type of period reset. Values can be:
+    #   - 0: end of period (groups are no longer valid)
+    #   - 1: start of a static period
+    #   - 2: start of a dynamic (live) period
+    #\return 
+    def on_period_reset(self, reset_type):
+        pass
+
+    ##Callback (optional) called when a new group (adaptation set) is created
+    #\param group the newly created \ref DASHGroup
+    #\return 
+    def on_new_group(self, group):
+        pass
+
+
+    ##Callback (mandatory) called at the end of the segment download to perform rate adaptation
+    #\param group the \ref DASHGroup on which to perform adaptation
+    #\param base_group the associated base \ref DASHGroup (tiling only), or None if no base group
+    #\param force_low_complexity indicates that the client would like a lower complexity (typically because it is dropping frames)
+    #\param stats the \ref DASHGroupStatistics  for the downloaded segment
+    #\return value can be:
+    # - new quality index,
+    # - -1 to take no decision
+    # - -2 to disable quality (debug, will drop segment)
+    # - other negative values are handled as error
+    def on_rate_adaptation(self, group, base_group, force_low_complexity, stats):
+        pass
+
+    ##Callback (optional) called on regular basis during a segment download
+    #\param group the \ref DASHGroup associated with the current download
+    #\param stats the \ref DASHGroupDownloadStatistics for the download
+    #\return value can be:
+    #   - `-1` to continue download
+    #   - `-2` to abort download but without retrying to downloading the same segment at lower quality
+    #   - the index of the new quality to download for the same segment index (same time)
+    def on_download_monitor(self, group, stats):
+        pass
+
+## @}
+
+
+## \cond priv
+
+
+@CFUNCTYPE(c_int, c_void_p, c_uint, c_void_p)
+def dash_group_new(cbk, groupidx, _dashobj):
+ obj = cast(cbk, py_object).value
+ if not hasattr(obj, 'on_new_group'):
+    return 0
+ new_group = DASHGroup(_dashobj, groupidx);
+ obj.groups.append(new_group);
+ obj.on_new_group(new_group)
+ return 0
+
+
+
+@CFUNCTYPE(c_int, c_void_p, c_uint, c_uint, gf_bool, POINTER(DASHGroupStatistics))
+def dash_rate_adaptation(cbk, groupidx, base_groupidx, force_low_complex, stats):
+ obj = cast(cbk, py_object).value
+ group = None
+ base_group = None
+ for i in range(len(obj.groups)):
+    if obj.groups[i].idx==groupidx:
+        group = obj.groups[i]
+    if obj.groups[i].idx==base_groupidx:
+        base_group = obj.groups[i]
+
+ return obj.on_rate_adaptation(group, base_group, force_low_complex, stats.contents);
+
+
+@CFUNCTYPE(c_int, c_void_p, c_uint, POINTER(DASHGroupDownloadStatistics))
+def dash_download_monitor(cbk, groupidx, stats):
+ obj = cast(cbk, py_object).value
+ group = None
+ for i in range(len(obj.groups)):
+    if obj.groups[i].idx==groupidx:
+        group = obj.groups[i]
+        break
+
+ return obj.on_download_monitor(group, stats.contents)
+
+
+
 def _prop_to_python(pname, prop):
     type = prop.type
     if type==GF_PROP_SINT:
@@ -1560,11 +2033,9 @@ def _prop_to_python(pname, prop):
             cid = _libgpac.gf_codecid_file_ext(prop.value.uint).decode('utf-8')
             names=cid.split('|')
             return names[0]
-        if pname=="PixelFormat":
-            return _libgpac.gf_pixel_fmt_name(prop.value.uint).decode('utf-8')
-        if pname=="AudioFormat":
-            return _libgpac.gf_audio_fmt_name(prop.value.uint).decode('utf-8')
         return prop.value.uint
+    if type==GF_PROP_4CC:
+        return _libgpac.gf_4cc_to_str(prop.value.uint).decode('utf-8')
     if type==GF_PROP_LSINT:
         return prop.value.longsint
     if type==GF_PROP_LUINT:
@@ -1585,18 +2056,8 @@ def _prop_to_python(pname, prop):
         return prop.value.vec2
     if type==GF_PROP_VEC3I:
         return prop.value.vec3i
-    if type==GF_PROP_VEC3:
-        return prop.value.vec3
     if type==GF_PROP_VEC4I:
         return prop.value.vec4i
-    if type==GF_PROP_VEC4:
-        return prop.value.vec4
-    if type==GF_PROP_PIXFMT:
-        pname = _libgpac.gf_pixel_fmt_name(prop.value.uint)
-        return pname.decode('utf-8')
-    if type==GF_PROP_PCMFMT:
-        pname = _libgpac.gf_audio_fmt_name(prop.value.uint)
-        return pname.decode('utf-8')
     if type==GF_PROP_STRING or type==GF_PROP_STRING_NO_COPY or type==GF_PROP_NAME:
         return prop.value.string.decode('utf-8')
     if type==GF_PROP_DATA or type==GF_PROP_DATA_NO_COPY or type==GF_PROP_CONST_DATA:
@@ -1615,6 +2076,12 @@ def _prop_to_python(pname, prop):
             val = prop.value.uint_list.vals[i]
             res.append(val)
         return res
+    if type==GF_PROP_4CC_LIST:
+        res = [];
+        for i in range(prop.value.uint_list.nb_items):
+            val = _libgpac.gf_4cc_to_str(prop.value.uint).decode('utf-8')
+            res.append(val)
+        return res
     if type==GF_PROP_SINT_LIST:
         res = [];
         for i in range(prop.value.uint_list.nb_items):
@@ -1627,6 +2094,10 @@ def _prop_to_python(pname, prop):
             val = prop.value.v2i_list.vals[i]
             res.append(val)
         return res
+
+    if _libgpac.gf_props_type_is_enum(type):
+        pname = _libgpac.gf_props_enum_name(type, prop.value.uint)
+        return pname.decode('utf-8')
 
     raise Exception('Unknown property type ' + str(type))
 
@@ -1680,6 +2151,15 @@ class Filter:
     def set_source(self, f, link_args=None):
         if f:
             _libgpac.gf_filter_set_source(self._filter, f._filter, link_args)
+
+    ## set a given filter as restricted source for this filter - see \ref gf_filter_set_source_restricted
+    #\param f source Filter
+    #\param link_args link options (string)
+    #\return
+    def set_source_restricted(self, f, link_args=None):
+        if f:
+            _libgpac.gf_filter_set_source_restricted(self._filter, f._filter, link_args)
+
 
     ## insert a given filter after this filter - see \ref gf_filter_set_source and \ref gf_filter_reconnect_output
     #\param f  Filter to insert
@@ -1844,14 +2324,42 @@ class Filter:
             return res
         return None
 
-    ##returns the statistics of a filter - see \ref gf_filter_get_stats
-    #\return GF_FilterStatistics object
+    ##Gets the statistics of a filter - see \ref gf_filter_get_stats
+    #\return FilterStats object
     def get_statistics(self):
         stats = FilterStats()
         err = _libgpac.gf_filter_get_stats(self._filter, byref(stats))
         if err<0: 
             raise Exception('Failed to fetch filter stats: ' + e2s(err))
         return stats
+
+    ##\cond private
+    def _bind_dash_algo(self, object):
+        if not hasattr(object, 'on_rate_adaptation'):
+            raise Exception('Missing on_rate_adaptation member function on object, cannot bind')
+        object.groups = [];
+        if hasattr(object, 'on_download_monitor'):
+            err = _libgpac.gf_filter_bind_dash_algo_callbacks(self._filter, py_object(object), dash_period_reset, dash_group_new, dash_rate_adaptation, dash_download_monitor)
+        else:
+            err = _libgpac.gf_filter_bind_dash_algo_callbacks(self._filter, py_object(object), dash_period_reset, dash_group_new, dash_rate_adaptation, None)
+        if err<0: 
+            raise Exception('Failed to bind dash algo: ' + e2s(err))
+        return 0
+    ##\endcond private
+
+
+    ## \brief binds a given object to the filter
+    #
+    #Binds the given object to the underlying filter for callbacks override - only supported by DASH demuxer for the current time
+    #
+    #For DASH, the object must derive from or implement the methods of the \ref DASHCustomAlgorithm class:
+    #
+    #\param object object to bind
+    #\return
+    def bind(self, object):
+        if self.name=="dashin":
+            return self._bind_dash_algo(object)
+        raise Exception('No possible binding to filter class ' + self.name)
 
     ##\cond private: until end, properties
 
@@ -1895,6 +2403,22 @@ _libgpac.gf_pixel_fmt_parse.restype = c_uint
 _libgpac.gf_audio_fmt_parse.argtypes = [c_char_p]
 _libgpac.gf_audio_fmt_parse.restype = c_uint
 
+_libgpac.gf_cicp_color_primaries_name.argtypes = [c_uint]
+_libgpac.gf_cicp_color_primaries_name.restype = c_char_p
+_libgpac.gf_cicp_color_transfer_name.argtypes = [c_uint]
+_libgpac.gf_cicp_color_transfer_name.restype = c_char_p
+_libgpac.gf_cicp_color_matrix_name.argtypes = [c_uint]
+_libgpac.gf_cicp_color_matrix_name.restype = c_char_p
+
+_libgpac.gf_cicp_parse_color_primaries.argtypes = [c_char_p]
+_libgpac.gf_cicp_parse_color_primaries.restype = c_uint
+_libgpac.gf_cicp_parse_color_transfer.argtypes = [c_char_p]
+_libgpac.gf_cicp_parse_color_transfer.restype = c_uint
+_libgpac.gf_cicp_parse_color_matrix.argtypes = [c_char_p]
+_libgpac.gf_cicp_parse_color_matrix.restype = c_uint
+
+
+
 def _make_prop(prop4cc, propname, prop, custom_type=0):
     prop_val = PropertyValue()
     if prop4cc==0:
@@ -1913,18 +2437,13 @@ def _make_prop(prop4cc, propname, prop, custom_type=0):
     elif propname=="CodecID":
         prop_val.value.uint = _libgpac.gf_codecid_parse(prop.encode('utf-8'))
         return prop_val
-    elif propname=="PixelFormat":
-        prop_val.value.uint = _libgpac.gf_pixel_fmt_parse(prop.encode('utf-8'))
-        return prop_val
-    elif propname=="AudioFormat":
-        prop_val.value.uint = _libgpac.gf_audio_fmt_parse(prop.encode('utf-8'))
-        return prop_val
-
 
     if type==GF_PROP_SINT:
         prop_val.value.sint = prop
     elif type==GF_PROP_UINT:
         prop_val.value.uint = prop
+    elif type==GF_PROP_4CC:
+        prop_val.value.uint = _libgpac.gf_4cc_parse(prop.encode('utf-8'))
     elif type==GF_PROP_LSINT:
         prop_val.value.longsint = prop
     elif type==GF_PROP_LUINT:
@@ -1974,13 +2493,6 @@ def _make_prop(prop4cc, propname, prop, custom_type=0):
             prop_val.value.vec3i.z = prop.z
         else:
             raise Exception('Invalid property value for vec3i: ' + str(prop))
-    elif type==GF_PROP_VEC3:
-        if hasattr(prop, 'x') and hasattr(prop, 'y') and hasattr(prop, 'z'):
-            prop_val.value.vec3i.x = prop.x
-            prop_val.value.vec3i.y = prop.y
-            prop_val.value.vec3i.z = prop.z
-        else:
-            raise Exception('Invalid property value for vec3: ' + str(prop))
     elif type==GF_PROP_VEC4I:
         if hasattr(prop, 'x') and hasattr(prop, 'y') and hasattr(prop, 'z') and hasattr(prop, 'w'):
             prop_val.value.vec4i.x = prop.x
@@ -1989,14 +2501,6 @@ def _make_prop(prop4cc, propname, prop, custom_type=0):
             prop_val.value.vec4i.w = prop.w
         else:
             raise Exception('Invalid property value for vec4i: ' + str(prop))
-    elif type==GF_PROP_VEC4:
-        if hasattr(prop, 'x') and hasattr(prop, 'y') and hasattr(prop, 'z') and hasattr(prop, 'w'):
-            prop_val.value.vec4.x = prop.x
-            prop_val.value.vec4.y = prop.y
-            prop_val.value.vec4.z = prop.z
-            prop_val.value.vec4.w = prop.w
-        else:
-            raise Exception('Invalid property value for vec4: ' + str(prop))
     elif type==GF_PROP_STRING or type==GF_PROP_STRING_NO_COPY or type==GF_PROP_NAME:
         prop_val.value.string = str(prop).encode('utf-8')
     elif type==GF_PROP_DATA or type==GF_PROP_DATA_NO_COPY or type==GF_PROP_CONST_DATA:
@@ -2017,6 +2521,15 @@ def _make_prop(prop4cc, propname, prop, custom_type=0):
             raise Exception('Property is not a list')
         prop_val.value.uint_list.nb_items = len(prop)
         prop_val.value.uint_list.vals = (ctypes.c_uint * len(prop))(*prop)
+    elif type==GF_PROP_4CC_LIST:
+        if isinstance(prop, list)==False:
+            raise Exception('Property is not a list')
+        prop_val.value.uint_list.nb_items = len(prop)
+        prop_val.value.uint_list.vals = (ctypes.c_uint * len(prop))
+        i=0
+        for str in list:
+            prop_val.value.uint_list.vals[i] = _libgpac.gf_4cc_parse( str.encode('utf-8') )
+            i+=1
     elif type==GF_PROP_SINT_LIST:
         if isinstance(prop, list)==False:
             raise Exception('Property is not a list')
@@ -2030,6 +2543,10 @@ def _make_prop(prop4cc, propname, prop, custom_type=0):
         for i in range (len(prop)):
             prop_val.value.v2i_list.vals[i].x = prop[i].x
             prop_val.value.v2i_list.vals[i].y = prop[i].y
+
+    elif _lingpac.gf_props_type_is_enum(type):
+        prop_val.value.uint = _libgpac.gf_props_parse_enum(prop.encode('utf-8'))
+        return prop_val
     else:
         raise Exception('Unsupported property type ' + str(type) )
 
@@ -2048,7 +2565,7 @@ _libgpac.gf_filter_pid_send_event.argtypes = [_gf_filter_pid, POINTER(FilterEven
 
 
 _libgpac.gf_filter_set_configure_ckb.argtypes = [_gf_filter, c_void_p]
-@CFUNCTYPE(c_int, _gf_filter, _gf_filter_pid, c_bool)
+@CFUNCTYPE(c_int, _gf_filter, _gf_filter_pid, gf_bool)
 def filter_cbk_configure(_f, _pid, is_remove):
     obj = _libgpac.gf_filter_get_rt_udta(_f)
     filter = cast(obj, py_object).value
@@ -2141,32 +2658,25 @@ _libgpac.gf_filter_ask_rt_reschedule.argtypes = [_gf_filter]
 _libgpac.gf_filter_post_process_task.argtypes = [_gf_filter]
 
 
-_libgpac.gf_filter_ask_rt_reschedule.argtypes = [_gf_filter, c_int, c_bool]
+_libgpac.gf_filter_ask_rt_reschedule.argtypes = [_gf_filter, c_int, gf_bool]
 _libgpac.gf_filter_setup_failure.argtypes = [_gf_filter, c_int]
 _libgpac.gf_filter_make_sticky.argtypes = [_gf_filter]
-_libgpac.gf_filter_prevent_blocking.argtypes = [_gf_filter, c_bool]
-_libgpac.gf_filter_block_eos.argtypes = [_gf_filter, c_bool]
+_libgpac.gf_filter_prevent_blocking.argtypes = [_gf_filter, gf_bool]
+_libgpac.gf_filter_block_eos.argtypes = [_gf_filter, gf_bool]
 _libgpac.gf_filter_set_max_extra_input_pids.argtypes = [_gf_filter, c_uint]
 _libgpac.gf_filter_block_enabled.argtypes = [_gf_filter]
-_libgpac.gf_filter_block_enabled.restype = c_bool
+_libgpac.gf_filter_block_enabled.restype = gf_bool
 _libgpac.gf_filter_get_output_buffer_max.argtypes = [_gf_filter, POINTER(c_uint), POINTER(c_uint)]
 _libgpac.gf_filter_all_sinks_done.argtypes = [_gf_filter]
-_libgpac.gf_filter_all_sinks_done.restype = c_bool
+_libgpac.gf_filter_all_sinks_done.restype = gf_bool
 _libgpac.gf_filter_get_num_events_queued.argtypes = [_gf_filter]
 
 _libgpac.gf_filter_get_clock_hint.argtypes = [_gf_filter, POINTER(c_ulonglong), POINTER(Fraction64)]
 _libgpac.gf_filter_connections_pending.argtypes = [_gf_filter]
-_libgpac.gf_filter_connections_pending.restype = c_bool
+_libgpac.gf_filter_connections_pending.restype = gf_bool
 _libgpac.gf_filter_hint_single_clock.argtypes = [_gf_filter, c_ulonglong, Fraction64]
 
 ##\endcond
-
-##notification is a setup error, the filter chain was never connected
-GF_SETUP_ERROR=0
-##notification is an error but keep the filter chain connected
-GF_NOTIF_ERROR=1
-##notification is an error and disconnect the filter chain
-GF_NOTIF_ERROR_AND_DISCONNECT=2
 
 ## Base class used to create custom filters in python
 class FilterCustom(Filter):
@@ -2389,60 +2899,60 @@ _libgpac.gf_filter_pid_set_property.argtypes = [_gf_filter_pid, c_uint, POINTER(
 _libgpac.gf_filter_pid_set_property_str.argtypes = [_gf_filter_pid, c_char_p, POINTER(PropertyValue)]
 _libgpac.gf_filter_pid_set_info.argtypes = [_gf_filter_pid, c_uint, POINTER(PropertyValue)]
 _libgpac.gf_filter_pid_set_info_str.argtypes = [_gf_filter_pid, c_char_p, POINTER(PropertyValue)]
-_libgpac.gf_filter_pid_clear_eos.argtypes = [_gf_filter_pid, c_bool]
+_libgpac.gf_filter_pid_clear_eos.argtypes = [_gf_filter_pid, gf_bool]
 _libgpac.gf_filter_pid_check_caps.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_check_caps.restype = c_bool
+_libgpac.gf_filter_pid_check_caps.restype = gf_bool
 _libgpac.gf_filter_pid_discard_block.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_allow_direct_dispatch.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_reset_properties.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_get_clock_info.argtypes = [_gf_filter_pid, POINTER(c_longlong), POINTER(c_uint)]
 _libgpac.gf_filter_pid_remove.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_is_filter_in_parents.argtypes = [_gf_filter_pid, _gf_filter]
-_libgpac.gf_filter_pid_is_filter_in_parents.restype = c_bool
+_libgpac.gf_filter_pid_is_filter_in_parents.restype = gf_bool
 
 _libgpac.gf_filter_pid_get_name.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_get_name.restype = c_char_p
 _libgpac.gf_filter_pid_set_name.argtypes = [_gf_filter_pid, c_char_p]
 
 _libgpac.gf_filter_pid_is_eos.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_is_eos.restype = c_bool
+_libgpac.gf_filter_pid_is_eos.restype = gf_bool
 _libgpac.gf_filter_pid_set_eos.argtypes = [_gf_filter_pid]
 
 _libgpac.gf_filter_pid_has_seen_eos.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_has_seen_eos.restype = c_bool
+_libgpac.gf_filter_pid_has_seen_eos.restype = gf_bool
 
 _libgpac.gf_filter_pid_would_block.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_would_block.restype = c_bool
+_libgpac.gf_filter_pid_would_block.restype = gf_bool
 _libgpac.gf_filter_pid_set_loose_connect.argtypes = [_gf_filter_pid]
 
-_libgpac.gf_filter_pid_set_framing_mode.argtypes = [_gf_filter_pid, c_bool]
+_libgpac.gf_filter_pid_set_framing_mode.argtypes = [_gf_filter_pid, gf_bool]
 
 _libgpac.gf_filter_pid_get_max_buffer.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_get_max_buffer.restype = c_uint
 _libgpac.gf_filter_pid_set_max_buffer.argtypes = [_gf_filter_pid, c_uint]
 
-_libgpac.gf_filter_pid_query_buffer_duration.argtypes = [_gf_filter_pid, c_bool]
+_libgpac.gf_filter_pid_query_buffer_duration.argtypes = [_gf_filter_pid, gf_bool]
 _libgpac.gf_filter_pid_query_buffer_duration.restype = c_ulonglong
 
 _libgpac.gf_filter_pid_first_packet_is_empty.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_first_packet_is_empty.restype = c_bool
+_libgpac.gf_filter_pid_first_packet_is_empty.restype = gf_bool
 
 _libgpac.gf_filter_pid_get_first_packet_cts.argtypes = [_gf_filter_pid, POINTER(c_ulonglong)]
-_libgpac.gf_filter_pid_get_first_packet_cts.restype = c_bool
+_libgpac.gf_filter_pid_get_first_packet_cts.restype = gf_bool
 
 _libgpac.gf_filter_pid_get_packet_count.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_get_timescale.argtypes = [_gf_filter_pid]
 
-_libgpac.gf_filter_pid_set_clock_mode.argtypes = [_gf_filter_pid, c_bool]
-_libgpac.gf_filter_pid_set_discard.argtypes = [_gf_filter_pid, c_bool]
+_libgpac.gf_filter_pid_set_clock_mode.argtypes = [_gf_filter_pid, gf_bool]
+_libgpac.gf_filter_pid_set_discard.argtypes = [_gf_filter_pid, gf_bool]
 
 _libgpac.gf_filter_pid_require_source_id.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_recompute_dts.argtypes = [_gf_filter_pid, c_bool]
+_libgpac.gf_filter_pid_recompute_dts.argtypes = [_gf_filter_pid, gf_bool]
 
 
 _libgpac.gf_filter_pid_get_min_pck_duration.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_is_playing.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_is_playing.restype = c_bool
+_libgpac.gf_filter_pid_is_playing.restype = gf_bool
 
 _libgpac.gf_filter_pid_get_filter_name.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_is_playing.restype = c_char_p
@@ -2468,22 +2978,6 @@ _libgpac.gf_filter_pck_new_copy.argtypes = [_gf_filter_pid, _gf_filter_packet, P
 _libgpac.gf_filter_pck_new_copy.restype = _gf_filter_packet
 
 ## \endcond private
-
-## Buffer occupancy object 
-class BufferOccupancy:
-  ##\cond private
-  def __init__(self, max_units, nb_pck, max_dur, dur, is_final_flush):
-  ##\endcond
-    ##maximum number of packets (partial or full AU) allowed in buffer
-    self.max_units = max_units
-    ##number of block allowed in buffer
-    self.nb_pck = nb_pck
-    ##maximum buffer duration in microseconds
-    self.max_dur = max_dur
-    ## buffer duration in microseconds
-    self.dur = dur
-    ##if true, the session has been aborted and this is the final flush for this buffer
-    self.is_final_flush = is_final_flush
 
 
 ## \cond private
@@ -2866,7 +3360,7 @@ class FilterPid:
             raise Exception('Cannot resolve file template ' + template + ': ' + e2s(err))
         return res.raw.decode('utf-8')
 
-    ##creates a new packet refering to an existing packet - see \ref gf_filter_pck_new_ref
+    ##creates a new packet referring to an existing packet - see \ref gf_filter_pck_new_ref
     #\param ipck the input (referenced) packet
     #\param size the data size of the new packet
     #\param offset the offset in the original data
@@ -3091,8 +3585,8 @@ _libgpac.gf_filter_pck_set_duration.argtypes = [_gf_filter_packet, c_uint]
 _libgpac.gf_filter_pck_get_data.argtypes = [_gf_filter_packet, POINTER(c_uint)]
 _libgpac.gf_filter_pck_get_data.restype = POINTER(c_ubyte)
 
-_libgpac.gf_filter_pck_get_framing.argtypes = [_gf_filter_packet, POINTER(c_bool), POINTER(c_bool)]
-_libgpac.gf_filter_pck_set_framing.argtypes = [_gf_filter_packet, c_bool, c_bool]
+_libgpac.gf_filter_pck_get_framing.argtypes = [_gf_filter_packet, POINTER(gf_bool), POINTER(gf_bool)]
+_libgpac.gf_filter_pck_set_framing.argtypes = [_gf_filter_packet, gf_bool, gf_bool]
 
 _libgpac.gf_filter_pck_get_timescale.argtypes = [_gf_filter_packet]
 _libgpac.gf_filter_pck_get_timescale.restype = c_uint
@@ -3102,12 +3596,12 @@ _libgpac.gf_filter_pck_get_interlaced.restype = c_uint
 _libgpac.gf_filter_pck_set_interlaced.argtypes = [_gf_filter_packet, c_uint]
 
 _libgpac.gf_filter_pck_get_corrupted.argtypes = [_gf_filter_packet]
-_libgpac.gf_filter_pck_get_corrupted.restype = c_bool
-_libgpac.gf_filter_pck_set_corrupted.argtypes = [_gf_filter_packet, c_bool]
+_libgpac.gf_filter_pck_get_corrupted.restype = gf_bool
+_libgpac.gf_filter_pck_set_corrupted.argtypes = [_gf_filter_packet, gf_bool]
 
 _libgpac.gf_filter_pck_get_seek_flag.argtypes = [_gf_filter_packet]
-_libgpac.gf_filter_pck_get_seek_flag.restype = c_bool
-_libgpac.gf_filter_pck_set_seek_flag.argtypes = [_gf_filter_packet, c_bool]
+_libgpac.gf_filter_pck_get_seek_flag.restype = gf_bool
+_libgpac.gf_filter_pck_set_seek_flag.argtypes = [_gf_filter_packet, gf_bool]
 
 _libgpac.gf_filter_pck_get_byte_offset.argtypes = [_gf_filter_packet]
 _libgpac.gf_filter_pck_get_byte_offset.restype = c_ulonglong
@@ -3141,7 +3635,7 @@ _libgpac.gf_filter_pck_get_frame_interface.argtypes = [_gf_filter_packet]
 _libgpac.gf_filter_pck_get_frame_interface.restype = c_void_p
 
 _libgpac.gf_filter_pck_is_blocking_ref.argtypes = [_gf_filter_packet]
-_libgpac.gf_filter_pck_is_blocking_ref.restype = c_bool
+_libgpac.gf_filter_pck_is_blocking_ref.restype = gf_bool
 
 _libgpac.gf_filter_pck_enum_properties.argtypes = [_gf_filter_packet, POINTER(c_uint), POINTER(c_uint), POINTER(c_char_p)]
 _libgpac.gf_filter_pck_enum_properties.restype = POINTER(PropertyValue)
@@ -3439,8 +3933,8 @@ class FilterPacket:
 
     @property
     def start(self):
-        start = c_bool(False)
-        end = c_bool(False)
+        start = gf_bool(False)
+        end = gf_bool(False)
         _libgpac.gf_filter_pck_get_framing(self._pck, byref(start), byref(end))
         return start.value
 
@@ -3448,15 +3942,15 @@ class FilterPacket:
     def start(self, value):
         if self._is_src:
             raise Exception('Cannot set framing on source packet')
-        start = c_bool(False)
-        end = c_bool(False)
+        start = gf_bool(False)
+        end = gf_bool(False)
         _libgpac.gf_filter_pck_get_framing(self._pck, byref(start), byref(end))
         _libgpac.gf_filter_pck_set_framing(self._pck, value, end.value)
 
     @property
     def end(self):
-        start = c_bool(False)
-        end = c_bool(False)
+        start = gf_bool(False)
+        end = gf_bool(False)
         _libgpac.gf_filter_pck_get_framing(self._pck, byref(start), byref(end))
         return end.value
 
@@ -3464,8 +3958,8 @@ class FilterPacket:
     def end(self, value):
         if self._is_src:
             raise Exception('Cannot set framing on source packet')
-        start = c_bool(False)
-        end = c_bool(False)
+        start = gf_bool(False)
+        end = gf_bool(False)
         _libgpac.gf_filter_pck_get_framing(self._pck, byref(start), byref(end))
         _libgpac.gf_filter_pck_set_framing(self._pck, start.value, value)
 

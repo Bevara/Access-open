@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018
+ *			Copyright (c) Telecom ParisTech 2018-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / audio resample filter
@@ -33,7 +33,7 @@
 typedef struct
 {
 	//opts
-	u32 ch, sr, fmt;
+	u32 och, osr, ofmt;
 
 	//internal
 	GF_FilterPid *ipid, *opid;
@@ -52,6 +52,7 @@ typedef struct
 	u32 size, bytes_consumed;
 	Fixed speed;
 	GF_FilterPacket *in_pck;
+	Bool cfg_changed;
 } GF_ResampleCtx;
 
 
@@ -60,17 +61,30 @@ static u8 *resample_fetch_frame(void *callback, u32 *size, u32 *planar_stride, u
 	u32 sample_offset;
 	GF_ResampleCtx *ctx = (GF_ResampleCtx *) callback;
 	if (!ctx->data) {
-		*size = 0;
-		return NULL;
+		//fetch data if none present (we may have drop the previous frame while mixing)
+		assert(!ctx->in_pck);
+		ctx->in_pck = gf_filter_pid_get_packet(ctx->ipid);
+		if (!ctx->in_pck) {
+			*size = 0;
+			return NULL;
+		}
+		ctx->out_cts = gf_filter_pck_get_cts(ctx->in_pck);
+		ctx->data = gf_filter_pck_get_data(ctx->in_pck, &ctx->size);
+
+		if (!ctx->data) {
+			*size = 0;
+			return NULL;
+		}
 	}
+
 	assert(ctx->data);
 	*size = ctx->size - ctx->bytes_consumed;
 	sample_offset = ctx->bytes_consumed;
-	//planar mode, bytes consummed correspond to all channels, so move frame pointer
+	//planar mode, bytes consumed correspond to all channels, so move frame pointer
 	//to first sample non consumed = bytes_consumed/nb_channels
 	if (ctx->src_is_planar) {
-		*planar_stride = ctx->size / ctx->nb_ch;
-		sample_offset /= ctx->nb_ch;
+		*planar_stride = ctx->size / ctx->input_ai.chan;
+		sample_offset /= ctx->input_ai.chan;
 	}
 	return (char*)ctx->data + sample_offset;
 }
@@ -84,19 +98,19 @@ static void resample_release_frame(void *callback, u32 nb_bytes)
 		//trash packet and get a new one
 		gf_filter_pid_drop_packet(ctx->ipid);
 		ctx->data = NULL;
+		ctx->in_pck = NULL;
 		ctx->size = ctx->bytes_consumed = 0;
-		ctx->in_pck = gf_filter_pid_get_packet(ctx->ipid);
-		if (!ctx->in_pck) {
-			return;
-		}
-		ctx->out_cts = gf_filter_pck_get_cts(ctx->in_pck);
-		ctx->data = gf_filter_pck_get_data(ctx->in_pck, &ctx->size);
-		ctx->bytes_consumed = 0;
+		//do NOT fetch data until needed
 	}
 }
 
 static Bool resample_get_config(struct _audiointerface *ai, Bool for_reconf)
 {
+	GF_ResampleCtx *ctx = (GF_ResampleCtx *) ai->callback;
+	if (ctx->cfg_changed) {
+		ctx->cfg_changed = GF_FALSE;
+		return GF_FALSE;
+	}
 	return GF_TRUE;
 }
 static Bool resample_is_muted(void *callback)
@@ -150,6 +164,7 @@ static GF_Err resample_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		if (ctx->opid) {
 			gf_mixer_remove_input(ctx->mixer, &ctx->input_ai);
 			gf_filter_pid_remove(ctx->opid);
+			ctx->opid = NULL;
 		}
 		if (ctx->in_pck) gf_filter_pid_drop_packet(ctx->ipid);
 		ctx->in_pck = NULL;
@@ -192,9 +207,9 @@ static GF_Err resample_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 
 	//initial config
 	if (!ctx->freq || !ctx->nb_ch || !ctx->afmt) {
-		ctx->afmt = ctx->fmt ? ctx->fmt : afmt;
-		ctx->freq = ctx->sr ? ctx->sr : sr;
-		ctx->nb_ch = ctx->ch ? ctx->ch : nb_ch;
+		ctx->afmt = ctx->ofmt ? ctx->ofmt : afmt;
+		ctx->freq = ctx->osr ? ctx->osr : sr;
+		ctx->nb_ch = ctx->och ? ctx->och : nb_ch;
 		ctx->ch_cfg = ch_cfg;
 
 		gf_mixer_set_config(ctx->mixer, ctx->freq, ctx->nb_ch, afmt, ctx->ch_cfg);
@@ -209,6 +224,7 @@ static GF_Err resample_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		ctx->input_ai.chan = nb_ch;
 		ctx->input_ai.ch_layout = ch_cfg;
 		ctx->src_is_planar = gf_audio_fmt_is_planar(afmt);
+		ctx->cfg_changed = GF_TRUE;
 	}
 
 	ctx->passthrough = GF_FALSE;
@@ -268,22 +284,27 @@ static GF_Err resample_process(GF_Filter *filter)
 		gf_filter_pck_merge_properties(ctx->in_pck, dstpck);
 
 		written = gf_mixer_get_output(ctx->mixer, output, osize, 0);
-		if (written != osize) {
-			gf_filter_pck_truncate(dstpck, written);
-		}
-		gf_filter_pck_set_dts(dstpck, ctx->out_cts);
-		gf_filter_pck_set_cts(dstpck, ctx->out_cts);
-		gf_filter_pck_send(dstpck);
-
-		if (ctx->timescale==ctx->freq) {
-			ctx->out_cts += (u64) (ctx->speed * written / bytes_per_samp);
+		if (!written) {
+			gf_filter_pck_discard(dstpck);
 		} else {
-			u64 ts_inc = written / bytes_per_samp;
-			ts_inc *= ctx->timescale;
-			ts_inc /= ctx->freq;
+			if (written != osize) {
+				gf_filter_pck_truncate(dstpck, written);
+			}
+			gf_filter_pck_set_dts(dstpck, ctx->out_cts);
+			gf_filter_pck_set_cts(dstpck, ctx->out_cts);
+			gf_filter_pck_send(dstpck);
 
-			ctx->out_cts += (u64) (ctx->speed * ts_inc);
+			if (ctx->timescale==ctx->freq) {
+				ctx->out_cts += (u64) (ctx->speed * written / bytes_per_samp);
+			} else {
+				u64 ts_inc = written / bytes_per_samp;
+				ts_inc *= ctx->timescale;
+				ts_inc /= ctx->freq;
+
+				ctx->out_cts += (u64) (ctx->speed * ts_inc);
+			}
 		}
+
 		//still some bytes to use from packet, do not discard
 		if (ctx->bytes_consumed<ctx->size) {
 			continue;
@@ -361,7 +382,7 @@ static Bool resample_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 {
 	if ((evt->base.type==GF_FEVT_SET_SPEED) && evt->play.speed) {
 		GF_ResampleCtx *ctx = gf_filter_get_udta(filter);
-		ctx->speed = evt->play.speed;
+		ctx->speed = FLT2FIX(evt->play.speed);
 		if (ctx->speed<0) ctx->speed = -ctx->speed;
 
 		ctx->passthrough = GF_FALSE;
@@ -386,9 +407,9 @@ static const GF_FilterCapability ResamplerCaps[] =
 #define OFFS(_n)	#_n, offsetof(GF_ResampleCtx, _n)
 static const GF_FilterArgs ResamplerArgs[] =
 {
-	{ OFFS(ch), "desired number of output audio channels - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
-	{ OFFS(sr), "desired sample rate of output audio - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
-	{ OFFS(fmt), "desired format of output audio - none for auto", GF_PROP_PCMFMT, "none", NULL, 0},
+	{ OFFS(och), "desired number of output audio channels - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(osr), "desired sample rate of output audio - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(ofmt), "desired format of output audio - none for auto", GF_PROP_PCMFMT, "none", NULL, 0},
 	{0}
 };
 

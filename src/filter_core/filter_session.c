@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -302,6 +302,7 @@ GF_FilterSession *gf_fs_new(s32 nb_threads, GF_FilterSchedulerType sched_type, u
 			fsess->blocking_mode = GF_FS_NOBLOCK;
 		}
 	}
+
 	fsess->run_status = GF_EOS;
 	fsess->nb_threads_stopped = 1+nb_threads;
 	fsess->default_pid_buffer_max_us = 1000;
@@ -333,6 +334,13 @@ GF_FilterSession *gf_fs_new(s32 nb_threads, GF_FilterSchedulerType sched_type, u
 			char *sep = strchr(arg, '=');
 			if (sep) sep[0] = 0;
 			gf_fs_push_arg(fsess, arg+2, GF_FALSE, (arg[1]!='-') ? 2 : 1);
+
+			if (!strcmp(arg+2, "template")) {
+				if (strstr(sep+1, "$Bandwidth$")) {
+					gf_opts_set_key("temp", "force_indexing", "true");
+				}
+			}
+
 			if (sep) sep[0] = '=';
 		}
 	}
@@ -599,10 +607,12 @@ void gf_fs_del(GF_FilterSession *fsess)
 				gf_list_del(filter->postponed_packets);
 				filter->postponed_packets = NULL;
 			}
+			gf_mx_p(filter->tasks_mx);
 			for (j=0; j<filter->num_input_pids; j++) {
 				GF_FilterPidInst *pidi = gf_list_get(filter->input_pids, j);
 				gf_filter_pid_inst_reset(pidi);
 			}
+			gf_mx_v(filter->tasks_mx);
 			filter->scheduled_for_next_task = GF_FALSE;
 		}
 		//second pass, finalize all
@@ -864,8 +874,7 @@ void gf_fs_post_task(GF_FilterSession *fsess, gf_fs_task_callback task_fun, GF_F
 	gf_fs_post_task_ex(fsess, task_fun, filter, pid, log_name, udta, GF_FALSE, GF_FALSE);
 }
 
-GF_EXPORT
-Bool gf_fs_check_filter_register_cap(const GF_FilterRegister *f_reg, u32 incode, GF_PropertyValue *cap_input, u32 outcode, GF_PropertyValue *cap_output, Bool exact_match_only)
+Bool gf_fs_check_filter_register_cap_ex(const GF_FilterRegister *f_reg, u32 incode, GF_PropertyValue *cap_input, u32 outcode, GF_PropertyValue *cap_output, Bool exact_match_only, Bool out_cap_excluded)
 {
 	u32 j;
 	u32 has_raw_in = 0;
@@ -896,10 +905,18 @@ Bool gf_fs_check_filter_register_cap(const GF_FilterRegister *f_reg, u32 incode,
 		if ( (cap->flags & GF_CAPFLAG_OUTPUT) && (cap->code == outcode) ) {
 			if (! (cap->flags & GF_CAPFLAG_EXCLUDED)) {
 				if (gf_props_equal(&cap->val, cap_output) ) {
-					has_cid_match = (cap->flags & GF_CAPS_OUTPUT_STATIC) ? 2 : 1;
+					if (out_cap_excluded) {
+						exclude_cid_out = (cap->flags & GF_CAPS_OUTPUT_STATIC) ? 2 : 1;
+					} else {
+						has_cid_match = (cap->flags & GF_CAPS_OUTPUT_STATIC) ? 2 : 1;
+					}
 				}
 			} else {
-				if (gf_props_equal(&cap->val, cap_output) ) {
+				Bool prop_equal = gf_props_equal(&cap->val, cap_output);
+				if (out_cap_excluded)
+					prop_equal = !prop_equal;
+
+				if (prop_equal) {
 					exclude_cid_out = (cap->flags & GF_CAPS_OUTPUT_STATIC) ? 2 : 1;
 				} else {
 					has_exclude_cid_out = (cap->flags & GF_CAPS_OUTPUT_STATIC) ? 2 : 1;
@@ -913,6 +930,12 @@ Bool gf_fs_check_filter_register_cap(const GF_FilterRegister *f_reg, u32 incode,
 	}
 	return GF_FALSE;
 }
+GF_EXPORT
+Bool gf_fs_check_filter_register_cap(const GF_FilterRegister *f_reg, u32 incode, GF_PropertyValue *cap_input, u32 outcode, GF_PropertyValue *cap_output, Bool exact_match_only)
+{
+	return gf_fs_check_filter_register_cap_ex(f_reg, incode, cap_input, outcode, cap_output, exact_match_only, GF_FALSE);
+}
+
 static GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args)
 {
 	GF_Err e;
@@ -923,6 +946,8 @@ static GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args)
 	GF_Filter *filter;
 	u32 i, count;
 	GF_PropertyValue cap_in, cap_out;
+	GF_List *blacklist = NULL;
+	Bool ocap_excluded = GF_FALSE;
 	szCodec[0] = 'c';
 	szCodec[1] = fsess->sep_name;
 	szCodec[2] = 0;
@@ -936,37 +961,54 @@ static GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args)
 	if (sep) sep[0] = 0;
 
 	codecid = gf_codecid_parse(cid+2);
+#if 0
 	if (codecid==GF_CODECID_NONE) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Unrecognized codec identifier in \"enc\" definition: %s\n", cid));
 		if (sep) sep[0] = fsess->sep_args;
 		return NULL;
 	}
+#endif
 	if (sep) sep[0] = fsess->sep_args;
 
 	cap_in.type = GF_PROP_UINT;
 	cap_in.value.uint = GF_CODECID_RAW;
 	cap_out.type = GF_PROP_UINT;
-	cap_out.value.uint = codecid;
+	if (codecid==GF_CODECID_NONE) {
+		cap_out.value.uint = GF_CODECID_RAW;
+		ocap_excluded = GF_TRUE;
+	} else {
+		cap_out.value.uint = codecid;
+	}
 
+retry:
 	count = gf_list_count(fsess->registry);
 	for (i=0; i<count; i++) {
 		const GF_FilterRegister *f_reg = gf_list_get(fsess->registry, i);
+		if (blacklist && gf_list_find(blacklist, (void *) f_reg))
+			continue;
 
-		if ( gf_fs_check_filter_register_cap(f_reg, GF_PROP_PID_CODECID, &cap_in, GF_PROP_PID_CODECID, &cap_out, GF_FALSE)) {
+		if ( gf_fs_check_filter_register_cap_ex(f_reg, GF_PROP_PID_CODECID, &cap_in, GF_PROP_PID_CODECID, &cap_out, GF_FALSE, ocap_excluded)) {
 			if (!candidate || (candidate->priority>f_reg->priority))
 				candidate = f_reg;
 		}
 	}
 	if (!candidate) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Cannot find any filter providing encoding for %s\n", cid));
+		if (blacklist) gf_list_del(blacklist);
 		return NULL;
 	}
 	filter = gf_filter_new(fsess, candidate, args, NULL, GF_FILTER_ARG_EXPLICIT, &e, NULL, GF_FALSE);
 	if (!filter) {
+		if (e==GF_NOT_SUPPORTED) {
+			if (!blacklist) blacklist = gf_list_new();
+			gf_list_add(blacklist, (void *) candidate);
+			goto retry;
+		}
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to load filter %s: %s\n", candidate->name, gf_error_to_string(e) ));
 	} else {
 		filter->encoder_stream_type = gf_codecid_type(codecid);
 	}
+	if (blacklist) gf_list_del(blacklist);
 	return filter;
 }
 
@@ -989,6 +1031,7 @@ Bool gf_fs_filter_exists(GF_FilterSession *fsess, const char *name)
 
 static Bool locate_js_script(char *path, const char *file_name, const char *file_ext)
 {
+	u32 len = (u32) strlen(path);
 	strcat(path, file_name);
 	if (gf_file_exists(path))
 		return GF_TRUE;
@@ -998,6 +1041,12 @@ static Bool locate_js_script(char *path, const char *file_name, const char *file
 		if (gf_file_exists(path))
 			return GF_TRUE;
 	}
+	path[len] = 0;
+	strcat(path, file_name);
+	strcat(path, "/init.js");
+	if (gf_file_exists(path))
+		return GF_TRUE;
+
 	return GF_FALSE;
 }
 
@@ -1092,6 +1141,9 @@ GF_Filter *gf_fs_load_filter(GF_FilterSession *fsess, const char *name, GF_Err *
 	}
 	/*check JS file*/
 	file_ext = gf_file_ext_start(name);
+	if (file_ext && (file_ext > sep) )
+		file_ext = NULL;
+
 	if (!file_ext || strstr(name, ".js") || strstr(name, ".jsf") || strstr(name, ".mjs") ) {
 		Bool file_exists = GF_FALSE;
 		char szName[10+GF_MAX_PATH];
@@ -1126,7 +1178,7 @@ GF_Filter *gf_fs_load_filter(GF_FilterSession *fsess, const char *name, GF_Err *
 }
 
 //in mono thread mode, we cannot always sleep for the requested timeout in case there are more tasks to be processed
-//this defines the number of pending tasks above wich we limit sleep
+//this defines the number of pending tasks above which we limit sleep
 #define MONOTH_MIN_TASKS	2
 //this defines the sleep time for this case
 #define MONOTH_MIN_SLEEP	5
@@ -1782,18 +1834,34 @@ void gf_fs_run_step(GF_FilterSession *fsess)
 	gf_fs_thread_proc(&fsess->main_th);
 }
 
+static void filter_abort(GF_FSTask *task)
+{
+	GF_FilterEvent evt;
+	GF_FEVT_INIT(evt, GF_FEVT_STOP, task->pid);
+
+	task->pid->filter->freg->process_event(task->pid->filter, &evt);
+	gf_filter_pid_set_eos(task->pid);
+	task->pid->filter->disabled = GF_TRUE;
+	safe_int_dec(&task->pid->filter->abort_pending);
+
+}
+
 GF_EXPORT
 GF_Err gf_fs_abort(GF_FilterSession *fsess, Bool do_flush)
 {
 	u32 i, count;
+	Bool threaded;
 	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Session abort from user, stoping sources\n"));
 	if (!fsess) return GF_BAD_PARAM;
+	threaded = (!fsess->filters_mx && (fsess->main_th.th_id==gf_th_id())) ? GF_FALSE : GF_TRUE;
 
 	if (!do_flush) {
 		fsess->in_final_flush = GF_TRUE;
 		fsess->run_status = GF_EOS;
 		return GF_OK;
 	}
+
+	fsess->in_final_flush = GF_TRUE;
 
 	gf_mx_p(fsess->filters_mx);
 	count = gf_list_count(fsess->filters);
@@ -1803,30 +1871,67 @@ GF_Err gf_fs_abort(GF_FilterSession *fsess, Bool do_flush)
 		//force end of session on all sources, and on all filters connected to these sources, and dispatch end of stream on all outputs pids of these filters
 		//if we don't propagate on connected filters, we take the risk of not deactivating demuxers working from file
 		//(eg ignoring input packets)
+		//
+		//we shortcut the thread execution state here by directly calling set_eos, we need to lock/unlock our filters carefully
+		//to avoid deadlocks or crashes
+		gf_mx_p(filter->tasks_mx);
+
 		if (!filter->num_input_pids) {
 			u32 j, k, l;
 			filter->disabled = GF_TRUE;
 			for (j=0; j<filter->num_output_pids; j++) {
+				const GF_PropertyValue *p;
 				GF_FilterPid *pid = gf_list_get(filter->output_pids, j);
+				//unlock before forcing eos as this could trigger a post task on a filter waiting for this mutex to be unlocked
+				gf_mx_v(filter->tasks_mx);
 				gf_filter_pid_set_eos(pid);
+				gf_mx_p(filter->tasks_mx);
+				//if the PID has a codecid set (demuxed pid, e.g. ffavin or other grabbers), do not force STOP on its destinations
+				p = gf_filter_pid_get_property(pid, GF_PROP_PID_CODECID);
+				if (p) continue;
+				
 				for (k=0; k<pid->num_destinations; k++) {
+					Bool force_disable = GF_TRUE;
 					GF_FilterPidInst *pidi = gf_list_get(pid->destinations, k);
-					pidi->filter->disabled = GF_TRUE;
+					gf_mx_v(filter->tasks_mx);
+					gf_mx_p(pidi->filter->tasks_mx);
 					for (l=0; l<pidi->filter->num_output_pids; l++) {
 						GF_FilterPid *opid = gf_list_get(pidi->filter->output_pids, l);
+						//We cannot directly call process_event as this would make concurrent access to the filter
+						//which we guarantee we will never do
+						//but we don't want to send a regular stop event which will reset PID buffers, so:
+						//- if called in main thread of session in single-thread mode we can safely force a STOP event
+						//otherwise:
+						//- post a task to the filter
+						//- only disable the filter once the filter_abort has been called
+						//- only move to EOS if no filter_abort is pending
+						//
 						if (opid->filter->freg->process_event) {
-							GF_FilterEvent evt;
-							GF_FEVT_INIT(evt, GF_FEVT_STOP, opid);
-							opid->filter->freg->process_event(opid->filter, &evt);
+							if (threaded) {
+								safe_int_inc(&opid->filter->abort_pending);
+								gf_fs_post_task(opid->filter->session, filter_abort, opid->filter, opid, "filter_abort", NULL);
+								force_disable = GF_FALSE;
+							} else {
+								GF_FilterEvent evt;
+								GF_FEVT_INIT(evt, GF_FEVT_STOP, opid);
+
+								opid->filter->freg->process_event(opid->filter, &evt);
+								gf_filter_pid_set_eos(opid);
+							}
+						} else {
+							gf_filter_pid_set_eos(opid);
 						}
-						gf_filter_pid_set_eos(opid);
 					}
+					gf_mx_v(pidi->filter->tasks_mx);
+					gf_mx_p(filter->tasks_mx);
+					//no filter_abort pending, disable the filter
+					if (force_disable)
+						pidi->filter->disabled = GF_TRUE;
 				}
 			}
 		}
+		gf_mx_v(filter->tasks_mx);
 	}
-	fsess->in_final_flush = GF_TRUE;
-
 	gf_mx_v(fsess->filters_mx);
 	return GF_OK;
 }
@@ -1929,6 +2034,8 @@ void gf_fs_print_stats(GF_FilterSession *fsess)
 		GF_Filter *f = gf_list_get(fsess->filters, i);
 		if (f->multi_sink_target) continue;
 
+		gf_mx_p(f->tasks_mx);
+
 		ipids = f->num_input_pids;
 		opids = f->num_output_pids;
 		GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("\tFilter "));
@@ -1961,7 +2068,11 @@ void gf_fs_print_stats(GF_FilterSession *fsess)
 		for (k=0; k<ipids; k++) {
 			GF_FilterPidInst *pid = gf_list_get(f->input_pids, k);
 			if (!pid->pid) continue;
-			GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("\t\t* input PID %s: %d packets received\n", pid->pid->name, pid->pid->nb_pck_sent));
+			if (pid->requires_full_data_block && (pid->nb_reagg_pck != pid->pid->nb_pck_sent) ) {
+				GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("\t\t* input PID %s: %d frames (%d packets) received\n", pid->pid->name, pid->nb_reagg_pck, pid->pid->nb_pck_sent));
+			} else {
+				GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("\t\t* input PID %s: %d packets received\n", pid->pid->name, pid->pid->nb_pck_sent));
+			}
 		}
 #ifndef GPAC_DISABLE_LOG
 		for (k=0; k<opids; k++) {
@@ -1973,6 +2084,7 @@ void gf_fs_print_stats(GF_FilterSession *fsess)
 		}
 #endif
 
+		gf_mx_v(f->tasks_mx);
 	}
 	if (fsess->filters_mx) gf_mx_v(fsess->filters_mx);
 
@@ -2015,10 +2127,11 @@ static void gf_fs_print_filter_outputs(GF_Filter *f, GF_List *filters_done, u32 
 	} else {
 		GF_LOG(GF_LOG_INFO, GF_LOG_APP, (" (ptr=%p)\n", f));
 	}
-	if (gf_list_find(filters_done, f)>=0)
+	if (filters_done && (gf_list_find(filters_done, f)>=0))
 		return;
 
-	gf_list_add(filters_done, f);
+	if (filters_done)
+		gf_list_add(filters_done, f);
 	if (alias_for) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_APP, (" (<=> "));
 		print_filter_name(alias_for, GF_TRUE, GF_TRUE);
@@ -2050,15 +2163,52 @@ static void gf_fs_print_filter_outputs(GF_Filter *f, GF_List *filters_done, u32 
 			}
 		}
 	}
-
 }
+
+static void gf_fs_print_not_connected_filters(GF_FilterSession *fsess, GF_List *filters_done, Bool ignore_sinks)
+{
+	u32 i, count;
+	Bool has_unconnected=GF_FALSE;
+	count=gf_list_count(fsess->filters);
+	for (i=0; i<count; i++) {
+		GF_Filter *f = gf_list_get(fsess->filters, i);
+		//only dump not connected ones
+		if (f->num_input_pids || f->num_output_pids || f->multi_sink_target || f->nb_tasks_done) continue;
+		if (ignore_sinks) {
+			Bool has_outputs;
+			if (f->forced_caps)
+				has_outputs = gf_filter_has_out_caps(f->forced_caps, f->nb_forced_caps);
+			else
+				has_outputs = gf_filter_has_out_caps(f->freg->caps, f->freg->nb_caps);
+			if (!has_outputs) continue;
+		}
+
+		if (!has_unconnected) {
+			has_unconnected = GF_TRUE;
+			GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("Filters not connected:\n"));
+		}
+		gf_fs_print_filter_outputs(f, filters_done, 0, NULL, NULL);
+	}
+}
+
+GF_EXPORT
+void gf_fs_print_non_connected(GF_FilterSession *fsess)
+{
+	gf_fs_print_not_connected_filters(fsess, NULL, GF_FALSE);
+}
+
+GF_EXPORT
+void gf_fs_print_non_connected_ex(GF_FilterSession *fsess, Bool ignore_sinks)
+{
+	gf_fs_print_not_connected_filters(fsess, NULL, ignore_sinks);
+}
+
 GF_EXPORT
 void gf_fs_print_connections(GF_FilterSession *fsess)
 {
 	u32 i, count;
 	Bool has_undefined=GF_FALSE;
 	Bool has_connected=GF_FALSE;
-	Bool has_unconnected=GF_FALSE;
 	GF_List *filters_done;
 	GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("\n"));
 	if (fsess->filters_mx) gf_mx_p(fsess->filters_mx);
@@ -2077,16 +2227,9 @@ void gf_fs_print_connections(GF_FilterSession *fsess)
 		}
 		gf_fs_print_filter_outputs(f, filters_done, 0, NULL, NULL);
 	}
-	for (i=0; i<count; i++) {
-		GF_Filter *f = gf_list_get(fsess->filters, i);
-		//only dump not connected ones
-		if (f->num_input_pids || f->num_output_pids || f->multi_sink_target) continue;
-		if (!has_unconnected) {
-			has_unconnected = GF_TRUE;
-			GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("Filters not connected:\n"));
-		}
-		gf_fs_print_filter_outputs(f, filters_done, 0, NULL, NULL);
-	}
+
+	gf_fs_print_not_connected_filters(fsess, filters_done, GF_FALSE);
+
 	for (i=0; i<count; i++) {
 		GF_Filter *f = gf_list_get(fsess->filters, i);
 		if (f->multi_sink_target) continue;
@@ -2102,12 +2245,46 @@ void gf_fs_print_connections(GF_FilterSession *fsess)
 	gf_list_del(filters_done);
 }
 
+GF_EXPORT
+void gf_fs_print_unused_args(GF_FilterSession *fsess, const char *ignore_args)
+{
+	u32 idx = 0;
+	char *argname;
+	u32 argtype;
+
+	while (1) {
+		Bool found = GF_FALSE;
+		const char *loc_arg;
+		if (gf_fs_enum_unmapped_options(fsess, &idx, &argname, &argtype)==GF_FALSE)
+			break;
+
+		loc_arg = ignore_args;
+		while (loc_arg) {
+			u32 len;
+			char *sep;
+			char *match = strstr(loc_arg, argname);
+			if (!match) break;
+			len = (u32) strlen(argname);
+			if (!match[len] || (match[len]==',')) {
+				found = GF_TRUE;
+				break;
+			}
+			sep = strchr(loc_arg, ',');
+			if (!sep) break;
+			loc_arg = sep+1;
+		}
+		if (found) continue;;
+
+		GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Arg %s set but not used\n", argname));
+	}
+}
 
 GF_EXPORT
 void gf_fs_send_update(GF_FilterSession *fsess, const char *fid, GF_Filter *filter, const char *name, const char *val, GF_EventPropagateType propagate_mask)
 {
 	GF_FilterUpdate *upd;
 	u32 i, count;
+	char *sep = NULL;
 	Bool removed = GF_FALSE;
 	if ((!fid && !filter) || !name) return;
 	if (!fsess) {
@@ -2144,10 +2321,36 @@ void gf_fs_send_update(GF_FilterSession *fsess, const char *fid, GF_Filter *filt
 
 	if (removed) return;
 
+	if (!val) {
+		sep = strchr(name, fsess->sep_name);
+		if (sep) sep[0] = 0;
+	}
+
+	//find arg and check if it is only a sync update - if so do it now
+	i=0;
+	while (filter->freg->args) {
+		const GF_FilterArgs *a = &filter->freg->args[i];
+		i++;
+		if (!a || !a->arg_name) break;
+
+		if ((a->flags & GF_FS_ARG_META) && !strcmp(a->arg_name, "*")) {
+			continue;
+		} else if (strcmp(a->arg_name, name)) {
+			continue;
+		}
+
+		if (a->flags & GF_FS_ARG_UPDATE_SYNC) {
+			gf_mx_p(filter->tasks_mx);
+			gf_filter_update_arg_apply(filter, name, sep ? sep+1 : val, GF_TRUE);
+			gf_mx_v(filter->tasks_mx);
+			if (sep) sep[0] = fsess->sep_name;
+			return;
+		}
+		break;
+	}
+
 	GF_SAFEALLOC(upd, GF_FilterUpdate);
 	if (!val) {
-		char *sep = strchr(name, fsess->sep_name);
-		if (sep) sep[0] = 0;
 		upd->name = gf_strdup(name);
 		upd->val = sep ? gf_strdup(sep+1) : NULL;
 		if (sep) sep[0] = fsess->sep_name;
@@ -2293,6 +2496,10 @@ GF_Filter *gf_fs_load_source_dest_internal(GF_FilterSession *fsess, const char *
 	Bool free_url=GF_FALSE;
 	memset(szExt, 0, sizeof(szExt));
 
+	if (!url) {
+		if (err) *err = GF_BAD_PARAM;
+		return NULL;
+	}
 	if (err) *err = GF_OK;
 
 	mime_type = NULL;
@@ -2312,9 +2519,6 @@ GF_Filter *gf_fs_load_source_dest_internal(GF_FilterSession *fsess, const char *
 		}
 	}
 	sURL = NULL;
-	if (!url || !strncmp(url, "\\\\", 2) ) {
-		return NULL;
-	}
 	if (filter) {
 		sURL = (char *) url;
 	} else {
@@ -2362,7 +2566,18 @@ GF_Filter *gf_fs_load_source_dest_internal(GF_FilterSession *fsess, const char *
 
 				if (try_js) {
 					if (!strncmp(url, "gpac://", 7)) url += 7;
-					return gf_fs_load_filter(fsess, url, err);
+					filter = gf_fs_load_filter(fsess, url, err);
+
+					if (filter) {
+						//for link resolution
+						if (dst_filter && for_source)	{
+							if (gf_list_find(filter->destination_links, dst_filter)<0)
+								gf_list_add(filter->destination_links, dst_filter);
+							//to remember our connection target
+							filter->target_filter = dst_filter;
+						}
+					}
+					return filter;
 				}
 
 				if (err) *err = GF_URL_ERROR;
@@ -2503,6 +2718,9 @@ restart:
 #ifdef GPAC_HAS_QJS
         jsfs_on_filter_destroyed(filter);
 #endif
+		if (filter->session->on_filter_create_destroy)
+			filter->session->on_filter_create_destroy(filter->session->rt_udta, filter, GF_TRUE);
+			
         filter->freg = candidate_freg;
 		e = gf_filter_new_finalize(filter, args, arg_type);
 		if (err) *err = e;
@@ -3096,6 +3314,7 @@ GF_Err gf_filter_get_stats(GF_Filter *f, GF_FilterStats *stats)
 			set_name = GF_FALSE;
 		}
 	}
+	gf_mx_p(f->tasks_mx);
 	stats->nb_pid_in = f->num_input_pids;
 	for (i=0; i<f->num_input_pids; i++) {
 		GF_FilterPidInst *pidi = gf_list_get(f->input_pids, i);
@@ -3124,6 +3343,7 @@ GF_Err gf_filter_get_stats(GF_Filter *f, GF_FilterStats *stats)
 			set_name = GF_FALSE;
 		}
 	}
+	gf_mx_v(f->tasks_mx);
 	if (!stats->type && stats->codecid) {
 		if (!stats->nb_pid_out) {
 			stats->type = GF_FS_STATS_FILTER_MEDIA_SINK;
@@ -3387,6 +3607,16 @@ Bool gf_fs_fire_event(GF_FilterSession *fs, GF_Filter *f, GF_FilterEvent *evt, B
 	evt->base.on_pid = on_pid;
 	return ret;
 }
+
+GF_EXPORT
+GF_Err gf_fs_set_filter_creation_callback(GF_FilterSession *session, gf_fs_on_filter_creation on_create_destroy, void *udta)
+{
+	if (!session) return GF_BAD_PARAM;
+	session->rt_udta = udta;
+	session->on_filter_create_destroy = on_create_destroy;
+	return GF_OK;
+}
+
 
 
 #ifdef FILTER_FIXME

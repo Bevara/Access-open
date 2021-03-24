@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2018
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / VideoToolBox decoder filter
@@ -28,7 +28,7 @@
 
 #include <gpac/thread.h>
 
-#if !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) )
+#if !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) ) && defined(GPAC_HAS_VTB)
 
 #include <stdint.h>
 
@@ -950,8 +950,10 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 	GF_VTBDecCtx *ctx = gf_filter_get_udta(filter);
 
 	if (is_remove) {
-		if (ctx->opid) gf_filter_pid_remove(ctx->opid);
-		ctx->opid = NULL;
+		if (ctx->opid) {
+			gf_filter_pid_remove(ctx->opid);
+			ctx->opid = NULL;
+		}
 		gf_list_del_item(ctx->streams, pid);
 		return GF_OK;
 	}
@@ -1101,6 +1103,16 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 				e = GF_OK;
 			}
 			gf_odf_avc_cfg_del(cfg);
+
+			if (ctx->avc.sps[ctx->active_sps].vui_parameters_present_flag) {
+				Bool full_range = ctx->avc.sps[ctx->active_sps].vui.video_full_range_flag;
+				u32 cmx = ctx->avc.sps[ctx->active_sps].vui.matrix_coefficients;
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(full_range));
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT(cmx));
+			} else {
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, NULL);
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, NULL);
+			}
 			return e;
 		}
 	}
@@ -1157,6 +1169,16 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 				e = GF_OK;
 			}
 			gf_odf_hevc_cfg_del(cfg);
+
+			if (ctx->hevc.sps[ctx->active_sps].vui_parameters_present_flag) {
+				Bool full_range = ctx->hevc.sps[ctx->active_sps].video_full_range_flag;
+				u32 cmx = ctx->hevc.sps[ctx->active_sps].matrix_coeffs;
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(full_range));
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT(cmx));
+			} else {
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, NULL);
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, NULL);
+			}
 			return e;
 		}
 	}
@@ -1232,7 +1254,7 @@ static GF_Err vtbdec_parse_nal_units(GF_Filter *filter, GF_VTBDecCtx *ctx, char 
 			}
 
 			if (nal_size > inBufferLength) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[VTB] Error parsing NAL: size indicated %d but %d bytes only in payload\n", nal_size, inBufferLength));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[VTB] Error parsing NAL: size indicated %u but %u bytes only in payload\n", nal_size, inBufferLength));
 				break;
 			}
 			ptr += ctx->nalu_size_length;
@@ -1403,7 +1425,7 @@ static GF_Err vtbdec_flush_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	if (ctx->no_copy) return vtbdec_send_output_frame(filter, ctx);
 
 	vtbframe = gf_list_pop_front(ctx->frames);
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[VTB] Outputing frame DTS "LLU" CTS "LLU" timescale %d\n", gf_filter_pck_get_dts(vtbframe->pck_src), gf_filter_pck_get_cts(vtbframe->pck_src), gf_filter_pck_get_timescale(vtbframe->pck_src)));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[VTB] Outputting frame DTS "LLU" CTS "LLU" timescale %d\n", gf_filter_pck_get_dts(vtbframe->pck_src), gf_filter_pck_get_cts(vtbframe->pck_src), gf_filter_pck_get_timescale(vtbframe->pck_src)));
 
 
 	status = CVPixelBufferLockBaseAddress(vtbframe->frame, kCVPixelBufferLock_ReadOnly);
@@ -1867,7 +1889,7 @@ static GF_Err vtbdec_send_output_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	vtb_frame = gf_list_pop_front(ctx->frames);
 	if (!vtb_frame) return GF_BAD_PARAM;
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[VTB] Outputing frame DTS "LLU" CTS "LLU" timescale %d\n", gf_filter_pck_get_dts(vtb_frame->pck_src), gf_filter_pck_get_cts(vtb_frame->pck_src), gf_filter_pck_get_timescale(vtb_frame->pck_src)));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[VTB] Outputting frame DTS "LLU" CTS "LLU" timescale %d\n", gf_filter_pck_get_dts(vtb_frame->pck_src), gf_filter_pck_get_cts(vtb_frame->pck_src), gf_filter_pck_get_timescale(vtb_frame->pck_src)));
 
 	vtb_frame->frame_ifce.user_data = vtb_frame;
 	vtb_frame->frame_ifce.get_plane = vtbframe_get_plane;
@@ -1974,6 +1996,7 @@ static const GF_FilterCapability VTBDecCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AVC),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_HEVC),
 	{ .code=GF_PROP_PID_SCALABLE, .val={.type=GF_PROP_BOOL, .value.boolean = GF_TRUE}, .flags=(GF_CAPS_INPUT_OPT), .priority=255 },
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_TILE_BASE, GF_TRUE),
 
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_SIMPLE),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_MAIN),
@@ -2017,7 +2040,6 @@ GF_FilterRegister GF_VTBDecCtxRegister = {
 	.finalize = vtbdec_finalize,
 	.configure_pid = vtbdec_configure_pid,
 	.process = vtbdec_process,
-	.max_extra_pids = 5,
 	.process_event = vtbdec_process_event,
 };
 
@@ -2026,11 +2048,11 @@ GF_FilterRegister GF_VTBDecCtxRegister = {
 #include <gpac/maths.h>
 #include <gpac/filters.h>
 
-#endif // !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) )
+#endif // !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) ) && defined(GPAC_HAS_VTB)
 
 const GF_FilterRegister *vtbdec_register(GF_FilterSession *session)
 {
-#if !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) )
+#if !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) ) && defined(GPAC_HAS_VTB)
 	return &GF_VTBDecCtxRegister;
 #else
 	return NULL;

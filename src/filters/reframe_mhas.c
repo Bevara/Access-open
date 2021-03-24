@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2020
+ *			Copyright (c) Telecom ParisTech 2020-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / MHAS reframer filter
@@ -82,6 +82,7 @@ typedef struct
 	u32 nb_frames;
 
 	u32 nb_unknown_pck;
+	u32 bitrate;
 } GF_MHASDmxCtx;
 
 
@@ -94,8 +95,10 @@ GF_Err mhas_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 
 	if (is_remove) {
 		ctx->ipid = NULL;
-		if (ctx->opid)
+		if (ctx->opid) {
 			gf_filter_pid_remove(ctx->opid);
+			ctx->opid = NULL;
+		}
 		return GF_OK;
 	}
 	if (! gf_filter_pid_check_caps(pid))
@@ -131,7 +134,7 @@ static void mhas_dmx_check_dur(GF_Filter *filter, GF_MHASDmxCtx *ctx)
 	GF_BitStream *bs;
 	u32 frame_len, cur_dur;
 	Bool mhas_sap;
-	u64 mhas_last_cfg;
+	u64 mhas_last_cfg, rate;
 	const GF_PropertyValue *p;
 	if (!ctx->opid || ctx->timescale || ctx->file_loaded) return;
 
@@ -232,12 +235,19 @@ static void mhas_dmx_check_dur(GF_Filter *filter, GF_MHASDmxCtx *ctx)
 		}
 	}
 
+	rate = gf_bs_get_position(bs);
 	gf_bs_del(bs);
 	gf_fclose(stream);
 
 	if (!ctx->duration.num || (ctx->duration.num  * duration.den != duration.num * ctx->duration.den)) {
 		ctx->duration = duration;
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+
+		if (duration.num && !gf_sys_is_test_mode() ) {
+			rate *= 8 * ctx->duration.den;
+			rate /= ctx->duration.num;
+			ctx->bitrate = (u32) rate;
+		}
 	}
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
@@ -310,6 +320,10 @@ static void mhas_dmx_check_pid(GF_Filter *filter, GF_MHASDmxCtx *ctx, u32 PL, u3
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CHANNEL_LAYOUT, & PROP_LONGUINT(chan_layout) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_NUM_CHANNELS, & PROP_UINT(nb_channels) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAMPLES_PER_FRAME, & PROP_UINT(ctx->frame_len) );
+
+	if (ctx->bitrate) {
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_BITRATE, & PROP_UINT(ctx->bitrate));
+	}
 }
 
 static Bool mhas_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
@@ -392,6 +406,7 @@ static GFINLINE void mhas_dmx_update_cts(GF_MHASDmxCtx *ctx)
 	}
 }
 
+#ifndef GPAC_DISABLE_LOG
 static const char *mhas_pck_name(u32 pck_type)
 {
 	switch (pck_type) {
@@ -419,6 +434,7 @@ static const char *mhas_pck_name(u32 pck_type)
 	}
 	return "error";
 }
+#endif
 
 GF_Err mhas_dmx_process(GF_Filter *filter)
 {
@@ -430,7 +446,7 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 	u32 pck_size, remain, prev_pck_size;
 	u64 cts = GF_FILTER_NO_TS;
 	u32 au_start = 0;
-	u32 consummed = 0;
+	u32 consumed = 0;
 	u32 nb_trunc_samples = 0;
 	Bool trunc_from_begin = 0;
 	Bool has_cfg = 0;
@@ -527,13 +543,13 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 	ctx->buffer_too_small = GF_FALSE;
 
 	//MHAS packet
-	while (remain > consummed) {
+	while (remain > consumed) {
 		u32 pay_start, parse_end, mhas_size, mhas_label;
 		Bool mhas_sap = 0;
 		u32 mhas_type;
 		if (!ctx->is_playing && ctx->opid) {
 			ctx->resume_from = 1;
-			consummed = 0;
+			consumed = 0;
 			break;
 		}
 
@@ -549,14 +565,14 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 			ctx->nb_unknown_pck++;
 			if (ctx->nb_unknown_pck > ctx->pcksync) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[MHASDmx] %d packets of unknwon type, considering sync was lost\n"));
-				consummed = 0;
+				consumed = 0;
 				ctx->nosync = GF_TRUE;
 				ctx->nb_unknown_pck = 0;
 				break;
 			}
 		} else if (!mhas_size) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[MHASDmx] MHAS packet with 0 payload size, considering sync was lost\n"));
-			consummed = 0;
+			consumed = 0;
 			ctx->nosync = GF_TRUE;
 			ctx->nb_unknown_pck = 0;
 			break;
@@ -669,7 +685,7 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 							offset *= ctx->timescale;
 							offset /= ctx->sample_rate;
 						}
-						gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DELAY , &PROP_SINT( (s32) -offset));
+						gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DELAY , &PROP_LONGSINT( -offset));
 					}
 				} else {
 					pck_dur -= nb_trunc_samples;
@@ -705,11 +721,10 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 			gf_filter_pck_send(dst);
 
 			au_start += au_size;
-			consummed = au_start;
+			consumed = au_start;
 			ctx->nb_frames ++;
 
 			mhas_dmx_update_cts(ctx);
-			mhas_sap = 0;
 			has_cfg = 0;
 
 			if (prev_pck_size) {
@@ -728,7 +743,7 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 					}
 				}
 			}
-			if (remain==consummed)
+			if (remain==consumed)
 				break;
 
 			if (gf_filter_pid_would_block(ctx->opid)) {
@@ -738,10 +753,10 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 			}
 		}
 	}
-	if (consummed) {
-		assert(remain>=consummed);
-		remain -= consummed;
-		start += consummed;
+	if (consumed) {
+		assert(remain>=consumed);
+		remain -= consumed;
+		start += consumed;
 	}
 
 skip:

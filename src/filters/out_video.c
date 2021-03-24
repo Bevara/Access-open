@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2020
+ *			Copyright (c) Telecom ParisTech 2018-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / video output filter
@@ -73,6 +73,17 @@ typedef enum
 	MODE_2D_SOFT,
 } GF_VideoOutMode;
 
+
+enum
+{
+	FLIP_NO,
+	FLIP_VERT,
+	FLIP_HORIZ,
+	FLIP_BOTH,
+	FLIP_BOTH2,
+};
+
+
 typedef struct
 {
 	//options
@@ -81,11 +92,11 @@ typedef struct
 	Bool vsync, linear, fullscreen, drop, hide, step;
 	GF_Fraction64 dur;
 	Double speed, hold;
-	u32 back;
+	u32 back, vflip, vrot;
 	GF_PropVec2i wsize, owsize;
 	GF_PropVec2i wpos;
 	Double start;
-	u32 buffer;
+	u32 buffer, mbuffer, rbuffer;
 	GF_Fraction vdelay;
 	const char *out;
 	GF_PropUIntList dumpframes;
@@ -139,7 +150,7 @@ typedef struct
 	Bool force_release;
 	GF_FilterPacket *last_pck;
 
-	s32 pid_delay;
+	s64 pid_delay;
 	Bool buffer_done;
 	Bool no_buffering;
 	Bool dump_done;
@@ -151,6 +162,13 @@ typedef struct
 
 	Bool do_seek;
 	Bool update_oldata;
+
+	Bool full_range;
+	s32 cmx;
+
+	u64 rebuffer;
+
+	Bool force_reconfig_pid;
 } GF_VideoOutCtx;
 
 static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx);
@@ -209,7 +227,7 @@ static void vout_set_caption(GF_VideoOutCtx *ctx)
 	GF_Event evt;
 	memset(&evt, 0, sizeof(GF_Event));
 	evt.type = GF_EVENT_SET_CAPTION;
-	evt.caption.caption = gf_filter_pid_orig_src_args(ctx->pid);
+	evt.caption.caption = gf_filter_pid_orig_src_args(ctx->pid, GF_FALSE);
 	if (!evt.caption.caption) evt.caption.caption = gf_filter_pid_get_source_filter_name(ctx->pid);
 	if (evt.caption.caption) {
 		if (!strncmp(evt.caption.caption, "src=", 4)) evt.caption.caption += 4;
@@ -268,6 +286,14 @@ static GF_Err resize_video_output(GF_VideoOutCtx *ctx, u32 dw, u32 dh)
 		evt.size.height = dh;
 		ctx->video_out->ProcessEvent(ctx->video_out, &evt);
 	}
+
+	if (ctx->pid) {
+		GF_FilterEvent fevt;
+		GF_FEVT_INIT(fevt, GF_FEVT_VISIBILITY_HINT, ctx->pid);
+		fevt.visibility_hint.max_x = dw;
+		fevt.visibility_hint.max_y = dh;
+		gf_filter_pid_send_event(ctx->pid, &fevt);
+	}
 	return GF_OK;
 }
 
@@ -276,6 +302,9 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	GF_Event evt;
 	const GF_PropertyValue *p;
 	u32 w, h, pfmt, stride, stride_uv, timescale, dw, dh, hw, hh;
+	Bool full_range;
+	Bool sar_changed = GF_FALSE;
+	s32 cmx;
 	GF_VideoOutCtx *ctx = (GF_VideoOutCtx *) gf_filter_get_udta(filter);
 
 	//if we have a pending packet, draw it now
@@ -315,24 +344,41 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 	ctx->sar.num = ctx->sar.den = 1;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
-	if (p && p->value.frac.den && p->value.frac.num) ctx->sar = p->value.frac;
+	if (p && p->value.frac.den && p->value.frac.num) {
+		if (ctx->sar.num * p->value.frac.den != p->value.frac.num * ctx->sar.den)
+			sar_changed = GF_TRUE;
+		ctx->sar = p->value.frac;
+	}
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
-	ctx->pid_delay = p ? p->value.sint : 0;
+	ctx->pid_delay = p ? p->value.longsint : 0;
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_PLAY_BUFFER);
 	ctx->no_buffering = (p && !p->value.sint) ? GF_TRUE : GF_FALSE;
-	if (ctx->no_buffering) ctx->buffer_done = GF_TRUE;
-
+	if (ctx->no_buffering) {
+		ctx->buffer_done = GF_TRUE;
+		ctx->rebuffer = 0;
+	}
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_RAWGRAB);
 	ctx->raw_grab = (p && p->value.boolean) ? GF_TRUE : GF_FALSE;
+
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_RANGE);
+	full_range = (p && p->value.boolean) ? GF_TRUE : GF_FALSE;
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_MX);
+	cmx = p ? (s32) p->value.uint : GF_CICP_MX_UNSPECIFIED;
+
 
 	if (!ctx->pid) {
 		GF_FilterEvent fevt;
 
 		GF_FEVT_INIT(fevt, GF_FEVT_BUFFER_REQ, pid);
 		fevt.buffer_req.max_buffer_us = ctx->buffer * 1000;
-//		if (!fevt.buffer_req.max_buffer_us) fevt.buffer_req.max_buffer_us = 100000;
+		//we have a max buffer, move our computed max to playout and setup max buffer
+		if (ctx->mbuffer > ctx->buffer) {
+			fevt.buffer_req.max_playout_us = fevt.buffer_req.max_buffer_us;
+			fevt.buffer_req.max_buffer_us = ctx->mbuffer * 1000;
+		}
+
 		gf_filter_pid_send_event(pid, &fevt);
 
 		gf_filter_pid_init_play_event(pid, &fevt, ctx->start, ctx->speed, "VideoOut");
@@ -362,10 +408,18 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	//pid not yet ready
 	if (!pfmt || !w || !h) return GF_OK;
 
-	if ((ctx->width==w) && (ctx->height == h) && (ctx->pfmt == pfmt) ) return GF_OK;
+	if ((ctx->width==w) && (ctx->height == h) && (ctx->pfmt == pfmt) && (full_range==ctx->full_range) && (cmx==ctx->cmx) && !sar_changed && !ctx->force_reconfig_pid) return GF_OK;
 
+	ctx->full_range = full_range;
+	ctx->cmx = cmx;
 	dw = w;
 	dh = h;
+
+	if ((ctx->disp<MODE_2D) && (ctx->vrot % 2)) {
+		dw = h;
+		dh = w;
+	}
+
 	if (ctx->sar.den != ctx->sar.num) {
 		dw = dw * ctx->sar.num / ctx->sar.den;
 	}
@@ -438,10 +492,15 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	case GF_PIXEL_YUV444_10:
 		ctx->bit_depth = 10;
 	case GF_PIXEL_YUV444:
+	case GF_PIXEL_YUVA444:
 		ctx->uv_w = ctx->width;
 		ctx->uv_h = ctx->height;
 		ctx->uv_stride = ctx->stride;
 		ctx->is_yuv = GF_TRUE;
+		if (ctx->pfmt==GF_PIXEL_YUVA444) {
+			ctx->has_alpha = GF_TRUE;
+			//ctx->pfmt = GF_PIXEL_YUV444;
+		}
 		break;
 	case GF_PIXEL_YUV422_10:
 		ctx->bit_depth = 10;
@@ -454,6 +513,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	case GF_PIXEL_YUV_10:
 		ctx->bit_depth = 10;
 	case GF_PIXEL_YUV:
+	case GF_PIXEL_YVU:
 		ctx->uv_w = ctx->width/2;
 		if (ctx->width % 2) ctx->uv_w++;
 		ctx->uv_h = ctx->height/2;
@@ -474,6 +534,11 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ctx->uv_stride = ctx->stride;
 		ctx->is_yuv = GF_TRUE;
 		break;
+	case GF_PIXEL_UYVY_10:
+	case GF_PIXEL_YUYV_10:
+	case GF_PIXEL_YVYU_10:
+	case GF_PIXEL_VYUY_10:
+		ctx->bit_depth = 10;
 	case GF_PIXEL_UYVY:
 	case GF_PIXEL_YUYV:
 	case GF_PIXEL_YVYU:
@@ -485,6 +550,18 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 			if (ctx->stride%2) ctx->uv_stride ++;
 		}
 		ctx->is_yuv = GF_TRUE;
+		break;
+	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_YUV444_10_PACK:
+		ctx->uv_w = ctx->width;
+		ctx->uv_h = ctx->height;
+		ctx->uv_stride = ctx->stride;
+		ctx->is_yuv = GF_TRUE;
+		if (ctx->pfmt==GF_PIXEL_YUVA444_PACK) {
+			ctx->has_alpha = GF_TRUE;
+			//ctx->pfmt = GF_PIXEL_YUV444;
+		}
 		break;
 
 	case GF_PIXEL_ALPHAGREY:
@@ -538,7 +615,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		vout_compile_shader(ctx->vertex_shader, "vertex", default_glsl_vertex);
 
 		ctx->fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-		gf_gl_txw_setup(&ctx->tx, ctx->pfmt, ctx->width, ctx->height, ctx->stride, ctx->uv_stride, ctx->linear, NULL);
+		gf_gl_txw_setup(&ctx->tx, ctx->pfmt, ctx->width, ctx->height, ctx->stride, ctx->uv_stride, ctx->linear, NULL, ctx->full_range, ctx->cmx);
 
 		gf_dynstrcat(&frag_shader_src, "#version 120\n", NULL);
 
@@ -638,6 +715,13 @@ static Bool vout_on_event(void *cbk, GF_Event *evt)
 			ctx->owsize.x = ctx->display_width;
 			ctx->owsize.y = ctx->display_height;
 			vout_reset_overlay(ctx);
+
+			if (ctx->pid) {
+				GF_FEVT_INIT(fevt, GF_FEVT_VISIBILITY_HINT, ctx->pid);
+				fevt.visibility_hint.max_x = ctx->display_width;
+				fevt.visibility_hint.max_y = ctx->display_height;
+				gf_filter_pid_send_event(ctx->pid, &fevt);
+			}
 		}
 		break;
 	case GF_EVENT_CLICK:
@@ -763,6 +847,7 @@ static GF_Err vout_initialize(GF_Filter *filter)
 			ctx->disp = MODE_2D;
 		}
 	}
+
 #ifdef VOUT_USE_OPENGL
 	if (ctx->disp <= MODE_GL_PBO) {
 		GF_Event evt;
@@ -875,6 +960,9 @@ static void vout_draw_overlay(GF_VideoOutCtx *ctx)
 static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 {
 	Float dw, dh;
+	Bool flip_h = GF_FALSE;
+	Bool flip_v = GF_FALSE;
+	u32 i;
 
 	gf_gl_txw_bind(&ctx->tx, "maintx", ctx->glsl_program, 0);
 
@@ -899,6 +987,45 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 	if (flip_texture) {
 		textureVertices[1] = textureVertices[7] = 1.0f;
 		textureVertices[3] = textureVertices[5] = 0.0f;
+	}
+
+	switch (ctx->vflip) {
+	case FLIP_VERT:
+		flip_v = GF_TRUE;
+		break;
+	case FLIP_HORIZ:
+		flip_h = GF_TRUE;
+		break;
+	case FLIP_BOTH:
+	case FLIP_BOTH2:
+		flip_v = GF_TRUE;
+		flip_h = GF_TRUE;
+		break;
+	}
+
+	if (flip_h) {
+		GLfloat v = textureVertices[0];
+		textureVertices[0] = textureVertices[2] = textureVertices[4];
+		textureVertices[4] = textureVertices[6] = v;
+	}
+	if (flip_v) {
+		GLfloat v = textureVertices[1];
+		textureVertices[1] = textureVertices[7] = textureVertices[3];
+		textureVertices[3] = textureVertices[5] = v;
+	}
+
+	for (i=0; i < ctx->vrot; i++)  {
+		GLfloat vx = textureVertices[0];
+		GLfloat vy = textureVertices[1];
+
+		textureVertices[0] = textureVertices[2];
+		textureVertices[1] = textureVertices[3];
+		textureVertices[2] = textureVertices[4];
+		textureVertices[3] = textureVertices[5];
+		textureVertices[4] = textureVertices[6];
+		textureVertices[5] = textureVertices[7];
+		textureVertices[6] = vx;
+		textureVertices[7] = vy;
 	}
 
 	int loc = glGetAttribLocation(ctx->glsl_program, "gfVertex");
@@ -981,16 +1108,25 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 	vout_make_gl_current(ctx);
 
 	if (ctx->display_changed) {
+		u32 v_w, v_h;
+		if (ctx->vrot % 2) {
+			v_h = ctx->width;
+			v_w = ctx->height;
+		} else {
+			v_w = ctx->width;
+			v_h = ctx->height;
+		}
+
 		//if we fill width to display width and height is outside
-		if (ctx->display_width * ctx->height / ctx->width > ctx->display_height) {
-			ctx->dw = (Float) (ctx->display_height * ctx->width / ctx->height);
+		if (ctx->display_width * v_h / v_w > ctx->display_height) {
+			ctx->dw = (Float) (ctx->display_height * v_w / v_h);
 			ctx->dw *= ctx->sar.num;
 			ctx->dw /= ctx->sar.den;
 			ctx->dh = (Float) ctx->display_height;
 			ctx->oh = (Float) 0;
 			ctx->ow = (Float) (ctx->display_width - ctx->dw ) / 2;
 		} else {
-			ctx->dh = (Float) (ctx->display_width * ctx->height / ctx->width);
+			ctx->dh = (Float) (ctx->display_width * v_h / v_w);
 			ctx->dh *= ctx->sar.den;
 			ctx->dh /= ctx->sar.num;
 			ctx->dw = (Float) ctx->display_width;
@@ -1077,33 +1213,39 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 
 exit:
 
+	//we don't lock since most of the time overlay is not set
 	if (ctx->oldata.ptr) {
-		if (!ctx->overlay_tx) {
-			glGenTextures(1, &ctx->overlay_tx);
+		// overlay is set, lock filter to make sure the data is still valid
+		gf_filter_lock(ctx->filter, GF_TRUE);
+		if (ctx->oldata.ptr) {
+			if (!ctx->overlay_tx) {
+				glGenTextures(1, &ctx->overlay_tx);
 
-			glEnable(GL_TEXTURE_2D);
+				glEnable(GL_TEXTURE_2D);
 #if !defined(GPAC_USE_GLES1X)
-			glBindTexture(GL_TEXTURE_2D, ctx->overlay_tx);
+				glBindTexture(GL_TEXTURE_2D, ctx->overlay_tx);
 #if defined(GPAC_USE_GLES2)
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 #else
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
 #endif
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 #endif
 
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ctx->olsize.x, ctx->olsize.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, ctx->oldata.ptr);
-			ctx->update_oldata = GF_FALSE;
-		} else if (ctx->update_oldata) {
-			glEnable(GL_TEXTURE_2D);
-			glBindTexture(GL_TEXTURE_2D, ctx->overlay_tx);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, ctx->olsize.x, ctx->olsize.y, GL_RGBA, GL_UNSIGNED_BYTE, ctx->oldata.ptr);
-			ctx->update_oldata = GF_FALSE;
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ctx->olsize.x, ctx->olsize.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, ctx->oldata.ptr);
+				ctx->update_oldata = GF_FALSE;
+			} else if (ctx->update_oldata) {
+				glEnable(GL_TEXTURE_2D);
+				glBindTexture(GL_TEXTURE_2D, ctx->overlay_tx);
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, ctx->olsize.x, ctx->olsize.y, GL_RGBA, GL_UNSIGNED_BYTE, ctx->oldata.ptr);
+				ctx->update_oldata = GF_FALSE;
+			}
+			vout_draw_overlay(ctx);
 		}
-		vout_draw_overlay(ctx);
+		gf_filter_lock(ctx->filter, GF_FALSE);
 	}
 
 	//final flush
@@ -1277,14 +1419,19 @@ static GF_Err vout_process(GF_Filter *filter)
 	if (ctx->force_vout) {
 		ctx->force_vout = GF_FALSE;
 		ctx->width = ctx->display_width = ctx->olwnd.z;
-		ctx->height =ctx->display_height = ctx->olwnd.w;
+		ctx->height = ctx->display_height = ctx->olwnd.w;
 		resize_video_output(ctx, ctx->width, ctx->height);
 		ctx->owsize.x = ctx->display_width;
 		ctx->owsize.y = ctx->display_height;
 	}
+	if (ctx->force_reconfig_pid) {
+		vout_configure_pid(filter, ctx->pid, GF_FALSE);
+		ctx->force_reconfig_pid = GF_FALSE;
+	}
 	ctx->video_out->ProcessEvent(ctx->video_out, NULL);
 
 	if (!ctx->step && !ctx->speed) {
+		//we don't lock here since we don't access the pointer
 		if (ctx->oldata.ptr && ctx->update_oldata)
 			return vout_draw_frame(ctx);
 		gf_filter_ask_rt_reschedule(filter, 50000);
@@ -1312,6 +1459,7 @@ static GF_Err vout_process(GF_Filter *filter)
 	}
 
 	if (!ctx->pid) {
+		//we don't lock here since we don't access the pointer
 		if (ctx->oldata.ptr && ctx->update_oldata)
 			return vout_draw_frame(ctx);
 		return ctx->oldata.ptr ? GF_OK : GF_EOS;
@@ -1336,14 +1484,26 @@ static GF_Err vout_process(GF_Filter *filter)
 			if ((ctx->nb_frames>1) && ctx->last_pck_dur_us) {
 				gf_filter_ask_rt_reschedule(filter, ctx->last_pck_dur_us);
 				ctx->last_pck_dur_us = 0;
+				//we don't lock here since we don't access the pointer
+				if (ctx->oldata.ptr && ctx->update_oldata)
+					return vout_draw_frame(ctx);
 				return GF_OK;
 			}
-			//fallthrough
+		} else if (ctx->rbuffer && ctx->buffer_done) {
+			GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[VideoOut] buffer empty, rebuffering\n"));
+			ctx->rebuffer = gf_sys_clock_high_res();
+			ctx->buffer_done = GF_FALSE;
 		}
+
 		//check if all sinks are done - if not keep requesting a process to pump window event loop
 		if (!gf_filter_all_sinks_done(filter)) {
 			gf_filter_ask_rt_reschedule(filter, 100000);
-			if (ctx->display_changed) goto draw_frame;
+			if (ctx->display_changed)
+				goto draw_frame;
+
+			//we don't lock here since we don't access the pointer
+			if (ctx->oldata.ptr && ctx->update_oldata)
+				return vout_draw_frame(ctx);
 			return GF_OK;
 		}
 		return ctx->aborted ? GF_EOS : GF_OK;
@@ -1391,7 +1551,8 @@ static GF_Err vout_process(GF_Filter *filter)
 	if (ctx->buffer) {
 		if (gf_filter_pck_is_blocking_ref(pck)) {
 			ctx->buffer_done = GF_TRUE;
-			ctx->buffer = 0;
+			ctx->rebuffer = 0;
+			ctx->buffer = ctx->rbuffer = 0;
 		} else {
 			//query full buffer duration in us
 			u64 dur = gf_filter_pid_query_buffer_duration(ctx->pid, GF_FALSE);
@@ -1406,12 +1567,30 @@ static GF_Err vout_process(GF_Filter *filter)
 						sprintf(szStatus, "buffering %d / %d ms", (u32) (dur/1000), ctx->buffer);
 						gf_filter_update_status(filter, -1, szStatus);
 					}
+					//we don't lock here since we don't access the pointer
+					if (ctx->oldata.ptr && ctx->update_oldata)
+						return vout_draw_frame(ctx);
 					return GF_OK;
 				}
 				ctx->buffer_done = GF_TRUE;
+				if (ctx->rebuffer) {
+					u64 rebuf_time = gf_sys_clock_high_res() - ctx->rebuffer;
+					ctx->rebuffer = 0;
+					GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[VideoOut] rebuffer done in "LLU" ms\n", (u32) (rebuf_time/1000)));
+					if (ctx->clock_at_first_cts)
+						ctx->clock_at_first_cts += rebuf_time;
+				}
+			} else if (ctx->rbuffer) {
+				if ((dur < ctx->rbuffer * 1000) && !gf_filter_pid_has_seen_eos(ctx->pid)) {
+					GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[VideoOut] buffer %u less than min threshold %u, rebuffering\n", (u32) (dur/1000), ctx->rbuffer));
+					ctx->rebuffer = gf_sys_clock_high_res();
+					ctx->buffer_done = GF_FALSE;
+					return GF_OK;
+				}
 			}
 		}
 	}
+
 
 	if (!ctx->step && (ctx->vsync || ctx->drop)) {
 		u64 ref_clock = 0;
@@ -1421,7 +1600,7 @@ static GF_Err vout_process(GF_Filter *filter)
 		GF_Fraction64 media_ts;
 		s64 delay;
 
-		if (ctx->dur.num) {
+		if (ctx->dur.num && ctx->clock_at_first_cts && ctx->first_cts_plus_one) {
 			if ((cts - ctx->first_cts_plus_one + 1) * ctx->dur.den > (u64) (ctx->dur.num * ctx->timescale)) {
 				GF_FilterEvent evt;
 				if (ctx->last_pck) {
@@ -1433,6 +1612,8 @@ static GF_Err vout_process(GF_Filter *filter)
 				gf_filter_pid_send_event(ctx->pid, &evt);
 				gf_filter_pid_set_discard(ctx->pid, GF_TRUE);
 				return GF_EOS;
+			} else if (gf_filter_pid_has_seen_eos(ctx->pid)) {
+				gf_filter_ask_rt_reschedule(filter, 100000);
 			}
 		}
 
@@ -1743,6 +1924,11 @@ GF_Err vout_update_arg(GF_Filter *filter, const char *arg_name, const GF_Propert
 		}
 		return GF_OK;
 	}
+	if (!strcmp(arg_name, "vrot")) {
+		if (ctx->disp<MODE_2D)
+			ctx->force_reconfig_pid = GF_TRUE;
+		return GF_OK;
+	}
 	if (!strcmp(arg_name, "step")) {
 		return GF_OK;
 	}
@@ -1751,6 +1937,21 @@ GF_Err vout_update_arg(GF_Filter *filter, const char *arg_name, const GF_Propert
 		if (!ctx->pid)
 			return GF_OK;
 		ctx->do_seek = GF_TRUE;
+	}
+	if (!strcmp(arg_name, "speed") && ctx->pid) {
+		GF_FilterEvent fevt;
+		GF_FEVT_INIT(fevt, 0, ctx->pid);
+		if (new_val->value.number) {
+			if (!ctx->speed) {
+				fevt.base.type = GF_FEVT_RESUME;
+			} else {
+				fevt.base.type = GF_FEVT_SET_SPEED;
+				fevt.play.speed = new_val->value.number;
+			}
+		} else {
+			fevt.base.type = GF_FEVT_PAUSE;
+		}
+		gf_filter_pid_send_event(ctx->pid, &fevt);
 	}
 	//reinit clock
 	ctx->first_cts_plus_one = 0;
@@ -1783,15 +1984,33 @@ static const GF_FilterArgs VideoOutArgs[] =
 	{ OFFS(vdelay), "set delay in sec, positive value displays after audio clock", GF_PROP_FRACTION, "0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(hide), "hide output window", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(fullscreen), "use fullcreen", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(buffer), "set buffer in ms", GF_PROP_UINT, "100", NULL, 0},
+	{ OFFS(buffer), "set playout buffer in ms", GF_PROP_UINT, "100", NULL, 0},
+	{ OFFS(mbuffer), "set max buffer occupancy in ms (if less than buffer, use buffer)", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(rbuffer), "rebuffer trigger in ms (if 0 or more than buffer, disable rebuffering", GF_PROP_UINT, "0", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(dumpframes), "ordered list of frames to dump, 1 being first frame - see filter help. Special value 0 means dump all frames", GF_PROP_UINT_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(out), "radical of dump frame filenames. If no extension is provided, frames are exported as $OUT_%d.PFMT", GF_PROP_STRING, "dump", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(step), "step frame", GF_PROP_BOOL, "false", NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE},
 
 	{ OFFS(olwnd), "overlay window position and size", GF_PROP_VEC4I, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE},
-	{ OFFS(olsize), "overlay texture size (must be RGBA)", GF_PROP_VEC2I, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE},
-	{ OFFS(oldata), "overlay texture data (must be RGBA)", GF_PROP_CONST_DATA, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE},
+	{ OFFS(olsize), "overlay texture size (must be RGBA)", GF_PROP_VEC2I, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE_SYNC},
+	{ OFFS(oldata), "overlay texture data (must be RGBA)", GF_PROP_CONST_DATA, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE_SYNC},
 	{ OFFS(owsize), "output window size (readonly)", GF_PROP_VEC2I, NULL, NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(buffer_done), "buffer done indication (readonly)", GF_PROP_BOOL, NULL, NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(rebuffer), "time at which rebuffer started, 0 if not rebuffering (readonly)", GF_PROP_LUINT, NULL, NULL, GF_ARG_HINT_EXPERT},
+
+	{ OFFS(vflip), "flip video (GL only)\n"
+		"- no: no flipping\n"
+		"- v: vertical flip\n"
+		"- h: horizontal flip\n"
+		"- vh: horizontal and vertical\n"
+		"- hv: same as vh"
+		, GF_PROP_UINT, "no", "no|v|h|vh|hv", GF_FS_ARG_UPDATE | GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(vrot), "rotate video by given angle\n"
+		"- 0: no rotation\n"
+		"- 90: rotate 90 degree counter clockwise\n"
+		"- 180: rotate 180 degree\n"
+		"- 270: rotate 90 degree clockwise"
+	, GF_PROP_UINT, "0","0|90|180|270", GF_FS_ARG_UPDATE | GF_FS_ARG_HINT_ADVANCED},
 	{0}
 };
 

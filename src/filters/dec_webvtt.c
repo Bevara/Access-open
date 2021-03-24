@@ -2,7 +2,7 @@
  *					GPAC Multimedia Framework
  *
  *			Authors: Cyril Concolato - Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2013-2017
+ *			Copyright (c) Telecom ParisTech 2013-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / WebVTT decoder filter
@@ -160,8 +160,11 @@ static GF_Err vttd_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	GF_VTTDec *ctx = (GF_VTTDec *)gf_filter_get_udta(filter);
 
 	if (is_remove) {
-		if (ctx->opid) gf_filter_pid_remove(ctx->opid);
-		ctx->opid = ctx->ipid = NULL;
+		if (ctx->opid) {
+			gf_filter_pid_remove(ctx->opid);
+			ctx->opid = NULL;
+		}
+		ctx->ipid = NULL;
 		return GF_OK;
 	}
 	//TODO: we need to cleanup cap checking upon reconfigure
@@ -404,7 +407,7 @@ static GF_Err vttd_process(GF_Filter *filter)
 	}
 	pck_data = gf_filter_pck_get_data(pck, &pck_size);
 
-	cues = gf_webvtt_parse_cues_from_data(pck_data, pck_size, 0);
+	cues = gf_webvtt_parse_cues_from_data(pck_data, pck_size, 0, 0);
 	vttd_js_remove_cues(ctx, ctx->scenegraph->RootNode);
 	if (gf_list_count(cues)) {
 		while (gf_list_count(cues)) {
