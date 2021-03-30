@@ -1890,6 +1890,8 @@ GF_Err gf_media_parse_ivf_file_header(GF_BitStream *bs, u32 *width, u32 *height,
 GF_Err gf_media_parse_ivf_frame_header(GF_BitStream *bs, u64 *frame_size, u64 *pts)
 {
 	if (!frame_size) return GF_BAD_PARAM;
+	if (gf_bs_available(bs) < 12)
+		return GF_BUFFER_TOO_SMALL;
 
 	*frame_size = gf_bs_read_u32_le(bs);
 	if (*frame_size > 256 * 1024 * 1024) {
@@ -5115,10 +5117,7 @@ static s32 gf_avc_read_sps_bs_internal(GF_BitStream *bs, AVCState *avc, u32 subs
 	by subset SPS. According to the SVC standard, subset SPS can have the same sps_id
 	than its base layer, but it does not refer to the same SPS. */
 	sps_id = gf_bs_read_ue_log(bs, "sps_id") + GF_SVC_SSPS_ID_SHIFT * subseq_sps;
-	if (sps_id >= 32) {
-		return -1;
-	}
-	if (sps_id < 0) {
+	if ((sps_id < 0) || (sps_id >= 32)) {
 		return -1;
 	}
 
@@ -5447,7 +5446,7 @@ static s32 gf_avc_read_pps_bs_internal(GF_BitStream *bs, AVCState *avc, u32 nal_
 		gf_bs_read_int_log(bs, 5, "nal_unit_type");
 	}
 	pps_id = gf_bs_read_ue_log(bs, "pps_id");
-	if (pps_id >= 255) {
+	if ((pps_id<0) || (pps_id >= 255)) {
 		return -1;
 	}
 	pps = &avc->pps[pps_id];
@@ -5455,7 +5454,7 @@ static s32 gf_avc_read_pps_bs_internal(GF_BitStream *bs, AVCState *avc, u32 nal_
 
 	if (!pps->status) pps->status = 1;
 	pps->sps_id = gf_bs_read_ue_log(bs, "sps_id");
-	if (pps->sps_id >= 32) {
+	if ((pps->sps_id<0) || (pps->sps_id >= 32)) {
 		pps->sps_id = 0;
 		return -1;
 	}
@@ -6843,7 +6842,7 @@ s32 hevc_parse_slice_segment(GF_BitStream *bs, HEVCState *hevc, HEVCSliceInfo *s
 	}
 
 	pps_id = gf_bs_read_ue_log(bs, "pps_id");
-	if (pps_id >= 64)
+	if ((pps_id<0) || (pps_id >= 64))
 		return -1;
 
 	pps = &hevc->pps[pps_id];
@@ -7666,7 +7665,7 @@ static s32 gf_hevc_read_vps_bs_internal(GF_BitStream *bs, HEVCState *hevc, Bool 
 	//nalu header already parsed
 	vps_id = gf_bs_read_int_log(bs, 4, "vps_id");
 
-	if (vps_id >= 16) return -1;
+	if ((vps_id<0) || (vps_id >= 16)) return -1;
 
 	vps = &hevc->vps[vps_id];
 	vps->bit_pos_vps_extensions = -1;
@@ -7895,7 +7894,7 @@ static s32 gf_hevc_read_sps_bs_internal(GF_BitStream *bs, HEVCState *hevc, u8 la
 
 	//nalu header already parsed
 	vps_id = gf_bs_read_int_log(bs, 4, "vps_id");
-	if (vps_id >= 16) {
+	if ((vps_id<0) || (vps_id >= 16)) {
 		return -1;
 	}
 	memset(&ptl, 0, sizeof(ptl));
@@ -8210,7 +8209,7 @@ static s32 gf_hevc_read_pps_bs_internal(GF_BitStream *bs, HEVCState *hevc)
 		pps->state = 1;
 	}
 	pps->sps_id = gf_bs_read_ue_log(bs, "sps_id");
-	if (pps->sps_id >= 16) {
+	if ((pps->sps_id<0) || (pps->sps_id >= 16)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[HEVC] wrong SPS ID %d in PPS\n", pps->sps_id));
 		pps->sps_id=0;
 		return -1;
@@ -9360,7 +9359,7 @@ static s32 gf_media_vvc_read_vps_bs_internal(GF_BitStream *bs, VVCState *vvc, Bo
 
 	//nalu header already parsed
 	vps_id = gf_bs_read_int_log(bs, 4, "vps_id");
-	if (vps_id >= 16) return -1;
+	if ((vps_id<0) || (vps_id >= 16)) return -1;
 	if (!vps_id) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[VVC] VPS ID 0 is forbidden\n"));
 		return -1;
@@ -9451,11 +9450,11 @@ static s32 gf_media_vvc_read_sps_bs_internal(GF_BitStream *bs, VVCState *vvc, u8
 	if (vui_flag_pos) *vui_flag_pos = 0;
 
 	sps_id = gf_bs_read_int_log(bs, 4, "sps_id");
-	if (sps_id >= 16) {
+	if ((sps_id<0) || (sps_id >= 16)) {
 		return -1;
 	}
 	vps_id = gf_bs_read_int_log(bs, 4, "vps_id");
-	if (vps_id >= 16) {
+	if ((vps_id<0) || (vps_id >= 16)) {
 		return -1;
 	}
 	if (!vps_id && !vvc->vps[0].state) {
@@ -9657,7 +9656,7 @@ static s32 gf_media_vvc_read_pps_bs_internal(GF_BitStream *bs, VVCState *vvc)
 		pps->state = 1;
 	}
 	pps->sps_id = gf_bs_read_int_log(bs, 4, "sps_id");
-	if (pps->sps_id >= 16) {
+	if ((pps->sps_id<0) || (pps->sps_id >= 16)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[VVC] wrong SPS ID %d in PPS\n", pps->sps_id));
 		pps->sps_id=0;
 		return -1;
@@ -9725,7 +9724,7 @@ s32 vvc_parse_picture_header(GF_BitStream *bs, VVCState *vvc, VVCSliceInfo *si)
 		si->intra_slice_allowed_flag = gf_bs_read_int_log(bs, 1, "intra_slice_allowed_flag");
 
 	pps_id = gf_bs_read_ue_log(bs, "pps_id");
-	if (pps_id >= 64)
+	if ((pps_id<0) || (pps_id >= 64))
 		return -1;
 	si->pps = &vvc->pps[pps_id];
 	si->sps = &vvc->sps[si->pps->sps_id];

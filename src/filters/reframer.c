@@ -726,11 +726,14 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 		//packet reinserted (not split), adjust duration and store offset in split start
 		if (!st->can_split && !is_split && st->reinsert_single_pck) {
 			u32 dur = gf_filter_pck_get_duration(pck);
-			u64 ndur = st->range_end_reached_ts;
-			ndur -= st->ts_at_range_start_plus_one-1;
-			if (ndur && (ndur < dur))
-				gf_filter_pck_set_duration(new_pck, (u32) ndur);
-			st->split_start = (u32) ndur;
+			//only for closed range
+			if (st->range_end_reached_ts) {
+				u64 ndur = st->range_end_reached_ts;
+				ndur -= st->ts_at_range_start_plus_one-1;
+				if (ndur && (ndur < dur))
+					gf_filter_pck_set_duration(new_pck, (u32) ndur);
+				st->split_start = (u32) ndur;
+			}
 		}
 
 		gf_filter_pck_send(new_pck);
@@ -1653,10 +1656,13 @@ load_next_range:
 				u64 start = ctx->cur_start.num;
 				start *= st->timescale;
 				start /= ctx->cur_start.den;
-				st->ts_at_range_end = ctx->cur_end.num;
-				st->ts_at_range_end *= st->timescale;
-				st->ts_at_range_end /= ctx->cur_end.den;
-				st->ts_at_range_end -= start;
+				//closed range, compute TS at range end
+				if (ctx->cur_end.num && ctx->cur_end.den) {
+					st->ts_at_range_end = ctx->cur_end.num;
+					st->ts_at_range_end *= st->timescale;
+					st->ts_at_range_end /= ctx->cur_end.den;
+					st->ts_at_range_end -= start;
+				}
 			} else {
 				st->ts_at_range_end = (st->range_end_reached_ts - 1)  - (st->ts_at_range_start_plus_one - 1);
 			}
@@ -1857,7 +1863,7 @@ GF_FilterRegister ReframerRegister = {
 		"In this mode, the timestamps are rewritten to form a continuous timeline.\n"
 		"When multiple ranges are given, the filter will try to seek if supported by source."
 		"\n"
-		"EX gpac src=m.mp4 reframer:xs=T00:00:10,T00:01:10,T00:02:00:xs=T00:00:20,T00:01:20 [dst]\n"
+		"EX gpac src=m.mp4 reframer:xs=T00:00:10,T00:01:10,T00:02:00:xe=T00:00:20,T00:01:20 [dst]\n"
 		"This will extract the time ranges [10s,20s], [1m10s,1m20s] and all media starting from 2m\n"
 		"\n"
 		"It is possible to signal range boundaries in output packets using [-splitrange]().\n"
