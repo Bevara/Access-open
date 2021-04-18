@@ -713,7 +713,7 @@ Bool gf_isom_moov_first(GF_ISOFile *isom_file);
 
 /*! when reading a file, indicates that file data is missing the indicated bytes
 \param isom_file the target ISO file
-\param byte_offset number of bytes not present at the begining of the file
+\param byte_offset number of bytes not present at the beginning of the file
 \return error if any
 */
 GF_Err gf_isom_set_byte_offset(GF_ISOFile *isom_file, s64 byte_offset);
@@ -1858,7 +1858,7 @@ GF_Err gf_isom_patch_last_sample_duration(GF_ISOFile *isom_file, u32 trackNumber
 \param isom_file the target ISO file
 \param trackNumber the target track
 \param referenceType the four character code of the reference
-\param ReferencedTrackID the ID of the track refered to
+\param ReferencedTrackID the ID of the track referred to
 \return error if any
 */
 GF_Err gf_isom_set_track_reference(GF_ISOFile *isom_file, u32 trackNumber, u32 referenceType, GF_ISOTrackID ReferencedTrackID);
@@ -2751,7 +2751,7 @@ GF_Err gf_isom_set_pl_indication(GF_ISOFile *isom_file, GF_ISOProfileLevelType P
 GF_Err gf_isom_set_root_od_id(GF_ISOFile *isom_file, u32 OD_ID);
 
 /*! sets the rootOD URL of the movie if you need it (only needed to create an empty file pointing
-to external ressource)
+to external resource)
 \note Use for MPEG-4 Systems only
 \param isom_file the target ISO file
 \param url_string the URL to assign to the root OD/IOD
@@ -4041,7 +4041,7 @@ u32 gf_isom_get_next_moof_number(GF_ISOFile *isom_file);
 				User Data Manipulation
 
 You can add specific typed data to either a track or the movie: the UserData
-	The type must be formated as a FourCC if you have a registered 4CC type
+	The type must be formatted as a FourCC if you have a registered 4CC type
 	but the usual is to set a UUID (128 bit ID for box type) which never conflict
 	with existing structures in the format
 		To manipulate a UUID user data set the UserDataType to 0 and specify a valid UUID.
@@ -4579,7 +4579,7 @@ GF_Err gf_isom_end_hint_sample(GF_ISOFile *isom_file, u32 trackNumber, u8 IsRand
 /*! adds a blank chunk of data in the sample that is skipped while streaming
 \param isom_file the target ISO file
 \param trackNumber the target hint track
-\param AtBegin indicates if the blank chunk should be at the end or at the begining of the hint packet
+\param AtBegin indicates if the blank chunk should be at the end or at the beginning of the hint packet
 \return error if any
 */
 GF_Err gf_isom_hint_blank_data(GF_ISOFile *isom_file, u32 trackNumber, u8 AtBegin);
@@ -4591,7 +4591,7 @@ to add small blocks of data (encrypted parts, specific headers, ...)
 \param trackNumber the target hint track
 \param data buffer to add to the RTP packet
 \param dataLength size of buffer to add to the RTP packet
-\param AtBegin indicates if the blank chunk should be at the end or at the begining of the hint packet
+\param AtBegin indicates if the blank chunk should be at the end or at the beginning of the hint packet
 \return error if any
 */
 GF_Err gf_isom_hint_direct_data(GF_ISOFile *isom_file, u32 trackNumber, u8 *data, u32 dataLength, u8 AtBegin);
@@ -4609,7 +4609,7 @@ GF_Err gf_isom_hint_direct_data(GF_ISOFile *isom_file, u32 trackNumber, u8 *data
 (useful to store en encrypted version of a packet only available while streaming)
 	In this case, set SourceTrackID to the HintTrack ID and SampleNumber to 0
 	In this case, the DataOffset MUST BE NULL and length will indicate the extra_data size
-\param AtBegin indicates if the blank chunk should be at the end or at the begining of the hint packet
+\param AtBegin indicates if the blank chunk should be at the end or at the beginning of the hint packet
 \return error if any
 */
 GF_Err gf_isom_hint_sample_data(GF_ISOFile *isom_file, u32 trackNumber, GF_ISOTrackID SourceTrackID, u32 SampleNumber, u16 DataLength, u32 offsetInSample, u8 *extra_data, u8 AtBegin);
@@ -4623,7 +4623,7 @@ GF_Err gf_isom_hint_sample_data(GF_ISOFile *isom_file, u32 trackNumber, GF_ISOTr
 \param sampleDescriptionIndex the index of the stream description in the desired track
 \param DataLength the length of bytes to copy in the packet
 \param offsetInDescription the offset in bytes in the description at which to begin copying data. Since it is far from being obvious / interoperable what this offset is, we recommend not using this function and injecting the data instead using \ref gf_isom_hint_direct_data.
-\param AtBegin indicates if the blank chunk should be at the end or at the begining of the hint packet
+\param AtBegin indicates if the blank chunk should be at the end or at the beginning of the hint packet
 \return error if any
 */
 GF_Err gf_isom_hint_sample_description_data(GF_ISOFile *isom_file, u32 trackNumber, GF_ISOTrackID SourceTrackID, u32 sampleDescriptionIndex, u16 DataLength, u32 offsetInDescription, u8 AtBegin);
@@ -6083,6 +6083,28 @@ typedef enum
 	GF_ISOM_ITUNE_COMPOSER 		= GF_4CC( 0xA9, 'c', 'o', 'm' ),
 	GF_ISOM_ITUNE_TRACK 		= GF_4CC( 0xA9, 't', 'r', 'k' ),
 	GF_ISOM_ITUNE_CONDUCTOR 	= GF_4CC( 0xA9, 'c', 'o', 'n' ),
+
+	GF_ISOM_ITUNE_ART_DIRECTOR 	= GF_4CC( 0xA9, 'a', 'r', 'd' ),
+	GF_ISOM_ITUNE_ARRANGER	 	= GF_4CC( 0xA9, 'a', 'r', 'g' ),
+	GF_ISOM_ITUNE_LYRICIST	 	= GF_4CC( 0xA9, 'a', 'u', 't' ),
+	GF_ISOM_ITUNE_COPY_ACK	 	= GF_4CC( 0xA9, 'c', 'a', 'k' ),
+	GF_ISOM_ITUNE_SONG_DESC	 	= GF_4CC( 0xA9, 'd', 'e', 's' ),
+	GF_ISOM_ITUNE_DIRECTOR	 	= GF_4CC( 0xA9, 'd', 'i', 'r' ),
+	GF_ISOM_ITUNE_EQ_PRESET	 	= GF_4CC( 0xA9, 'e', 'q', 'u' ),
+	GF_ISOM_ITUNE_LINER_NOTES 	= GF_4CC( 0xA9, 'l', 'n', 't' ),
+	GF_ISOM_ITUNE_REC_COMPANY 	= GF_4CC( 0xA9, 'm', 'a', 'k' ),
+	GF_ISOM_ITUNE_ORIG_ARTIST 	= GF_4CC( 0xA9, 'o', 'p', 'e' ),
+	GF_ISOM_ITUNE_PHONO_RIGHTS 	= GF_4CC( 0xA9, 'p', 'h', 'g' ),
+	GF_ISOM_ITUNE_PRODUCER	 	= GF_4CC( 0xA9, 'p', 'r', 'd' ),
+	GF_ISOM_ITUNE_PERFORMER	 	= GF_4CC( 0xA9, 'p', 'r', 'f' ),
+	GF_ISOM_ITUNE_PUBLISHER	 	= GF_4CC( 0xA9, 'p', 'u', 'b' ),
+	GF_ISOM_ITUNE_SOUND_ENG	 	= GF_4CC( 0xA9, 's', 'n', 'e' ),
+	GF_ISOM_ITUNE_SOLOIST	 	= GF_4CC( 0xA9, 's', 'o', 'l' ),
+	GF_ISOM_ITUNE_CREDITS	 	= GF_4CC( 0xA9, 's', 'r', 'c' ),
+	GF_ISOM_ITUNE_THANKS	 	= GF_4CC( 0xA9, 't', 'h', 'x' ),
+	GF_ISOM_ITUNE_ONLINE	 	= GF_4CC( 0xA9, 'u', 'r', 'l' ),
+	GF_ISOM_ITUNE_EXEC_PRODUCER	= GF_4CC( 0xA9, 'x', 'p', 'd' ),
+
 
 	GF_ISOM_ITUNE_ITUNES_DATA 	= GF_4CC( '-', '-', '-', '-' ),
 

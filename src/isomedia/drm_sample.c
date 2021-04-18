@@ -1307,11 +1307,24 @@ Bool gf_isom_cenc_has_saiz_saio_full(GF_SampleTableBox *stbl, void *_traf, u32 s
 	has_saiz = has_saio = GF_FALSE;
 
 	if (stbl) {
+		if (!stbl->patch_piff_psec) {
+			stbl->patch_piff_psec = gf_opts_get_bool("core", "piff-force-subsamples") ? 2 : 1;
+		}
+		if (stbl->patch_piff_psec==2)
+			return GF_FALSE;
 		sai_sizes = stbl->sai_sizes;
 		sai_offsets = stbl->sai_offsets;
 	}
 #ifndef GPAC_DISABLE_ISOM_FRAGMENTS
 	else if (_traf) {
+		if (traf->trex && traf->trex->track && traf->trex->track->Media->information->sampleTable) {
+			GF_SampleTableBox *_stbl = traf->trex->track->Media->information->sampleTable;
+			if (!_stbl->patch_piff_psec) {
+				_stbl->patch_piff_psec = gf_opts_get_bool("core", "piff-force-subsamples") ? 2 : 1;
+			}
+			if (_stbl->patch_piff_psec==2)
+				return GF_FALSE;
+		}
 		sai_sizes = traf->sai_sizes;
 		sai_offsets = traf->sai_offsets;
 	}
@@ -1686,7 +1699,7 @@ void gf_isom_cenc_get_default_info_internal(GF_TrackBox *trak, u32 sampleDescrip
 				seig_entry = gf_list_get(sgdesc->group_descriptions, sgdesc->default_description_index-1);
 			else
 				seig_entry = gf_list_get(sgdesc->group_descriptions, 0);
-			if (!seig_entry->key_info[0])
+			if (seig_entry && !seig_entry->key_info[0])
 				seig_entry = NULL;
 			break;
 		}
@@ -1886,7 +1899,7 @@ Bool gf_cenc_validate_key_info(const u8 *key_info, u32 key_info_size)
 	return GF_TRUE;
 
 exit:
-	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Invalid key info formating, missing %d bytes\n", nb_missing));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Invalid key info format, missing %d bytes\n", nb_missing));
 	return GF_FALSE;
 }
 

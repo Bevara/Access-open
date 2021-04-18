@@ -550,7 +550,7 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 	}
 }
 
-static Bool gf_filter_aggregate_packets(GF_FilterPidInst *dst)
+Bool gf_filter_aggregate_packets(GF_FilterPidInst *dst)
 {
 	u32 size=0, pos=0;
 	u64 byte_offset = 0;
@@ -780,6 +780,9 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		if (!pid->request_property_map && !is_cmd_pck && (pid->nb_pck_sent || pid->props_changed_since_connect) ) {
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s PID %s properties modified, marking packet\n", pck->pid->filter->name, pck->pid->name));
 
+			if (pid->filter->user_pid_props)
+				gf_filter_pid_set_args(pid->filter, pid);
+
 			pck->info.flags |= GF_PCKF_PROPS_CHANGED;
 		}
 		//any new pid_set_property after this packet will trigger a new property map
@@ -973,7 +976,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		GF_FilterPidInst *dst = gf_list_get(pck->pid->destinations, i);
 		if (!dst->filter || dst->filter->finalized || (dst->filter->removed==1) || !dst->filter->freg->process) continue;
 
-		if (dst->discard_inputs) {
+		if (dst->discard_inputs==1) {
 			//in discard input mode, we drop all input packets but trigger reconfigure as they happen
 			if ((pck->info.flags & GF_PCKF_PROPS_CHANGED) && (dst->props != pck->pid_props)) {
 				//unassign old property list and set the new one
@@ -995,11 +998,14 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 				//in which a previously blacklisted filter (failing (re)configure for previous state) could
 				//now work, eg moving from formatA to formatB then back to formatA
 				gf_list_reset(dst->filter->blacklisted);
+				dst->discard_inputs = 2;
 				//and post a reconfigure task
-				gf_fs_post_task(dst->filter->session, gf_filter_pid_reconfigure_task, dst->filter, dst->pid, "pidinst_reconfigure", NULL);
+				gf_fs_post_task(dst->filter->session, gf_filter_pid_reconfigure_task_discard, dst->filter, (GF_FilterPid *)dst, "pidinst_reconfigure", NULL);
+				//keep packets, they will be trashed if we are still in discard when executing gf_filter_pid_reconfigure_task_discard
+			} else {
+				nb_discard++;
+				continue;
 			}
-			nb_discard++;
-			continue;
 		}
 
 		inst = gf_fq_pop(pck->pid->filter->pcks_inst_reservoir);

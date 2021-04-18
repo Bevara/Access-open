@@ -987,9 +987,12 @@ GF_FilterRegister FFMuxRegister = {
 	.version = LIBAVFORMAT_IDENT,
 	GF_FS_SET_DESCRIPTION("FFMPEG muxer")
 
-	GF_FS_SET_HELP("Muxes files and open output protocols using FFMPEG.\n"
+	GF_FS_SET_HELP("Mulitiplexes files and open output protocols using FFMPEG.\n"
 		"See FFMPEG documentation (https://ffmpeg.org/documentation.html) for more details.\n"
-		"To list all supported demuxers for your GPAC build, use `gpac -h ffmx:*`."
+		"To list all supported muxers for your GPAC build, use `gpac -h ffmx:*`."
+		"This will list both supported output formats and protocols.\n"
+		"Output protocols are listed with `Description: Output protocol`, and the subclass name identitfes the protocol scheme.\n"
+		"For example, if `ffmx:rtmp` is listed as output protocol, this means `rtmp://` destination URLs are supported.\n"
 		"\n"
 		"Some URL formats may not be sufficient to derive the multiplexing format, you must then use [-ffmt]() to specify the desired format.\n"
 		"\n"
@@ -1019,7 +1022,7 @@ GF_FilterRegister FFMuxRegister = {
 static const GF_FilterArgs FFMuxArgs[] =
 {
 	{ OFFS(dst), "location of destination file or remote URL", GF_PROP_NAME, NULL, NULL, 0},
-	{ OFFS(start), "set playback start offset. Negative value means percent of media dur with -1 <=> dur", GF_PROP_DOUBLE, "0.0", NULL, 0},
+	{ OFFS(start), "set playback start offset. Negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, 0},
 	{ OFFS(speed), "set playback speed. If speed is negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
 	{ OFFS(interleave), "write frame in interleave mode", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(nodisc), "ignore stream configuration changes while muxing, may result in broken streams", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},

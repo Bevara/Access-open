@@ -335,10 +335,8 @@ GF_FilterSession *gf_fs_new(s32 nb_threads, GF_FilterSchedulerType sched_type, u
 			if (sep) sep[0] = 0;
 			gf_fs_push_arg(fsess, arg+2, GF_FALSE, (arg[1]!='-') ? 2 : 1);
 
-			if (!strcmp(arg+2, "template")) {
-				if (strstr(sep+1, "$Bandwidth$")) {
-					gf_opts_set_key("temp", "force_indexing", "true");
-				}
+			if (sep && !strcmp(arg+2, "template") && strstr(sep+1, "$Bandwidth$")) {
+				gf_opts_set_key("temp", "force_indexing", "true");
 			}
 
 			if (sep) sep[0] = '=';
@@ -1853,7 +1851,7 @@ GF_Err gf_fs_abort(GF_FilterSession *fsess, Bool do_flush)
 {
 	u32 i, count;
 	Bool threaded;
-	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Session abort from user, stoping sources\n"));
+	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Session abort from user, stopping sources\n"));
 	if (!fsess) return GF_BAD_PARAM;
 	threaded = (!fsess->filters_mx && (fsess->main_th.th_id==gf_th_id())) ? GF_FALSE : GF_TRUE;
 
@@ -2833,10 +2831,9 @@ Bool gf_filter_send_gf_event(GF_Filter *filter, GF_Event *evt)
 }
 
 
-static void gf_fs_print_jsf_connection(GF_FilterSession *session, char *filter_name, void (*print_fn)(FILE *output, GF_SysPrintArgFlags flags, const char *fmt, ...) )
+static void gf_fs_print_jsf_connection(GF_FilterSession *session, char *filter_name, GF_Filter *js_filter, void (*print_fn)(FILE *output, GF_SysPrintArgFlags flags, const char *fmt, ...) )
 {
 	GF_CapsBundleStore capstore;
-	GF_Filter *js_filter;
 	const char *js_name = NULL;
 	GF_Err e=GF_OK;
 	u32 i, j, count, nb_js_caps;
@@ -2844,8 +2841,10 @@ static void gf_fs_print_jsf_connection(GF_FilterSession *session, char *filter_n
 	GF_FilterRegister loaded_freg;
 	Bool has_output, has_input;
 
-	js_filter = gf_fs_load_filter(session, filter_name, &e);
-	if (!js_filter) return;
+	if (!js_filter) {
+		js_filter = gf_fs_load_filter(session, filter_name, &e);
+		if (!js_filter) return;
+	}
 
 	js_name = strrchr(filter_name, '/');
 	if (!js_name) js_name = strrchr(filter_name, '\\');
@@ -2954,7 +2953,7 @@ void gf_fs_print_all_connections(GF_FilterSession *session, char *filter_name, v
 	gf_log_set_tool_level(GF_LOG_FILTER, GF_LOG_INFO);
 	//load JS to inspect its connections
 	if (filter_name && strstr(filter_name, ".js")) {
-		gf_fs_print_jsf_connection(session, filter_name, print_fn);
+		gf_fs_print_jsf_connection(session, filter_name, NULL, print_fn);
 		gf_log_set_tool_level(GF_LOG_FILTER, llev);
 		return;
 	}
@@ -3032,7 +3031,12 @@ void gf_fs_print_all_connections(GF_FilterSession *session, char *filter_name, v
 	}
 
 	if (!found && filter_name) {
-		if (print_fn)
+		GF_Err e;
+		GF_Filter *f = gf_fs_load_filter(session, filter_name, &e);
+		if (f) {
+			gf_fs_print_jsf_connection(session, filter_name, f, print_fn);
+		}
+		else if (print_fn)
 			print_fn(stderr, 1, "%s filter not found\n", filter_name);
 		else {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("%s filter not found\n", filter_name));

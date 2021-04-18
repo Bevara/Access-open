@@ -966,7 +966,9 @@ Bool gf_filter_update_arg_apply(GF_Filter *filter, const char *arg_name, const c
 
 		if (argv.type != GF_PROP_FORBIDEN) {
 			GF_Err e = GF_OK;
-			FSESS_CHECK_THREAD(filter)
+			if (!is_sync_call) {
+				FSESS_CHECK_THREAD(filter)
+			}
 			//if no update function consider the arg OK
 			if (filter->freg->update_arg) {
 				e = filter->freg->update_arg(filter, arg_name, &argv);
@@ -1038,6 +1040,7 @@ void gf_filter_update_arg_task(GF_FSTask *task)
 
 static const char *gf_filter_load_arg_config(GF_Filter *filter, const char *sec_name, const char *arg_name, const char *arg_val)
 {
+	char szArg[101];
 	Bool gf_sys_has_filter_global_args();
 	const char *opt;
 	GF_FilterSession *session = filter->session;
@@ -1047,18 +1050,21 @@ static const char *gf_filter_load_arg_config(GF_Filter *filter, const char *sec_
 		u32 alen = (u32) strlen(arg_name);
 		u32 i, nb_args = gf_sys_get_argc();
 		for (i=0; i<nb_args; i++) {
+			u32 flen = 0;
 			const char *per_filter;
-			const char *arg = gf_sys_get_arg(i);
+			const char *o_arg, *arg = gf_sys_get_arg(i);
 			if (arg[0]!='-') continue;
 			if (arg[1]!='-') continue;
 
 			arg += 2;
+			o_arg = arg;
 			per_filter = strchr(arg, '@');
 			if (per_filter) {
-				u32 len = (u32) (per_filter - arg);
-				if (!len || strncmp(filter->freg->name, arg, len))
+				flen = (u32) (per_filter - arg);
+				if (!flen || strncmp(filter->freg->name, arg, flen))
 					continue;
-				arg += len+1;
+				flen++;
+				arg += flen;
 			}
 
 			if (!strncmp(arg, arg_name, alen)) {
@@ -1070,7 +1076,9 @@ static const char *gf_filter_load_arg_config(GF_Filter *filter, const char *sec_
 					len = (u32) strlen(arg);
 				}
 				if (len != alen) continue;
-				gf_fs_push_arg(session, arg_name, GF_TRUE, 0);
+				strncpy(szArg, o_arg, 100);
+				szArg[ MIN(flen + alen, 100) ] = 0;
+				gf_fs_push_arg(session, szArg, GF_TRUE, 0);
 
 				if (sep) return sep+1;
 				//no arg value means boolean true
@@ -1084,7 +1092,7 @@ static const char *gf_filter_load_arg_config(GF_Filter *filter, const char *sec_
 	if (opt)
 		return opt;
 
-	//ifce (used by socket and keep MP4Client behaviour: some options are set in MP4Client main apply them
+	//ifce (used by socket and keep MP4Client behavior: some options are set in MP4Client main apply them
 	if (!strcmp(arg_name, "ifce")) {
 		opt = gf_opts_get_key("core", "ifce");
 		if (opt)
@@ -1134,38 +1142,41 @@ static void gf_filter_load_meta_args_config(const char *sec_name, GF_Filter *fil
 #define META_MAX_ARG	1000
 		char szArg[META_MAX_ARG+1];
 		GF_Err e;
+		u32 len = 0;
 		const char *per_filter;
-		const char *sep, *arg = gf_sys_get_arg(i);
+		const char *sep, *o_arg, *arg = gf_sys_get_arg(i);
 		if (arg[0] != '-') continue;
 		if (arg[1] != '+') continue;
 		arg+=2;
 
+		o_arg = arg;
 		per_filter = strchr(arg, '@');
 		if (per_filter) {
-			u32 len = (u32) (per_filter - arg);
+			len = (u32) (per_filter - arg);
 			if (!len || strncmp(filter->freg->name, arg, len))
 				continue;
-			arg += len+1;
+			len++;
+			arg += len;
 		}
 
 		sep = strchr(arg, '=');
 		memset(&argv, 0, sizeof(GF_PropertyValue));
 		argv.type = GF_PROP_STRING;
 		if (sep) {
-			u32 cplen = (u32) (sep - arg);
+			u32 cplen = (u32) (sep - o_arg);
 			if (cplen>=META_MAX_ARG) cplen=META_MAX_ARG;
-			strncpy(szArg, arg, cplen);
+			strncpy(szArg, o_arg, cplen);
 			szArg[cplen] = 0;
 			argv.value.string = (char *) sep+1;
 		} else {
-			u32 cplen = (u32) strlen(arg);
+			u32 cplen = (u32) strlen(o_arg);
 			if (cplen>=META_MAX_ARG) cplen=META_MAX_ARG;
-			memcpy(szArg, arg, cplen);
+			memcpy(szArg, o_arg, cplen);
 			szArg[cplen] = 0;
 		}
 #undef META_MAX_ARG
 
-		e = filter->freg->update_arg(filter, szArg, &argv);
+		e = filter->freg->update_arg(filter, szArg + len, &argv);
 		gf_fs_push_arg(filter->session, szArg, (e==GF_OK) ? GF_TRUE : GF_FALSE, 2);
 	}
 }
@@ -1513,7 +1524,7 @@ skip_date:
 			else if (
 				//generic encoder load
 				!strcmp("c", szArg)
-				//prefered registry to use
+				//preferred registry to use
 				|| !strcmp("gfreg", szArg)
 				//non inherited options
 				|| !strcmp("gfloc", szArg)
@@ -1570,13 +1581,14 @@ skip_date:
 				internal_arg = GF_TRUE;
 			}
 			else if (has_meta_args && filter->freg->update_arg) {
+				GF_Err e = GF_OK;
 				if (for_script || !(filter->freg->flags&GF_FS_REG_SCRIPT) ) {
 					GF_PropertyValue argv = gf_props_parse_value(GF_PROP_STRING, szArg, value, NULL, filter->session->sep_list);
 					FSESS_CHECK_THREAD(filter)
-					filter->freg->update_arg(filter, szArg, &argv);
+					e = filter->freg->update_arg(filter, szArg, &argv);
 					if (argv.value.string) gf_free(argv.value.string);
 				}
-				if (!(filter->freg->flags&GF_FS_REG_SCRIPT))
+				if (!(filter->freg->flags&GF_FS_REG_SCRIPT) && (e==GF_OK) )
 					found = GF_TRUE;
 			}
 		}
@@ -1869,8 +1881,18 @@ void gf_filter_renegociate_output_dst(GF_FilterPid *pid, GF_Filter *filter, GF_F
 		gf_fs_check_graph_load(filter_dst->session, GF_TRUE);
 		//make sure we don't try the PID parent filter since we just failed reconfiguring it
 		gf_list_add(pid->filter->blacklisted, (void *) pid->filter->freg);
-		new_f = gf_filter_pid_resolve_link_for_caps(pid, filter_dst);
+		new_f = gf_filter_pid_resolve_link_for_caps(pid, filter_dst, GF_TRUE);
+
 		gf_list_del_item(pid->filter->blacklisted, (void *)pid->filter->freg);
+
+		//special case: no adaptation filter found but destination filter has forced caps set, try to load a filter chain allowing for new caps
+		if (!new_f && filter_dst->forced_caps) {
+			new_f = gf_filter_pid_resolve_link_for_caps(pid, filter_dst, GF_FALSE);
+			if (new_f) {
+				//drop caps negociate
+				reconfig_only = GF_FALSE;
+			}
+		}
 	}
 	//we are inserting a new chain
 	else {

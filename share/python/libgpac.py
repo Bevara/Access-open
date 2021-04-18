@@ -104,7 +104,7 @@
 #
 # # Posting user tasks
 # 
-# You can post tasks to the session scheduler to get called back (usefull when running the session in blocking mode)
+# You can post tasks to the session scheduler to get called back (useful when running the session in blocking mode)
 # Tasks must derive FilterTask class and implement their own `execute` method
 # \code
 # class MyTask(FilterTask): 
@@ -128,7 +128,7 @@
 #- custom filters cannot be used as sources of filters loading a source filter graph dynamically, such as the dashin filter.
 #- custom filters cannot be used as destination of filters loading a destination filter graph dynamically, such as the dasher filters.
 #
-# A custom filter must implement the \ref FilterCustom class, and optionaly provide the following methods
+# A custom filter must implement the \ref FilterCustom class, and optionally provide the following methods
 # - configure_pid: callback for PID configuration, mandatory if your filter is not a source
 # - process: callback for processing
 # - process_event: callback for processing and event
@@ -237,7 +237,7 @@ except OSError:
 
 #change this to reflect API we encapsulate. An incomatibility in either of these will throw a warning
 GF_ABI_MAJOR=10
-GF_ABI_MINOR=6
+GF_ABI_MINOR=7
 
 gpac_abi_major=_libgpac.gf_gpac_abi_major()
 gpac_abi_minor=_libgpac.gf_gpac_abi_minor()
@@ -251,7 +251,7 @@ _libgpac_abi_mismatch=False
 ## \cond private
 if (gpac_abi_major != GF_ABI_MAJOR) or (gpac_abi_minor != GF_ABI_MINOR):
     abi_mismatch=True
-    print('WARNING: this python wrapper is for GPAC ABI ' + str(GF_ABI_MAJOR) + '.' + str(GF_ABI_MINOR)  + ' but native libgpac ABI is ' + str(gpac_abi_major) + '.'  + str(gpac_abi_minor) + '\n\tUndefined behaviour or crashes might happen, please update libgpac.py')
+    print('WARNING: this python wrapper is for GPAC ABI ' + str(GF_ABI_MAJOR) + '.' + str(GF_ABI_MINOR)  + ' but native libgpac ABI is ' + str(gpac_abi_major) + '.'  + str(gpac_abi_minor) + '\n\tUndefined behavior or crashes might happen, please update libgpac.py')
 
 ## \endcond private
 
@@ -2921,6 +2921,9 @@ _libgpac.gf_filter_pid_set_eos.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_has_seen_eos.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_has_seen_eos.restype = gf_bool
 
+_libgpac.gf_filter_pid_eos_received.argtypes = [_gf_filter_pid]
+_libgpac.gf_filter_pid_eos_received.restype = gf_bool
+
 _libgpac.gf_filter_pid_would_block.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_would_block.restype = gf_bool
 _libgpac.gf_filter_pid_set_loose_connect.argtypes = [_gf_filter_pid]
@@ -3031,9 +3034,12 @@ class FilterPid:
             ##end of stream property of PID  - see \ref gf_filter_pid_is_eos and \ref gf_filter_pid_set_eos
             #\hideinitializer
             self.eos=0
-            ##True if end of stream was seen in the chain but not yet reached by the filter, readonly  - see \ref gf_filter_pid_has_seen_eos
+            ##True if end of stream was seen in the chain but has not yet reached the filter, readonly  - see \ref gf_filter_pid_has_seen_eos
             #\hideinitializer
             self.has_seen_eos=0
+            ##True if end of stream was seen on the input PID but some packets are still to be processed, readonly  - see \ref gf_filter_pid_eos_received
+            #\hideinitializer
+            self.eos_received=0
             ##True if PID would block, readonly - see \ref gf_filter_pid_would_block
             #\hideinitializer
             self.would_block=0
@@ -3471,11 +3477,17 @@ class FilterPid:
         _libgpac.gf_filter_pid_set_eos(self._pid)
     ##\endcond private
 
-    ##True if end of stream was seen in the chain but not yet reached by the filter  - see \ref gf_filter_pid_has_seen_eos
+    ##True if end of stream was seen in the chain but not yet reached by the filter - see \ref gf_filter_pid_has_seen_eos
     #\return
     @property
     def has_seen_eos(self):
         return _libgpac.gf_filter_pid_has_seen_eos(self._pid)
+
+    ##True if end of stream was seen on pid but some packets are still pending - see \ref gf_filter_pid_eos_received
+    #\return
+    @property
+    def eos_receievd(self):
+        return _libgpac.gf_filter_pid_eos_received(self._pid)
 
     ##True if PID would block - see \ref gf_filter_pid_would_block
     #\return

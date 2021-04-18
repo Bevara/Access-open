@@ -112,6 +112,11 @@ enum
  */
 const char *gf_stream_type_name(u32 streamType);
 
+/*! Gets the stream type short name based on stream type (usually the lower case value of the stream name)
+\param streamType stream type GF_STREAM_XXX as defined in constants.h
+\return NULL if unknown, otherwise value
+ */
+const char *gf_stream_type_short_name(u32 streamType);
 
 /*! Gets the stream type by name
 \param name name of the stream type to query
@@ -479,7 +484,7 @@ typedef enum
 		\brief OGG DecoderConfig
 
 	 The DecoderConfig for theora, vorbis, flac and opus contains all intitialization ogg packets for the codec
-	  and is formated as follows:\n
+	  and is formatted as follows:\n
 	 \code
 	  while (dsi_size) {
 			bit(16) packet_size;

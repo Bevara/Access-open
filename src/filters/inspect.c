@@ -65,6 +65,7 @@ typedef struct
 	u32 tmcd_flags;
 	u32 tmcd_fpt;
 
+	u32 csize;
 	Bool buffer_done, no_analysis;
 } PidCtx;
 
@@ -1200,8 +1201,8 @@ static u64 gf_inspect_dump_obu_internal(FILE *dump, AV1State *av1, u8 *obu, u64 
 	switch (obu_type) {
 	case OBU_SEQUENCE_HEADER:
 		if (full_dump) break;
-		DUMP_OBU_INT(width)
-		DUMP_OBU_INT(height)
+		DUMP_OBU_INT(sequence_width)
+		DUMP_OBU_INT(sequence_height)
 		DUMP_OBU_INT(bit_depth)
 		DUMP_OBU_INT(still_picture)
 		DUMP_OBU_INT(OperatingPointIdc)
@@ -1232,6 +1233,8 @@ static u64 gf_inspect_dump_obu_internal(FILE *dump, AV1State *av1, u8 *obu, u64 
 
 				DUMP_OBU_INT2("show_frame", av1->frame_state.show_frame);
 				DUMP_OBU_INT2("show_existing_frame", av1->frame_state.show_existing_frame);
+				DUMP_OBU_INT(width);
+				DUMP_OBU_INT(height);
 			}
 			if (obu_type==OBU_FRAME_HEADER)
 				break;
@@ -1749,8 +1752,12 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 {
 	char szDump[GF_PROP_DUMP_ARG_SIZE];
 
-	if (!pname) pname = gf_props_4cc_get_name(p4cc);
+	if (!pname)
+		pname = gf_props_4cc_get_name(p4cc);
 	else {
+		//all properties starting with __ are not dumped
+		if (!strncmp(pname, "__", 2))
+			return;
 		if (!strcmp(pname, "isom_force_ctts"))
 			return;
 	}
@@ -1941,8 +1948,10 @@ static void inspect_dump_packet_fmt(GF_InspectCtx *ctx, FILE *dump, GF_FilterPac
 	if (!dump) return;
 	assert(str);
 
-	if (pck)
+	if (pck) {
 		data = gf_filter_pck_get_data(pck, &size);
+		pctx->csize += size;
+	}
 
 	while (str) {
 		char csep;
@@ -2050,6 +2059,7 @@ static void inspect_dump_packet_fmt(GF_InspectCtx *ctx, FILE *dump, GF_FilterPac
 		else if (!strcmp(key, "crypt")) gf_fprintf(dump, "%d", gf_filter_pck_get_crypt_flags(pck) );
 		else if (!strcmp(key, "vers")) gf_fprintf(dump, "%d", gf_filter_pck_get_carousel_version(pck) );
 		else if (!strcmp(key, "size")) gf_fprintf(dump, "%d", size );
+		else if (!strcmp(key, "csize")) gf_fprintf(dump, "%d", pctx->csize);
 		else if (!strcmp(key, "crc")) gf_fprintf(dump, "0x%08X", gf_crc_32(data, size) );
 		else if (!strcmp(key, "lf")) gf_fprintf(dump, "\n" );
 		else if (!strcmp(key, "cr")) gf_fprintf(dump, "\r" );
@@ -2210,7 +2220,7 @@ static void inspect_format_tmcd_internal(const u8 *data, u32 size, u32 tmcd_flag
 {
 	u32 h, m, s, f, value;
 	Bool neg=GF_FALSE;
-	Bool parse_fmt = 1;
+	u32 parse_fmt = 1;
 	Bool is_drop = GF_FALSE;
 	GF_BitStream *loc_bs = NULL;
 
@@ -2251,7 +2261,7 @@ static void inspect_format_tmcd_internal(const u8 *data, u32 size, u32 tmcd_flag
 		else if ((m>=60) || (s>=60))
 			parse_fmt = 2;
 		else
-			parse_fmt = GF_FALSE;
+			parse_fmt = 0;
 	}
 
 	if (parse_fmt) {
@@ -3611,20 +3621,20 @@ static const GF_FilterArgs InspectArgs[] =
 	{ OFFS(interleave), "dump packets as they are received on each pid. If false, report per pid is generated", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(deep), "dump packets along with PID state change, implied when [-fmt]() is set", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(props), "dump packet properties, ignored when [-fmt]() is set (see filter help)", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
-	{ OFFS(dump_data), "enable full data dump (__WARNING__ heavy!), ignored when [-fmt]() is set (see filter help)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
+	{ OFFS(dump_data), "enable full data dump (__heavy!__), ignored when [-fmt]() is set (see filter help)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(fmt), "set packet dump format (see filter help)", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(hdr), "print a header corresponding to fmt string without '$' or \"pid\"", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(allp), "analyse for the entire duration, rather than stoping when all pids are found", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(allp), "analyse for the entire duration, rather than stopping when all pids are found", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(info), "monitor PID info changes", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(pcr), "dump M2TS PCR info", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 	{ OFFS(speed), "set playback command speed. If speed is negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
-	{ OFFS(start), "set playback start offset. Negative value means percent of media dur with -1 <=> dur", GF_PROP_DOUBLE, "0.0", NULL, 0},
+	{ OFFS(start), "set playback start offset. Negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, 0},
 	{ OFFS(dur), "set inspect duration", GF_PROP_FRACTION, "0/0", NULL, 0},
 	{ OFFS(analyze), "analyze sample content (NALU, OBU)\n"
 	"- off: no analyzing\n"
 	"- on: simple analyzing\n"
 	"- bs: log bitstream syntax (all elements read from bitstream)\n"
-	"- full: log bitstream syntax and bit sizes signaled as `(N)` after field value, except 1-bit fields (ommited)", GF_PROP_UINT, "off", "off|on|bs|full", GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
+	"- full: log bitstream syntax and bit sizes signaled as `(N)` after field value, except 1-bit fields (omitted)", GF_PROP_UINT, "off", "off|on|bs|full", GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(xml), "use xml formatting (implied if (-analyze]() is set) and disable [-fmt]()", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(crc), "dump crc of NALU/OBU/... when analyzing", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(fftmcd), "consider timecodes use ffmpeg-compatible signaling rather than QT compliant one", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
@@ -3666,9 +3676,9 @@ const GF_FilterRegister InspectRegister = {
 				"- frame: framing status\n"
 				"  - interface: complete AU, interface object (no size info). Typically a GL texture\n"
 				"  - frame_full: complete AU\n"
-				"  - frame_start: begining of frame\n"
+				"  - frame_start: beginning of frame\n"
 				"  - frame_end: end of frame\n"
-				"  - frame_cont: frame continuation (not begining, not end)\n"
+				"  - frame_cont: frame continuation (not beginning, not end)\n"
 				"- sap or rap: SAP type of the frame\n"\
 				"- ilace: interlacing flag (0: progressive, 1: top field, 2: bottom field)\n"\
 				"- corr: corrupted packet flag\n"\
@@ -3676,13 +3686,14 @@ const GF_FilterRegister InspectRegister = {
 				"- bo: byte offset in source, N/A if not available\n"\
 				"- roll: roll info\n"\
 				"- crypt: crypt flag\n"\
-				"- vers: carrousel version number\n"\
+				"- vers: carousel version number\n"\
 				"- size: size of packet\n"\
+				"- csize: cumulated size of packets\n"\
 				"- crc: 32 bit CRC of packet\n"\
 				"- lf: insert linefeed\n"\
 				"- cr: insert carriage return\n"\
 				"- t: insert tab\n"\
-				"- data: hex dump of packet (** WARNING, BIG OUTPUT !! **)\n"\
+				"- data: hex dump of packet (__big output!__)\n"\
 				"- lp: leading picture flag\n"\
 				"- depo: depends on other packet flag\n"\
 				"- depf: is depended on other packet flag\n"\
@@ -3696,7 +3707,7 @@ const GF_FilterRegister InspectRegister = {
 	 			"EX fmt=\"PID $pid.ID$ packet $pn$ DTS $dts$ CTS $cts$ $lf$\"\n"
 	 			"This dumps packet number, cts and dts as follows: `PID 1 packet 10 DTS 100 CTS 108 \\n`\n"\
 	 			"  \n"\
-	 			"An unrecognized keywork or missing property will resolve to an empty string.\n"\
+	 			"An unrecognized keyword or missing property will resolve to an empty string.\n"\
 	 			"\n"\
 	 			"Note: when dumping in interleaved mode, there is no guarantee that the packets will be dumped in their original sequence order since the inspector fetches one packet at a time on each PID.\n")
 	.private_size = sizeof(GF_InspectCtx),
@@ -3736,11 +3747,10 @@ const GF_FilterRegister ProbeRegister = {
 	.name = "probe",
 	GF_FS_SET_DESCRIPTION("Probe source")
 	GF_FS_SET_HELP("The Probe filter is used by applications (typically `MP4Box`) to query demuxed pids available in a source chain.\n"
-	"The filter does not produce any output nor feedback, it is up to the app developper to query input pids of the prober and take appropriated decisions.")
+	"The filter does not produce any output nor feedback, it is up to the app developer to query input pids of the prober and take appropriated decisions.")
 	.private_size = sizeof(GF_InspectCtx),
 	.flags = GF_FS_REG_EXPLICIT_ONLY,
 	.max_extra_pids = (u32) -1,
-	.args = InspectArgs,
 	.initialize = inspect_initialize,
 	SETCAPS(ProberCaps),
 	.finalize = inspect_finalize,

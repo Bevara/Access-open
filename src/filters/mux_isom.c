@@ -141,7 +141,7 @@ typedef struct
 	u32 amr_mode_set;
 	Bool has_seig;
 	u64 empty_init_dur;
-	u32 raw_audio_bytes_per_sample;
+	u32 raw_audio_bytes_per_sample, raw_samplerate;
 	u64 dts_patch;
 
 	Bool is_item;
@@ -636,6 +636,8 @@ static void mp4_mux_set_tags(GF_MP4MuxCtx *ctx, TrackWriter *tkw)
 
 			if (strlen(tag_name)==4) {
 				itag = GF_4CC(tag_name[0], tag_name[1], tag_name[2], tag_name[3]);
+			} else if (strlen(tag_name)==3) {
+				itag = GF_4CC(0xA9, tag_name[0], tag_name[1], tag_name[2]);
 			} else {
 				itag = gf_crc_32(tag_name, (u32) strlen(tag_name));
 				GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[MP4Mux] Tag name %s is not a 4CC, using CRC32 %08X as value\n", tag_name, itag));
@@ -1720,6 +1722,11 @@ sample_entry_setup:
 			tkw->raw_audio_bytes_per_sample = raw_bitdepth;
 			tkw->raw_audio_bytes_per_sample *= nb_chan;
 			tkw->raw_audio_bytes_per_sample /= 8;
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLE_RATE);
+			tkw->raw_samplerate = p ? p->value.uint : 0;
+			//force timescale to be samplerate, except if explicit overwrite
+			if (ctx->mediats==0)
+				tkw->tk_timescale = tkw->raw_samplerate;
 		}
 		else if (tkw->stream_type == GF_STREAM_VISUAL) {
 			p = gf_filter_pid_get_property(pid, GF_PROP_PID_PIXFMT);
@@ -3025,6 +3032,7 @@ sample_entry_done:
 	return GF_OK;
 }
 
+static GF_Err mp4_mux_flush_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx);
 static GF_Err mp4_mux_done(GF_Filter *filter, GF_MP4MuxCtx *ctx, Bool is_final);
 
 static GF_Err mp4_mux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
@@ -3038,10 +3046,17 @@ static GF_Err mp4_mux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 			gf_free(tkw);
 		}
 		//removing last pid
-		if (ctx->opid && !gf_list_count(ctx->tracks) && ctx->file) {
-			//non-frag file, flush file
-			if (!ctx->init_movie_done) {
-				mp4_mux_done(filter, ctx, GF_TRUE);
+		if (ctx->opid && !gf_list_count(ctx->tracks)) {
+			if (ctx->file) {
+				//non-frag file, flush file
+				if (!ctx->init_movie_done) {
+					mp4_mux_done(filter, ctx, GF_TRUE);
+				}
+			} else {
+				while (ctx->flush_size) {
+					GF_Err e = mp4_mux_flush_fragmented(filter, ctx);
+					if (e) break;
+				}
 			}
 			//delete output pid (to flush destruction of filter chain)
 			gf_filter_pid_remove(ctx->opid);
@@ -3476,7 +3491,11 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 
 
 	tkw->sample.IsRAP = 0;
-	sap_type = mp4_mux_get_sap(ctx, pck);
+	if (tkw->codecid==GF_CODECID_RAW) {
+		sap_type = GF_FILTER_SAP_1;
+	} else {
+		sap_type = mp4_mux_get_sap(ctx, pck);
+	}
 	if (sap_type==GF_FILTER_SAP_1)
 		tkw->sample.IsRAP = SAP_TYPE_1;
 	else if ( (sap_type == GF_FILTER_SAP_4) && (tkw->stream_type != GF_STREAM_VISUAL) )
@@ -3531,7 +3550,13 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 	tkw->sample.nb_pack = 0;
 	if (tkw->raw_audio_bytes_per_sample) {
 		tkw->sample.nb_pack = tkw->sample.dataLength / tkw->raw_audio_bytes_per_sample;
-		if (tkw->sample.nb_pack) duration /= tkw->sample.nb_pack;
+		if (tkw->sample.nb_pack) {
+			duration = 1;
+			if (tkw->raw_samplerate && (tkw->tk_timescale != tkw->raw_samplerate)) {
+				duration *= tkw->tk_timescale;
+				duration /= tkw->raw_samplerate;
+			}
+		}
 	}
 
 	if (tkw->cenc_state && tkw->clear_stsd_idx && !gf_filter_pck_get_crypt_flags(pck)) {
@@ -4247,6 +4272,7 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 	//good to go, finalize for fragments
 	for (i=0; i<count; i++) {
 		u32 def_pck_dur;
+		u32 def_samp_size=0;
 		u32 def_is_rap;
 #ifdef GF_ENABLE_CTRN
 		u32 inherit_traf_from_track = 0;
@@ -4282,9 +4308,18 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 					min_dts = dts;
 					min_dts_scale = tscale;
 				}
+				if (tkw->raw_audio_bytes_per_sample) {
+					u32 pck_size;
+					gf_filter_pck_get_data(pck, &pck_size);
+					pck_size /= tkw->raw_audio_bytes_per_sample;
+					if (pck_size)
+						def_pck_dur /= pck_size;
+				}
 			} else {
 				def_pck_dur = 0;
 			}
+			if (tkw->raw_audio_bytes_per_sample)
+				def_samp_size = tkw->raw_audio_bytes_per_sample;
 		}
 		if (tkw->src_timescale != tkw->tk_timescale) {
 			def_pck_dur *= tkw->tk_timescale;
@@ -4329,7 +4364,7 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 
 		//use 1 for the default sample description index. If no multi stsd, this is always the case
 		//otherwise we need to update the stsd idx in the traf headers
-		e = gf_isom_setup_track_fragment(ctx->file, tkw->track_id, tkw->stsd_idx, def_pck_dur, 0, (u8) def_is_rap, 0, 0, ctx->nofragdef ? GF_TRUE : GF_FALSE);
+		e = gf_isom_setup_track_fragment(ctx->file, tkw->track_id, tkw->stsd_idx, def_pck_dur, def_samp_size, (u8) def_is_rap, 0, 0, ctx->nofragdef ? GF_TRUE : GF_FALSE);
 		if (e) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Unable to setup fragmentation for track ID %d: %s\n", tkw->track_id, gf_error_to_string(e) ));
 			return e;
@@ -4645,7 +4680,7 @@ static GF_Err mp4_mux_flush_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 	nb_read = (u32) gf_fread(output, blocksize, ctx->tmp_store);
 	if (nb_read != blocksize) {
 		char tmp[1];
-		//weird behaviour on some file systems, dump debug info
+		//weird behavior on some file systems, dump debug info
 		gf_fread(tmp, 1, ctx->tmp_store);
 		Bool is_eof = gf_feof(ctx->tmp_store);
 		GF_LOG(is_eof ? GF_LOG_WARNING : GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error reading from VOD temp cache, read %d bytes but asked %d bytes\n\tCache EOF %d - cache size "LLU" - read pos "LLU" - file pos "LLU"\n", nb_read, blocksize, is_eof, ctx->flush_size, ctx->flush_done, gf_ftell(ctx->tmp_store)));
@@ -4660,7 +4695,7 @@ static GF_Err mp4_mux_flush_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 	gf_filter_pck_set_framing(pck, GF_FALSE, GF_FALSE);
 	gf_filter_pck_send(pck);
 	//we are not done flushing but we have no more input packets, signal we still need processing
-	gf_filter_post_process_task(filter);
+	gf_filter_ask_rt_reschedule(filter, 1);
 	return GF_OK;
 }
 
@@ -6195,9 +6230,9 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	{ OFFS(pack3gp), "pack a given number of 3GPP audio frames in one sample", GF_PROP_UINT, "1", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(importer), "compatibility with old importer, displays import progress", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(pack_nal), "repack NALU size length to minimum possible size for NALU-based video (AVC/HEVC/...)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(xps_inband), "use inband (in sample data) param set for NALU-based video (AVC/HEVC/...)\n"
+	{ OFFS(xps_inband), "use inband (in sample data) parameter set for NALU-based video (AVC/HEVC/...)\n"
 	"- no: paramater sets are not inband, several sample descriptions might be created\n"
-	"- all: paramater sets are inband, no param sets in sample description\n"
+	"- all: paramater sets are inband, no parameter sets in sample description\n"
 	"- both: paramater sets are inband, signaled as inband, and also first set is kept in sample description\n"
 	"- mix: creates non-standard files using single sample entry with first PSs found, and moves other PS inband", GF_PROP_UINT, "no", "no|all|both|mix", 0},
 	{ OFFS(store), "file storage mode\n"
@@ -6216,7 +6251,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	{ OFFS(fsap), "split truns in video fragments at SAPs to reduce file size", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(file), "pointer to a write/edit ISOBMF file used internally by importers and exporters", GF_PROP_POINTER, NULL, NULL, GF_FS_ARG_HINT_HIDE},
 	{ OFFS(subs_sidx), "number of subsegments per sidx. negative value disables sidx, -2 removes sidx if present in source pid", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(m4cc), "4 character code of empty box to appen at the end of a segment", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(m4cc), "4 character code of empty box to append at the end of a segment", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(chain_sidx), "use daisy-chaining of SIDX", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(msn), "sequence number of first moof to N", GF_PROP_UINT, "1", NULL, 0},
 	{ OFFS(msninc), "sequence number increase between moofs", GF_PROP_UINT, "1", NULL, 0},
@@ -6259,7 +6294,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 			"- v1: use v1 signaling, ISOBMFF style (will mux raw PCM as ISOBMFF style)\n"\
 			"- v1qt: use v1 signaling, QTFF style"\
 		, GF_PROP_UINT, "v0", "|v0|v0s|v1|v1qt", 0},
-	{ OFFS(ssix), "create ssix when sidx is present, level 1 mappping I-frames byte ranges, level 0xFF mapping the rest", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(ssix), "create ssix when sidx is present, level 1 mapping I-frames byte ranges, level 0xFF mapping the rest", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ccst), "insert coding constraint box for video tracks", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(maxchunk), "set max chunk size in bytes for runs (only used in non-fragmented mode). 0 means no constraints", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(noroll), "disable roll sample grouping", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
@@ -6302,7 +6337,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 		"- cmfc: use CMAF `cmfc` guidelines\n"
 		"- cmf2: use CMAF `cmf2` guidelines"
 		, GF_PROP_UINT, "no", "no|cmfc|cmf2", GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(start), "set playback start offset (MP4Box import only). Negative value means percent of media dur with -1 <=> dur", GF_PROP_DOUBLE, "0.0", NULL, GF_FS_ARG_HINT_HIDE},
+	{ OFFS(start), "set playback start offset (MP4Box import only). Negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, GF_FS_ARG_HINT_HIDE},
 	{0}
 };
 
@@ -6321,9 +6356,9 @@ GF_FilterRegister MP4MuxRegister = {
 	"EX -i source.jpg:#ItemID=1 -o file.mp4\n"
 	"  \n"
 	"# Storage\n"
-	"The [-store]() option allows controling if the file is fragmented ot not, and when not fragmented, how interleaving is done. For cases where disk requirements are tight and fragmentation cannot be used, it is recommended to use either `flat` or `fstart` modes.\n"
+	"The [-store]() option allows controlling if the file is fragmented ot not, and when not fragmented, how interleaving is done. For cases where disk requirements are tight and fragmentation cannot be used, it is recommended to use either `flat` or `fstart` modes.\n"
 	"  \n"
-	"The [-vodcache]() option allows controling how DASH onDemand segments are generated:\n"
+	"The [-vodcache]() option allows controlling how DASH onDemand segments are generated:\n"
 	"- If set to `on`, file data is stored to a temporary file on disk and flushed upon completion, no padding is present.\n"
 	"- If set to `insert`, SIDX/SSIX will be injected upon completion of the file by shifting bytes in file. In this case, no padding is required but this might not be compatible with all output sinks and will take longer to write the file.\n"
 	"- If set to `replace`, SIDX/SSIX size will be estimated based on duration and DASH segment length, and padding will be used in the file __before__ the final SIDX. If input pids have the properties `DSegs` set, this will be as the number of segments.\n"
@@ -6342,9 +6377,10 @@ GF_FilterRegister MP4MuxRegister = {
 	"  \n"
 	"# Tagging\n"
 	"When tagging is enabled, the filter will watch the property `CoverArt` and all custom properties on incoming pid.\n"
-	"The built-in tag names are `album`, `artist`, `comment`, `complilation`, `composer`, `year`, `disk`, `tool`, `genre`, `contentgroup`, `title`, `tempo`, `track`, `tracknum`, `writer`, `encoder`, `album_artist`, `gapless`, `conductor`.\n"
+	"The built-in tag names are indicated by `MP4Box -h tags`.\n"
 	"Other tag class may be specified using `tag_NAME` property names, and will be added if [-tags]() is set to `all` using:\n"
 	"- `NAME` as a box 4CC if `NAME` is four characters long\n"
+	"- `NAME` as a box 4CC if `NAME` is 3 characters long, and will be prefixed by 0xA9\n"
 	"- the CRC32 of the `NAME` as a box 4CC if `NAME` is not four characters long\n"
 	"  \n"
 	"# Notes\n"

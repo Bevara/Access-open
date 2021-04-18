@@ -59,7 +59,7 @@ CodecIDReg CodecRegistry [] = {
 	{GF_CODECID_TEXT_MPEG4, GF_CODECID_TEXT_MPEG4, GF_STREAM_TEXT, "MPEG-4 Streaming Text", "m4txt", "text", "application/x-mpeg4-text"},
 	{GF_CODECID_LASER, GF_CODECID_LASER, GF_STREAM_SCENE, "MPEG-4 LASeR", "laser", "lsr1", "application/x-laser"},
 	{GF_CODECID_SAF, GF_CODECID_SAF, GF_STREAM_SCENE, "MPEG-4 Simple Aggregation Format", "saf", "mp4s", "application/saf"},
-	{GF_CODECID_MPEG4_PART2, GF_CODECID_MPEG4_PART2, GF_STREAM_VISUAL, "MPEG-4 Visual part 2", "cmp|m4vp2", "mp4v", "video/mp4v-es"},
+	{GF_CODECID_MPEG4_PART2, GF_CODECID_MPEG4_PART2, GF_STREAM_VISUAL, "MPEG-4 Visual part 2", "cmp|m4ve|m4v", "mp4v", "video/mp4v-es"},
 	{GF_CODECID_AVC, GF_CODECID_AVC, GF_STREAM_VISUAL, "MPEG-4 AVC|H264 Video", "264|avc|h264", "avc1", "video/avc"},
 	{GF_CODECID_AVC_PS, GF_CODECID_AVC_PS, GF_STREAM_VISUAL, "MPEG-4 AVC|H264 Video Parameter Sets", "avcps", "avcp", "video/avc"},
 	{GF_CODECID_SVC, GF_CODECID_SVC, GF_STREAM_VISUAL, "MPEG-4 AVC|H264 Scalable Video Coding", "svc|avc|264|h264", "svc1", "video/svc"},
@@ -387,26 +387,27 @@ typedef struct
 	u32 st;
 	const char *name;
 	const char *desc;
+	const char *sname;
 	const char *alt_name;
 } GF_StreamTypeDesc;
 
 static const GF_StreamTypeDesc GF_StreamTypes[] =
 {
-	{GF_STREAM_VISUAL, "Visual", "Video or Image stream", "Video"},
-	{GF_STREAM_AUDIO, "Audio", "Audio stream"},
-	{GF_STREAM_SCENE, "SceneDescription", "Scene stream"},
-	{GF_STREAM_TEXT, "Text", "Text or subtitle stream"},
-	{GF_STREAM_METADATA, "Metadata", "Metadata stream"},
-	{GF_STREAM_FILE, "File", "Raw file stream"},
-	{GF_STREAM_ENCRYPTED, "Encrypted", "Encrypted media stream"},
-	{GF_STREAM_OD, "ObjectDescriptor", "MPEG-4 ObjectDescriptor stream"},
-	{GF_STREAM_OCR, "ClockReference", "MPEG-4 Clock Reference stream"},
-	{GF_STREAM_MPEG7, "MPEG7", "MPEG-7 description stream"},
-	{GF_STREAM_IPMP, "IPMP", "MPEG-4 IPMP/DRM stream"},
-	{GF_STREAM_OCI, "OCI", "MPEG-4 ObjectContentInformation stream"},
-	{GF_STREAM_MPEGJ, "MPEGJ", "MPEG-4 JAVA stream"},
-	{GF_STREAM_INTERACT, "Interaction", "MPEG-4 Interaction Sensor stream"},
-	{GF_STREAM_FONT, "Font", "MPEG-4 Font stream"}
+	{GF_STREAM_VISUAL, "Visual", "Video or Image stream", "video", "Video"},
+	{GF_STREAM_AUDIO, "Audio", "Audio stream", "audio"},
+	{GF_STREAM_SCENE, "SceneDescription", "Scene stream", "scene"},
+	{GF_STREAM_TEXT, "Text", "Text or subtitle stream", "text"},
+	{GF_STREAM_METADATA, "Metadata", "Metadata stream", "meta"},
+	{GF_STREAM_FILE, "File", "Raw file stream", "file"},
+	{GF_STREAM_ENCRYPTED, "Encrypted", "Encrypted media stream", "crypt"},
+	{GF_STREAM_OD, "ObjectDescriptor", "MPEG-4 ObjectDescriptor stream", "od"},
+	{GF_STREAM_OCR, "ClockReference", "MPEG-4 Clock Reference stream", "ocr"},
+	{GF_STREAM_MPEG7, "MPEG7", "MPEG-7 description stream", "mpeg7"},
+	{GF_STREAM_IPMP, "IPMP", "MPEG-4 IPMP/DRM stream", "ipmp"},
+	{GF_STREAM_OCI, "OCI", "MPEG-4 ObjectContentInformation stream", "oci"},
+	{GF_STREAM_MPEGJ, "MPEGJ", "MPEG-4 JAVA stream", "mpegj"},
+	{GF_STREAM_INTERACT, "Interaction", "MPEG-4 Interaction Sensor stream", "interact"},
+	{GF_STREAM_FONT, "Font", "MPEG-4 Font stream", "font"}
 };
 
 GF_EXPORT
@@ -418,6 +419,17 @@ const char *gf_stream_type_name(u32 streamType)
 			return GF_StreamTypes[i].name;
 	}
 	return "Unknown";
+}
+
+GF_EXPORT
+const char *gf_stream_type_short_name(u32 streamType)
+{
+	u32 i, nb_st = sizeof(GF_StreamTypes) / sizeof(GF_StreamTypeDesc);
+	for (i=0; i<nb_st; i++) {
+		if (GF_StreamTypes[i].st == streamType)
+			return GF_StreamTypes[i].sname;
+	}
+	return "unkn";
 }
 
 GF_EXPORT
@@ -1517,7 +1529,7 @@ static struct _itags {
 	{"tracknum", NULL, GF_ISOM_ITUNE_TRACKNUMBER, GF_ID3V2_FRAME_TRCK, GF_ITAG_FRAC8, 0},
 	{"disk", NULL, GF_ISOM_ITUNE_DISK, GF_ID3V2_FRAME_TPOS, GF_ITAG_FRAC6, 0},
 	{"tempo", NULL, GF_ISOM_ITUNE_TEMPO, GF_ID3V2_FRAME_TBPM, GF_ITAG_INT16, 0},
-	{"complilation", NULL, GF_ISOM_ITUNE_COMPILATION, GF_ID3V2_FRAME_TCMP, GF_ITAG_BOOL, 0},
+	{"compilation", NULL, GF_ISOM_ITUNE_COMPILATION, GF_ID3V2_FRAME_TCMP, GF_ITAG_BOOL, 0},
 	{"show", "tvShow", GF_ISOM_ITUNE_TV_SHOW, 0, GF_ITAG_STR, 0},
 	{"episode_id", "tvEpisodeID", GF_ISOM_ITUNE_TV_EPISODE, 0, GF_ITAG_STR, 0},
 	{"season", "tvSeason", GF_ISOM_ITUNE_TV_SEASON, 0, GF_ITAG_INT32, 0},
@@ -1541,10 +1553,31 @@ static struct _itags {
 	{"url", "podcastURL", GF_ISOM_ITUNE_PODCAST_URL, 0, GF_ITAG_STR, 0},
 	{"keywords", NULL, GF_ISOM_ITUNE_KEYWORDS, GF_ID3V2_FRAME_TKWD, GF_ITAG_STR, 0},
 	{"category", NULL, GF_ISOM_ITUNE_CATEGORY, GF_ID3V2_FRAME_TCAT, GF_ITAG_STR, 0},
-	{"hdvideo", NULL, GF_ISOM_ITUNE_HD_VIDEO, 0, GF_ITAG_BOOL, 0},
+	{"hdvideo", NULL, GF_ISOM_ITUNE_HD_VIDEO, 0, GF_ITAG_INT8, 0},
 	{"media", "mediaType", GF_ISOM_ITUNE_MEDIA_TYPE, 0, GF_ITAG_INT8, 0},
 	{"rating", "contentRating", GF_ISOM_ITUNE_RATING, 0, GF_ITAG_INT8, 0},
 	{"gapless", NULL, GF_ISOM_ITUNE_GAPLESS, 0, GF_ITAG_BOOL, 0},
+	{"art_director", NULL, GF_ISOM_ITUNE_ART_DIRECTOR, 0, GF_ITAG_STR, 0},
+	{"arranger", NULL, GF_ISOM_ITUNE_ARRANGER, 0, GF_ITAG_STR, 0},
+	{"lyricist", NULL, GF_ISOM_ITUNE_LYRICIST, 0, GF_ITAG_STR, 0},
+	{"acknowledgement", NULL, GF_ISOM_ITUNE_COPY_ACK, 0, GF_ITAG_STR, 0},
+	{"song_description", NULL, GF_ISOM_ITUNE_SONG_DESC, 0, GF_ITAG_STR, 0},
+	{"director", NULL, GF_ISOM_ITUNE_DIRECTOR, 0, GF_ITAG_STR, 0},
+	{"equalizer", NULL, GF_ISOM_ITUNE_EQ_PRESET, 0, GF_ITAG_STR, 0},
+	{"liner", NULL, GF_ISOM_ITUNE_LINER_NOTES, 0, GF_ITAG_STR, 0},
+	{"record_company", NULL, GF_ISOM_ITUNE_REC_COMPANY, 0, GF_ITAG_STR, 0},
+	{"original_artist", NULL, GF_ISOM_ITUNE_ORIG_ARTIST, 0, GF_ITAG_STR, 0},
+	{"phono_rights", NULL, GF_ISOM_ITUNE_PHONO_RIGHTS, 0, GF_ITAG_STR, 0},
+	{"producer", NULL, GF_ISOM_ITUNE_PRODUCER, 0, GF_ITAG_STR, 0},
+	{"performer", NULL, GF_ISOM_ITUNE_PERFORMER, 0, GF_ITAG_STR, 0},
+	{"publisher", NULL, GF_ISOM_ITUNE_PUBLISHER, 0, GF_ITAG_STR, 0},
+	{"sound_engineer", NULL, GF_ISOM_ITUNE_SOUND_ENG, 0, GF_ITAG_STR, 0},
+	{"soloist", NULL, GF_ISOM_ITUNE_SOLOIST, 0, GF_ITAG_STR, 0},
+	{"credits", NULL, GF_ISOM_ITUNE_CREDITS, 0, GF_ITAG_STR, 0},
+	{"thanks", NULL, GF_ISOM_ITUNE_THANKS, 0, GF_ITAG_STR, 0},
+	{"online_info", NULL, GF_ISOM_ITUNE_ONLINE, 0, GF_ITAG_STR, 0},
+	{"exec_producer", NULL, GF_ISOM_ITUNE_EXEC_PRODUCER, 0, GF_ITAG_STR, 0},
+
 };
 
 GF_EXPORT

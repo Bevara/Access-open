@@ -110,7 +110,7 @@ GF_Err gf_media_change_par(GF_ISOFile *isom_file, u32 trackNumber, s32 ar_num, s
 /*! Changes color property of the media (bitstream rewrite) - only AVC/H264 supported for now. See CICP for value types
 Negative values keep source settings for the corresponding flags.
 If source stream has no VUI info, create one and set corresponding flags to specified values.
-In this case, any other flags are set to prefered values (typically, flag=0 or value=undef).
+In this case, any other flags are set to preferred values (typically, flag=0 or value=undef).
 \param isom_file target ISOBMF file
 \param trackNumber target track
 \param fullrange fullrange flag
@@ -398,7 +398,7 @@ typedef struct __track_import
 	const char *filter_src_opts;
 	/*! any filter options to pass to sink*/
 	const char *filter_dst_opts;
-	/*! filter chain to insert before destination, formated as "f1[:args]@f2[:args]" options to pass to sink*/
+	/*! filter chain to insert before destination, formatted as "f1[:args]@f2[:args]" options to pass to sink*/
 	const char *filter_chain;
 
 	/*! force mode for the created  ISOBMFF sample entry*/
@@ -603,7 +603,7 @@ typedef struct
 	/*! ID of the adaptation set, may be 0 (assigned by dasher)*/
 	u32 asID;
 	/*! forced media duration.*/
-	Double media_duration;
+	GF_Fraction64 media_duration;
 	/*! number of base URLs in the baseURL structure*/
 	u32 nb_baseURL;
 	/*! list of baseURL to be used for this representation*/
@@ -633,9 +633,9 @@ typedef struct
 	/*! forces bandwidth in bits per seconds of the source media. If 0, computed from file */
 	u32 bandwidth;
 	/*! forced period duration (used when using empty periods or xlink periods without content)*/
-	Double period_duration;
+	GF_Fraction period_duration;
 	/*! forced dash target duration for this rep*/
-	Double dash_duration;
+	GF_Fraction dash_duration;
 	/*! sets default start number for this representation. if not set, assigned automatically */
 	u32 startNumber; 	//TODO: start number, template
 	/*! overrides template for this input*/
@@ -843,7 +843,7 @@ GF_Err gf_dasher_set_switch_mode(GF_DASHSegmenter *dasher, GF_DashSwitchingMode 
 GF_Err gf_dasher_set_durations(GF_DASHSegmenter *dasher, Double default_segment_duration, Double default_fragment_duration, Double sub_duration);
 
 /*!
- Enables spliting at RAP boundaries
+ Enables splitting at RAP boundaries
 \param dasher the DASH segmenter object
 \param segments_start_with_rap segments will be split at RAP boundaries
 \param fragments_start_with_rap fragments will be split at RAP boundaries

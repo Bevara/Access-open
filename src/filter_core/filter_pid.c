@@ -1022,6 +1022,26 @@ void gf_filter_pid_reconfigure_task(GF_FSTask *task)
 	}
 }
 
+void gf_filter_pid_reconfigure_task_discard(GF_FSTask *task)
+{
+	GF_FilterPidInst *pidi = (GF_FilterPidInst *) task->pid;
+	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Filter %s pid %s reconfigure to %s\n", task->pid->pid->filter->name, task->pid->pid->name, task->filter->name));
+
+	if (!pidi->pid) return;
+	gf_filter_pid_configure(task->filter, pidi->pid, GF_PID_CONF_RECONFIG);
+	//once connected, any set_property before the first packet dispatch will have to trigger a reconfigure
+	if (!task->pid->pid->nb_pck_sent) {
+		task->pid->pid->request_property_map = GF_TRUE;
+		task->pid->pid->pid_info_changed = GF_FALSE;
+	}
+
+	if (pidi->discard_inputs==2) {
+		gf_filter_aggregate_packets(pidi);
+		while (gf_filter_pid_get_packet((GF_FilterPid *) pidi)) {
+			gf_filter_pid_drop_packet((GF_FilterPid *) pidi);
+		}
+	}
+}
 void gf_filter_pid_disconnect_task(GF_FSTask *task)
 {
 	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Filter %s pid %s disconnect from %s\n", task->pid->pid->filter->name, task->pid->pid->name, task->filter->name));
@@ -3057,7 +3077,7 @@ static void gf_filter_pid_resolve_link_dijkstra(GF_FilterPid *pid, GF_Filter *ds
 \param reconfigurable_only indicates the chain should be loaded for reconfigurable filters
 \return the first filter in the matching chain, or NULL if no match
 */
-static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filter *dst, Bool *filter_reassigned, Bool reconfigurable_only, u32 *min_chain_len, GF_List *skip_if_in_filter_list, Bool *skipped)
+static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filter *dst, Bool *filter_reassigned, u32 reconfigurable_only_type, u32 *min_chain_len, GF_List *skip_if_in_filter_list, Bool *skipped)
 {
 	GF_Filter *chain_input = NULL;
 	GF_FilterSession *fsess = pid->filter->session;
@@ -3065,12 +3085,15 @@ static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filt
 	u32 i, count;
 	char prefRegister[1001];
 	char szForceReg[20];
+	Bool reconfigurable_only;
 
 	if (!fsess->max_resolve_chain_len) return NULL;
 
 	filter_chain = gf_list_new();
 
 	if (!dst) return NULL;
+
+	reconfigurable_only = (reconfigurable_only_type==2) ? GF_TRUE : GF_FALSE;
 
 	sprintf(szForceReg, "gfreg%c", pid->filter->session->sep_name);
 	prefRegister[0]=0;
@@ -3197,7 +3220,7 @@ static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filt
 
 #ifndef GPAC_DISABLE_LOG
 		if (gf_log_tool_level_on(GF_LOG_FILTER, GF_LOG_INFO)) {
-			GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Solved %sfilter chain from filter %s PID %s to filter %s - dumping chain:\n", reconfigurable_only ? "adaptation " : "", pid->filter->name, pid->name, dst->freg->name));
+			GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Solved %sfilter chain from filter %s PID %s to filter %s - dumping chain:\n", reconfigurable_only_type ? "adaptation " : "", pid->filter->name, pid->name, dst->freg->name));
 		}
 #endif
 		prev_af = NULL;
@@ -3305,7 +3328,7 @@ static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filt
 
 			prev_af = af;
 
-			if (reconfigurable_only) af->is_pid_adaptation_filter = GF_TRUE;
+			if (reconfigurable_only_type) af->is_pid_adaptation_filter = GF_TRUE;
 
 			//remember the first in the chain
 			if (!i) chain_input = af;
@@ -3333,23 +3356,23 @@ exit:
 
 GF_Filter *gf_filter_pid_resolve_link(GF_FilterPid *pid, GF_Filter *dst, Bool *filter_reassigned)
 {
-	return gf_filter_pid_resolve_link_internal(pid, dst, filter_reassigned, GF_FALSE, NULL, NULL, NULL);
+	return gf_filter_pid_resolve_link_internal(pid, dst, filter_reassigned, 0, NULL, NULL, NULL);
 }
 
 GF_Filter *gf_filter_pid_resolve_link_check_loaded(GF_FilterPid *pid, GF_Filter *dst, Bool *filter_reassigned, GF_List *skip_if_in_filter_list, Bool *skipped)
 {
-	return gf_filter_pid_resolve_link_internal(pid, dst, filter_reassigned, GF_FALSE, NULL, skip_if_in_filter_list, skipped);
+	return gf_filter_pid_resolve_link_internal(pid, dst, filter_reassigned, 0, NULL, skip_if_in_filter_list, skipped);
 }
 
-GF_Filter *gf_filter_pid_resolve_link_for_caps(GF_FilterPid *pid, GF_Filter *dst)
+GF_Filter *gf_filter_pid_resolve_link_for_caps(GF_FilterPid *pid, GF_Filter *dst, Bool check_reconfig_only)
 {
-	return gf_filter_pid_resolve_link_internal(pid, dst, NULL, GF_TRUE, NULL, NULL, NULL);
+	return gf_filter_pid_resolve_link_internal(pid, dst, NULL, check_reconfig_only ? 2 : 1, NULL, NULL, NULL);
 }
 
 u32 gf_filter_pid_resolve_link_length(GF_FilterPid *pid, GF_Filter *dst)
 {
 	u32 chain_len=0;
-	gf_filter_pid_resolve_link_internal(pid, dst, NULL, GF_FALSE, &chain_len, NULL, NULL);
+	gf_filter_pid_resolve_link_internal(pid, dst, NULL, 0, &chain_len, NULL, NULL);
 	return chain_len;
 }
 
@@ -3376,11 +3399,30 @@ static void gf_filter_pid_set_args_internal(GF_Filter *filter, GF_FilterPid *pid
 		Bool parse_prop = GF_TRUE;
 		char *value_next_list = NULL;
 		char *value_sep = NULL;
-		char *value, *name;
-		//look for our arg separator
+		char *value, *name, *sep;
 
-		char *sep = (char *)gf_fs_path_escape_colon(filter->session, args);
-
+		//escaped arg separator, skip everything until next escape sep or end
+		if (args[0] == sep_args) {
+			args++;
+			while (1) {
+				if (sep_args == ':') {
+					sep = (char *)gf_fs_path_escape_colon(filter->session, args);
+				} else {
+					sep = strchr(args, sep_args);
+				}
+				if (!sep) return;
+				if (sep[1]==sep_args) {
+					args = sep+1;
+					break;
+				}
+				args = sep+1;
+			}
+		}
+		if (sep_args == ':') {
+			sep = (char *)gf_fs_path_escape_colon(filter->session, args);
+		} else {
+			sep = strchr(args, sep_args);
+		}
 		if (sep) {
 			char *xml_start = strchr(args, '<');
 			u32 len = (u32) (sep-args);
@@ -3583,9 +3625,8 @@ skip_arg:
 }
 
 GF_EXPORT
-GF_Err gf_filter_pid_push_properties(GF_FilterPid *pid, char *args, Bool use_default_seps)
+GF_Err gf_filter_pid_push_properties(GF_FilterPid *pid, char *args, Bool direct_merge, Bool use_default_seps)
 {
-	Bool req_map_bck;
 	if (!args) return GF_OK;
 	if (PID_IS_INPUT(pid)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to write property on input PID in filter %s - ignoring\n", pid->filter->name));
@@ -3593,14 +3634,18 @@ GF_Err gf_filter_pid_push_properties(GF_FilterPid *pid, char *args, Bool use_def
 	}
 
 	//pid props specified by user are merged directly
-	req_map_bck = pid->request_property_map;
-	pid->request_property_map = GF_FALSE;
-	gf_filter_pid_set_args_internal(pid->filter, pid, args, use_default_seps, 0);
-	pid->request_property_map = req_map_bck;
+	if (direct_merge) {
+		Bool req_map_bck = pid->request_property_map;
+		pid->request_property_map = GF_FALSE;
+		gf_filter_pid_set_args_internal(pid->filter, pid, args, use_default_seps, 0);
+		pid->request_property_map = req_map_bck;
+	} else {
+		gf_filter_pid_set_args_internal(pid->filter, pid, args, use_default_seps, 0);
+	}
 	return GF_OK;
 }
 
-static void gf_filter_pid_set_args(GF_Filter *filter, GF_FilterPid *pid)
+void gf_filter_pid_set_args(GF_Filter *filter, GF_FilterPid *pid)
 {
 	Bool req_map_bck;
 	char *args;
@@ -3820,7 +3865,7 @@ static void gf_filter_pid_init_task(GF_FSTask *task)
 	if (filter->user_pid_props)
 		gf_filter_pid_set_args(filter, pid);
 
-	//since we may have inserted filters in the middle (demuxers typically), get the last explicitely
+	//since we may have inserted filters in the middle (demuxers typically), get the last explicitly
 	//loaded ID in the chain
 	filter_id = gf_filter_last_id_in_chain(filter, GF_FALSE);
 	if (!filter_id && filter->cloned_from)
@@ -3927,7 +3972,7 @@ single_retry:
 			}
 
 			//explicitly clonable but caps don't match, don't connect to it
-			if (!gf_filter_pid_caps_match(pid, filter_dst->freg, NULL, NULL, NULL, pid->filter->dst_filter, -1)) {
+			if (!gf_filter_pid_caps_match(pid, filter_dst->freg, filter_dst, NULL, NULL, pid->filter->dst_filter, -1)) {
 				GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("PID %s caps does not match clonable filter %s\n", pid->name, filter_dst->name));
 				continue;
 			}
@@ -3937,7 +3982,7 @@ single_retry:
 
 		//we try to load a filter chain, so don't test against filters loaded for another chain
 		if (filter_dst->dynamic_filter && (filter_dst != pid->filter->dst_filter)) {
-			//dst was explicitely set and does not match
+			//dst was explicitly set and does not match
 			if (pid->filter->dst_filter) {
 				GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("PID %s has explicit dest %s not %s\n", pid->name, pid->filter->dst_filter->name, filter_dst->name));
 				continue;
@@ -5467,7 +5512,7 @@ void gf_filter_pid_drop_packet(GF_FilterPid *pid)
 		s64 d = ((u64)pck->info.duration) * 1000000;
 		d /= timescale;
 		if (d > pidinst->buffer_duration) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_FILTER, ("Corrupted buffer level in PID instance %s (%s -> %s), droping packet duration "LLD" us greater than buffer duration "LLU" us\n", pid->name, pid->filter->name, pidinst->filter ? pidinst->filter->name : "disconnected", d, pidinst->buffer_duration));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_FILTER, ("Corrupted buffer level in PID instance %s (%s -> %s), dropping packet duration "LLD" us greater than buffer duration "LLU" us\n", pid->name, pid->filter->name, pidinst->filter ? pidinst->filter->name : "disconnected", d, pidinst->buffer_duration));
 			d = pidinst->buffer_duration;
 		}
 		assert(d <= pidinst->buffer_duration);
@@ -5775,6 +5820,18 @@ Bool gf_filter_pid_has_seen_eos(GF_FilterPid *pid)
 	gf_mx_v(pid->pid->filter->tasks_mx);
 	return GF_FALSE;
 }
+
+GF_EXPORT
+Bool gf_filter_pid_eos_received(GF_FilterPid *pid)
+{
+	if (PID_IS_OUTPUT(pid)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to query EOS on output PID %s in filter %s\n", pid->pid->name, pid->filter->name));
+		return GF_FALSE;
+	}
+	if (pid->pid->has_seen_eos) return GF_TRUE;
+	return GF_FALSE;
+}
+
 
 GF_EXPORT
 const char *gf_filter_event_name(GF_FEventType type)
@@ -6810,7 +6867,7 @@ GF_Err gf_filter_pid_resolve_file_template_ex(GF_FilterPid *pid, char szTemplate
 		}
 		sep = strchr(name+1, '$');
 		if (!sep) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[Filter] broken file template expecting $KEYWORD$, couln't find second '$'\n", szTemplate));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[Filter] broken file template expecting $KEYWORD$, couldn't find second '$'\n", szTemplate));
 			strcpy(szFinalName, szTemplate);
 			return GF_BAD_PARAM;
 		}
@@ -6851,6 +6908,13 @@ GF_Err gf_filter_pid_resolve_file_template_ex(GF_FilterPid *pid, char szTemplate
 		} else if (!strcmp(name, "FS")) {
 			str_val = file_suffix ? file_suffix : "";
 			is_ok = GF_TRUE;
+		} else if (!strcmp(name, "Type")) {
+			prop_val = gf_filter_pid_get_property_first(pid, GF_PROP_PID_STREAM_TYPE);
+			if (prop_val) {
+				str_val = gf_stream_type_short_name(prop_val->value.uint);
+				is_ok = GF_TRUE;
+			}
+			prop_val = NULL;
 		} else if (!strncmp(name, "p4cc=", 5)) {
 			if (strlen(name) != 9) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[Filter] wrong length in 4CC template, expecting 4cc=ABCD\n", name));
@@ -7041,6 +7105,7 @@ GF_Err gf_filter_pid_set_discard(GF_FilterPid *pid, Bool discard_on)
 	}
 	if (discard_on) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Discarding packets on PID %s (filter %s to %s)\n", pid->pid->name, pid->pid->filter->name, pid->filter->name));
+		gf_filter_aggregate_packets(pidi);
 		while (gf_filter_pid_get_packet(pid)) {
 			gf_filter_pid_drop_packet(pid);
 		}
@@ -7053,7 +7118,7 @@ GF_Err gf_filter_pid_set_discard(GF_FilterPid *pid, Bool discard_on)
 		if (!gf_fq_count(pidi->packets) && !pid->pid->filter->postponed_packets)
 			pidi->is_end_of_stream = pid->pid->has_seen_eos;
 	}
-	pidi->discard_inputs = discard_on;
+	pidi->discard_inputs = discard_on ? 1 : 0;
 	return GF_OK;
 }
 

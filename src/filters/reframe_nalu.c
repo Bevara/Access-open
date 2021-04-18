@@ -219,6 +219,9 @@ typedef struct
 	u32 nb_frames;
 } GF_NALUDmxCtx;
 
+static void naludmx_enqueue_or_dispatch(GF_NALUDmxCtx *ctx, GF_FilterPacket *n_pck, Bool flush_ref);
+static void naludmx_finalize_au_flags(GF_NALUDmxCtx *ctx);
+
 
 GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 {
@@ -346,6 +349,14 @@ GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 
 	//copy properties at init or reconfig
 	if (ctx->opid) {
+		if (ctx->poc_probe_done) {
+			//full frame mode, flush everything before signaling discontinuity
+			//for other modes discontinuity we signal disconntinuity before the current AU being reconstructed
+			if (ctx->full_au_source && ctx->first_pck_in_au)
+				naludmx_finalize_au_flags(ctx);
+
+			naludmx_enqueue_or_dispatch(ctx, NULL, GF_TRUE);
+		}
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT(GF_STREAM_VISUAL));
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(ctx->codecid));
@@ -1470,7 +1481,7 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx)
 	}
 
 	naludmx_enqueue_or_dispatch(ctx, NULL, GF_TRUE);
-	if (!ctx->analyze && gf_list_count(ctx->pck_queue)) {
+	if (!ctx->analyze && (gf_list_count(ctx->pck_queue)>1))  {
 		GF_LOG(dsi_enh ? GF_LOG_DEBUG : GF_LOG_ERROR, GF_LOG_PARSER, ("[%s] xPS changed but could not flush frames before signaling state change %s\n", ctx->log_name, dsi_enh ? "- likely scalable xPS update" : "!"));
 	}
 
@@ -1784,7 +1795,7 @@ static void naludmx_queue_param_set(GF_NALUDmxCtx *ctx, char *data, u32 size, u3
 	gf_list_add(list, sl);
 }
 
-void naludmx_finalize_au_flags(GF_NALUDmxCtx *ctx)
+static void naludmx_finalize_au_flags(GF_NALUDmxCtx *ctx)
 {
 	u64 ts;
 	Bool is_rap = GF_FALSE;
@@ -1835,7 +1846,7 @@ void naludmx_finalize_au_flags(GF_NALUDmxCtx *ctx)
 		/*we store the POC (last POC minus the poc shift) as the CTS offset and re-update the CTS when dispatching*/
 		assert(ctx->last_poc >= ctx->poc_shift);
 		gf_filter_pck_set_cts(ctx->first_pck_in_au, CTS_POC_OFFSET_SAFETY + ctx->last_poc - ctx->poc_shift);
-		//we use the carrousel flag temporarly to indicate the cts must be recomputed
+		//we use the carousel flag temporarly to indicate the cts must be recomputed
 		gf_filter_pck_set_carousel_version(ctx->first_pck_in_au, 1);
 	}
 
@@ -1904,7 +1915,7 @@ GF_Err naludmx_realloc_last_pck(GF_NALUDmxCtx *ctx, u32 nb_bytes_to_add, u8 **da
 	//rewrite subsample size
 	if (ctx->subsamples) {
 		assert(ctx->subsamp_buffer_size>=14);
-		//reassign to begining of size field (after first u32 flags)
+		//reassign to beginning of size field (after first u32 flags)
 		gf_bs_reassign_buffer(ctx->bs_w, ctx->subsamp_buffer + ctx->subsamp_buffer_size-14 + 4, 14 - 4);
 		gf_bs_write_u32(ctx->bs_w, full_size + ctx->nal_length);
 	}
@@ -1935,7 +1946,7 @@ GF_FilterPacket *naludmx_start_nalu(GF_NALUDmxCtx *ctx, u32 nal_size, Bool skip_
 			//we don't set the CTS, it will be set once we detect frame end
 			gf_filter_pck_set_dts(dst_pck, ctx->dts);
 		}
-		//we use the carrousel flag temporarly to indicate the cts must be recomputed
+		//we use the carousel flag temporarly to indicate the cts must be recomputed
 		gf_filter_pck_set_carousel_version(dst_pck, ctx->timescale ? 0 : 1);
 
 		gf_filter_pck_set_duration(dst_pck, ctx->pck_duration ? ctx->pck_duration : ctx->cur_fps.den);
@@ -2531,7 +2542,7 @@ static void naldmx_switch_timestamps(GF_NALUDmxCtx *ctx, GF_FilterPacket *pck)
 		if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 		ctx->src_pck = pck;
 		gf_filter_pck_ref_props(&ctx->src_pck);
-		//store framing flags. If input_is_au_start, the first NAL of the first frame begining in this packet will
+		//store framing flags. If input_is_au_start, the first NAL of the first frame beginning in this packet will
 		//use the DTS/CTS of the input packet, otherwise we will use our internal POC recompute
 		gf_filter_pck_get_framing(pck, &ctx->input_is_au_start, NULL);
 	}
@@ -3051,7 +3062,7 @@ naldmx_flush:
 				}
 				if (nal_type==GF_AVC_NALU_SVC_PREFIX_NALU) {
                     if (ctx->svc_prefix_buffer_size) {
-                        GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[%s] broken bitstream, two consecutive SVC prefix NALU without SVC slice inbetween\n", ctx->log_name));
+                        GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[%s] broken bitstream, two consecutive SVC prefix NALU without SVC slice in-between\n", ctx->log_name));
                         ctx->svc_prefix_buffer_size = 0;
                     }
 
@@ -3323,6 +3334,9 @@ naldmx_flush:
 		gf_filter_update_status(filter, -1, szStatus);
 	}
 	if (ctx->full_au_source && ctx->poc_probe_done) {
+		if (ctx->first_pck_in_au)
+			naludmx_finalize_au_flags(ctx);
+
 		naludmx_enqueue_or_dispatch(ctx, NULL, GF_TRUE);
 	}
 	return GF_OK;

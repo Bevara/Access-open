@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -239,64 +239,17 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 		}
 		break;
 	case GF_PROP_FRACTION:
-		if (!value) {
+		if (gf_parse_frac(value, &p.value.frac)==GF_FALSE) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for fraction arg %s - using 0/1\n", value, name));
 			p.value.frac.num = 0;
 			p.value.frac.den = 1;
-		} else {
-			if (sscanf(value, "%d/%u", &p.value.frac.num, &p.value.frac.den) != 2) {
-				if (sscanf(value, "%d-%u", &p.value.frac.num, &p.value.frac.den) != 2) {
-					u32 ret=0;
-					p.value.frac.den=1;
-					if (strchr(value, '.') || strchr(value, ',')) {
-						Float v;
-						ret = sscanf(value, "%g", &v);
-						if (ret==1) {
-							p.value.frac.num = (u32) (v*1000000);
-							p.value.frac.den = 1000000;
-						} else {
-							ret = 0;
-						}
-					}
-					if (!ret && (sscanf(value, "%d", &p.value.frac.num) != 1)) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for fraction arg %s - using 0/1\n", value, name));
-						p.value.frac.num = 0;
-						p.value.frac.den = 1;
-					}
-				}
-			}
 		}
 		break;
 	case GF_PROP_FRACTION64:
-		if (!value) {
+		if (gf_parse_lfrac(value, &p.value.lfrac)==GF_FALSE) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for fraction arg %s - using 0/1\n", value, name));
-			p.value.frac.num = 0;
-			p.value.frac.den = 1;
-		}
-		else {
-			if (sscanf(value, LLD"/"LLU, &p.value.lfrac.num, &p.value.lfrac.den) != 2) {
-				if (sscanf(value, LLD"-"LLU, &p.value.lfrac.num, &p.value.lfrac.den) != 2) {
-					u32 ret=0;
-					p.value.lfrac.den = 1;
-
-					if (strchr(value, '.') || strchr(value, ',')) {
-						Float v;
-						ret = sscanf(value, "%g", &v);
-						if (ret==1) {
-							p.value.lfrac.num = (u64) (v*1000000);
-							p.value.lfrac.den = 1000000;
-						} else {
-							ret = 0;
-						}
-					}
-
-					if (!ret && (sscanf(value, LLD, &p.value.lfrac.num) != 1)) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for fraction arg %s - using 0/1\n", value, name));
-						p.value.lfrac.num = 0;
-						p.value.lfrac.den = 1;
-					}
-				}
-			}
+			p.value.lfrac.num = 0;
+			p.value.lfrac.den = 1;
 		}
 		break;
 	case GF_PROP_FLOAT:
@@ -1327,6 +1280,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_AUDIO_SPEED, "AudioPlaybackSpeed", "Audio playback speed, only used for audio output reconfiguration", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DELAY, "Delay", "Delay of presentation compared to composition timestamps, in media timescale. Positive value imply holding (delaying) the stream. Negative value imply skipping the beginning of stream", GF_PROP_LSINT},
 	{ GF_PROP_PID_CTS_SHIFT, "CTSShift", "CTS offset to apply in case of negative ctts", GF_PROP_UINT},
+	{ GF_PROP_PID_NO_PRIMING, "SkipPriming", "Indicate audio priming is not to be removed when initializing decoding", GF_PROP_BOOL},
 	{ GF_PROP_PID_WIDTH, "Width", "Visual Width (video / text / graphics)", GF_PROP_UINT},
 	{ GF_PROP_PID_HEIGHT, "Height", "Visual Height (video / text / graphics)", GF_PROP_UINT},
 	{ GF_PROP_PID_PIXFMT, "PixelFormat", "Pixel format", GF_PROP_PIXFMT},
@@ -1368,7 +1322,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_MIME, "MIMEType", "MIME type of source", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_FILE_EXT, "Extension", "File extension of source", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_FILE_CACHED, "Cached", "indicates the file is completely cached", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_DOWN_RATE, "DownloadRate", "Dowload rate of resource in bits per second - changes are signaled through pid info (no reconfigure)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_DOWN_RATE, "DownloadRate", "Download rate of resource in bits per second - changes are signaled through pid info (no reconfigure)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DOWN_SIZE, "DownloadSize", "Size of resource in bytes", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DOWN_BYTES, "DownBytes", "Number of bytes downloaded - changes are signaled through pid info (no reconfigure)", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_FILE_RANGE, "ByteRange", "Byte range of resource", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
@@ -1405,7 +1359,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_ENCRYPTED, "Encrypted", "Packets for the stream are by default encrypted (however the encryption state is carried in packet crypt flags) - changes are signaled through pid_set_info (no reconfigure)", GF_PROP_BOOL},
 	{ GF_PROP_PID_OMA_PREVIEW_RANGE, "OMAPreview", "OMA Preview range ", GF_PROP_LUINT},
 	{ GF_PROP_PID_CENC_PSSH, "CENC_PSSH", "PSSH blob for CENC, formatted as (u32)NbSystems [ (bin128)SystemID(u32)version(u32)KID_count[ (bin128)keyID ] (u32)priv_size(char*priv_size)priv_data]", GF_PROP_DATA},
-	{ GF_PROP_PCK_CENC_SAI, "CENC_SAI", "CENC SAI for the packet, formated as (char(IV_Size))IV(u16)NbSubSamples [(u16)ClearBytes(u32)CryptedBytes]", GF_PROP_DATA, GF_PROP_FLAG_PCK},
+	{ GF_PROP_PCK_CENC_SAI, "CENC_SAI", "CENC SAI for the packet, formatted as (char(IV_Size))IV(u16)NbSubSamples [(u16)ClearBytes(u32)CryptedBytes]", GF_PROP_DATA, GF_PROP_FLAG_PCK},
 	{ GF_PROP_PID_CENC_KEY_INFO, "KeyInfo", "Multi key info formatted as:\n `is_mkey(u8);\nnb_keys(u16);\n[\n\tIV_size(u8);\n\tKID(bin128);\n\tif (!IV_size) {;\n\t\tconst_IV_size(u8);\n\t\tconstIV(const_IV_size);\n}\n]\n`", GF_PROP_DATA},
 	{ GF_PROP_PID_CENC_PATTERN, "CENCPattern", "CENC crypt pattern, CENC pattern, skip as frac.num crypt as frac.den", GF_PROP_FRACTION},
 	{ GF_PROP_PID_CENC_STORE, "CENCStore", "Storage location 4CC of SAI data", GF_PROP_4CC},
@@ -1421,29 +1375,29 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PCK_IDXFILENAME, "IDXName", "Name of index file when dashing MPEG-2 TS. Must be set on first packet belonging to new file", GF_PROP_STRING, GF_PROP_FLAG_PCK},
 	{ GF_PROP_PCK_FILESUF, "FileSuffix", "File suffix name, replacement for $FS$ in tile templates", GF_PROP_STRING, GF_PROP_FLAG_PCK},
 	{ GF_PROP_PCK_EODS, "EODS", "End of DASH segment", GF_PROP_BOOL, GF_PROP_FLAG_PCK},
-	{ GF_PROP_PCK_CUE_START, "CueStart", "Set on packets marking the begining of a DASH/HLS segment for cue-driven segmentation - see dasher help", GF_PROP_BOOL, GF_PROP_FLAG_PCK},
+	{ GF_PROP_PCK_CUE_START, "CueStart", "Set on packets marking the beginning of a DASH/HLS segment for cue-driven segmentation - see dasher help", GF_PROP_BOOL, GF_PROP_FLAG_PCK},
 	{ GF_PROP_PID_MAX_FRAME_SIZE, "MaxFrameSize", "Max size of frame in stream - changes are signaled through pid_set_info (no reconfigure)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_AVG_FRAME_SIZE, "AvgFrameSize", "Average size of frame in stream (isobmff only, static property)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_MAX_TS_DELTA, "MaxTSDelta", "Maximum DTS delta between frames (isobmff only, static property)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_MAX_CTS_OFFSET, "MaxCTSOffset", "Maximum absolute CTS offset (isobmff only, static property)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_CONSTANT_DURATION, "ConstantDuration", "Constant duration of samples, 0 means variable duration (isobmff only, static property)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_ISOM_TRACK_TEMPLATE, "TrackTemplate", "ISOBMFF serialized track box for this PID, without any sample info (empty stbl and empty dref) - used by isomuxer to reinject specific boxes of input ISOBMFF track", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_TRACK_TEMPLATE, "TrackTemplate", "ISOBMFF serialized track box for this PID, without any sample info (empty stbl and empty dref) - used by isomuxer to re-inject specific boxes of input ISOBMFF track", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_TREX_TEMPLATE, "TrexTemplate", "ISOBMFF serialized trex box for this PID - used by isomuxer to remux empty init segments", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_ISOM_STSD_TEMPLATE, "STSDTemplate", "ISOBMFF serialized sample description box (stsd entry) for this PID - used by isomuxer to reinject specific boxes of input ISOBMFF track", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_STSD_TEMPLATE, "STSDTemplate", "ISOBMFF serialized sample description box (stsd entry) for this PID - used by isomuxer to re-inject specific boxes of input ISOBMFF track", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
 
-	{ GF_PROP_PID_ISOM_UDTA, "MovieUserData", "ISOBMFF serialized moov UDTA and other moov-level boxes (list) for this PID - used by isomuxer to reinject specific boxes of input ISOBMFF moov", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_UDTA, "MovieUserData", "ISOBMFF serialized moov UDTA and other moov-level boxes (list) for this PID - used by isomuxer to re-inject specific boxes of input ISOBMFF moov", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_HANDLER, "TrackHandler", "ISOBMFF track handler name", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_TRACK_FLAGS, "TrackFlags", "ISOBMFF track header flags", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_TRACK_MATRIX, "TrackMatrix", "ISOBMFF track header matrix", GF_PROP_UINT_LIST, GF_PROP_FLAG_GSF_REM},
 
 	{ GF_PROP_PID_PERIOD_ID, "Period", "ID of DASH period", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_PERIOD_START, "PStart", "DASH Period start - cf dasher help", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_PERIOD_DUR, "PDur", "DASH Period duration - cf dasher help", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_PERIOD_START, "PStart", "DASH Period start - cf dasher help", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_PERIOD_DUR, "PDur", "DASH Period duration - cf dasher help", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_REP_ID, "Representation", "ID of DASH representation", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_AS_ID, "ASID", "ID of parent DASH AS", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_MUX_SRC, "MuxSrc", "Name of mux source(s), set by dasher to direct its outputs", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MODE, "DashMode", "DASH mode to be used by muxer if any, set by dasher. 0 is no DASH, 1 is regular DASH, 2 is VoD", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_DASH_DUR, "DashDur", "DASH target segment duration in seconds to muxer if any, set by dasher", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_DASH_DUR, "DashDur", "DASH target segment duration in seconds", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MULTI_PID, NULL, "Pointer to the GF_List of input pids for multi-stsd entries segments, set by dasher", GF_PROP_POINTER, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MULTI_PID_IDX, NULL, "1-based index of PID in the multi PID list, set by dasher", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_MULTI_TRACK, NULL, "Pointer to the GF_List of input pids for multi-tracks segments, set by dasher", GF_PROP_POINTER, GF_PROP_FLAG_GSF_REM},
@@ -1456,7 +1410,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_TEMPLATE, "Template", "Template to use for DASH generation for this pid", GF_PROP_STRING, 0},
 	{ GF_PROP_PID_START_NUMBER, "StartNumber", "Start number to use for this pid - cf dasher help", GF_PROP_UINT, 0},
 	{ GF_PROP_PID_XLINK, "xlink", "Remote period URL for DASH - cf dasher help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_CLAMP_DUR, "ClampDur", "Max media duration to process from pid in DASH mode", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_CLAMP_DUR, "ClampDur", "Max media duration to process from pid in DASH mode", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_HLS_PLAYLIST, "HLSPL", "Name of the HLS variant playlist for this media", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_HLS_GROUPID, "HLSGroup", "Name of HLS Group of a stream", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DASH_CUE, "DCue", "Name of a cue list file for this pid - see dasher help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
@@ -1475,9 +1429,9 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 
 	{ GF_PROP_PID_COLR_PRIMARIES, "ColorPrimaries", "Indicate color primaries for a visual pid", GF_PROP_CICP_COL_PRIM, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_COLR_TRANSFER, "ColorTransfer", "Indicate color transfer characteristics for a visual pid", GF_PROP_CICP_COL_TFC, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_COLR_MX, "ColorMatrix", "Indicate color matrix coeficient for a visual pid ", GF_PROP_CICP_COL_MX, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_COLR_MX, "ColorMatrix", "Indicate color matrix coefficient for a visual pid ", GF_PROP_CICP_COL_MX, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_COLR_RANGE, "FullRange", "Indicate color full range flag for a visual pid", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_COLR_CHROMALOC, "ChromaLoc", "Indicate chrom location for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_COLR_CHROMALOC, "ChromaLoc", "Indicate chroma location for a visual pid (see ISO/IEC 23001-8 / 23091-2)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_SRC_MAGIC, "SrcMagic", "Indicate a magic number to store in the track, only used by importers", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_MUX_INDEX, "MuxIndex", "Indicate target track index in destination file, stored by lowest value first (not set by demuxers)", GF_PROP_LUINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_NO_TS_LOOP, "NoTSLoop", "Indicate the timestamps on this PID are adjusted in case of loops (used by TS muxer output)", GF_PROP_BOOL, 0},
@@ -1511,7 +1465,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_PROJECTION_TYPE, "Projection", "Projection type of video", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_VR_POSE, "InitalPose", "Initial pose for 360 video, in degrees expressed as 16.16 bits (x is yaw, y is pitch, z is roll)", GF_PROP_VEC3I, GF_PROP_FLAG_GSF_REM},
 
-	{ GF_PROP_PID_CUBE_MAP_PAD, "CMPad", "Number of pixels to pad from egde of each face in cube map", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_CUBE_MAP_PAD, "CMPad", "Number of pixels to pad from edge of each face in cube map", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_EQR_CLAMP, "EQRClamp", "Clamping of frame for EQR as 0.32 fixed point (x is top, y is bottom, z is left and w is right)", GF_PROP_VEC4I, GF_PROP_FLAG_GSF_REM},
 };
 

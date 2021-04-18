@@ -151,6 +151,7 @@ enum
 	JSF_PID_NAME=0,
 	JSF_PID_EOS,
 	JSF_PID_EOS_SEEN,
+	JSF_PID_EOS_RECEIVED,
 	JSF_PID_WOULD_BLOCK,
 	JSF_PID_FILTER_NAME,
 	JSF_PID_FILTER_SRC,
@@ -1918,6 +1919,8 @@ static JSValue jsf_pid_get_prop(JSContext *ctx, JSValueConst this_val, int magic
 		return JS_NewBool (ctx, gf_filter_pid_is_eos(pctx->pid) );
 	case JSF_PID_EOS_SEEN:
 		return JS_NewBool (ctx, gf_filter_pid_has_seen_eos(pctx->pid) );
+	case JSF_PID_EOS_RECEIVED:
+		return JS_NewBool (ctx, gf_filter_pid_eos_received(pctx->pid) );
 	case JSF_PID_WOULD_BLOCK:
 		return JS_NewBool(ctx, gf_filter_pid_would_block(pctx->pid) );
 	case JSF_PID_FILTER_NAME:
@@ -2598,6 +2601,7 @@ static const JSCFunctionListEntry jsf_pid_funcs[] = {
     JS_CGETSET_MAGIC_DEF("name", jsf_pid_get_prop, jsf_pid_set_prop, JSF_PID_NAME),
     JS_CGETSET_MAGIC_DEF("eos", jsf_pid_get_prop, jsf_pid_set_prop, JSF_PID_EOS),
     JS_CGETSET_MAGIC_DEF("eos_seen", jsf_pid_get_prop, NULL, JSF_PID_EOS_SEEN),
+    JS_CGETSET_MAGIC_DEF("eos_received", jsf_pid_get_prop, NULL, JSF_PID_EOS_RECEIVED),
     JS_CGETSET_MAGIC_DEF("would_block", jsf_pid_get_prop, NULL, JSF_PID_WOULD_BLOCK),
     JS_CGETSET_MAGIC_DEF("filter_name", jsf_pid_get_prop, NULL, JSF_PID_FILTER_NAME),
     JS_CGETSET_MAGIC_DEF("src_name", jsf_pid_get_prop, NULL, JSF_PID_FILTER_SRC),
@@ -4578,9 +4582,7 @@ static GF_Err jsfilter_update_arg(GF_Filter *filter, const char *arg_name, const
 
 	if (!arg_name && !new_val) {
 		gf_js_lock(jsf->ctx, GF_TRUE);
-		if (gf_opts_get_bool("temp", "helponly")) {
-			jsf->disable_filter = GF_TRUE;
-		} else if (JS_IsFunction(jsf->ctx, jsf->funcs[JSF_EVT_INITIALIZE]) ) {
+		if (JS_IsFunction(jsf->ctx, jsf->funcs[JSF_EVT_INITIALIZE]) ) {
 			ret = JS_Call(jsf->ctx, jsf->funcs[JSF_EVT_INITIALIZE], jsf->filter_obj, 0, NULL);
 			if (JS_IsException(ret)) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[%s] Error initializing filter\n", jsf->log_name));
@@ -4595,6 +4597,10 @@ static GF_Err jsfilter_update_arg(GF_Filter *filter, const char *arg_name, const
 			JS_FreeValue(jsf->ctx, ret);
 		}
 		jsf->initialized = GF_TRUE;
+		//we still call initialize even in help-only mode to properly print links and cap bundles
+		if (gf_opts_get_bool("temp", "helponly"))
+			jsf->disable_filter = GF_TRUE;
+
 		//filter object not used (no new_pid, post_task or set_cap), disable it
 		if (jsf->disable_filter) {
 			JSAtom prop;

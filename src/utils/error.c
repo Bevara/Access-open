@@ -1811,3 +1811,93 @@ GF_Err gf_dynstrcat(char **str, const char *to_append, const char *sep)
 	return GF_OK;
 }
 
+GF_EXPORT
+Bool gf_parse_lfrac(const char *value, GF_Fraction64 *frac)
+{
+	Float v;
+	u32 len, i;
+	Bool all_num=GF_TRUE;
+	char *sep;
+	if (!frac) return GF_FALSE;
+	frac->num = 0;
+	frac->den = 0;
+	if (!value) return GF_FALSE;
+
+	if (sscanf(value, LLD"/"LLU, &frac->num, &frac->den) == 2) {
+		return GF_TRUE;
+	}
+	if (sscanf(value, LLD"-"LLU, &frac->num, &frac->den) == 2) {
+		return GF_TRUE;
+	}
+	if (sscanf(value, "%g", &v) != 1) {
+		frac->num = 0;
+		frac->den = 0;
+		return GF_FALSE;
+	}
+	sep = strchr(value, '.');
+	if (!sep) sep = strchr(value, ',');
+	if (!sep) {
+		frac->num = atoi(value);
+		frac->den = 1;
+		return GF_TRUE;
+	}
+
+	len = (u32) strlen(sep+1);
+	for (i=1; i<=len; i++) {
+		if ((sep[i]<'0') || (sep[i]>'9')) {
+			all_num = GF_FALSE;
+			break;
+		}
+	}
+	if (all_num) {
+		u32 div_trail_zero = 1;
+		sscanf(value, LLD"."LLU, &frac->num, &frac->den);
+
+		i=0;
+		frac->den = 1;
+		while (i<len) {
+			i++;
+			frac->den *= 10;
+		}
+		//trash trailing zero
+		i=len;
+		while (i>0) {
+			if (sep[i] != '0') {
+				break;
+			}
+			div_trail_zero *= 10;
+			i--;
+		}
+
+
+		frac->num *= frac->den / div_trail_zero;
+		frac->num += atoi(sep+1) / div_trail_zero;
+		frac->den /= div_trail_zero;
+
+		return GF_TRUE;
+	}
+
+	sep += 1;
+	if (len <= 3) frac->den = 1000;
+	else if (len <= 6) frac->den = 1000000;
+	else frac->den = 1000000000;
+
+	frac->num = (u64)( (atof(value) * frac->den) + 0.5 );
+	return GF_TRUE;
+}
+
+GF_EXPORT
+Bool gf_parse_frac(const char *value, GF_Fraction *frac)
+{
+	GF_Fraction64 r;
+	Bool res;
+	if (!frac) return GF_FALSE;
+	res = gf_parse_lfrac(value, &r);
+	while ((r.num >= 0x80000000) && (r.den > 1000)) {
+		r.num /= 1000;
+		r.den /= 1000;
+	}
+	frac->num = (s32) r.num;
+	frac->den = (u32) r.den;
+	return res;
+}
