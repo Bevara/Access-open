@@ -238,8 +238,8 @@ Double mpd_live_duration=0;
 Bool do_hint=0, do_save=0, full_interleave=0, do_frag=0, hint_interleave=0, dump_rtp=0, regular_iod=0, remove_sys_tracks=0, remove_hint=0, remove_root_od=0;
 Bool print_sdp=0, open_edit=0, dump_cr=0, force_ocr=0, encode=0, do_scene_log=0, dump_srt=0, dump_ttxt=0, do_saf=0, dump_m2ts=0, dump_cart=0;
 Bool do_hash=0, verbose=0, force_cat=0, pack_wgt=0, single_group=0, clean_groups=0, dash_live=0, no_fragments_defaults=0;
-Bool single_traf_per_moof=0, tfdt_per_traf=0, hls_clock=0, do_mpd_rip=0, merge_vtt_cues=0, compress_moov=0, get_nb_tracks=0;
-
+Bool single_traf_per_moof=0, tfdt_per_traf=0, hls_clock=0, do_mpd_rip=0, merge_vtt_cues=0, get_nb_tracks=0;
+u32 compress_moov=0;
 char *inName=NULL, *outName=NULL, *mediaSource=NULL, *input_ctx=NULL, *output_ctx=NULL, *drm_file=NULL, *avi2raw=NULL, *cprt=NULL;
 char *chap_file=NULL, *chap_file_qt=NULL, *itunes_tags=NULL, *pack_file=NULL, *raw_cat=NULL, *seg_name=NULL, *dash_ctx_file=NULL;
 char *compress_top_boxes=NULL, *high_dynamc_range_filename=NULL, *use_init_seg=NULL, *box_patch_filename=NULL, *udp_dest = NULL;
@@ -268,7 +268,8 @@ GF_DASHPSSHMode pssh_mode=0;
 GF_DashProfile dash_profile=GF_DASH_PROFILE_AUTO;
 char *dash_profile_extension = NULL;
 char *dash_cues = NULL;
-Bool strict_cues=0, use_url_template=0, seg_at_rap=0, frag_at_rap=0, adjust_split_end=0, memory_frags=0, keep_utc=0, has_next_arg=0, no_cache=0, no_loop=0;
+Bool strict_cues=0, use_url_template=0, seg_at_rap=0, frag_at_rap=0, memory_frags=0, keep_utc=0, has_next_arg=0, no_cache=0, no_loop=0;
+u32 adjust_split_end=0;
 char *do_wget = NULL;
 char *mux_name = NULL;
 char *seg_ext = NULL;
@@ -428,7 +429,8 @@ MP4BoxArg m4b_gen_args[] =
 	MP4BOX_ARG_S("patch", "[tkID=]FILE", "apply box patch described in FILE, for given trackID if set", GF_ARG_HINT_ADVANCED, parse_boxpatch, 0, ARG_IS_FUN),
 	MP4BOX_ARG("bo", "freeze the order of boxes in input file", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &freeze_box_order, 0, 0),
 	MP4BOX_ARG("init-seg", "use the given file as an init segment for dumping or for encryption", GF_ARG_STRING, GF_ARG_HINT_ADVANCED, &use_init_seg, 0, 0),
-	MP4BOX_ARG("zmov", "compress movie box according to ISOBMFF box compression", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &compress_moov, 0, 0),
+	MP4BOX_ARG("zmov", "compress movie box according to ISOBMFF box compression", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, parse_compress, 0, ARG_IS_FUN),
+	MP4BOX_ARG("xmov", "same as zmov and wraps ftyp in otyp", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, parse_compress, 1, ARG_IS_FUN),
  	MP4BOX_ARG_S("edits", "tkID=EDITS", "set edit list. The following syntax is used (no separators between entries):\n"
 			" - `r`: removes all edits\n"
 			" - `eSTART`: add empty edit with given start time (fractional or milliseconds). START can be\n"
@@ -479,10 +481,19 @@ MP4BoxArg m4b_split_args[] =
  	MP4BOX_ARG("split", "split in files of given max duration", GF_ARG_STRING, 0, parse_split, 0, ARG_IS_FUN),
 	MP4BOX_ARG_ALT("split-rap", "splitr", "split in files at each new RAP", GF_ARG_STRING, 0, parse_split, 1, ARG_IS_FUN),
 	MP4BOX_ARG_ALT("split-size", "splits", "split in files of given max size (in kb)", GF_ARG_STRING, 0, parse_split, 2, ARG_IS_FUN),
-	MP4BOX_ARG_ALT("split-chunk", "splitx", "extract a new file from source. `VAL` can be formatted as:\n"
-	"- `S:E`: `S` (number of seconds) to `E` with `E` a number (in seconds), `end` or `end-N`, N  number of seconds before the end\n"
+	MP4BOX_ARG_ALT("split-chunk", "splitx", "extract the specified time range formatted as:\n"
+	"- `S:E` or `S-E`: `S` start time and `E` end time in seconds (int, double, fraction)\n"
+	"- `S:end` or `S:end-N`: `S` start time in seconds (int, double), `N` number of seconds (int, double) before the end\n"
 	"- `S-E`: start and end dates, each formatted as `HH:MM:SS.ms` or `MM:SS.ms`", GF_ARG_STRING, 0, parse_split, 3, ARG_IS_FUN),
-	MP4BOX_ARG_S("splitz", "S:E", "same as -split-chunk, but adjust the end time to be before the next RAP sample, so that ranges `A:B` and `B:C` share exactly the same boundary `B`", 0, parse_split, 4, ARG_IS_FUN),
+	MP4BOX_ARG("splitz", "same as -splitx, but adjust range times so that ranges `A:B` and `B:C` share exactly the same boundary `B`:\n"
+	"- the start time is moved to the RAP sample at or after the specified start time\n"
+	"- the end time is moved to the frame preceeding the RAP sample at or following the specified end time"
+	, GF_ARG_STRING, 0, parse_split, 4, ARG_IS_FUN),
+	MP4BOX_ARG("splitg", "same as -splitx, but adjust range times so that:\n"
+	"- the start time is moved to the RAP sample at or before the specified start time\n"
+	"- the end time is moved to the frame preceeding the RAP sample at or following the specified end time"
+	, GF_ARG_STRING, 0, parse_split, 5, ARG_IS_FUN),
+	MP4BOX_ARG("splitf", "same as -splitx but insert edits such that the extracted output is exactly the specified range\n", GF_ARG_STRING, 0, parse_split, 6, ARG_IS_FUN),
 	{0}
 };
 
@@ -492,11 +503,19 @@ static void PrintSplitUsage()
 	u32 i=0;
 	gf_sys_format_help(helpout, help_flags, "  \n"
 		"# File splitting\n"
-		"MP4Box can split IsoMedia files by size, duration or extract a given part of the file to new IsoMedia file(s).\n"
+		"MP4Box can split input files by size, duration or extract a given part of the file to new IsoMedia file(s).\n"
 		"This requires that at most one track in the input file has non random-access points (typically one video track at most).\n"
-		"splitting will ignore all MPEG-4 Systems tracks and hint tracks, but will try to split private media tracks.\n"
+		"Splitting will ignore all MPEG-4 Systems tracks and hint tracks, but will try to split private media tracks.\n"
 		"The input file must have enough random access points in order to be split. If this is not the case, you will have to re-encode the content.\n"
 		"You can add media to a file and split it in the same pass. In this case, the destination file (the one which would be obtained without splitting) will not be stored.\n"
+		"  \n"
+		"MP4Box splitting runs a filter session using the `reframer` filter as follows:\n"
+		"- `splitrange` option of the reframer is always set\n"
+		"- start and end ranges are passed to `xs` and `xe` options of the reframer\n"
+		"- `xadjust` and `xround=after` options are enforced for `-splitz`\n"
+		"- `xadjust` and `xround=before` options are enforced for `-splitg`\n"
+		"- `xround=seek` option is enforced for `-splitf`\n"
+		"- for other modes, `xround` defaults to `closest` if not specified at prompt\n"
 		"  \n"
 	);
 
@@ -803,8 +822,8 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 		"  - no value: use the previous sample duration\n"
 		"  - integer: indicate the duration in milliseconds\n"
 		"  - N/D: indicate the duration as fractional second", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("fstat", NULL, "print filter session stats after import", NULL, NULL, GF_ARG_BOOL, 0),
-	GF_DEF_ARG("fgraph", NULL, "print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
+	GF_DEF_ARG("fstat", NULL, "`C` print filter session stats after import", NULL, NULL, GF_ARG_BOOL, 0),
+	GF_DEF_ARG("fgraph", NULL, "`C` print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
 	{"sopt:[OPTS]", NULL, "set `OPTS` as additional arguments to source filter. `OPTS` can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
 	{"dopt:[OPTS]", NULL, "`X` set `OPTS` as additional arguments to [destination filter](mp4mx). OPTS can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
 	{"@f1[:args][@fN:args]", NULL, "set a filter chain to insert before the muxer. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](Filters). A `@@` separator starts a new chain (see DASH help). The last filter in each chain shall not have any ID specified"},
@@ -2607,12 +2626,13 @@ u32 parse_split(char *arg_val, u32 opt)
 		split_size = (u32)atoi(arg_val);
 		split_duration = 0;
 		break;
-	case 4: //-splitz
-		adjust_split_end = 1;
-		//fallthrough
 	case 3: //-split-chunk, -splitx
-		if (!strstr(arg_val, ":")) {
-			M4_LOG(GF_LOG_ERROR, ("Chunk extraction usage: \"-splitx start:end\" expressed in seconds\n"));
+	case 4: //-splitz
+	case 5: //-splitg
+	case 6: //-splitf
+		adjust_split_end = opt-3;
+		if (!strstr(arg_val, ":") && !strstr(arg_val, "-")) {
+			M4_LOG(GF_LOG_ERROR, ("Chunk extraction usage: \"-split* start:end\" expressed in seconds\n"));
 			return 2;
 		}
 		if (strstr(arg_val, "end")) {
@@ -2625,12 +2645,7 @@ u32 parse_split(char *arg_val, u32 opt)
 				split_duration = -2;
 			}
 		} else {
-			if (strchr(arg_val, '-')) {
-				split_range_str = arg_val;
-			} else {
-				sscanf(arg_val, "%lf:%lf", &split_start, &split_duration);
-				split_duration -= split_start;
-			}
+			split_range_str = arg_val;
 		}
 		split_size = 0;
 		break;
@@ -2697,6 +2712,12 @@ u32 parse_boxpatch(char *arg_val, u32 opt)
 		sep[0] = '=';
 		box_patch_filename = sep+1;
 	}
+	open_edit = GF_TRUE;
+	return 0;
+}
+u32 parse_compress(char *arg_val, u32 opt)
+{
+	compress_moov = opt ? 2 : 1;
 	open_edit = GF_TRUE;
 	return 0;
 }
@@ -3387,7 +3408,7 @@ GF_Err HintFile(GF_ISOFile *file, u32 MTUSize, u32 max_ptime, u32 rtp_rate, u32 
 			/*single AU - check if base64 would fit in ESD (consider 33% overhead of base64), otherwise stream*/
 			if (gf_isom_get_sample_count(file, i+1)==1) {
 				GF_ISOSample *samp = gf_isom_get_sample(file, i+1, 1, &val);
-				if (streamType) {
+				if (streamType && samp) {
 					res = gf_hinter_can_embbed_data(samp->data, samp->dataLength, streamType);
 				} else {
 					/*not a system track, we shall hint it*/
@@ -6198,7 +6219,7 @@ int mp4boxMain(int argc, char **argv)
 		gf_isom_force_64bit_chunk_offset(file, GF_TRUE);
 
 	if (compress_moov)
-		gf_isom_enable_compression(file, GF_ISO_COMP_MOOV, GF_FALSE);
+		gf_isom_enable_compression(file, GF_ISOM_COMP_ALL, (compress_moov==2) ? GF_ISOM_COMP_WRAP_FTYPE : 0);
 
 	if (no_inplace)
 		gf_isom_disable_inplace_rewrite(file);

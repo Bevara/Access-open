@@ -653,11 +653,11 @@ noaudio (bool, default: false): disable audio output
 .br
 opfmt (pfmt, default: none, minmax: none,yuv420,yvu420,yuv420_10,yuv422,yuv422_10,yuv444,yuv444_10,uyvy,vyuy,yuyv,yvyu,uyvl,vyul,yuyl,yvyl,nv12,nv21,nv1l,nv2l,yuva,yuvd,yuv444a,yuv444p,yuv444ap,yuv444p_10,grey,algr,gral,rgb4,rgb5,rgb6,rgba,argb,bgra,abgr,rgb,bgr,xrgb,rgbx,xbgr,bgrx,rgbd,rgbds,rgbs,rgbas): pixel format to use for output. Ignored in .I player mode
 .br
-drv (enum, default: auto):     indicate if graphics driver should be used. Ignored in player mode
+drv (enum, default: auto):     indicate if graphics driver should be used
 .br
-* no: never loads a graphics driver (software blitting used, no 3D possible)
+* no: never loads a graphics driver, software blitting is used, no 3D possible (in player mode, disables OpenGL)
 .br
-* yes: always loads a graphics driver. Output pixel format will be RGB
+* yes: always loads a graphics driver, output pixel format will be RGB (in player mode, same to auto)
 .br
 * auto: decides based on the loaded content
 .br
@@ -1985,7 +1985,7 @@ store (enum, default: inter):  file storage mode
 .br
 
 .br
-cdur (frac, default: -1/1):    chunk duration for interleaving and fragmentation modes
+cdur (frac, default: -1/1):    chunk duration for flat and interleaving modes or fragment duration for fragmentation modes
 .br
 * 0: no specific interleaving but moov first
 .br
@@ -2126,6 +2126,8 @@ compress (enum, default: no):  set top-level box compression mode
 
 .br
 fcomp (bool, default: false):  force using compress box even when compressed size is larger than uncompressed
+.br
+otyp (bool, default: false):   inject original file type when using compressed boxes
 .br
 trun_inter (bool, default: false): interleave samples in trun based on the temporal level, the lowest level are stored first - this will create as many trun as required
 .br
@@ -2865,7 +2867,7 @@ This filter can force input media streams to be decoded using the .I raw option.
 .br
 Example
 .br
-gpac src=m.mp4 reframer:raw @ [dst]
+gpac src=m.mp4 reframer:raw=av @ [dst]
 .br
 
 .br
@@ -2983,6 +2985,32 @@ This will assign to output PIDs
 .br
 For uncompressed audio pids, input frame will be split to closest audio sample number.
 .br
+
+.br
+When .I xround is set to seek, the following applies:
+.br
+- a single range shall be specified
+.br
+- the first I-frame preceding or matching the range start is used as split point
+.br
+- all packets before range start are marked as seek points
+.br
+- packets overlapping range start are forwarded with a SkipBegin property set to the amount of media to skip
+.br
+- packets overlapping range end are forwarded with an adjusted duration to match the range end
+.br
+This mode is typically used to extract a range in a frame/sample accurate way, rather than a GOP-aligned way.
+.br
+
+.br
+When .I xround is not set to seek, compressed audio streams using priming will still use seek mode.
+.br
+Consequently, these streams will have modified edit lists in ISOBMFF which might not be properly handled by players.
+.br
+This can be avoided using .I no_audio_seek, but this will introduce audio delay.
+.br
+
+.br
 .SH Other split actions
 .LP
 .br
@@ -3029,7 +3057,17 @@ refs (bool, default: false):   forward only frames used as reference frames, if 
 .br
 speed (dbl, default: 1.0):     speed for real-time regulation mode - only positive value
 .br
-raw (bool, default: false):    force input AV streams to be in raw format (i.e. forces decoding of AV input)
+raw (enum, default: no):       force input AV streams to be in raw format
+.br
+* no: do not force decoding of inputs
+.br
+* av: force decoding of audio and video inputs
+.br
+* a: force decoding of audio inputs
+.br
+* v: force decoding of video inputs
+.br
+
 .br
 frames (uintl):                drop all except listed frames (first being 1), off by default
 .br
@@ -3037,13 +3075,15 @@ xs (strl):                     extraction start time(s), see filter help
 .br
 xe (strl):                     extraction end time(s). If less values than start times, the last time interval extracted is an open range
 .br
-xround (enum, default: before): adjustment of extraction start range I-frame
+xround (enum, default: before): adjust start time of extraction range to I-frame
 .br
-* before: use first I-frame preceding or equal to start range
+* before: use first I-frame preceding or matching range start
 .br
-* after: use first I-frame (if any) following or equal to start range
+* seek: see filter help
 .br
-* closest: use I-frame closest to start range
+* after: use first I-frame (if any) following or matching range start
+.br
+* closest: use I-frame closest to range start
 .br
 
 .br
@@ -3058,6 +3098,8 @@ seeksafe (dbl, default: 10.0): rewind play requests by given seconds (to make su
 tcmdrw (bool, default: true):  rewrite TCMD samples when splitting
 .br
 props (strl):                  extra output PID properties per extraction range
+.br
+no_audio_seek (bool, default: false): disable seek mode on audio streams (no change of priming duration) - see filter help
 .br
 
 .br
@@ -4012,7 +4054,17 @@ sigcues (bool, default: false): inject CueStart property at each source begin (n
 .br
 fdel (bool, default: false):   delete source files after processing in playlist mode (does not delete the playlist)
 .br
-raw (bool, default: false):    force input AV streams to be in raw format (i.e. forces decoding of AV input)
+raw (enum, default: no):       force input AV streams to be in raw format
+.br
+* no: do not force decoding of inputs
+.br
+* av: force decoding of audio and video inputs
+.br
+* a: force decoding of audio inputs
+.br
+* v: force decoding of video inputs
+.br
+
 .br
 
 .br
@@ -7600,7 +7652,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev736-gd1e971268-master
+build: 1.1.0-DEV-rev753-g3b246ee75-master
 .br
 Copyright: (c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

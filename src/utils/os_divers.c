@@ -1058,6 +1058,32 @@ const char *gf_sys_get_arg(u32 arg)
 	if (arg>=gpac_argc) return NULL;
 	return gpac_argv[arg];
 }
+GF_EXPORT
+const char *gf_sys_find_global_arg(const char *arg)
+{
+	u32 i;
+	if (!gpac_argc || !gpac_argv) return NULL;
+	for (i=0; i<gpac_argc; i++) {
+		const char *sep;
+		u32 len;
+		const char *an_arg = gpac_argv[i];
+		if (an_arg[0]!='-') continue;
+		if ((an_arg[1]!='-') && (an_arg[1]!='+')) continue;
+		an_arg += 2;
+		sep = strchr(an_arg, '@');
+		if (sep) an_arg = sep+1;
+		sep = strchr(an_arg, '=');
+		if (sep) len = (u32) (sep - an_arg);
+		else len = (u32) strlen(an_arg);
+		if (len != (u32) strlen(arg)) continue;
+
+		if (strncmp(an_arg, arg, len)) continue;
+
+		if (!sep) return "";
+		return sep;
+	}
+	return NULL;
+}
 
 
 #ifndef GPAC_DISABLE_REMOTERY
@@ -1767,8 +1793,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 		count = THREAD_BASIC_INFO_COUNT;
 		error = thread_info(thread_table[i], THREAD_BASIC_INFO, (thread_info_t)thi, &count);
 		if (error != KERN_SUCCESS) {
-			mach_error("[RTI] Unexpected thread_info() call return", error);
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[RTI] Unexpected thread info for PID %d\n", the_rti.pid));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[RTI] Unexpected thread_info error for process %d: %s\n", the_rti.pid, mach_error_string(error) ));
 			break;
 		}
 		if ((thi->flags & TH_FLAGS_IDLE) == 0) {

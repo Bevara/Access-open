@@ -28,7 +28,7 @@
 #include <gpac/constants.h>
 #include <gpac/filters.h>
 
-#if !defined(GPAC_STATIC_BUILD) && (defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)) 
+#if (!defined(GPAC_STATIC_BUILD) && (defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)) && !defined(GPAC_DISABLE_NVDEC))
 
 #include "dec_nvdec_sdk.h"
 
@@ -1487,6 +1487,11 @@ GF_FilterRegister NVDecRegister = {
 
 const GF_FilterRegister *nvdec_register(GF_FilterSession *session)
 {
+	//check if nvdec is not globally blacklisted - if so, do not try to load CUDA SDK which may be time consuming on some devices
+	const char *blacklist = gf_opts_get_key("core", "blacklist");
+	if (blacklist && strstr(blacklist, "nvdec"))
+		return NULL;
+
 	init_cuda_sdk();
 	//do not register if no SDK
 	if (cuvid_load_state != 2) {
@@ -1505,6 +1510,4 @@ const GF_FilterRegister *nvdec_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-#endif // !defined(GPAC_STATIC_BUILD) && (defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)) 
-
-
+#endif // (!defined(GPAC_STATIC_BUILD) && (defined(WIN32) || defined(GPAC_CONFIG_LINUX) || defined(GPAC_CONFIG_DARWIN)) && !defined(GPAC_DISABLE_NVDEC))

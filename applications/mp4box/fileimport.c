@@ -1773,7 +1773,7 @@ static Bool on_split_event(void *_udta, GF_Event *evt)
 	return GF_FALSE;
 }
 
-GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb, char *inName, Double InterleavingTime, Double chunk_start_time, Bool adjust_split_end, char *outName, Bool force_rap_split, const char *split_range_str, u32 fs_dump_flags)
+GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb, char *inName, Double InterleavingTime, Double chunk_start_time, u32 adjust_split_end, char *outName, Bool force_rap_split, const char *split_range_str, u32 fs_dump_flags)
 {
 	Bool chunk_extraction, rap_split, split_until_end;
 	GF_Err e;
@@ -1833,18 +1833,43 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 	} else if (chunk_extraction) {
 		//we adjust end: start at the iframe at or after requested time and use xadjust (move end to next I-frame)
 		//so that two calls with X:Y and Y:Z have the same Y boundary
-		if (adjust_split_end) {
+		if (adjust_split_end==1) {
 			gf_dynstrcat(&filter_args, ":xadjust:xround=after", NULL);
-		} else {
+		} else if (adjust_split_end==2) {
+			gf_dynstrcat(&filter_args, ":xadjust:xround=before", NULL);
+		} else if (adjust_split_end==3) {
+			gf_dynstrcat(&filter_args, ":xround=seek", NULL);
+		} else if (!gf_sys_find_global_arg("xround")) {
 			gf_dynstrcat(&filter_args, ":xround=closest", NULL);
 		}
 
 		if (split_range_str) {
+			Bool is_time = GF_FALSE;
+			char c;
+			//S-E syntax
 			char *end = (char *) strchr(split_range_str, '-');
-			assert(end);
+			if (!end) {
+				//S:E syntax
+				end = (char *) strchr(split_range_str, ':');
+				//if another `:` assume time format
+				if (end && strchr(end+1, ':'))
+					is_time = GF_TRUE;
+			}
+			if (!end) {
+				gf_free(filter_args);
+				M4_LOG(GF_LOG_ERROR, ("Invalid range specifer %s, expecting START-END or START:END\n", split_range_str ));
+				gf_fs_del(fs);
+				return GF_BAD_PARAM;
+			}
+
+			c = end[0];
 			end[0] = 0;
-			sprintf(szArgs, ":xs=T%s:xe=T%s", split_range_str, end+1);
-			end[0] = '-';
+			if (is_time) {
+				sprintf(szArgs, ":xs=T%s:xe=T%s", split_range_str, end+1);
+			} else {
+				sprintf(szArgs, ":xs=%s:xe=%s", split_range_str, end+1);
+			}
+			end[0] = c;
 		} else if (split_until_end) {
 			Double end=0;
 			if (split_dur<-2) {

@@ -167,6 +167,8 @@ typedef struct
 	Bool insert_pssh;
 
 	Bool wait_sap;
+	s64 min_ts_seek_plus_one;
+	Bool check_seek_ts;
 } TrackWriter;
 
 enum
@@ -251,7 +253,7 @@ typedef struct
 	Bool trun_inter;
 	Bool truns_first;
 	char *boxpatch;
-	Bool fcomp;
+	Bool fcomp, otyp;
 	Bool deps;
 	Bool mvex;
 	u32 sdtp_traf;
@@ -2654,6 +2656,12 @@ multipid_stsd_setup:
 					mp4_mux_write_track_refs(ctx, base_tk, "isom:sabt", GF_ISOM_REF_SABT);
 			}
 		}
+
+		//check if we have sample-accurate seek info for the pid. If so, enable seek ts checking
+		p = gf_filter_pid_get_property(pid, GF_PROP_PCK_SKIP_BEGIN);
+		if (p && p->value.uint)
+			tkw->check_seek_ts = GF_TRUE;
+
 	} else if (codec_id==GF_CODECID_HEVC_TILES) {
 		mp4_mux_write_track_refs(ctx, tkw, "isom:tbas", GF_ISOM_REF_TBAS);
 	}
@@ -2690,6 +2698,9 @@ sample_entry_done:
 	if (!tkw->is_item) {
 		if (ctx->maxchunk)
 			gf_isom_hint_max_chunk_size(ctx->file, tkw->track_num, ctx->maxchunk);
+
+		if (ctx->store==MP4MX_MODE_FLAT)
+			gf_isom_hint_max_chunk_duration(ctx->file, tkw->track_num, tkw->tk_timescale * ctx->cdur.num / ctx->cdur.den);
 
 		if (sr) {
 			if (use_flac_entry) {
@@ -3422,8 +3433,6 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 
 	timescale = gf_filter_pck_get_timescale(pck);
 
-	subs = gf_filter_pck_get_property(pck, GF_PROP_PCK_SUBS);
-
 	prev_dts = tkw->nb_samples ? tkw->sample.DTS : GF_FILTER_NO_TS;
 	prev_size = tkw->sample.dataLength;
 	tkw->sample.CTS_Offset = 0;
@@ -3473,6 +3482,23 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 			} else {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] broken timing in track, initial ts "LLU" greater than TS "LLU"\n", tkw->ts_shift, tkw->sample.DTS));
 			}
+		}
+	}
+
+	//sample-accurate seek info, start logging min CTS of packets marked as non-sync
+	if (tkw->check_seek_ts && !gf_filter_pck_get_seek_flag(pck)) {
+		u64 ts_check = cts;
+		subs = gf_filter_pck_get_property(pck, GF_PROP_PCK_SKIP_BEGIN);
+		if (subs)
+			ts_check += subs->value.uint;
+
+		if (!tkw->min_ts_seek_plus_one) {
+			tkw->min_ts_seek_plus_one = ts_check + 1;
+		} else if (tkw->min_ts_seek_plus_one > ts_check + 1) {
+			tkw->min_ts_seek_plus_one = ts_check + 1;
+		} else {
+			//TS is greater than last non-seek packet TS, we're done seeking
+			tkw->check_seek_ts = GF_FALSE;
 		}
 	}
 
@@ -3702,6 +3728,7 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 		}
 	}
 	
+	subs = gf_filter_pck_get_property(pck, GF_PROP_PCK_SUBS);
 	if (subs) {
 		//if no AUDelim nal and inband header injection, push new subsample
 		if (!first_nal_is_audelim && insert_subsample_dsi_size) {
@@ -5747,6 +5774,7 @@ static GF_Err mp4_mux_initialize(GF_Filter *filter)
 			return GF_BAD_PARAM;
 		}
 		ctx->owns_mov = GF_FALSE;
+		gf_filter_act_as_sink(filter);
 	} else {
 		u32 open_mode = GF_ISOM_OPEN_WRITE;
 		ctx->owns_mov = GF_TRUE;
@@ -5806,8 +5834,12 @@ static GF_Err mp4_mux_initialize(GF_Filter *filter)
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] Invalid segment marker 4cc %s, ignoring\n", ctx->m4cc));
 		}
 	}
-	if (ctx->compress)
-		gf_isom_enable_compression(ctx->file, ctx->compress, ctx->fcomp);
+	if (ctx->compress) {
+		u32 flags = 0;
+		if (ctx->fcomp) flags |= GF_ISOM_COMP_FORCE_ALL;
+		if (ctx->otyp) flags |= GF_ISOM_COMP_WRAP_FTYPE;
+		gf_isom_enable_compression(ctx->file, ctx->compress, flags);
+	}
 
 	if (ctx->cmaf) {
 		//cf table 3, 4, 5 of CMAF
@@ -5994,6 +6026,37 @@ static GF_Err mp4_mux_done(GF_Filter *filter, GF_MP4MuxCtx *ctx, Bool is_final)
 			has_bframes = GF_TRUE;
 		} else if (tkw->ts_delay || tkw->empty_init_dur) {
 			gf_isom_update_edit_list_duration(ctx->file, tkw->track_num);
+		}
+
+		if (tkw->min_ts_seek_plus_one) {
+			u64 min_ts = tkw->min_ts_seek_plus_one - 1;
+			u64 mdur = gf_isom_get_media_duration(ctx->file, tkw->track_num);
+			u32 delay = 0;
+			if (mdur > min_ts)
+				mdur -= min_ts;
+			else
+				mdur = 0;
+
+			if ((ctx->ctmode!=MP4MX_CT_NEGCTTS) && (tkw->ts_delay<0) && (tkw->stream_type==GF_STREAM_VISUAL)) {
+				delay = (u32) -tkw->ts_delay;
+			}
+
+			if (tkw->src_timescale != tkw->tk_timescale) {
+				min_ts *= tkw->tk_timescale;
+				min_ts /= tkw->src_timescale;
+				delay *= tkw->tk_timescale;
+				delay /= tkw->src_timescale;
+			}
+			mdur += delay;
+
+			if (ctx->moovts != tkw->tk_timescale) {
+				mdur *= ctx->moovts;
+				mdur /= tkw->tk_timescale;
+			}
+			gf_isom_remove_edits(ctx->file, tkw->track_num);
+			if (tkw->empty_init_dur)
+				gf_isom_set_edit(ctx->file, tkw->track_num, 0, tkw->empty_init_dur, 0, GF_ISOM_EDIT_EMPTY);
+			gf_isom_set_edit(ctx->file, tkw->track_num, tkw->empty_init_dur, mdur, min_ts, GF_ISOM_EDIT_NORMAL);
 		}
 
 		if (tkw->force_ctts) {
@@ -6242,7 +6305,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	"- tight:  uses per-sample interleaving of all tracks (requires temporary storage of all media)\n"
 	"- frag: fragments the file using cdur duration\n"
 	"- sfrag: framents the file using cdur duration but adjusting to start with SAP1/3", GF_PROP_UINT, "inter", "inter|flat|fstart|tight|frag|sfrag", 0},
-	{ OFFS(cdur), "chunk duration for interleaving and fragmentation modes\n"
+	{ OFFS(cdur), "chunk duration for flat and interleaving modes or fragment duration for fragmentation modes\n"
 	"- 0: no specific interleaving but moov first\n"
 	"- negative: defaults to 1.0 unless overridden by storage profile", GF_PROP_FRACTION, "-1/1", NULL, 0},
 	{ OFFS(moovts), "timescale to use for movie. A negative value picks the media timescale of the first track added", GF_PROP_SINT, "600", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -6314,6 +6377,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 						"- ssix: compress moof, sidx and ssix boxes\n"
 						"- all: compress moov, moof, sidx and ssix boxes", GF_PROP_UINT, "no", "no|moov|moof|sidx|ssix|all", GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(fcomp), "force using compress box even when compressed size is larger than uncompressed", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(otyp), "inject original file type when using compressed boxes", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 
 	{ OFFS(trun_inter), "interleave samples in trun based on the temporal level, the lowest level are stored first - this will create as many trun as required", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(truns_first), "store track runs before sample group description and sample encryption information", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},

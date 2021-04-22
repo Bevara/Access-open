@@ -483,6 +483,10 @@ enum
 	/* OMA PDCF DRM Format 2.1 (OMA-TS-DRM-DCF-V2_1-20070724-C) */
 	GF_ISOM_BRAND_OPF2 = GF_4CC('o','p','f','2'),
 
+	/* compressed brand*/
+	GF_ISOM_BRAND_COMP  = GF_4CC( 'c', 'o', 'm', 'p' ),
+	GF_ISOM_BRAND_ISOC  = GF_4CC( 'i', 's', 'o', 'C' ),
+
 };
 
 /*! sample roll information type*/
@@ -1987,26 +1991,35 @@ GF_Err gf_isom_force_64bit_chunk_offset(GF_ISOFile *isom_file, Bool set_on);
 typedef enum
 {
 	/*! no compression is used*/
-	GF_ISO_COMP_NONE=0,
+	GF_ISOM_COMP_NONE=0,
 	/*! only moov box is compressed*/
-	GF_ISO_COMP_MOOV,
+	GF_ISOM_COMP_MOOV,
 	/*! only moof boxes are compressed*/
-	GF_ISO_COMP_MOOF,
+	GF_ISOM_COMP_MOOF,
 	/*! only moof and sidx boxes are compressed*/
-	GF_ISO_COMP_MOOF_SIDX,
+	GF_ISOM_COMP_MOOF_SIDX,
 	/*! only moof,  sidx and ssix boxes are compressed*/
-	GF_ISO_COMP_MOOF_SSIX,
+	GF_ISOM_COMP_MOOF_SSIX,
 	/*! all (moov, moof,  sidx and ssix) boxes are compressed*/
-	GF_ISO_COMP_ALL,
+	GF_ISOM_COMP_ALL,
 } GF_ISOCompressMode;
+
+enum
+{
+	/*! forces compressed box even if compress size is larger than uncompressed size*/
+	GF_ISOM_COMP_FORCE_ALL	=	0x01,
+	/*! wraps ftyp in otyp*/
+	GF_ISOM_COMP_WRAP_FTYPE	=	0x02,
+};
+
 
 /*! sets compression mode of file
 \param isom_file the target ISO file
 \param compress_mode the desired compress mode
-\param force_compress forces compressed box even if compress size is larger than uncompressed size
+\param compress_flags compress mode flags
 \return error if any
 */
-GF_Err gf_isom_enable_compression(GF_ISOFile *isom_file, GF_ISOCompressMode compress_mode, Bool force_compress);
+GF_Err gf_isom_enable_compression(GF_ISOFile *isom_file, GF_ISOCompressMode compress_mode, u32 compress_flags);
 
 /*! sets the copyright in one language
 \param isom_file the target ISO file
@@ -2574,6 +2587,14 @@ GF_Err gf_isom_set_track_priority_in_group(GF_ISOFile *isom_file, u32 trackNumbe
 \return error if any
 */
 GF_Err gf_isom_hint_max_chunk_size(GF_ISOFile *isom_file, u32 trackNumber, u32 maxChunkSize);
+
+/*! sets the maximum chunk duration for a track
+\param isom_file the target ISO file
+\param trackNumber the target track
+\param maxChunkDur the maximum chunk duration in media timescale
+\return error if any
+*/
+GF_Err gf_isom_hint_max_chunk_duration(GF_ISOFile *isom_file, u32 trackNumber, u32 maxChunkDur);
 
 /*! sets up interleaving for storage (shortcut for storeage mode + interleave_time)
 \param isom_file the target ISO file
@@ -5688,6 +5709,16 @@ GF_Err gf_isom_get_meta_item_info(GF_ISOFile *isom_file, Bool root_meta, u32 tra
                                   u32 *itemID, u32 *type, u32 *protection_scheme, u32 *protection_scheme_version, Bool *is_self_reference,
                                   const char **item_name, const char **item_mime_type, const char **item_encoding,
                                   const char **item_url, const char **item_urn);
+
+/*! gets item flags for the givesn item
+
+\param isom_file the target ISO file
+\param root_meta if GF_TRUE uses meta at the file, otherwise uses meta at the movie level if track number is 0
+\param track_num if GF_TRUE and root_meta is GF_FALSE, uses meta at the track level
+\param item_num 1-based index of item to query
+\return item flags
+*/
+GF_Err gf_isom_get_meta_item_flags(GF_ISOFile *isom_file, Bool root_meta, u32 track_num, u32 item_num);
 
 /*! gets item index from item ID
 \param isom_file the target ISO file
