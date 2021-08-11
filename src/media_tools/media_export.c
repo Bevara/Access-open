@@ -78,7 +78,6 @@ static GF_Err gf_dump_to_ogg(GF_MediaExporter *dumper, char *szName, u32 track)
 	ogg_page og;
 	u32 count, i, di, theora_kgs, nb_i, nb_p;
 	Bool flush_first = GF_TRUE;
-	GF_BitStream *bs;
 	GF_ISOSample *samp;
 	GF_ESD *esd = gf_isom_get_esd(dumper->file, track, 1);
 
@@ -98,68 +97,73 @@ static GF_Err gf_dump_to_ogg(GF_MediaExporter *dumper, char *szName, u32 track)
 	if (!out) return gf_export_message(dumper, GF_IO_ERR, "Error opening %s for writing - check disk access & permissions", szName);
 
 	theora_kgs = 0;
-	bs = gf_bs_new(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, GF_BITSTREAM_READ);
-	if (esd->decoderConfig->objectTypeIndication==GF_CODECID_OPUS) {
-		GF_BitStream *bs_out;
-		GF_OpusSpecificBox *dops = (GF_OpusSpecificBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_DOPS);
-		dops->size = gf_bs_read_u32(bs);
-		gf_bs_read_u32(bs);
-		gf_isom_box_read((GF_Box *)dops, bs);
-		bs_out = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-		gf_bs_write_data(bs_out, "OpusHead", 8);
-		gf_bs_write_u8(bs_out, 1);//version
-		gf_bs_write_u8(bs_out, dops->OutputChannelCount);
-		gf_bs_write_u16_le(bs_out, dops->PreSkip);
-		gf_bs_write_u32_le(bs_out, dops->InputSampleRate);
-		gf_bs_write_u16_le(bs_out, dops->OutputGain);
-		gf_bs_write_u8(bs_out, dops->ChannelMappingFamily);
-		if (dops->ChannelMappingFamily) {
-			gf_bs_write_u8(bs_out, dops->StreamCount);
-			gf_bs_write_u8(bs_out, dops->CoupledCount);
-			gf_bs_write_data(bs, (char *) dops->ChannelMapping, dops->OutputChannelCount);
-		}
-		gf_isom_box_del((GF_Box*)dops);
-
-		gf_bs_get_content(bs_out, &op.packet, &op.bytes);
-		gf_bs_del(bs_out);
-		ogg_stream_packetin(&os, &op);
-		gf_free(op.packet);
-		op.packetno ++;
-
-	} else {
-		while (gf_bs_available(bs)) {
-			op.bytes = gf_bs_read_u16(bs);
-			op.packet = (unsigned char*)gf_malloc(sizeof(char) * op.bytes);
-			gf_bs_read_data(bs, (char*)op.packet, op.bytes);
-			ogg_stream_packetin(&os, &op);
-
-			if (flush_first) {
-				ogg_stream_pageout(&os, &og);
-				gf_fwrite(og.header, og.header_len, out);
-				gf_fwrite(og.body, og.body_len, out);
-				flush_first = 0;
-
-				if (esd->decoderConfig->objectTypeIndication==GF_CODECID_THEORA) {
-					u32 kff;
-					GF_BitStream *vbs = gf_bs_new((char*)op.packet, op.bytes, GF_BITSTREAM_READ);
-					gf_bs_skip_bytes(vbs, 40);
-					gf_bs_read_int(vbs, 6); /* quality */
-					kff = 1 << gf_bs_read_int(vbs, 5);
-					gf_bs_del(vbs);
-
-					theora_kgs = 0;
-					kff--;
-					while (kff) {
-						theora_kgs ++;
-						kff >>= 1;
-					}
-				}
+	if (esd && esd->decoderConfig
+		&& esd->decoderConfig->decoderSpecificInfo
+		&& esd->decoderConfig->decoderSpecificInfo->data
+	) {
+		GF_BitStream *bs = gf_bs_new(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, GF_BITSTREAM_READ);
+		if (esd->decoderConfig->objectTypeIndication==GF_CODECID_OPUS) {
+			GF_BitStream *bs_out;
+			GF_OpusSpecificBox *dops = (GF_OpusSpecificBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_DOPS);
+			dops->size = gf_bs_read_u32(bs);
+			gf_bs_read_u32(bs);
+			gf_isom_box_read((GF_Box *)dops, bs);
+			bs_out = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+			gf_bs_write_data(bs_out, "OpusHead", 8);
+			gf_bs_write_u8(bs_out, 1);//version
+			gf_bs_write_u8(bs_out, dops->OutputChannelCount);
+			gf_bs_write_u16_le(bs_out, dops->PreSkip);
+			gf_bs_write_u32_le(bs_out, dops->InputSampleRate);
+			gf_bs_write_u16_le(bs_out, dops->OutputGain);
+			gf_bs_write_u8(bs_out, dops->ChannelMappingFamily);
+			if (dops->ChannelMappingFamily) {
+				gf_bs_write_u8(bs_out, dops->StreamCount);
+				gf_bs_write_u8(bs_out, dops->CoupledCount);
+				gf_bs_write_data(bs, (char *) dops->ChannelMapping, dops->OutputChannelCount);
 			}
+			gf_isom_box_del((GF_Box*)dops);
+
+			gf_bs_get_content(bs_out, &op.packet, &op.bytes);
+			gf_bs_del(bs_out);
+			ogg_stream_packetin(&os, &op);
 			gf_free(op.packet);
 			op.packetno ++;
+
+		} else {
+			while (gf_bs_available(bs)) {
+				op.bytes = gf_bs_read_u16(bs);
+				op.packet = (unsigned char*)gf_malloc(sizeof(char) * op.bytes);
+				gf_bs_read_data(bs, (char*)op.packet, op.bytes);
+				ogg_stream_packetin(&os, &op);
+
+				if (flush_first) {
+					ogg_stream_pageout(&os, &og);
+					gf_fwrite(og.header, og.header_len, out);
+					gf_fwrite(og.body, og.body_len, out);
+					flush_first = 0;
+
+					if (esd->decoderConfig->objectTypeIndication==GF_CODECID_THEORA) {
+						u32 kff;
+						GF_BitStream *vbs = gf_bs_new((char*)op.packet, op.bytes, GF_BITSTREAM_READ);
+						gf_bs_skip_bytes(vbs, 40);
+						gf_bs_read_int(vbs, 6); /* quality */
+						kff = 1 << gf_bs_read_int(vbs, 5);
+						gf_bs_del(vbs);
+
+						theora_kgs = 0;
+						kff--;
+						while (kff) {
+							theora_kgs ++;
+							kff >>= 1;
+						}
+					}
+				}
+				gf_free(op.packet);
+				op.packetno ++;
+			}
 		}
+		gf_bs_del(bs);
 	}
-	gf_bs_del(bs);
 	gf_odf_desc_del((GF_Descriptor *)esd);
 
 	while (ogg_stream_pageout(&os, &og)>0) {
@@ -402,12 +406,19 @@ static GF_Err gf_export_isom_copy_track(GF_MediaExporter *dumper, GF_ISOFile *in
 
 	if (esd) {
 		gf_isom_new_mpeg4_description(outfile, newTk, esd, NULL, NULL, &descIndex);
+	} else {
+		gf_isom_clone_sample_description(outfile, newTk, infile, inTrackNum, 1, NULL, NULL, &descIndex);
+	}
+
+	if (esd && esd->decoderConfig) {
 		if ((esd->decoderConfig->streamType == GF_STREAM_VISUAL) || (esd->decoderConfig->streamType == GF_STREAM_SCENE)) {
 			u32 w, h;
 			gf_isom_get_visual_info(infile, inTrackNum, 1, &w, &h);
 #ifndef GPAC_DISABLE_AV_PARSERS
 			/*this is because so many files have reserved values of 320x240 from v1 ... */
-			if (esd->decoderConfig->objectTypeIndication == GF_CODECID_MPEG4_PART2) {
+			if ((esd->decoderConfig->objectTypeIndication == GF_CODECID_MPEG4_PART2)
+				&& esd->decoderConfig->decoderSpecificInfo
+			) {
 				GF_M4VDecSpecInfo dsi;
 				gf_m4v_get_config(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, &dsi);
 				w = dsi.width;
@@ -425,8 +436,6 @@ static GF_Err gf_export_isom_copy_track(GF_MediaExporter *dumper, GF_ISOFile *in
 		}
 		esd->decoderConfig->avgBitrate = 0;
 		esd->decoderConfig->maxBitrate = 0;
-	} else {
-		gf_isom_clone_sample_description(outfile, newTk, infile, inTrackNum, 1, NULL, NULL, &descIndex);
 	}
 
 	pos = 0;
@@ -436,7 +445,7 @@ static GF_Err gf_export_isom_copy_track(GF_MediaExporter *dumper, GF_ISOFile *in
 	for (i=0; i<count; i++) {
 		samp = gf_isom_get_sample(infile, inTrackNum, i+1, &di);
 		gf_isom_add_sample(outfile, newTk, descIndex, samp);
-		if (esd) {
+		if (esd && esd->decoderConfig) {
 			rate += samp->dataLength;
 			esd->decoderConfig->avgBitrate += samp->dataLength;
 			if (esd->decoderConfig->bufferSizeDB<samp->dataLength) esd->decoderConfig->bufferSizeDB = samp->dataLength;
@@ -460,8 +469,16 @@ static GF_Err gf_export_isom_copy_track(GF_MediaExporter *dumper, GF_ISOFile *in
 	          ) {
 		return gf_isom_set_pl_indication(outfile, GF_ISOM_PL_VISUAL, 0x0F);
 	}
+
 	/*likely 3gp or any non-MPEG-4 isomedia file*/
-	else if (!esd) return gf_isom_remove_root_od(outfile);
+	if (!esd)
+		return gf_isom_remove_root_od(outfile);
+
+	//broken stream description, do not check for profiles & levels and remove from root
+	if (!esd->decoderConfig) {
+		gf_odf_desc_del((GF_Descriptor *)esd);
+		return gf_isom_remove_root_od(outfile);
+	}
 
 	dur = gf_isom_get_media_duration(outfile, newTk);
 	if (!dur) dur = ts;
@@ -487,7 +504,9 @@ static GF_Err gf_export_isom_copy_track(GF_MediaExporter *dumper, GF_ISOFile *in
 			gf_isom_set_pl_indication(outfile, GF_ISOM_PL_VISUAL, iod->visual_profileAndLevel);
 		}
 #ifndef GPAC_DISABLE_AV_PARSERS
-		else if (esd->decoderConfig->objectTypeIndication==GF_CODECID_MPEG4_PART2) {
+		else if ((esd->decoderConfig->objectTypeIndication==GF_CODECID_MPEG4_PART2)
+			&& esd->decoderConfig->decoderSpecificInfo
+		) {
 			GF_M4VDecSpecInfo dsi;
 			gf_m4v_get_config(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, &dsi);
 			gf_isom_set_pl_indication(outfile, GF_ISOM_PL_VISUAL, dsi.VideoPL);
@@ -503,7 +522,9 @@ static GF_Err gf_export_isom_copy_track(GF_MediaExporter *dumper, GF_ISOFile *in
 			gf_isom_set_pl_indication(outfile, GF_ISOM_PL_AUDIO, iod->audio_profileAndLevel);
 		}
 #ifndef GPAC_DISABLE_AV_PARSERS
-		else if (esd->decoderConfig->objectTypeIndication==GF_CODECID_AAC_MPEG4) {
+		else if ((esd->decoderConfig->objectTypeIndication==GF_CODECID_AAC_MPEG4)
+			&& esd->decoderConfig->decoderSpecificInfo
+		) {
 			GF_M4ADecSpecInfo cfg;
 			gf_m4a_get_config(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, &cfg);
 			gf_isom_set_pl_indication(outfile, GF_ISOM_PL_AUDIO, cfg.audioPL);
@@ -678,10 +699,12 @@ GF_Err gf_media_export_webvtt_metadata(GF_MediaExporter *dumper)
 		gf_fprintf(vtt, "baseMediaFile: %s\n", gf_file_basename(szMedia));
 	}
 	if (esd) {
-		/* TODO: export the MPEG-4 Stream type only if it is not a GPAC internal value */
-		gf_fprintf(vtt, "MPEG-4-streamType: %d\n", esd->decoderConfig->streamType);
-		/* TODO: export the MPEG-4 Object Type Indication only if it is not a GPAC internal value */
-		gf_fprintf(vtt, "MPEG-4-objectTypeIndication: %d\n", esd->decoderConfig->objectTypeIndication);
+		if (esd->decoderConfig) {
+			/* TODO: export the MPEG-4 Stream type only if it is not a GPAC internal value */
+			gf_fprintf(vtt, "MPEG-4-streamType: %d\n", esd->decoderConfig->streamType);
+			/* TODO: export the MPEG-4 Object Type Indication only if it is not a GPAC internal value */
+			gf_fprintf(vtt, "MPEG-4-objectTypeIndication: %d\n", esd->decoderConfig->objectTypeIndication);
+		}
 		if (gf_isom_is_video_handler_type(mtype) ) {
 			gf_isom_get_visual_info(dumper->file, track, 1, &w, &h);
 			gf_fprintf(vtt, "width:%d\n", w);
@@ -701,7 +724,7 @@ GF_Err gf_media_export_webvtt_metadata(GF_MediaExporter *dumper)
 			if (tx || ty) gf_fprintf(vtt, "translation:%d,%d\n", tx, ty);
 			if (layer) gf_fprintf(vtt, "layer:%d\n", layer);
 		}
-		if (esd->decoderConfig->decoderSpecificInfo  && esd->decoderConfig->decoderSpecificInfo->data) {
+		if (esd->decoderConfig && esd->decoderConfig->decoderSpecificInfo && esd->decoderConfig->decoderSpecificInfo->data) {
 			if (isText) {
 				if (mstype == GF_ISOM_SUBTYPE_WVTT) {
 					/* Warning: Just use -raw export */
@@ -897,7 +920,7 @@ GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 	gf_fprintf(six, ">\n");
 	header_size = 0;
 	if (esd) {
-		if (esd->decoderConfig->decoderSpecificInfo  && esd->decoderConfig->decoderSpecificInfo->data) {
+		if (esd->decoderConfig && esd->decoderConfig->decoderSpecificInfo && esd->decoderConfig->decoderSpecificInfo->data) {
 #if !defined(GPAC_DISABLE_TTXT) && !defined(GPAC_DISABLE_VTT)
 			if (mstype == GF_ISOM_SUBTYPE_WVTT || mstype == GF_ISOM_SUBTYPE_STXT) {
 				gf_webvtt_dump_header_boxed(media,
@@ -974,7 +997,7 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 	mux = gf_saf_mux_new();
 	count = gf_isom_get_track_count(dumper->file);
 	for (i=0; i<count; i++) {
-		u32 time_scale, mtype, stream_id;
+		u32 time_scale, mtype, stream_id = 0;
 		GF_ESD *esd;
 		mtype = gf_isom_get_media_type(dumper->file, i+1);
 		if (mtype==GF_ISOM_MEDIA_OD) continue;
@@ -982,7 +1005,7 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 
 		time_scale = gf_isom_get_media_timescale(dumper->file, i+1);
 		esd = gf_isom_get_esd(dumper->file, i+1, 1);
-		if (esd) {
+		if (esd && esd->decoderConfig) {
 			stream_id = gf_isom_find_od_id_for_track(dumper->file, i+1);
 			if (!stream_id) stream_id = esd->ESID;
 
@@ -992,8 +1015,11 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 			} else {
 				gf_saf_mux_stream_add(mux, stream_id, time_scale, esd->decoderConfig->bufferSizeDB, esd->decoderConfig->streamType, esd->decoderConfig->objectTypeIndication, NULL, NULL, 0, esd->URLString);
 			}
+		}
+		if (esd)
 			gf_odf_desc_del((GF_Descriptor *)esd);
-		} else {
+
+		if (!stream_id) {
 			char *mime = NULL;
 			switch (gf_isom_get_media_subtype(dumper->file, i+1, 1)) {
 			case GF_ISOM_SUBTYPE_3GP_H263:
@@ -1108,7 +1134,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 		}
 		esd = gf_media_map_esd(dumper->file, track_num, 0);
 		sample_count = gf_isom_get_sample_count(dumper->file, dumper->trackID);
-		if (esd) {
+		if (esd && esd->decoderConfig) {
 			if (esd->decoderConfig->objectTypeIndication<GF_CODECID_LAST_MPEG4_MAPPING) {
 				codec_id = gf_codecid_from_oti(esd->decoderConfig->streamType, esd->decoderConfig->objectTypeIndication);
 #ifndef GPAC_DISABLE_AV_PARSERS

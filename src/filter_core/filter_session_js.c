@@ -123,7 +123,7 @@ static void jsfs_exec_task_custom(JSFS_Task *task, const char *text, GF_Filter *
 		js_dump_error(task->ctx);
 	}
 	JS_FreeValue(task->ctx, ret);
-	js_do_loop(task->ctx);
+	js_std_loop(task->ctx);
 	gf_js_lock(task->ctx, GF_FALSE);
 }
 
@@ -210,7 +210,7 @@ static Bool jsfs_task_exec(GF_FilterSession *fs, void *udta, u32 *timeout_ms)
 	}
 
 	JS_FreeValue(task->ctx, ret);
-	js_do_loop(task->ctx);
+	js_std_loop(task->ctx);
 	gf_js_lock(task->ctx, GF_FALSE);
 
 	if (do_free) {
@@ -251,13 +251,13 @@ static JSValue jsfs_post_task(JSContext *ctx, JSValueConst this_val, int argc, J
 
 static JSValue jsfs_abort(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-	Bool do_flush = GF_FALSE;
+	u32 flush_type = GF_FS_FLUSH_NONE;
 	GF_FilterSession *fs = JS_GetOpaque(this_val, fs_class_id);
     if (!fs) return JS_EXCEPTION;
-	if (argc && JS_IsBool(argv[0]) && JS_ToBool(ctx, argv[0])) {
-		do_flush = GF_FALSE;
+	if (argc) {
+		JS_ToInt32(ctx, &flush_type, argv[0]);
 	}
-	gf_fs_abort(fs, do_flush);
+	gf_fs_abort(fs, flush_type);
 	return JS_UNDEFINED;
 }
 static JSValue jsfs_lock_filters(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
@@ -344,7 +344,7 @@ Bool jsfs_on_event(GF_FilterSession *fs, GF_Event *evt)
 		evt->clipboard.text = NULL;
 	}
 	JS_FreeValue(fs->on_evt_task->ctx, ret);
-	js_do_loop(fs->on_evt_task->ctx);
+	js_std_loop(fs->on_evt_task->ctx);
 	gf_js_lock(fs->on_evt_task->ctx, GF_FALSE);
 	return res;
 }
@@ -958,7 +958,7 @@ static JSValue jsff_insert_filter(JSContext *ctx, JSValueConst this_val, int arg
 			return JS_EXCEPTION;
 		}
 	}
-
+	gf_fs_lock_filters(f->session, GF_TRUE);
 	if (!strncmp(fname, "src=", 4)) {
 		new_f = gf_fs_load_source(f->session, fname+4, NULL, NULL, &e);
 		is_source = GF_TRUE;
@@ -972,12 +972,16 @@ static JSValue jsff_insert_filter(JSContext *ctx, JSValueConst this_val, int arg
 		JSValue ret = js_throw_err_msg(ctx, e, "Cannot load filter %s: %s\n", fname, gf_error_to_string(e));
 		JS_FreeCString(ctx, fname);
 		if (link_args) JS_FreeCString(ctx, link_args);
+		gf_fs_lock_filters(f->session, GF_FALSE);
 		return ret;
 	}
 	if (is_source)
 		gf_filter_set_source_restricted(new_f, (GF_Filter *) f, link_args);
 	else
 		gf_filter_set_source(new_f, (GF_Filter *) f, link_args);
+
+	gf_fs_lock_filters(f->session, GF_FALSE);
+	
 	//reconnect outputs of source
 	gf_filter_reconnect_output((GF_Filter *) f);
 
@@ -1118,6 +1122,8 @@ static JSValue jsfs_add_filter(JSContext *ctx, JSValueConst this_val, int argc, 
 		}
 	}
 
+	gf_fs_lock_filters(fs, GF_TRUE);
+
 	if (!strncmp(fname, "src=", 4)) {
 		new_f = gf_fs_load_source(fs, fname+4, NULL, NULL, &e);
 		is_source = GF_TRUE;
@@ -1131,6 +1137,7 @@ static JSValue jsfs_add_filter(JSContext *ctx, JSValueConst this_val, int argc, 
 		JSValue ret = js_throw_err_msg(ctx, e, "Cannot load filter %s: %s\n", fname, gf_error_to_string(e));
 		JS_FreeCString(ctx, fname);
 		if (link_args) JS_FreeCString(ctx, link_args);
+		gf_fs_lock_filters(fs, GF_FALSE);
 		return ret;
 	}
 	JS_FreeCString(ctx, fname);
@@ -1142,6 +1149,7 @@ static JSValue jsfs_add_filter(JSContext *ctx, JSValueConst this_val, int argc, 
 	}
 
 	if (link_args) JS_FreeCString(ctx, link_args);
+	gf_fs_lock_filters(fs, GF_FALSE);
 
 	return jsfs_new_filter_obj(ctx, new_f);
 }
@@ -1329,12 +1337,7 @@ GF_Err gf_fs_load_script(GF_FilterSession *fs, const char *jsfile)
 	}
 
  	if (!gf_opts_get_bool("core", "no-js-mods") && JS_DetectModule((char *)buf, buf_len)) {
- 		//init modules
-		qjs_module_init_gpaccore(fs->js_ctx);
-		qjs_module_init_xhr(fs->js_ctx);
-		qjs_module_init_evg(fs->js_ctx);
-		qjs_module_init_storage(fs->js_ctx);
-		qjs_module_init_webgl(fs->js_ctx);
+		qjs_init_all_modules(fs->js_ctx, GF_FALSE, GF_FALSE);
 		flags = JS_EVAL_TYPE_MODULE;
 	}
 
@@ -1358,17 +1361,23 @@ GF_Err gf_fs_load_script(GF_FilterSession *fs, const char *jsfile)
 void gf_fs_unload_script(GF_FilterSession *fs, void *js_ctx)
 {
 	u32 i, count=gf_list_count(fs->jstasks);
+
 	for (i=0; i<count; i++) {
 		JSFS_Task *task = gf_list_get(fs->jstasks, i);
 		if (js_ctx && (task->ctx != js_ctx))
 			continue;
+
+		gf_js_lock(js_ctx, GF_TRUE);
 		JS_FreeValue(task->ctx, task->fun);
 		JS_FreeValue(task->ctx, task->_obj);
+		gf_js_lock(js_ctx, GF_FALSE);
+
 		gf_free(task);
 		gf_list_rem(fs->jstasks, i);
 		i--;
 		count--;
 	}
+
 	if (fs->js_ctx) {
 		gf_js_delete_context(fs->js_ctx);
 		fs->js_ctx = NULL;

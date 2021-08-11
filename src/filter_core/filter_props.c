@@ -27,6 +27,8 @@
 #include <gpac/constants.h>
 //for binxml parsing
 #include <gpac/xml.h>
+//for base64 decode
+#include <gpac/base_coding.h>
 
 typedef u32(*cst_parse_proto)(const char *val);
 typedef const char *(*cst_name_proto)(u32 val);
@@ -41,7 +43,7 @@ static struct {
 	{GF_PROP_PCMFMT, (cst_parse_proto) gf_audio_fmt_parse, (cst_name_proto) gf_audio_fmt_name, gf_audio_fmt_all_names},
 	{GF_PROP_CICP_COL_PRIM, gf_cicp_parse_color_primaries, gf_cicp_color_primaries_name, gf_cicp_color_primaries_all_names},
 	{GF_PROP_CICP_COL_TFC, gf_cicp_parse_color_transfer, gf_cicp_color_transfer_name, gf_cicp_color_transfer_all_names},
-	{GF_PROP_CICP_COL_MX, gf_cicp_parse_color_matrix, gf_cicp_color_matrix_name, gf_cicp_color_matrix_all_names},
+	{GF_PROP_CICP_COL_MX, gf_cicp_parse_color_matrix, gf_cicp_color_matrix_name, gf_cicp_color_matrix_all_names}
 };
 
 GF_EXPORT
@@ -385,6 +387,22 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				p.value.data.ptr=NULL;
 				p.value.data.size=0;
 			}
+		} else if (!strnicmp(value, "b64@", 4) ) {
+			u8 *b64 = (u8 *)value + 5;
+			u32 size = (u32) strlen(b64);
+			p.value.data.ptr = gf_malloc(sizeof(char) * size);
+			if (p.value.data.ptr) {
+				p.value.data.size = gf_base64_decode((u8 *)b64, size, p.value.data.ptr, size);
+				if (!p.value.data.size) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to decode base64 value %s\n", value, name));
+					p.type=GF_PROP_FORBIDEN;
+				}
+				p.value.data.ptr[p.value.data.size] = 0;
+			} else {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate memory for decoding base64 value %s\n", value, name));
+				p.value.data.size = 0;
+				p.type=GF_PROP_FORBIDEN;
+			}
 		} else {
 			p.value.data.size = (u32) strlen(value);
 			if (p.value.data.size)
@@ -510,6 +528,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 	case GF_PROP_FORBIDEN:
 	default:
 		if (gf_props_type_is_enum(type)) {
+			p.type = type;
 			p.value.uint = gf_props_parse_enum(type, value);
 			break;
 		}
@@ -1020,7 +1039,7 @@ GF_Err gf_props_set_property(GF_PropertyMap *map, u32 p4cc, const char *name, ch
 
 const GF_PropertyEntry *gf_props_get_property_entry(GF_PropertyMap *map, u32 prop_4cc, const char *name)
 {
-	u32 i, count;
+	u32 i, count, len;
 	const GF_PropertyEntry *res=NULL;
 #if GF_PROPS_HASHTABLE_SIZE
 	u32 hash = gf_props_hash_djb2(prop_4cc, name);
@@ -1037,6 +1056,12 @@ const GF_PropertyEntry *gf_props_get_property_entry(GF_PropertyMap *map, u32 pro
 	}
 #else
 	count = gf_list_count(map->properties);
+	if (name) {
+		len = (u32) strlen(name);
+	} else {
+		if (!prop_4cc) return NULL;
+		len = 0;
+	}
 	for (i=0; i<count; i++) {
 		GF_PropertyEntry *p = gf_list_get(map->properties, i);
 		if (!p) {
@@ -1044,9 +1069,24 @@ const GF_PropertyEntry *gf_props_get_property_entry(GF_PropertyMap *map, u32 pro
 			return NULL;
 		}
 
-		if ((prop_4cc && (p->p4cc==prop_4cc)) || (p->pname && name && !strcmp(p->pname, name)) ) {
-			res = p;
-			break;
+		if (prop_4cc) {
+			if (p->p4cc==prop_4cc) {
+				res = p;
+				break;
+			}
+		} else if (p->pname) {
+			u32 j;
+			for (j=0; j<=len; j++) {
+				char c = p->pname[j];
+				if (!c)
+					break;
+				if (c != name[j])
+					break;
+			}
+			if (j==len) {
+				res = p;
+				break;
+			}
 		}
 	}
 #endif
@@ -1252,7 +1292,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_SERVICE_NAME, "ServiceName", "Name of parent service", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_SERVICE_PROVIDER, "ServiceProvider", "Provider of parent service", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_STREAM_TYPE, "StreamType", "Media stream type", GF_PROP_UINT},
-	{ GF_PROP_PID_SUBTYPE, "StreamSubtype", "Media subtype 4CC (auxiliary, pic sequence, etc ..)", GF_PROP_4CC, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_SUBTYPE, "StreamSubtype", "Media subtype 4CC (auxiliary, pic sequence, etc ..), matches ISOM handler type", GF_PROP_4CC, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_SUBTYPE, "ISOMSubtype", "ISOM media subtype 4CC (avc1 avc2...)", GF_PROP_4CC, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ORIG_STREAM_TYPE, "OrigStreamType", "Original stream type before encryption", GF_PROP_UINT},
 	{ GF_PROP_PID_CODECID, "CodecID", "Codec ID (MPEG-4 OTI or ISOBMFF 4CC)", GF_PROP_UINT},
@@ -1262,6 +1302,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_UNFRAMED_LATM, "LATM", "Indicates media is unframed AAC in LATM format", GF_PROP_BOOL},
 	{ GF_PROP_PID_DURATION, "Duration", "Media duration", GF_PROP_FRACTION64},
 	{ GF_PROP_PID_NB_FRAMES, "NumFrames", "Number of frames in the stream", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_FRAME_OFFSET, "FrameOffset", "Index of first frame in the stream (used for reporting)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_FRAME_SIZE, "ConstantFrameSize", "Size of the frames for constant frame size streams", GF_PROP_UINT},
 	{ GF_PROP_PID_TIMESHIFT_DEPTH, "TimeshiftDepth", "Depth of the timeshift buffer", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_TIMESHIFT_TIME, "TimeshiftTime", "Time in the timeshift buffer in seconds - changes are signaled through pid info (no reconfigure)", GF_PROP_DOUBLE, GF_PROP_FLAG_GSF_REM},
@@ -1295,7 +1336,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_PAR, "PAR", "Picture aspect ratio", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_WIDTH_MAX, "MaxWidth", "Maximum width (video / text / graphics) of all enhancement layers", GF_PROP_UINT},
 	{ GF_PROP_PID_HEIGHT_MAX, "MaxHeight", "Maximum height (video / text / graphics) of all enhancement layers", GF_PROP_UINT},
-	{ GF_PROP_PID_ZORDER, "ZOrder", "Z-order of the video, from 0 (first) to max int (last)", GF_PROP_UINT},
+	{ GF_PROP_PID_ZORDER, "ZOrder", "Z-order of the video, from 0 (first) to max int (last)", GF_PROP_SINT},
 	{ GF_PROP_PID_TRANS_X, "TransX", "Horizontal translation of the video", GF_PROP_SINT},
 	{ GF_PROP_PID_TRANS_Y, "TransY", "Vertical translation of the video", GF_PROP_SINT},
 	{ GF_PROP_PID_HIDDEN, "Hidden", "Indicates the PID is hidden in visual/audio rendering", GF_PROP_BOOL},
@@ -1309,6 +1350,13 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	"- Dx,Dy,Dw,Dh: Position and Size of the input video in the reconstructed output, expressed in the output referential given by `SRDRef`", GF_PROP_UINT_LIST},
 
 	{ GF_PROP_PID_ALPHA, "Alpha", "Indicates the video in this pid is an alpha map", GF_PROP_BOOL},
+	{ GF_PROP_PID_MIRROR, "Mirror", "Indicates a mirror mode (0: no mirror, 1: along Y-axis, 2: along X-axis)", GF_PROP_UINT},
+	{ GF_PROP_PID_ROTATE, "Rotate", "Indicates the video rotation as value*90 degree anti-clockwise", GF_PROP_UINT},
+	{ GF_PROP_PID_CLAP_W, "ClapW", "Width of clean aperture in luma pixels", GF_PROP_FRACTION},
+	{ GF_PROP_PID_CLAP_H, "ClapH", "Height of clean aperture in luma pixels", GF_PROP_FRACTION},
+	{ GF_PROP_PID_CLAP_X, "ClapX", "Horizontal offset of clean aperture center in luma pixels, 0 at image center", GF_PROP_FRACTION},
+	{ GF_PROP_PID_CLAP_Y, "ClapY", "Vertical offset of clean aperture center in luma pixels, 0 at image center", GF_PROP_FRACTION},
+	{ GF_PROP_PID_NUM_VIEWS, "NumViews", "Indicates the number of views packed in a frame (top-to-bottom only)", GF_PROP_UINT},
 	{ GF_PROP_PID_BITRATE, "Bitrate", "Bitrate in bps", GF_PROP_UINT},
 	{ GF_PROP_PID_MAXRATE, "Maxrate", "Max bitrate in bps", GF_PROP_UINT},
 	{ GF_PROP_PID_TARGET_RATE, "TargetRate", "Target bitrate in bps, used to setup encoders", GF_PROP_UINT},
@@ -1328,7 +1376,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_FILE_RANGE, "ByteRange", "Byte range of resource", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_DISABLE_PROGRESSIVE, "DisableProgressive", "indicates that some blocks in file need patching (replace or insertion) upon closing, potentially disabling progressive upload", GF_PROP_UINT, 0},
 	{ GF_PROP_PID_ISOM_BRANDS, "IsoAltBrands", "indicates ISOBMFF brands associated with PID/file", GF_PROP_4CC_LIST, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_ISOM_MBRAND, "IsoBrand", "indicates ISOBMFF major brand associated with PID/file", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_MBRAND, "IsoBrand", "indicates ISOBMFF major brand associated with PID/file", GF_PROP_4CC, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_MOVIE_TIME, "MovieTime", "indicates ISOBMFF movie header duration and timescale", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_HAS_SYNC, "HasSync", "indicates ISOBMFF track has sync points", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 
@@ -1386,10 +1434,11 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_ISOM_STSD_TEMPLATE, "STSDTemplate", "ISOBMFF serialized sample description box (stsd entry) for this PID - used by isomuxer to re-inject specific boxes of input ISOBMFF track", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
 
 	{ GF_PROP_PID_ISOM_UDTA, "MovieUserData", "ISOBMFF serialized moov UDTA and other moov-level boxes (list) for this PID - used by isomuxer to re-inject specific boxes of input ISOBMFF moov", GF_PROP_DATA, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_ISOM_HANDLER, "TrackHandler", "ISOBMFF track handler name", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_HANDLER, "HandlerName", "ISOBMFF track handler name", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_ISOM_TRACK_FLAGS, "TrackFlags", "ISOBMFF track header flags", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
-	{ GF_PROP_PID_ISOM_TRACK_MATRIX, "TrackMatrix", "ISOBMFF track header matrix", GF_PROP_UINT_LIST, GF_PROP_FLAG_GSF_REM},
-
+	{ GF_PROP_PID_ISOM_TRACK_MATRIX, "TrackMatrix", "ISOBMFF track header matrix", GF_PROP_SINT_LIST, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_ISOM_ALT_GROUP, "AltGroup", "ISOBMFF alt group ID", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_DISABLED, "Disable", "ISOBMFF disable flag", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_PERIOD_ID, "Period", "ID of DASH period", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_PERIOD_START, "PStart", "DASH Period start - cf dasher help", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_PERIOD_DUR, "PDur", "DASH Period duration - cf dasher help", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM},
@@ -1468,17 +1517,42 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	{ GF_PROP_PID_CUBE_MAP_PAD, "CMPad", "Number of pixels to pad from edge of each face in cube map", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
 	{ GF_PROP_PID_EQR_CLAMP, "EQRClamp", "Clamping of frame for EQR as 0.32 fixed point (x is top, y is bottom, z is left and w is right)", GF_PROP_VEC4I, GF_PROP_FLAG_GSF_REM},
 
+	{ GF_PROP_PID_SCENE_NODE, "SceneNode", "Indicate the PID is a scene node decoder (AFX BitWrapper in BIFS)", GF_PROP_BOOL, 0},
+	{ GF_PROP_PID_ORIG_CRYPT_SCHEME, "OrigCryptoScheme", "Indicate the original cryptor scheme on a decrypted PID", GF_PROP_UINT, 0},
+
 	{ GF_PROP_PCK_SKIP_BEGIN, "SkipBegin", "Amount of media to skip from begining of packet in PID timescale", GF_PROP_UINT, GF_PROP_FLAG_PCK},
+	{ GF_PROP_PCK_SKIP_PRES, "SkipPres", "Indicate the packet and any following with CTS greater than this packet shall not be presented (used by reframer to create edit lists)", GF_PROP_BOOL, GF_PROP_FLAG_PCK},
+
+
+	{ GF_PROP_PCK_HLS_REF, "HLSRef", "HLS playlist reference, gives a unique ID identifying media mux, and indicated in packets carrying child playlists", GF_PROP_LUINT, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_LLHLS, "LLHLS", "HLS low latency mode", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_HLS_FRAG_NUM, "LLHLSFragNum", "LLHLS fragment number", GF_PROP_UINT, GF_PROP_FLAG_PCK},
+	{ GF_PROP_PID_DOWNLOAD_SESSION, "DownloadSession", "Pointer to download session", GF_PROP_POINTER, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PID_HAS_TEMI, "HasTemi", "TEMI present flag", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_XPS_MASK, "XPSMask", "Parameter set mask", GF_PROP_UINT, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM},
+	{ GF_PROP_PCK_END_RANGE, "RangeEnd", "Signal packet is the last in the desired play range", GF_PROP_BOOL, GF_PROP_FLAG_PCK},
 };
+
+static u32 gf_num_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
 
 GF_EXPORT
 u32 gf_props_get_id(const char *name)
 {
-	u32 i, nb_props;
+	u32 i, len;
 	if (!name) return 0;
-	nb_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
-	for (i=0; i<nb_props; i++) {
-		if (GF_BuiltInProps[i].name && !strcmp(GF_BuiltInProps[i].name, name)) return GF_BuiltInProps[i].type;
+	len = (u32) strlen(name);
+	for (i=0; i<gf_num_props; i++) {
+		if (GF_BuiltInProps[i].name) {
+			u32 j;
+			for (j=0; j<=len; j++) {
+				char c = GF_BuiltInProps[i].name[j];
+				if (!c) break;
+				if (c != name[j])
+					break;
+			}
+			if ((j==len) && !GF_BuiltInProps[i].name[j])
+				return GF_BuiltInProps[i].type;
+		}
 	}
 	return 0;
 }
@@ -1486,16 +1560,15 @@ u32 gf_props_get_id(const char *name)
 GF_EXPORT
 const GF_BuiltInProperty *gf_props_get_description(u32 prop_idx)
 {
-	u32 nb_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
-	if (prop_idx>=nb_props) return NULL;
+	if (prop_idx>=gf_num_props) return NULL;
 	return &GF_BuiltInProps[prop_idx];
 }
 
 GF_EXPORT
 const char *gf_props_4cc_get_name(u32 prop_4cc)
 {
-	u32 i, nb_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
-	for (i=0; i<nb_props; i++) {
+	u32 i;
+	for (i=0; i<gf_num_props; i++) {
 		if (GF_BuiltInProps[i].type==prop_4cc) return GF_BuiltInProps[i].name;
 	}
 	return NULL;
@@ -1504,8 +1577,8 @@ const char *gf_props_4cc_get_name(u32 prop_4cc)
 GF_EXPORT
 u8 gf_props_4cc_get_flags(u32 prop_4cc)
 {
-	u32 i, nb_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
-	for (i=0; i<nb_props; i++) {
+	u32 i;
+	for (i=0; i<gf_num_props; i++) {
 		if (GF_BuiltInProps[i].type==prop_4cc) return GF_BuiltInProps[i].flags;
 	}
 	return 0;
@@ -1514,8 +1587,8 @@ u8 gf_props_4cc_get_flags(u32 prop_4cc)
 GF_EXPORT
 u32 gf_props_4cc_get_type(u32 prop_4cc)
 {
-	u32 i, nb_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
-	for (i=0; i<nb_props; i++) {
+	u32 i;
+	for (i=0; i<gf_num_props; i++) {
 		if (GF_BuiltInProps[i].type==prop_4cc) return GF_BuiltInProps[i].data_type;
 	}
 	return GF_PROP_FORBIDEN;
@@ -1524,9 +1597,9 @@ u32 gf_props_4cc_get_type(u32 prop_4cc)
 Bool gf_props_4cc_check_props()
 {
 	Bool res = GF_TRUE;
-	u32 i, j, nb_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
-	for (i=0; i<nb_props; i++) {
-		for (j=i+1; j<nb_props; j++) {
+	u32 i, j;
+	for (i=0; i<gf_num_props; i++) {
+		for (j=i+1; j<gf_num_props; j++) {
 			if (GF_BuiltInProps[i].type==GF_BuiltInProps[j].type) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Property %s and %s have the same code type %s\n", GF_BuiltInProps[i].name, GF_BuiltInProps[j].name, gf_4cc_to_str(GF_BuiltInProps[i].type) ));
 				res = GF_FALSE;
@@ -1744,5 +1817,46 @@ const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PR
 		return gf_props_dump_val(att, dump, dump_data_mode, NULL);
 	}
 	return "";
+}
+
+
+GF_Err gf_prop_matrix_decompose(const GF_PropertyValue *p, u32 *flip_mode, u32 *rot_mode)
+{
+	GF_Point2D scale, translate;
+	Fixed rotate;
+	GF_Matrix2D mx;
+	if (!p || (p->type!=GF_PROP_SINT_LIST) || (p->value.sint_list.nb_items!=9))
+		return GF_BAD_PARAM;
+
+	mx.m[0] = INT2FIX(p->value.sint_list.vals[0])/65536;
+	mx.m[1] = INT2FIX(p->value.sint_list.vals[1])/65536;
+	mx.m[2] = INT2FIX(p->value.sint_list.vals[2])/65536;
+	mx.m[3] = INT2FIX(p->value.sint_list.vals[3])/65536;
+	mx.m[4] = INT2FIX(p->value.sint_list.vals[4])/65536;
+	mx.m[5] = INT2FIX(p->value.sint_list.vals[5])/65536;
+	gf_mx2d_decompose(&mx, &scale, &rotate, &translate);
+
+	if (flip_mode) {
+		*flip_mode = 0;
+		if (ABSDIFF(scale.x, -1) < 0.05) {
+			*flip_mode = (ABSDIFF(scale.y, -1) < 0.05) ? 3 : 2;
+		}
+		else if (ABSDIFF(scale.x, -1) < 0.05) {
+			*flip_mode = 1;
+		}
+	}
+	if (rot_mode) {
+		*rot_mode = 0;
+		if (ABSDIFF(rotate, GF_PI2)<0.05) {
+			*rot_mode = 1;
+		}
+		else if (ABSDIFF(rotate, GF_PI/2)<0.05) {
+			*rot_mode = 2;
+		}
+		if (ABSDIFF(-rotate, GF_PI2)<0.05) {
+			*rot_mode = 3;
+		}
+	}
+	return GF_OK;
 }
 

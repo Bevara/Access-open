@@ -222,8 +222,7 @@ static void ac3dmx_check_pid(GF_Filter *filter, GF_AC3DmxCtx *ctx)
 	if (!ctx->timescale) {
 		//we change sample rate, change cts
 		if (ctx->cts && (ctx->sample_rate != ctx->hdr.sample_rate)) {
-			ctx->cts *= ctx->hdr.sample_rate;
-			ctx->cts /= ctx->sample_rate;
+			ctx->cts = gf_timestamp_rescale(ctx->cts, ctx->sample_rate, ctx->hdr.sample_rate);
 		}
 	}
 	ctx->sample_rate = ctx->hdr.sample_rate;
@@ -446,6 +445,8 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 
 		if (!ctx->in_seek) {
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->hdr.framesize, &output);
+			if (!dst_pck) return GF_OUT_OF_MEM;
+			
 			if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
 
 			memcpy(output, sync, ctx->hdr.framesize);
@@ -536,7 +537,7 @@ static const char *ac3dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSco
 		data += fsize+pos;
 	}
 	if (nb_frames>2) {
-		*score = has_broken_frames ? GF_FPROBE_MAYBE_SUPPORTED : GF_FPROBE_SUPPORTED;
+		*score = has_broken_frames ? GF_FPROBE_MAYBE_NOT_SUPPORTED : GF_FPROBE_SUPPORTED;
 		return "audio/ac3";
 	}
 	return NULL;

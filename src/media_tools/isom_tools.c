@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / Media Tools sub-project
@@ -508,7 +508,10 @@ GF_Err gf_media_make_isma(GF_ISOFile *mp4file, Bool keepESIDs, Bool keepImage, B
 			if (!w || !h) {
 				gf_isom_get_visual_info(mp4file, VideoTrack, 1, &w, &h);
 #ifndef GPAC_DISABLE_AV_PARSERS
-				if ((v_esd->decoderConfig->objectTypeIndication==GF_CODECID_MPEG4_PART2) && (v_esd->decoderConfig->streamType==GF_STREAM_VISUAL)) {
+				if (v_esd->decoderConfig
+					&& (v_esd->decoderConfig->objectTypeIndication==GF_CODECID_MPEG4_PART2)
+					&& (v_esd->decoderConfig->streamType==GF_STREAM_VISUAL)
+				) {
 					GF_M4VDecSpecInfo dsi;
 					gf_m4v_get_config(v_esd->decoderConfig->decoderSpecificInfo->data, v_esd->decoderConfig->decoderSpecificInfo->dataLength, &dsi);
 					if (!is_image && (!w || !h)) {
@@ -550,7 +553,7 @@ GF_Err gf_media_make_isma(GF_ISOFile *mp4file, Bool keepESIDs, Bool keepImage, B
 			}
 
 #ifndef GPAC_DISABLE_AV_PARSERS
-			if (a_esd->decoderConfig->objectTypeIndication == GF_CODECID_AAC_MPEG4) {
+			if (a_esd->decoderConfig && (a_esd->decoderConfig->objectTypeIndication == GF_CODECID_AAC_MPEG4)) {
 				GF_M4ADecSpecInfo cfg;
 				gf_m4a_get_config(a_esd->decoderConfig->decoderSpecificInfo->data, a_esd->decoderConfig->decoderSpecificInfo->dataLength, &cfg);
 				audioPL = cfg.audioPL;
@@ -582,6 +585,8 @@ GF_Err gf_media_make_isma(GF_ISOFile *mp4file, Bool keepESIDs, Bool keepImage, B
 	if (!odT) return gf_isom_last_error(mp4file);
 
 	_esd = gf_odf_desc_esd_new(SLPredef_MP4);
+	if (!_esd) return GF_OUT_OF_MEM;
+
 	_esd->decoderConfig->bufferSizeDB = samp->dataLength;
 	_esd->decoderConfig->objectTypeIndication = GF_CODECID_OD_V1;
 	_esd->decoderConfig->streamType = GF_STREAM_OD;
@@ -599,6 +604,8 @@ GF_Err gf_media_make_isma(GF_ISOFile *mp4file, Bool keepESIDs, Bool keepImage, B
 	if (!bifsT) return gf_isom_last_error(mp4file);
 
 	_esd = gf_odf_desc_esd_new(SLPredef_MP4);
+	if (!_esd) return GF_OUT_OF_MEM;
+	
 	_esd->decoderConfig->bufferSizeDB = 20;
 	_esd->decoderConfig->objectTypeIndication = GF_CODECID_BIFS_V2;
 	_esd->decoderConfig->streamType = GF_STREAM_SCENE;
@@ -729,14 +736,20 @@ GF_Err gf_media_make_3gpp(GF_ISOFile *mp4file)
 			case GF_ISOM_SUBTYPE_MPEG4:
 			{
 				GF_ESD *esd = gf_isom_get_esd(mp4file, i+1, 1);
+				u32 oti = (esd && esd->decoderConfig) ? esd->decoderConfig->objectTypeIndication : 0;
+				gf_odf_desc_del((GF_Descriptor *)esd);
 				/*both MPEG4-Video and H264/AVC/SVC are supported*/
-				if ((esd->decoderConfig->objectTypeIndication==GF_CODECID_MPEG4_PART2) || (esd->decoderConfig->objectTypeIndication==GF_CODECID_AVC) || (esd->decoderConfig->objectTypeIndication==GF_CODECID_SVC) || (esd->decoderConfig->objectTypeIndication==GF_CODECID_MVC)) {
+				switch (oti) {
+				case GF_CODECID_MPEG4_PART2:
+				case GF_CODECID_AVC:
+				case GF_CODECID_SVC:
+				case GF_CODECID_MVC:
 					nb_vid++;
-				} else {
+					break;
+				default:
 					GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("[3GPP convert] Video format not supported by 3GP - removing track ID %d\n", gf_isom_get_track_id(mp4file, i+1) ));
 					goto remove_track;
 				}
-				gf_odf_desc_del((GF_Descriptor *)esd);
 			}
 			break;
 			default:
@@ -761,7 +774,10 @@ GF_Err gf_media_make_3gpp(GF_ISOFile *mp4file)
 			case GF_ISOM_SUBTYPE_MPEG4:
 			{
 				GF_ESD *esd = gf_isom_get_esd(mp4file, i+1, 1);
-				switch (esd->decoderConfig->objectTypeIndication) {
+				u32 oti = (esd && esd->decoderConfig) ? esd->decoderConfig->objectTypeIndication : 0;
+				gf_odf_desc_del((GF_Descriptor *)esd);
+
+				switch (oti) {
 				case GF_CODECID_QCELP:
 				case GF_CODECID_EVRC:
 				case GF_CODECID_SMV:
@@ -773,7 +789,6 @@ GF_Err gf_media_make_3gpp(GF_ISOFile *mp4file)
 					GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("[3GPP convert] Audio format not supported by 3GP - removing track ID %d\n", gf_isom_get_track_id(mp4file, i+1) ));
 					goto remove_track;
 				}
-				gf_odf_desc_del((GF_Descriptor *)esd);
 			}
 			break;
 			default:
@@ -1269,7 +1284,10 @@ GF_ESD *gf_media_map_esd(GF_ISOFile *mp4, u32 track, u32 stsd_idx)
 	if (subtype == GF_ISOM_SUBTYPE_OPUS) {
 		esd = gf_isom_get_esd(mp4, track, 1);
 		if (!esd) return NULL;
-
+		if (!esd->decoderConfig) {
+			gf_odf_desc_del((GF_Descriptor *)esd);
+			return NULL;
+		}
 		esd->decoderConfig->objectTypeIndication = GF_CODECID_OPUS;
 		return esd;
 	}
@@ -1278,6 +1296,7 @@ GF_ESD *gf_media_map_esd(GF_ISOFile *mp4, u32 track, u32 stsd_idx)
 		GF_BitStream *bs;
 		GF_DIMSDescription dims;
 		esd = gf_odf_desc_esd_new(0);
+		if (!esd) return NULL;
 		esd->slConfig->timestampResolution = gf_isom_get_media_timescale(mp4, track);
 		esd->ESID = gf_isom_get_track_id(mp4, track);
 		esd->OCRESID = esd->ESID;
@@ -1329,6 +1348,8 @@ GF_ESD *gf_media_map_item_esd(GF_ISOFile *mp4, u32 item_id)
 	if (item_type == GF_ISOM_SUBTYPE_HVC1) {
 		GF_ImageItemProperties props;
 		esd = gf_odf_desc_esd_new(0);
+		if (!esd) return NULL;
+
 		if (item_id > (1 << 16)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Item ID greater than 16 bits, does not fit on ES ID\n"));
 		}
@@ -1347,6 +1368,8 @@ GF_ESD *gf_media_map_item_esd(GF_ISOFile *mp4, u32 item_id)
 	} else if (item_type == GF_ISOM_SUBTYPE_AVC_H264) {
 		GF_ImageItemProperties props;
 		esd = gf_odf_desc_esd_new(0);
+		if (!esd) return NULL;
+
 		if (item_id > (1 << 16)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Item ID greater than 16 bits, does not fit on ES ID\n"));
 		}
@@ -1365,6 +1388,7 @@ GF_ESD *gf_media_map_item_esd(GF_ISOFile *mp4, u32 item_id)
 	} else if (item_type == GF_ISOM_SUBTYPE_AV01) {
 		GF_ImageItemProperties props;
 		esd = gf_odf_desc_esd_new(0);
+		if (!esd) return NULL;
 		if (item_id > (1 << 16)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Item ID greater than 16 bits, does not fit on ES ID\n"));
 		}
@@ -1383,6 +1407,8 @@ GF_ESD *gf_media_map_item_esd(GF_ISOFile *mp4, u32 item_id)
 	} else if ((item_type == GF_ISOM_SUBTYPE_JPEG) || (mime && !strcmp(mime, "image/jpeg")) ){
 		GF_ImageItemProperties props;
 		esd = gf_odf_desc_esd_new(0);
+		if (!esd) return NULL;
+
 		if (item_id > (1 << 16)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Item ID greater than 16 bits, does not fit on ES ID\n"));
 		}
@@ -1401,6 +1427,8 @@ GF_ESD *gf_media_map_item_esd(GF_ISOFile *mp4, u32 item_id)
 	} else if ((item_type == GF_ISOM_SUBTYPE_PNG) || (mime && !strcmp(mime, "image/png")) ){
 		GF_ImageItemProperties props;
 		esd = gf_odf_desc_esd_new(0);
+		if (!esd) return NULL;
+
 		if (item_id > (1 << 16)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Item ID greater than 16 bits, does not fit on ES ID\n"));
 		}
@@ -1416,10 +1444,9 @@ GF_ESD *gf_media_map_item_esd(GF_ISOFile *mp4, u32 item_id)
 		esd->slConfig->useTimestampsFlag = 1;
 		esd->slConfig->timestampResolution = 1000;
 		return esd;
-	} else {
-
-		return NULL;
 	}
+
+	return NULL;
 }
 
 #endif /*GPAC_DISABLE_ISOM*/
@@ -3266,6 +3293,8 @@ static void hevc_add_trif(GF_ISOFile *file, u32 track, u32 id, Bool full_picture
 	char data[11];
 	u32 di, data_size=7;
 	GF_BitStream *bs;
+	//avoid gcc warnings
+	memset(data, 0, 11);
 	//write TRIF sample group description
 	bs = gf_bs_new((const char*)data, 11, GF_BITSTREAM_WRITE);
 	gf_bs_write_u16(bs, id);	//groupID
@@ -3933,11 +3962,58 @@ GF_Err rfc_6381_get_codec_dolby_vision(char *szCodec, u32 subtype, GF_DOVIDecode
 	return GF_OK;
 }
 
+static char base32_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
 GF_Err rfc_6381_get_codec_vvc(char *szCodec, u32 subtype, GF_VVCConfig *vvcc)
 {
 	assert(vvcc);
+	u32 i, pos, len;
 
-	snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.%d.%s%d", gf_4cc_to_str(subtype), vvcc->general_profile_idc, vvcc->general_tier_flag ? "H" : "L", vvcc->general_level_idc);
+	if ( (subtype==GF_4CC('v','v','c','N')) || (subtype==GF_4CC('v','v','s','1')) ) {
+		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
+	} else {
+		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.%d.%s%d", gf_4cc_to_str(subtype), vvcc->general_profile_idc, vvcc->general_tier_flag ? "H" : "L", vvcc->general_level_idc);
+	}
+
+	u8 buf[256];
+	GF_BitStream *bs = gf_bs_new(buf, 256, GF_BITSTREAM_WRITE);
+	gf_bs_write_int(bs, vvcc->ptl_frame_only_constraint, 1);
+	gf_bs_write_int(bs, vvcc->ptl_multilayer_enabled, 1);
+	for (i=0; i<vvcc->num_constraint_info; i++) {
+		gf_bs_write_int(bs, vvcc->general_constraint_info[i], 8);
+	}
+	gf_bs_align(bs);
+	pos = (u32) gf_bs_get_position(bs);
+	gf_bs_del(bs);
+	while (pos && (buf[pos-1]==0)) {
+		pos--;
+	}
+	if (!pos) {
+		strcat(szCodec, ".CA");
+		return GF_OK;
+	}
+	strcat(szCodec, ".C");
+	len = (u32) strlen(szCodec);
+	bs = gf_bs_new(buf, pos, GF_BITSTREAM_READ);
+	while (1) {
+		u32 nb_bits = (u32) ( 8*gf_bs_available(bs) + gf_bs_bits_available(bs) );
+		if (!nb_bits) break;
+		if (nb_bits>5) nb_bits = 5;
+		u32 c = gf_bs_read_int(bs, nb_bits);
+		while (nb_bits<5) {
+			c <<= 1;
+			nb_bits++;
+		}
+		char b32_char = base32_chars[c];
+		//should not happen, we use 100 bytes by default and max general_constraint_info is 63 bytes
+		if (len >= RFC6381_CODEC_NAME_SIZE_MAX) {
+			return GF_OUT_OF_MEM;
+		}
+		szCodec[len] = b32_char;
+		len++;
+		szCodec[len] = 0;
+	}
+
 	return GF_OK;
 }
 GF_Err rfc_6381_get_codec_mpegha(char *szCodec, u32 subtype, u8 *dsi, u32 dsi_size, s32 pl)
@@ -4176,6 +4252,80 @@ GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *movie, u32 track, char *szCo
 
 	}
 	return GF_OK;
+}
+
+
+GF_Err gf_media_av1_layer_size_get(GF_ISOFile *file, u32 trackNumber, u32 sample_number, u8 op_index, u32 layer_size[3])
+{
+#ifndef GPAC_DISABLE_AV_PARSERS
+	u32 i;
+	AV1State av1;
+	ObuType obu_type;
+	u64 obu_size;
+	u32 hdr_size;
+	GF_BitStream *bs;
+	u32 sdidx;
+	GF_ISOSample *samp;
+	GF_Err e = GF_OK;
+
+	samp = gf_isom_get_sample(file, trackNumber, sample_number, &sdidx);
+	if (!samp) return GF_BAD_PARAM;
+
+	if (!sdidx) {
+		gf_isom_sample_del(&samp);
+		return GF_BAD_PARAM;
+	}
+	if (gf_isom_get_media_subtype(file, trackNumber, sdidx) != GF_ISOM_SUBTYPE_AV01) {
+		gf_isom_sample_del(&samp);
+		return GF_BAD_PARAM;
+	}
+
+	gf_av1_init_state(&av1);
+	av1.config = gf_isom_av1_config_get(file, trackNumber, sdidx);
+	if (!av1.config) {
+		gf_isom_sample_del(&samp);
+		return GF_ISOM_INVALID_FILE;
+	}
+
+	for (i=0; i<gf_list_count(av1.config->obu_array); i++) {
+		GF_AV1_OBUArrayEntry *obu = gf_list_get(av1.config->obu_array, i);
+		bs = gf_bs_new(obu->obu, (u32) obu->obu_length, GF_BITSTREAM_READ);
+		e = gf_av1_parse_obu(bs, &obu_type, &obu_size, &hdr_size, &av1);
+		gf_bs_del(bs);
+		if (e) break;
+	}
+
+	if (!e) {
+		bs = gf_bs_new(samp->data, samp->dataLength, GF_BITSTREAM_READ);
+		while (gf_bs_available(bs)) {
+			e = gf_av1_parse_obu(bs, &obu_type, &obu_size, &hdr_size, &av1);
+			if (e) break;
+		}
+		gf_bs_del(bs);
+	}
+	gf_isom_sample_del(&samp);
+
+  if (op_index > av1.operating_points_count) {
+    if (av1.config) gf_odf_av1_cfg_del(av1.config);
+    gf_av1_reset_state(&av1, GF_TRUE);
+    return GF_BAD_PARAM;
+  }
+
+	for (i=0; i<3; i++) {
+		if (av1.layer_size[i+1]==av1.layer_size[i]) {
+			layer_size[i] = 0;
+		} else {
+			layer_size[i] = av1.layer_size[i];
+		}
+	}
+
+	if (av1.config) gf_odf_av1_cfg_del(av1.config);
+	gf_av1_reset_state(&av1, GF_TRUE);
+
+	return e;
+#else
+	return GF_NOT_SUPPORTED;
+#endif
 }
 
 #endif //GPAC_DISABLE_ISOM

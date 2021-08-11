@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -478,8 +478,10 @@ static GF_Err rawvout_lock(struct _video_out *vout, GF_VideoSurface *vi, Bool do
 		vi->height = compositor->display_height;
 		gf_pixel_get_size_info(pfmt, compositor->display_width, compositor->display_height, NULL, &vi->pitch_y, NULL, NULL, NULL);
 		if (compositor->passthrough_txh && !compositor->passthrough_txh->frame_ifce && (pfmt == compositor->passthrough_txh->pixelformat)) {
-			if (!compositor->passthrough_pck)
+			if (!compositor->passthrough_pck) {
 				compositor->passthrough_pck = gf_filter_pck_new_clone(compositor->vout, compositor->passthrough_txh->stream->pck, &compositor->passthrough_data);
+				if (!compositor->passthrough_pck) return GF_OUT_OF_MEM;
+			}
 
 			vi->video_buffer = compositor->passthrough_data;
 			vi->pitch_y = compositor->passthrough_txh->stride;
@@ -1251,7 +1253,6 @@ static void gf_sc_reset(GF_Compositor *compositor, Bool has_scene)
 	compositor->grab_use = NULL;
 	compositor->focus_node = NULL;
 	compositor->focus_text_type = 0;
-	compositor->frame_number = 0;
 	if (compositor->video_memory!=2)
 		compositor->video_memory = compositor->was_system_memory ? 0 : 1;
 	compositor->rotation = 0;
@@ -1409,10 +1410,16 @@ GF_Err gf_sc_set_scene(GF_Compositor *compositor, GF_SceneGraph *scene_graph)
 			if (!compositor->os_wnd) {
 				/*only notify user if we are attached to a window*/
 				//do_notif = 0;
-				if (compositor->video_out->max_screen_width && (width > compositor->video_out->max_screen_width))
+				if (compositor->video_out->max_screen_width && (width > compositor->video_out->max_screen_width)) {
+					height *= compositor->video_out->max_screen_width;
+					height /= width;
 					width = compositor->video_out->max_screen_width;
-				if (compositor->video_out->max_screen_height && (height > compositor->video_out->max_screen_height))
+				}
+				if (compositor->video_out->max_screen_height && (height > compositor->video_out->max_screen_height)) {
+					width *= compositor->video_out->max_screen_height;
+					width /= height;
 					height = compositor->video_out->max_screen_height;
+				}
 
 				gf_sc_set_size(compositor,width, height);
 			}
@@ -2648,7 +2655,7 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 		if (compositor->reset_graphics && txh->tx_io) gf_sc_texture_reset(txh);
 		txh->update_texture_fcnt(txh);
 
-		if (!txh->stream_finished) {
+		if (!txh->stream_finished && txh->is_open) {
 			u32 d = gf_mo_get_min_frame_dur(txh->stream);
 			if (d && (d < frame_duration)) frame_duration = d;
 			//if the texture needs update (new frame), compute its timestamp in system timebase
@@ -2799,7 +2806,6 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 
 	if (!compositor->player) {
 		if (compositor->check_eos_state<=1) {
-			compositor->check_eos_state = 0;
 			/*check if we have to force a frame dispatch */
 
 			//no passthrough texture
@@ -2833,6 +2839,8 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 					compositor->check_eos_state = 2;
 				}
 			}
+			if (compositor->frame_draw_type==GF_SC_DRAW_FRAME)
+				compositor->check_eos_state = 0;
 		}
 
 	}
@@ -2873,10 +2881,14 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 				emit_frame = GF_FALSE;
 				compositor->last_error = GF_OK;
 			}
-			else if (!scene_drawn) emit_frame = GF_FALSE;
-			else if (compositor->frame_draw_type) emit_frame = GF_FALSE;
-			else if (compositor->fonts_pending>0) emit_frame = GF_FALSE;
-			else emit_frame = GF_TRUE;
+			else if (!scene_drawn)
+				emit_frame = GF_FALSE;
+			else if (compositor->frame_draw_type)
+				emit_frame = GF_FALSE;
+			else if (compositor->fonts_pending>0)
+				emit_frame = GF_FALSE;
+			else
+				emit_frame = GF_TRUE;
 
 #ifdef GPAC_CONFIG_ANDROID
             if (!emit_frame && scene_drawn) {
@@ -2919,6 +2931,8 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 					pck = gf_filter_pck_new_frame_interface(compositor->vout, &compositor->frame_ifce, gf_sc_frame_ifce_done);
 				}
 
+				if (!pck) return;
+
 				if (compositor->passthrough_txh) {
 					gf_filter_pck_merge_properties(compositor->passthrough_txh->stream->pck, pck);
 					pck_frame_ts = gf_filter_pck_get_cts(compositor->passthrough_txh->stream->pck);
@@ -2934,9 +2948,7 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 				}
 			}
 			if (pck_frame_ts) {
-				u64 ts = pck_frame_ts;
-				ts *= 1000;
-				ts /= compositor->passthrough_timescale;
+				u64 ts = gf_timestamp_rescale(pck_frame_ts, compositor->passthrough_timescale, 1000);
 				frame_ts = (u32) ts;
 			}
 			gf_filter_pck_send(pck);
@@ -3052,6 +3064,9 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 				assert(res >= compositor->scene_sampled_clock);
 				compositor->scene_sampled_clock = (u32) res;
 			}
+
+			if (compositor->check_eos_state && all_tx_done && !has_timed_nodes)
+				compositor->check_eos_state = 2;
 		}
 	}
 	compositor->reset_graphics = 0;
@@ -3518,6 +3533,11 @@ static Bool gf_sc_on_event_ex(GF_Compositor *compositor , GF_Event *event, Bool 
 			event->clipboard.text = NULL;
 		}
 		break;
+	case GF_EVENT_QUIT:
+		if (compositor->audio_renderer)
+			compositor->audio_renderer->non_rt_output = 2;
+		compositor->check_eos_state = 1;
+		return gf_sc_send_event(compositor, event);
 	/*when we process events we don't forward them to the user*/
 	default:
 		return gf_sc_send_event(compositor, event);

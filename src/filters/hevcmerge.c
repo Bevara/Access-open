@@ -1408,7 +1408,7 @@ static GF_Err hevcmerge_process(GF_Filter *filter)
 		}
 		dts = gf_filter_pck_get_dts(pck_src);
 
-		if (dts * min_dts_timescale < min_dts * tile_pid->timescale) {
+		if (!min_dts_timescale || gf_timestamp_less(dts, tile_pid->timescale, min_dts, min_dts_timescale)) {
 			min_dts = dts;
 			min_dts_timescale = tile_pid->timescale;
 		}
@@ -1497,6 +1497,8 @@ static GF_Err hevcmerge_process(GF_Filter *filter)
 			}
 			if (!output_pck) {
 				output_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->hevc_nalu_size_length + nal_pck_size, &output_nal);
+				if (!output_pck) return GF_OUT_OF_MEM;
+				
 				// todo: might need to rewrite crypto info
 				gf_filter_pck_merge_properties(pck_src, output_pck);
 			}

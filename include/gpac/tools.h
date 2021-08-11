@@ -279,6 +279,88 @@ Parse a 32 bit fraction from string
  */
 Bool gf_parse_frac(const char *str, GF_Fraction *frac);
 
+/*!
+\brief safe timestamp rescale
+
+Rescale a 64 bit timestamp value to new timescale, i.e. performs value * new_timescale / timescale
+\param value value to rescale. A value of -1 means no timestamp defined and is returned unmodified
+\param timescale timescale of value. Assumed to be less than 0xFFFFFFFF
+\param new_timescale new timescale? Assumed to be less than 0xFFFFFFFF
+\return new value
+ */
+u64 gf_timestamp_rescale(u64 value, u64 timescale, u64 new_timescale);
+
+/*!
+\brief safe signed timestamp rescale
+
+Rescale a 64 bit timestamp value to new timescale, i.e. performs value * new_timescale / timescale
+\param value value to rescale
+\param timescale timescale of value. Assumed to be less than 0xFFFFFFFF
+\param new_timescale new timescale. Assumed to be less than 0xFFFFFFFF
+\return new value
+ */
+s64 gf_timestamp_rescale_signed(s64 value, u64 timescale, u64 new_timescale);
+
+/*!
+\brief compare timestamps
+
+Compares two timestamps
+\param value1 value to rescale
+\param timescale1 timescale of value. Assumed to be less than 0xFFFFFFFF
+\param value2 value to rescale
+\param timescale2 timescale of value. Assumed to be less than 0xFFFFFFFF
+\return GF_TRUE if (value1 / timescale1) is stricly less than (value2 / timescale2)
+ */
+Bool gf_timestamp_less(u64 value1, u64 timescale1, u64 value2, u64 timescale2);
+
+/*!
+\brief compare timestamps
+
+Compares two timestamps
+\param value1 value to rescale
+\param timescale1 timescale of value. Assumed to be less than 0xFFFFFFFF
+\param value2 value to rescale
+\param timescale2 timescale of value. Assumed to be less than 0xFFFFFFFF
+\return GF_TRUE if (value1 / timescale1) is stricly less than or equal to (value2 / timescale2)
+ */
+Bool gf_timestamp_less_or_equal(u64 value1, u64 timescale1, u64 value2, u64 timescale2);
+
+/*!
+\brief compare timestamps
+
+Compares two timestamps
+\param value1 value to rescale
+\param timescale1 timescale of value. Assumed to be less than 0xFFFFFFFF
+\param value2 value to rescale
+\param timescale2 timescale of value. Assumed to be less than 0xFFFFFFFF
+\return GF_TRUE if (value1 / timescale1) is stricly greater than (value2 / timescale2)
+ */
+Bool gf_timestamp_greater(u64 value1, u64 timescale1, u64 value2, u64 timescale2);
+
+/*!
+\brief compare timestamps
+
+Compares two timestamps
+\param value1 value to rescale
+\param timescale1 timescale of value. Assumed to be less than 0xFFFFFFFF
+\param value2 value to rescale
+\param timescale2 timescale of value. Assumed to be less than 0xFFFFFFFF
+\return GF_TRUE if (value1 / timescale1) is stricly greater than or equal to (value2 / timescale2)
+ */
+Bool gf_timestamp_greater_or_equal(u64 value1, u64 timescale1, u64 value2, u64 timescale2);
+
+/*!
+\brief compare timestamps
+
+Compares two timestamps
+\param value1 value to rescale
+\param timescale1 timescale of value. Assumed to be less than 0xFFFFFFFF
+\param value2 value to rescale
+\param timescale2 timescale of value. Assumed to be less than 0xFFFFFFFF
+\return GF_TRUE if (value1 / timescale1) is equal to (value2 / timescale2)
+ */
+Bool gf_timestamp_equal(u64 value1, u64 timescale1, u64 value2, u64 timescale2);
+
 /*! @} */
 
 /*!
@@ -338,7 +420,7 @@ void gf_sys_close();
 
 Sets the user app arguments (used by GUI mode)
 \param argc Number of arguments
-\param argv Array of arguments
+\param argv Array of arguments - the first string is ignored (considered to be the executable name)
 \return error code if any, GF_OK otherwise
  */
 GF_Err gf_sys_set_args(s32 argc, const char **argv);
@@ -670,9 +752,9 @@ gf_log_cbk gf_log_set_callback(void *usr_cbk, gf_log_cbk cbk);
  \cond DUMMY_DOXY_SECTION
 */
 #ifndef GPAC_DISABLE_LOG
-/*note:
-		to turn log on, change to GPAC_ENABLE_LOG
-		to turn log off, change to GPAC_DISABLE_LOG
+/*\note
+	- to turn log on, change to GPAC_ENABLE_LOG
+	- to turn log off, change to GPAC_DISABLE_LOG
 	this is needed by configure+sed to modify this file directly
 */
 #define GPAC_ENABLE_LOG
@@ -2009,6 +2091,7 @@ typedef struct _gl_texture_wrap
 	Bool is_yuv;
 	u32 bit_depth, uv_w, uv_h;
 	u32 scale_10bit;
+	u32 init_active_texture;
 
 	u32 gl_format;
 	u32 bytes_per_pix;
@@ -2027,7 +2110,7 @@ typedef struct _gl_texture_wrap
 	s32 mx_cicp;
 } GF_GLTextureWrapper;
 
-Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source);
+Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source, Bool y_flip);
 Bool gf_gl_txw_setup(GF_GLTextureWrapper *tx, u32 pix_fmt, u32 width, u32 height, u32 stride, u32 uv_stride, Bool linear_interp, struct _gf_filter_frame_interface *frame_ifce, Bool full_range, s32 matrix_coef_or_neg);
 Bool gf_gl_txw_upload(GF_GLTextureWrapper *tx, const u8 *data, struct _gf_filter_frame_interface *frame_ifce);
 Bool gf_gl_txw_bind(GF_GLTextureWrapper *tx, const char *tx_name, u32 gl_program, u32 texture_unit);

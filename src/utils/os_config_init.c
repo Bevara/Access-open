@@ -609,6 +609,31 @@ static void gf_ios_refresh_cache_directory( GF_Config *cfg, const char *file_pat
 
 const char * gf_get_default_cache_directory_ex(Bool do_create);
 
+GF_EXPORT
+void gf_get_default_font_dir(char szPath[GF_MAX_PATH])
+{
+#if defined(_WIN32_WCE)
+	strcpy(szPath, "\\Windows");
+
+#elif defined(WIN32)
+	GetWindowsDirectory((char*)szPath, MAX_PATH);
+	if (szPath[strlen((char*)szPath)-1] != '\\') strcat((char*)szPath, "\\");
+	strcat((char *)szPath, "Fonts");
+
+#elif defined(__APPLE__) && defined(GPAC_CONFIG_IOS)
+	strcpy(szPath, "/System/Library/Fonts/Cache,/System/Library/Fonts/AppFonts,/System/Library/Fonts/Core,/System/Library/Fonts/Extra");
+#elif defined(__APPLE__)
+	strcpy(szPath, "/System/Library/Fonts,/Library/Fonts");
+
+#elif defined(GPAC_CONFIG_ANDROID)
+	strcpy(szPath, "/system/fonts/");
+#else
+	//scan all /usr/share/fonts, not just /usr/share/fonts/truetype/ which does not exist in some distrros
+	strcpy(szPath, "/usr/share/fonts/");
+#endif
+}
+
+
 static GF_Config *create_default_config(char *file_path, const char *profile)
 {
 	Bool moddir_found;
@@ -682,27 +707,7 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	gf_cfg_set_key(cfg, "core", "rescan-fonts", "yes");
 
 
-#if defined(_WIN32_WCE)
-	/*FIXME - is this true on all WinCE systems??*/
-	strcpy(szPath, "\\Windows");
-#elif defined(WIN32)
-	GetWindowsDirectory((char*)szPath, MAX_PATH);
-	if (szPath[strlen((char*)szPath)-1] != '\\') strcat((char*)szPath, "\\");
-	strcat((char *)szPath, "Fonts");
-#elif defined(__APPLE__)
-
-#ifdef GPAC_CONFIG_IOS
-	strcpy(szPath, "/System/Library/Fonts/Cache,/System/Library/Fonts/AppFonts,/System/Library/Fonts/Core,/System/Library/Fonts/Extra");
-#else
-	strcpy(szPath, "/Library/Fonts");
-#endif
-
-#elif defined(GPAC_CONFIG_ANDROID)
-	strcpy(szPath, "/system/fonts/");
-#else
-	//scan all /usr/share/fonts, not just /usr/share/fonts/truetype/ which does not exist in some distrros
-	strcpy(szPath, "/usr/share/fonts/");
-#endif
+	gf_get_default_font_dir(szPath);
 	gf_cfg_set_key(cfg, "core", "font-dirs", szPath);
 
 	gf_cfg_set_key(cfg, "core", "cache-size", "100M");
@@ -1126,8 +1131,8 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("noprog", NULL, "disable progress messages", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("quiet", NULL, "disable all messages, including errors", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("log-file", "lf", "set output log file", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_LOG),
- GF_DEF_ARG("log-clock", "lc", "log time in micro sec since start time of GPAC before each log line", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_LOG),
- GF_DEF_ARG("log-utc", "lu", "log UTC time in ms before each log line", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_LOG),
+ GF_DEF_ARG("log-clock", "lc", "log time in micro sec since start time of GPAC before each log line except for `app` tool", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_LOG),
+ GF_DEF_ARG("log-utc", "lu", "log UTC time in ms before each log line except for `app` tool", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("logs", NULL, "set log tools and levels.  \n"\
 			"  \n"\
 			"You can independently log different tools involved in a session.  \n"\
@@ -1184,7 +1189,7 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("cfg", "opt", "get or set configuration file value. The string parameter can be formatted as:\n"\
 	        "- `section:key=val`: set the key to a new value\n"\
 	        "- `section:key=null`, `section:key`: remove the key\n"\
-	        "- `section:*=null`: remove the section"\
+	        "- `section=null`: remove the section\n"\
 	        "- no argument: print the entire configuration file\n"\
 	        "- `section`: print the given section\n"\
 	        "- `section:key`: print the given `key` in `section` (section can be set to `*`)"\
@@ -1203,6 +1208,7 @@ GF_GPACArg GPAC_Args[] = {
 
  GF_DEF_ARG("bs-cache-size", NULL, "cache size for bitstream read and write from file (0 disable cache, slower IOs)", "512", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-check", NULL, "disable compliancy tests for inputs (ISOBMFF for now). This will likely result in random crashes", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("unhandled-rejection", NULL, "dump unhandled promise rejections", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("cache", NULL, "cache directory location", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-on", NULL, "enable HTTP proxy", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-name", NULL, "set HTTP proxy address", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
@@ -1371,6 +1377,16 @@ Bool gf_sys_set_cfg_option(const char *opt_string)
 	char *sep, *sep2, szSec[1024], szKey[1024], szVal[1024];
 	sep = strchr(opt_string, ':');
 	if (!sep) {
+		sep = strchr(opt_string, '=');
+		if (sep && !stricmp(sep, "=null")) {
+			sepIdx = sep - opt_string;
+			if (sepIdx>=1024) sepIdx = 1023;
+			strncpy(szSec, opt_string, sepIdx);
+			szSec[sepIdx] = 0;
+			gf_opts_del_section(szSec);
+			return  GF_TRUE;
+		}
+
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[CoreArgs] Badly formatted option %s - expected Section:Name=Value\n", opt_string ) );
 		return GF_FALSE;
 	}

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2018
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -51,7 +51,7 @@ GF_Err gf_filter_pck_merge_properties_filter(GF_FilterPacket *pck_src, GF_Filter
 	pck_dst->info = pck_src->info;
 	pck_dst->info.flags &= ~GF_PCKF_PROPS_REFERENCE;
 
-	if (!pck_src->props) {
+	if (!pck_src->props || pck_dst->is_dangling) {
 		return GF_OK;
 	}
 	if (!pck_dst->props) {
@@ -95,7 +95,7 @@ static Bool pck_queue_enum(void *udta, void *item)
 	return GF_FALSE;
 }
 
-static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 data_size, u8 **data, Bool no_block_check)
+static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 data_size, u8 **data)
 {
 	GF_FilterPacket *pck=NULL;
 	GF_FilterPacket *closest=NULL;
@@ -105,8 +105,6 @@ static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to allocate a packet on an input PID in filter %s\n", pid->filter->name));
 		return NULL;
 	}
-	if (!no_block_check && gf_filter_pid_would_block(pid))
-		return NULL;
 
 	count = gf_fq_count(pid->filter->pcks_alloc_reservoir);
 	if (count) {
@@ -128,6 +126,11 @@ static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 
 		assert(closest);
 		closest->alloc_size = data_size;
 		closest->data = gf_realloc(closest->data, closest->alloc_size);
+		if (!closest->data) {
+			gf_free(closest);
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new packet on PID %s of filter %s\n", pid->name, pid->filter->name));
+			return NULL;
+		}
 		pck = closest;
 #ifdef GPAC_MEMORY_TRACKING
 		pid->filter->session->nb_realloc_pck++;
@@ -136,9 +139,16 @@ static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 
 
 	if (!pck) {
 		GF_SAFEALLOC(pck, GF_FilterPacket);
-		if (!pck)
+		if (!pck) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new packet on PID %s of filter %s\n", pid->name, pid->filter->name));
 			return NULL;
+		}
 		pck->data = gf_malloc(sizeof(char)*data_size);
+		if (!pck->data) {
+			gf_free(pck);
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new packet on PID %s of filter %s\n", pid->name, pid->filter->name));
+			return NULL;
+		}
 		pck->alloc_size = data_size;
 #ifdef GPAC_MEMORY_TRACKING
 		pid->filter->session->nb_alloc_pck+=2;
@@ -171,16 +181,59 @@ static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 
 GF_EXPORT
 GF_FilterPacket *gf_filter_pck_new_alloc(GF_FilterPid *pid, u32 data_size, u8 **data)
 {
-	return gf_filter_pck_new_alloc_internal(pid, data_size, data, GF_TRUE);
+	return gf_filter_pck_new_alloc_internal(pid, data_size, data);
 }
 
-static GF_FilterPacket *clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data)
+static GF_FilterPacket *new_dangling_packet(GF_FilterPacket *cached_pck, u32 data_length)
+{
+	GF_FilterPacket *dst;
+
+	if (cached_pck && cached_pck->reference) {
+		gf_filter_pck_discard(cached_pck);
+		cached_pck = NULL;
+	}
+	if (cached_pck) {
+		if (data_length > cached_pck->alloc_size) {
+			cached_pck->alloc_size = data_length;
+			cached_pck->data = gf_realloc(cached_pck->data, cached_pck->alloc_size);
+			if (!cached_pck->data) {
+				gf_free(cached_pck);
+				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to re-allocate dangling packet data\n"));
+				return NULL;
+			}
+		}
+		cached_pck->data_length = data_length;
+		return cached_pck;
+	}
+
+	GF_SAFEALLOC(dst, GF_FilterPacket);
+	if (!dst) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new dangling packet\n"));
+		return NULL;
+	}
+	dst->data = gf_malloc(sizeof(char) * data_length);
+	if (!dst->data) {
+		gf_free(dst);
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new dangling packet\n"));
+		return NULL;
+	}
+	dst->alloc_size = dst->data_length = data_length;
+	dst->filter_owns_mem = 0;
+	dst->pck = dst;
+	dst->is_dangling = 1;
+	return dst;
+}
+
+static GF_FilterPacket *clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data, Bool dangling_packet, GF_FilterPacket *cached_pck)
 {
 	u32 i, w, h, stride, stride_uv, pf, osize;
 	u32 nb_planes, uv_height;
 	GF_FilterPacket *dst, *ref;
+	u8 *pck_data;
 	GF_FilterPacketInstance *pcki = (GF_FilterPacketInstance *) pck_source;
 	const GF_PropertyValue *p;
+
+	if (data) *data = NULL;
 
 	ref = pcki->pck;
 
@@ -198,18 +251,27 @@ static GF_FilterPacket *clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket
 	stride = stride_uv = 0;
 
 	if (gf_pixel_get_size_info(pf, w, h, &osize, &stride, &stride_uv, &nb_planes, &uv_height) == GF_FALSE) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Unknown pixel format, cannot grab underlying video data\n"));
 		return NULL;
 	}
-	p = gf_filter_pid_get_property(pid, GF_PROP_PID_STRIDE);
-	if (!p || (p->value.uint != stride)) {
-		gf_filter_pid_set_property(pid, GF_PROP_PID_STRIDE, &PROP_UINT(stride));
-		gf_filter_pid_set_property(pid, GF_PROP_PID_STRIDE_UV, &PROP_UINT(stride_uv));
+
+	if (!dangling_packet) {
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_STRIDE);
+		if (!p || (p->value.uint != stride)) {
+			gf_filter_pid_set_property(pid, GF_PROP_PID_STRIDE, &PROP_UINT(stride));
+			gf_filter_pid_set_property(pid, GF_PROP_PID_STRIDE_UV, &PROP_UINT(stride_uv));
+		}
+		dst = gf_filter_pck_new_alloc(pid, osize, &pck_data);
+		if (!dst) return NULL;
+	} else {
+		dst = new_dangling_packet(cached_pck, osize);
+		if (!dst) return NULL;
+		pck_data = dst->data;
 	}
 
-	dst = gf_filter_pck_new_alloc(pid, osize, data);
 	if (!dst) return NULL;
-	
-	u8 *out_ptr = *data;
+	if (data) *data = pck_data;
+
 	for (i=0; i<nb_planes; i++) {
 		u32 j, write_h, dst_stride;
 		const u8 *in_ptr;
@@ -227,25 +289,32 @@ static GF_FilterPacket *clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket
 			dst_stride = stride;
 		}
 		for (j=0; j<write_h; j++) {
-			memcpy(out_ptr, in_ptr, dst_stride);
+			memcpy(pck_data, in_ptr, dst_stride);
 			in_ptr += src_stride;
-			out_ptr += dst_stride;
+			pck_data += dst_stride;
 		}
 	}
 	gf_filter_pck_merge_properties(pck_source, dst);
 	return dst;
 }
 
-static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data, Bool force_copy)
+static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data, Bool force_copy, Bool dangling_packet, GF_FilterPacket *cached_pck)
 {
 	GF_FilterPacket *dst, *ref;
 	u32 max_ref = 0;
 	GF_FilterPacketInstance *pcki;
 	if (!pck_source) return NULL;
 
+	if (dangling_packet) {
+		if (PCK_IS_OUTPUT(pck_source)) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Cannot create dangling packet from non-source packet\n"));
+			return NULL;
+		}
+	}
+
 	pcki = (GF_FilterPacketInstance *) pck_source;
 	if (pcki->pck->frame_ifce)
-		return clone_frame_interface(pid, pck_source, data);
+		return clone_frame_interface(pid, pck_source, data, dangling_packet, cached_pck);
 
 	if (force_copy) {
 		max_ref = 2;
@@ -264,7 +333,14 @@ static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_F
 	
 	if (max_ref>1) {
 		u8 *data_new;
-		dst = gf_filter_pck_new_alloc_internal(pid, pcki->pck->data_length, &data_new, GF_TRUE);
+		if (dangling_packet) {
+			dst = new_dangling_packet(cached_pck, pcki->pck->data_length);
+			if (!dst) return NULL;
+
+			data_new = dst->data;
+		} else {
+			dst = gf_filter_pck_new_alloc_internal(pid, pcki->pck->data_length, &data_new);
+		}
 		if (dst && data_new) {
 			memcpy(data_new, pcki->pck->data, sizeof(char)*pcki->pck->data_length);
 			if (data) *data = data_new;
@@ -272,6 +348,34 @@ static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_F
 		if (dst) gf_filter_pck_merge_properties(pck_source, dst);
 		return dst;
 	}
+
+	if (dangling_packet) {
+		if (cached_pck && cached_pck->reference) {
+			gf_filter_pck_discard(cached_pck);
+			cached_pck = NULL;
+		}
+		GF_SAFEALLOC(dst, GF_FilterPacket);
+		if (!dst) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new dangling packet (source filter %s)\n", pck_source->pck->src_filter->name));
+			return NULL;
+		}
+		pck_source = pck_source->pck;
+		dst->data = pck_source->data;
+		dst->data_length = pck_source->data_length;
+		dst->reference = pck_source;
+		dst->pck = dst;
+		dst->is_dangling = 1;
+
+		assert(pck_source->reference_count);
+		//cf gf_filter_pck_new_ref for these
+		safe_int_inc(&pck_source->reference_count);
+		safe_int_inc(&pck_source->pid->nb_shared_packets_out);
+		safe_int_inc(&pck_source->pid->filter->nb_shared_packets_out);
+		gf_filter_pck_merge_properties(pck_source, dst);
+		if (data) *data = dst->data;
+		return dst;
+	}
+
 	dst = gf_filter_pck_new_ref(pid, 0, 0, pck_source);
 	if (dst) {
 		gf_filter_pck_merge_properties(pck_source, dst);
@@ -280,23 +384,28 @@ static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_F
 	return dst;
 }
 
+GF_EXPORT
+GF_FilterPacket *gf_filter_pck_dangling_copy(GF_FilterPacket *pck_source, GF_FilterPacket *cached_pck)
+{
+	return gf_filter_pck_new_clone_internal(NULL, pck_source, NULL, GF_FALSE, GF_TRUE, cached_pck);
+}
 
 GF_EXPORT
 GF_FilterPacket *gf_filter_pck_new_clone(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data)
 {
-	return gf_filter_pck_new_clone_internal(pid, pck_source, data, GF_FALSE);
+	return gf_filter_pck_new_clone_internal(pid, pck_source, data, GF_FALSE, GF_FALSE, NULL);
 }
 GF_EXPORT
 GF_FilterPacket *gf_filter_pck_new_copy(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data)
 {
-	return gf_filter_pck_new_clone_internal(pid, pck_source, data, GF_TRUE);
+	return gf_filter_pck_new_clone_internal(pid, pck_source, data, GF_TRUE, GF_FALSE, NULL);
 }
 
 
 GF_EXPORT
 GF_FilterPacket *gf_filter_pck_new_alloc_destructor(GF_FilterPid *pid, u32 data_size, u8 **data, gf_fsess_packet_destructor destruct)
 {
-	GF_FilterPacket *pck = gf_filter_pck_new_alloc_internal(pid, data_size, data, GF_TRUE);
+	GF_FilterPacket *pck = gf_filter_pck_new_alloc_internal(pid, data_size, data);
 	if (pck) pck->destructor = destruct;
 	return pck;
 }
@@ -451,7 +560,7 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 		is_filter_destroyed = pck->src_filter->finalized;
 	}
 
-	if (!is_filter_destroyed) {
+	if (!is_filter_destroyed && !pck->is_dangling) {
 		assert(pck->pid);
 		if (pck->pid->filter) {
 			if (pck->info.cts != GF_FILTER_NO_TS) {
@@ -461,8 +570,10 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 			}
 		}
 	}
+	//never set for dangling packets
 	if (pck->destructor) pck->destructor(pid->filter, pid, pck);
 
+	//never set for dangling packets (theyr are never sent)
 	if (pck->pid_props) {
 		GF_PropertyMap *props = pck->pid_props;
 		pck->pid_props = NULL;
@@ -498,6 +609,7 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 			gf_props_del(props);
 		}
 	}
+	//never set for dangling packets, they are either standalone mem or packet references
 	if (pck->filter_owns_mem && !(pck->info.flags & GF_PCK_CMD_MASK) ) {
 		assert(pck->pid);
 		assert(pck->pid->nb_shared_packets_out);
@@ -523,6 +635,8 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 			gf_filter_packet_destroy(pck->reference);
 		}
 		pck->reference = NULL;
+		if (pck->is_dangling)
+			pck->data = NULL;
 	}
 	/*this is a property reference packet, its destruction may happen at ANY time*/
 	if (is_ref_props_packet) {
@@ -534,7 +648,11 @@ void gf_filter_packet_destroy(GF_FilterPacket *pck)
 	} else if (is_filter_destroyed) {
 		if (!pck->filter_owns_mem && pck->data) gf_free(pck->data);
 		gf_free(pck);
-	} else if (pck->filter_owns_mem ) {
+	} else if (pck->is_dangling) {
+		if (pck->data) gf_free(pck->data);
+		gf_free(pck);
+	}
+	else if (pck->filter_owns_mem ) {
 		if (pid->filter && pid->filter->pcks_shared_reservoir) {
 			gf_fq_add(pid->filter->pcks_shared_reservoir, pck);
 		} else {
@@ -573,8 +691,7 @@ Bool gf_filter_aggregate_packets(GF_FilterPidInst *dst)
 		GF_FilterPacketInstance *pcki = gf_list_pop_back(dst->pck_reassembly);
 		safe_int_inc(&dst->filter->pending_packets);
 		if (pcki->pck->info.duration && pcki->pck->pid_props->timescale) {
-			s64 duration = ((u64)pcki->pck->info.duration) * 1000000;
-			duration /= pcki->pck->pid_props->timescale;
+			u64 duration = gf_timestamp_rescale(pcki->pck->info.duration, pcki->pck->pid_props->timescale, 1000000);
 			safe_int64_add(&dst->buffer_duration, duration);
 		}
 		pcki->pck->info.flags |= GF_PCKF_BLOCK_START | GF_PCKF_BLOCK_END;
@@ -657,8 +774,7 @@ Bool gf_filter_aggregate_packets(GF_FilterPidInst *dst)
 			safe_int_inc(&dst->filter->pending_packets);
 
 			if (info.duration && pck->pid_props && pck->pid_props->timescale) {
-				s64 duration = ((u64) info.duration) * 1000000;
-				duration /= pck->pid_props->timescale;
+				u64 duration = gf_timestamp_rescale(info.duration, pck->pid_props->timescale, 1000000);
 				safe_int64_add(&dst->buffer_duration, duration);
 			}
 			//not continous set of bytes reaggregated
@@ -737,8 +853,10 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		return GF_OK;
 	}
 
+	is_cmd_pck = (pck->info.flags & GF_PCK_CMD_MASK);
+
 	//special case for source filters (no input pids), mark as playing once we have a packet sent
-	if (!pid->filter->num_input_pids && !pid->initial_play_done && !pid->is_playing) {
+	if (!is_cmd_pck && !pid->filter->num_input_pids && !pid->initial_play_done && !pid->is_playing) {
 		pid->initial_play_done = GF_TRUE;
 		pid->is_playing = GF_TRUE;
 		pid->filter->nb_pids_playing++;
@@ -751,7 +869,6 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 
 	gf_rmt_begin(pck_send, GF_RMT_AGGREGATE);
 
-	is_cmd_pck = (pck->info.flags & GF_PCK_CMD_MASK);
 	//send from filter, update flags
 	if (from_filter) {
 		Bool is_cmd = (pck->info.flags & GF_PCK_CMD_MASK) ? GF_TRUE : GF_FALSE;
@@ -927,6 +1044,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 			if (!pid->min_pck_duration) pid->min_pck_duration = (u32) duration;
 			else if ((u32) duration < pid->min_pck_duration) pid->min_pck_duration = (u32) duration;
 		}
+
 		if (!pck->info.duration && pid->min_pck_duration)
 			pck->info.duration = (u32) duration;
 
@@ -934,6 +1052,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		if ((s32) pck->info.duration < 0) {
 			pck->info.duration = 0;
 		}
+		pid->last_pck_dur = pck->info.duration;
 
 #ifndef GPAC_DISABLE_LOG
 		if (gf_log_tool_level_on(GF_LOG_FILTER, GF_LOG_DEBUG)) {
@@ -1067,8 +1186,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 						dst->nb_reagg_pck++;
 
 					if (pck->info.duration && timescale) {
-						duration = ((u64)pck->info.duration) * 1000000;
-						duration /= timescale;
+						duration = gf_timestamp_rescale(pck->info.duration, timescale, 1000000);
 						safe_int64_add(&dst->buffer_duration, duration);
 					}
 					inst->pck->info.flags |= GF_PCKF_BLOCK_START;
@@ -1089,7 +1207,12 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 				if (inst->pck->filter_owns_mem) {
 					u8 *data;
 					u32 alloc_size;
-					inst->pck = gf_filter_pck_new_alloc_internal(pck->pid, pck->data_length, &data, GF_TRUE);
+					inst->pck = gf_filter_pck_new_alloc_internal(pck->pid, pck->data_length, &data);
+					if (!inst->pck) {
+						GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Filter %s: failed to allocate new packet\n", pid->filter->name));
+						continue;
+					}
+
 					alloc_size = inst->pck->alloc_size;
 					memcpy(inst->pck, pck, sizeof(GF_FilterPacket));
 					inst->pck->pck = inst->pck;
@@ -1144,8 +1267,7 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 			}
 
 			if (duration && timescale) {
-				duration *= 1000000;
-				duration /= timescale;
+				duration = gf_timestamp_rescale(duration, timescale, 1000000);
 				safe_int64_add(&dst->buffer_duration, duration);
 			}
 			safe_int_inc(&dst->filter->pending_packets);
@@ -1199,6 +1321,11 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 GF_EXPORT
 GF_Err gf_filter_pck_send(GF_FilterPacket *pck)
 {
+	//dangling packet
+	if (pck->is_dangling) {
+		gf_filter_pck_discard(pck);
+		return GF_OK;
+	}
 	assert(pck->pid);
 	return gf_filter_pck_send_internal(pck, GF_TRUE);
 }
@@ -1211,6 +1338,8 @@ GF_Err gf_filter_pck_ref(GF_FilterPacket **pck)
 
 	(*pck) = (*pck)->pck;
 	safe_int_inc(& (*pck)->reference_count);
+	//keep track of number of ref packets for this pid at filter level
+	safe_int_inc(& (*pck)->pid->filter->nb_ref_packets);
 	return GF_OK;
 }
 
@@ -1221,6 +1350,8 @@ GF_FilterPacket *gf_filter_pck_ref_ex(GF_FilterPacket *pck)
 	if (! pck ) return NULL;
 	ref_pck = pck->pck;
 	safe_int_inc(& ref_pck->reference_count);
+	//keep track of number of ref packets for this pid at filter level
+	safe_int_inc(& ref_pck->pid->filter->nb_ref_packets);
 	return ref_pck;
 }
 
@@ -1271,6 +1402,11 @@ void gf_filter_pck_unref(GF_FilterPacket *pck)
 	pck=pck->pck;
 
 	assert(pck->reference_count);
+	//decrease number of ref packets for this pid at filter level if not a props reference
+	if (! (pck->info.flags & GF_PCKF_PROPS_REFERENCE)) {
+		assert(pck->pid->filter->nb_ref_packets);
+		safe_int_dec(&pck->pid->filter->nb_ref_packets);
+	}
 	if (safe_int_dec(&pck->reference_count) == 0) {
 		gf_filter_packet_destroy(pck);
 	}

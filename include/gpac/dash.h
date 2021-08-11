@@ -64,7 +64,7 @@ static const char * const GF_DASH_M3U8_MIME_TYPES[] = { "video/x-mpegurl", "audi
  */
 static const char * const GF_DASH_SMOOTH_MIME_TYPES[] = { "application/vnd.ms-sstr+xml", NULL};
 
-/*! DASH Event type. The DASH client communitcaes with the user through a callback mechanism using events*/
+/*! DASH Event type. The DASH client communicates with the user through a callback mechanism using events*/
 typedef enum
 {
 	/*! event sent if an error occurs when setting up manifest*/
@@ -85,13 +85,13 @@ typedef enum
 	GF_DASH_EVENT_TIMESHIFT_UPDATE,
 	/*! event sent when timeshift buffer is overflown - the group_idx param contains the max number of dropped segments of all representations dropped by the client, or -1 if play pos is ahead of live */
 	GF_DASH_EVENT_TIMESHIFT_OVERFLOW,
-	/*! event send when we need the decoding statistics*/
+	/*! event sent when we need the decoding statistics*/
 	GF_DASH_EVENT_CODEC_STAT_QUERY,
-	/*! event send when no threading to trigger segment download abort*/
+	/*! event sent when no threading to trigger segment download abort*/
 	GF_DASH_EVENT_ABORT_DOWNLOAD,
-	/*! event send whenever cache is full, to allow client to dispatch any segment*/
+	/*! event sent whenever cache is full, to allow client to dispatch any segment*/
 	GF_DASH_EVENT_CACHE_FULL,
-	/*! event send when all groups are done in a period*/
+	/*! event sent when all groups are done in a period - if group_idx is 1, this announces a time discontinuity for next period*/
 	GF_DASH_EVENT_END_OF_PERIOD,
 } GF_DASHEventType;
 
@@ -242,9 +242,8 @@ void gf_dash_get_info(GF_DashClient *dash, const char **title, const char **sour
 /*! switches quality up or down
 \param dash the target dash client
 \param switch_up indicates if the quality should be increased (GF_TRUE) or decreased (GF_FALSE)
-\param force_immediate_switch if GF_TRUE, aborts all current downloads, remove downloaded segments not yet played and switch. Otherwise, existing switching will only happen once the existing downloaded segments have been played
 */
-void gf_dash_switch_quality(GF_DashClient *dash, Bool switch_up, Bool force_immediate_switch);
+void gf_dash_switch_quality(GF_DashClient *dash, Bool switch_up);
 
 /*! indicates whether the DASH client is running or not
 \param dash the target dash client
@@ -329,12 +328,25 @@ s32 gf_dash_get_dependent_group_index(GF_DashClient *dash, u32 group_idx, u32 gr
 */
 Bool gf_dash_is_group_selectable(GF_DashClient *dash, u32 group_idx);
 
-/*! selects a group for playback. If other groups are alternate to this group (through the group attribute), they are automatically deselected
+/*! selects a group for playback. If group selection is enabled,  other groups are alternate to this group (through the group attribute), they are automatically deselected
 \param dash the target dash client
 \param group_idx the 0-based index of the target group
 \param select if GF_TRUE, will select this group and disable any alternate group. If GF_FALSE, only deselects the group
 */
 void gf_dash_group_select(GF_DashClient *dash, u32 group_idx, Bool select);
+
+/*! gets group ID (through the group attribute), -1 if undefined
+\param dash the target dash client
+\param group_idx the 0-based index of the target group
+\return ID of the group
+*/
+s32 gf_dash_group_get_id(GF_DashClient *dash, u32 group_idx);
+
+/*! enables group selection  through the group attribute
+\param dash the target dash client
+\param enable if GF_TRUE, group selection will be done whenever selecting a new group
+*/
+void gf_dash_enable_group_selection(GF_DashClient *dash, Bool enable);
 
 /*! performs selection of representations based on language code
 \param dash the target dash client
@@ -675,7 +687,7 @@ GF_Err gf_dash_set_max_resolution(GF_DashClient *dash, u32 width, u32 height, u8
 */
 GF_Err gf_dash_set_min_timeout_between_404(GF_DashClient *dash, u32 min_timeout_between_404);
 
-/*! sets time in ms after which 404 request for a segment will indicate segment lost. The clien always retries for segment availability time + segment duration. This allows extanding slightly the probe time (used when segment durations varies, or for VBR broadcast). The default value is 100 ms.
+/*! sets time in ms after which 404 request for a segment will indicate segment lost. The client always retries for segment availability time + segment duration. This allows extending slightly the probe time (used when segment durations varies, or for VBR broadcast). The default value is 100 ms.
 \param dash the target dash client
 \param expire_after_ms delay in milliseconds
 \return error if any
@@ -970,6 +982,13 @@ Bool gf_dash_all_groups_done(GF_DashClient *dash);
 \param query_string the query string to append to xlinks on periods
 */
 void gf_dash_set_period_xlink_query_string(GF_DashClient *dash, const char *query_string);
+
+/*! sets MPD chaining mode
+\param dash the target dash client
+\param chaining_mode if 0, no chaining. If 1, chain at end. If 2 chain on error or at end
+*/
+void gf_dash_set_chaining_mode(GF_DashClient *dash, u32 chaining_mode);
+
 
 /*! DASH client adaptation algorithm*/
 typedef enum {

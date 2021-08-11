@@ -40,7 +40,7 @@ typedef struct
 	//options
 	Double start, speed;
 	char *dst, *mime, *ext;
-	Bool append, dynext, ow, redund;
+	Bool append, dynext, ow, redund, noinitraw;
 	u32 cat;
 	u32 mvbk;
 
@@ -57,7 +57,7 @@ typedef struct
 
 	Bool patch_blocks;
 	Bool is_null;
-	GF_Err is_error;
+	GF_Err error;
 	u32 dash_mode;
 	u64 offset_at_seg_start;
 	const char *original_url;
@@ -135,7 +135,7 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 				e = gf_filter_pid_resolve_file_template_ex(ctx->pid, szName, szFinalName, file_idx, file_suffix, szFileName);
 			}
 			if (e) {
-				return ctx->is_error = e;
+				return ctx->error = e;
 			}
 		}
 
@@ -151,7 +151,7 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 			fprintf(stderr, "File %s already exist - override (y/n/a) ?:", szFinalName);
 			res = scanf("%20s", szRes);
 			if (!res || (szRes[0] == 'n') || (szRes[0] == 'N')) {
-				return ctx->is_error = GF_IO_ERR;
+				return ctx->error = GF_IO_ERR;
 			}
 			if ((szRes[0] == 'a') || (szRes[0] == 'A')) ctx->ow = GF_TRUE;
 		}
@@ -167,7 +167,7 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 	ctx->nb_write = 0;
 	if (!ctx->file) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] cannot open output file %s\n", ctx->szFileName));
-		return ctx->is_error = GF_IO_ERR;;
+		return ctx->error = GF_IO_ERR;;
 	}
 
 	return GF_OK;
@@ -177,6 +177,7 @@ static void fileout_setup_file(GF_FileOutCtx *ctx, Bool explicit_overwrite)
 {
 	const char *dst = ctx->dst;
 	const GF_PropertyValue *p, *ext;
+
 	p = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_OUTPATH);
 	ext = gf_filter_pid_get_property(ctx->pid, GF_PROP_PID_FILE_EXT);
 
@@ -239,6 +240,8 @@ static GF_Err fileout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DASH_MODE);
 	if (p && p->value.uint) ctx->dash_mode = 1;
+
+	ctx->error = GF_OK;
 	return GF_OK;
 }
 
@@ -343,14 +346,8 @@ static GF_Err fileout_process(GF_Filter *filter)
 	u32 pck_size, nb_write;
 	GF_FileOutCtx *ctx = (GF_FileOutCtx *) gf_filter_get_udta(filter);
 
-	if (ctx->is_error) {
-		GF_Err e = ctx->is_error;
-		if (e != GF_EOS) {
-			gf_filter_pid_set_discard(ctx->pid, GF_TRUE);
-			ctx->is_error = GF_EOS;
-		}
-		return e;
-	}
+	if (ctx->error)
+		return ctx->error;
 
 	pck = gf_filter_pid_get_packet(ctx->pid);
 	if (!pck) {
@@ -367,13 +364,13 @@ static GF_Err fileout_process(GF_Filter *filter)
 				evt.seg_size.seg_url = NULL;
 
 				if (ctx->dash_mode==1) {
-					evt.seg_size.is_init = GF_TRUE;
+					evt.seg_size.is_init = 1;
 					ctx->dash_mode = 2;
 					evt.seg_size.media_range_start = 0;
 					evt.seg_size.media_range_end = 0;
 					gf_filter_pid_send_event(ctx->pid, &evt);
 				} else {
-					evt.seg_size.is_init = GF_FALSE;
+					evt.seg_size.is_init = 0;
 					evt.seg_size.media_range_start = ctx->offset_at_seg_start;
 					evt.seg_size.media_range_end = gf_ftell(ctx->file)-1;
 					gf_filter_pid_send_event(ctx->pid, &evt);
@@ -386,7 +383,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 	}
 
 	gf_filter_pck_get_framing(pck, &start, &end);
-	if (!ctx->redund) {
+	if (!ctx->redund && !ctx->dash_mode) {
 		u32 dep_flags = gf_filter_pck_get_dependency_flags(pck);
 		//redundant packet, do not store
 		if ((dep_flags & 0x3) == 1) {
@@ -431,13 +428,13 @@ static GF_Err fileout_process(GF_Filter *filter)
 			evt.seg_size.seg_url = NULL;
 
 			if (ctx->dash_mode==1) {
-				evt.seg_size.is_init = GF_TRUE;
+				evt.seg_size.is_init = 1;
 				ctx->dash_mode = 2;
 				evt.seg_size.media_range_start = 0;
 				evt.seg_size.media_range_end = 0;
 				gf_filter_pid_send_event(ctx->pid, &evt);
 			} else {
-				evt.seg_size.is_init = GF_FALSE;
+				evt.seg_size.is_init = 0;
 				evt.seg_size.media_range_start = ctx->offset_at_seg_start;
 				evt.seg_size.media_range_end = gf_ftell(ctx->file)-1;
 				ctx->offset_at_seg_start = evt.seg_size.media_range_end+1;
@@ -473,7 +470,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 
 		if (name) {
 			fileout_open_close(ctx, name, ext ? ext->value.string : NULL, fnum ? fnum->value.uint : 0, explicit_overwrite, fsuf ? fsuf->value.string : NULL);
-		} else if (!ctx->file) {
+		} else if (!ctx->file && !ctx->noinitraw) {
 			fileout_setup_file(ctx, explicit_overwrite);
 		}
 	}
@@ -675,6 +672,7 @@ static const GF_FilterArgs FileOutArgs[] =
 	{ OFFS(ow), "overwrite output if existing", GF_PROP_BOOL, "true", NULL, 0},
 	{ OFFS(mvbk), "block size used when moving parts of the file around in patch mode", GF_PROP_UINT, "8192", NULL, 0},
 	{ OFFS(redund), "keep redundant packet in output file", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(noinitraw), "do not produce initial segment", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_HIDE},
 
 	{0}
 };

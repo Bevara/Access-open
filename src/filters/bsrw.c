@@ -54,7 +54,6 @@ struct _bsrw_ctx
 	s32 cprim, ctfc, cmx, vidfmt;
 	Bool rmsei, fullrange, novsi;
 
-
 	GF_List *pids;
 	Bool reconfigure;
 };
@@ -63,7 +62,6 @@ static GF_Err none_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacke
 {
 	return gf_filter_pck_forward(pck, pctx->opid);
 }
-
 
 static GF_Err m4v_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 {
@@ -133,6 +131,8 @@ static GF_Err avc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket
 		return gf_filter_pck_forward(pck, pctx->opid);
 
 	dst = gf_filter_pck_new_alloc(pctx->opid, final_size, &output);
+	if (!dst) return GF_OUT_OF_MEM;
+
 	gf_filter_pck_merge_properties(pck, dst);
 
 	size=0;
@@ -205,7 +205,7 @@ static GF_Err avc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 		u32 i, count = gf_list_count(avcc->sequenceParameterSets);
 		for (i=0; i<count; i++) {
 			GF_NALUFFParam *sps = gf_list_get(avcc->sequenceParameterSets, i);
-			//first byte is nalu header, then profile_idc (8bits), prof_comp (8buts) a,d level_idc (8bits)
+			//first byte is nalu header, then profile_idc (8bits), prof_comp (8bits), and level_idc (8bits)
 			if (ctx->prof>=0) {
 				sps->data[1] = (u8) ctx->prof;
 			}
@@ -272,6 +272,8 @@ static GF_Err hevc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacke
 		return gf_filter_pck_forward(pck, pctx->opid);
 
 	dst = gf_filter_pck_new_alloc(pctx->opid, final_size, &output);
+	if (!dst) return GF_OUT_OF_MEM;
+	
 	gf_filter_pck_merge_properties(pck, dst);
 
 	size=0;
@@ -384,7 +386,8 @@ static GF_Err prores_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPac
 {
 	u8 *output;
 	GF_FilterPacket *dst_pck = gf_filter_pck_new_clone(pctx->opid, pck, &output);
-
+	if (!dst_pck) return GF_OUT_OF_MEM;
+	
 	//starting at offset 20 in frame:
 	/*
 	prores_frame->chroma_format = gf_bs_read_int(bs, 2);
@@ -515,8 +518,11 @@ static GF_Err bsrw_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 	gf_filter_pid_copy_properties(pctx->opid, pctx->ipid);
 	pctx->codec_id = prop->value.uint;
-	pctx->reconfigure = GF_TRUE;
+	pctx->reconfigure = GF_FALSE;
 	gf_filter_pid_set_framing_mode(pid, GF_TRUE);
+	//rewrite asap - waiting for first packet could lead to issues further down the chain, especially for movie fragments
+	//were the init segment could have already been flushed at the time we will dispatch the first packet
+	rewrite_pid_config(ctx, pctx);
 	return GF_OK;
 }
 
@@ -627,9 +633,11 @@ static const GF_FilterCapability BSRWCaps[] =
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_APCO),
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_APCS),
 #else
-	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_NONE),
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_NONE),
 #endif
 
 };
@@ -661,7 +669,7 @@ GF_FilterRegister BSRWRegister = {
 	)
 	.private_size = sizeof(GF_BSRWCtx),
 	.max_extra_pids = 0xFFFFFFFF,
-	.flags = GF_FS_REG_EXPLICIT_ONLY,
+	.flags = GF_FS_REG_EXPLICIT_ONLY|GF_FS_REG_ALLOW_CYCLIC,
 	.args = BSRWArgs,
 	SETCAPS(BSRWCaps),
 	.initialize = bsrw_initialize,

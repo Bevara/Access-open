@@ -218,7 +218,11 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 		/*the compositor sends empty packets after its reconfiguration to check when the config is active
 		we therefore probe the first packet before probing the buffer fullness*/
 		pck = gf_filter_pid_get_packet(ctx->pid);
-		if (!pck) return 0;
+		if (!pck) {
+			if (gf_filter_pid_is_eos(ctx->pid))
+				ctx->is_eos = GF_TRUE;
+			return 0;
+		}
 
 		if (! gf_filter_pck_is_blocking_ref(pck)) {
 			if ((dur < ctx->buffer * 1000) && !gf_filter_pid_is_eos(ctx->pid))
@@ -279,7 +283,7 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 
 		delay = ctx->pid_delay;
 		if (ctx->adelay.den)
-			delay += ctx->adelay.num * (s32)ctx->timescale / (s32)ctx->adelay.den;
+			delay += gf_timestamp_rescale(ctx->adelay.num, ctx->adelay.den, ctx->timescale);
 
 		cts = gf_filter_pck_get_cts(pck);
 		if (delay >= 0) {
@@ -294,7 +298,7 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 		if (ctx->dur.num>0) {
 			if (!ctx->first_cts) ctx->first_cts = cts+1;
 
-			if ((cts - ctx->first_cts + 1) * ctx->dur.den > (u64) ctx->dur.num*ctx->timescale) {
+			if (gf_timestamp_greater(cts - ctx->first_cts + 1, ctx->timescale, ctx->dur.num, ctx->dur.den)) {
 				gf_filter_pid_drop_packet(ctx->pid);
 				if (!ctx->aborted) {
 					GF_FilterEvent evt;
@@ -312,14 +316,19 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 		if (!done && ctx->clock && data && size) {
 			GF_Fraction64 timestamp;
 			timestamp.num = cts;
-			if (ctx->pck_offset)
-				timestamp.num += ctx->pck_offset/ctx->bytes_per_sample;
+			if (ctx->pck_offset) {
+				u32 nb_samp = ctx->pck_offset/ctx->bytes_per_sample;
+				if (ctx->timescale != ctx->sr) {
+					nb_samp = (u32) gf_timestamp_rescale(nb_samp, ctx->sr, ctx->timescale);
+				}
+				timestamp.num += nb_samp;
+			}
 
-			timestamp.num -= (ctx->hwdelay_us*ctx->timescale)/1000000;
+			timestamp.num -= gf_timestamp_rescale(ctx->hwdelay_us, 1000000, ctx->timescale);
 			if (timestamp.num<0) timestamp.num = 0;
 			timestamp.den = ctx->timescale;
 			gf_filter_hint_single_clock(ctx->filter, gf_sys_clock_high_res(), timestamp);
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[AudioOut] At %d ms audio frame CTS "LLU" (compensated time %g s)\n", gf_sys_clock(), cts, ((Double)timestamp.num)/timestamp.den ));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[AudioOut] At %d ms audio frame CTS "LLU" (compensated time %g s, HW delay "LLU" us)\n", gf_sys_clock(), cts, ((Double)timestamp.num)/timestamp.den, ctx->hwdelay_us ));
 		}
 		
 		if (data && !ctx->wait_recfg) {
@@ -408,8 +417,7 @@ static GF_Err aout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 	if (ctx->first_cts && (ctx->timescale != timescale)) {
 		ctx->first_cts-=1;
-		ctx->first_cts *= timescale;
-		ctx->first_cts /= ctx->timescale;
+		gf_timestamp_rescale(ctx->first_cts, ctx->timescale, timescale);
 		ctx->first_cts+=1;
 	}
 	ctx->timescale = timescale;
@@ -524,7 +532,7 @@ static GF_Err aout_initialize(GF_Filter *filter)
 	}
 	if (ctx->audio_out->SelfThreaded) {
 	} else if (ctx->threaded) {
-		ctx->th = gf_th_new("AudioOutput");
+		ctx->th = gf_th_new("gf_aout");
 		gf_th_run(ctx->th, aout_th_proc, ctx);
 	}
 
@@ -549,6 +557,7 @@ static void aout_finalize(GF_Filter *filter)
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[AudioOut] audio thread stopped\n"));
 			gf_th_del(ctx->th);
 		} else {
+			ctx->aborted = GF_TRUE;
 			ctx->audio_out->Shutdown(ctx->audio_out);
 		}
 		gf_modules_close_interface((GF_BaseInterface *)ctx->audio_out);

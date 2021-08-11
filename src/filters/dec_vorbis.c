@@ -229,7 +229,10 @@ static GF_Err vorbisdec_process(GF_Filter *filter)
 
 	}
 	size = (ctx->vd.pcm_current - ctx->vd.pcm_returned) * 2 * ctx->vi.channels;
-	if (size) dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &buffer);
+	if (size) {
+		dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &buffer);
+		if (!dst_pck) return GF_OUT_OF_MEM;
+	}
 
 	if (pck && dst_pck) gf_filter_pck_merge_properties(pck, dst_pck);
 
@@ -256,8 +259,7 @@ static GF_Err vorbisdec_process(GF_Filter *filter)
 	gf_filter_pck_set_cts(dst_pck, ctx->last_cts);
 
 	if (ctx->timescale != ctx->sample_rate) {
-		u64 dur = total_samples * ctx->timescale;
-		dur /= ctx->sample_rate;
+		u64 dur = gf_timestamp_rescale(total_samples, ctx->sample_rate, ctx->timescale);
 		gf_filter_pck_set_duration(dst_pck, (u32) dur);
 		ctx->last_cts += dur;
 	} else {

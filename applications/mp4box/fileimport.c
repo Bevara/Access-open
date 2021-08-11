@@ -283,25 +283,23 @@ static GF_Err set_chapter_track(GF_ISOFile *file, u32 track, u32 chapter_ref_tra
 	return GF_OK;
 }
 
-GF_Err parse_fracs(char *str, GF_Fraction64 *f, u64 *dur)
+GF_Err parse_fracs(char *str, GF_Fraction64 *f, GF_Fraction64 *dur)
 {
+	GF_Err e = GF_OK;
 	if (dur) {
-		if (sscanf(str, LLD"-"LLU"/"LLU, &f->num, dur, &f->den)==3) {
-			return GF_OK;
+		char *sep = strchr(str, '-');
+		if (sep) {
+			sep[0] = 0;
+			if (!gf_parse_lfrac(str, f)) e = GF_BAD_PARAM;
+			if (!gf_parse_lfrac(sep+1, dur)) e = GF_BAD_PARAM;
+			sep[0] = '-';
+			return e;
 		}
-		if (sscanf(str, LLD"-"LLU, &f->num, dur)==2) {
-			f->den = 1000;
-			return GF_OK;
-		}
-		*dur = 0;
+		dur->num = 0;
+		dur->den = 0;
 	}
-	if (sscanf(str, LLD"/"LLU, &f->num, &f->den)==2)
-		return GF_OK;
-	f->den = 1000;
-	if (sscanf(str, LLD, &f->num)==1) {
-		return GF_OK;
-	}
-	return GF_BAD_PARAM;
+	if (!gf_parse_lfrac(str, f)) e = GF_BAD_PARAM;
+	return e;
 }
 
 Bool scan_color(char *val, u32 *clr_prim, u32 *clr_tranf, u32 *clr_mx, Bool *clr_full_range)
@@ -369,9 +367,9 @@ GF_Err apply_edits(GF_ISOFile *dest, u32 track, char *edits)
 			if (e) goto error;
 		}
 		else if (edits[0]=='e') {
-			u64 movie_t, media_t, edit_dur;
+			u64 movie_t, media_t, edur;
 			u32 rate;
-			GF_Fraction64 movie_time, media_time, media_rate;
+			GF_Fraction64 movie_time, media_time, media_rate, edit_dur;
 			char *mtime_sep;
 
 			edits+=1;
@@ -401,24 +399,26 @@ GF_Err apply_edits(GF_ISOFile *dest, u32 track, char *edits)
 					if (e) goto error;
 				}
 			}
-			if (!movie_time.den) {
+			if (!movie_time.den || (movie_time.num<0)) {
 				e = GF_BAD_PARAM;
+				fprintf(stderr, "Wrong edit format %s, movie time must be valid and >= 0\n", edits);
 				goto error;
 			}
 			movie_t = movie_time.num * movie_ts / movie_time.den;
-			if (!edit_dur) {
-				edit_dur = media_dur;
-				edit_dur *= movie_ts;
-				edit_dur /= media_ts;
+			if (!edit_dur.den || !edit_dur.num) {
+				edur = media_dur;
+				edur *= movie_ts;
+				edur /= media_ts;
 			} else {
-				edit_dur *= movie_ts;
-				edit_dur /= movie_time.den;
-				if (edit_dur>media_dur)
-					edit_dur = media_dur;
+				edur = edit_dur.num;
+				edur *= movie_ts;
+				edur /= edit_dur.den;
+				edur /= movie_time.den;
+				if (edur>media_dur)
+					edur = media_dur;
 			}
 			if (!media_time.den) {
-				e = gf_isom_set_edit(dest, track, movie_t, edit_dur, 0, GF_ISOM_EDIT_EMPTY);
-				if (e) goto error;
+				e = gf_isom_set_edit(dest, track, movie_t, edur, 0, GF_ISOM_EDIT_EMPTY);
 			} else {
 				rate = 0;
 				if (media_rate.den) {
@@ -430,9 +430,13 @@ GF_Err apply_edits(GF_ISOFile *dest, u32 track, char *edits)
 					rate = (rate<<16) | (u32) frac;
 				}
 				media_t = media_time.num * media_ts / media_time.den;
-				e = gf_isom_set_edit_with_rate(dest, track, movie_t, edit_dur, media_t, rate);
-				if (e) goto error;
+				e = gf_isom_set_edit_with_rate(dest, track, movie_t, edur, media_t, rate);
 			}
+			if (e==GF_EOS) {
+				fprintf(stderr, "Inserted empty edit before edit at start time "LLD"/"LLU"\n", movie_time.num, movie_time.den);
+				e = GF_OK;
+			}
+			if (e) goto error;
 		}
 error:
 		if (sep) sep[0] = c;
@@ -912,9 +916,9 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		else if (!strnicmp(ext+1, "rate=", 5)) {
 			force_rate = atoi(ext+6);
 		}
-		else if (!stricmp(ext+1, "fstat"))
+		else if (!stricmp(ext+1, "stats") || !stricmp(ext+1, "fstat"))
 			print_stats_graph |= 1;
-		else if (!stricmp(ext+1, "fgraph"))
+		else if (!stricmp(ext+1, "graph") || !stricmp(ext+1, "graph"))
 			print_stats_graph |= 2;
 		else if (!strncmp(ext+1, "sopt", 4) || !strncmp(ext+1, "dopt", 4) || !strncmp(ext+1, "@", 1)) {
 			if (ext2) ext2[0] = ':';
@@ -1366,7 +1370,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 			}
 			if (has_clap) {
 				e = gf_isom_set_clean_aperture(dest, track, 1, clap_wn, clap_wd, clap_hn, clap_hd, clap_hon, clap_hod, clap_von, clap_vod);
-				GOTO_EXIT("changing clean apperture")
+				GOTO_EXIT("changing clean aperture")
 			}
 			if (bitdepth) {
 				e = gf_isom_set_visual_bit_depth(dest, track, 1, bitdepth);
@@ -1751,27 +1755,48 @@ exit:
 	return e;
 }
 
+typedef struct
+{
+	Double progress;
+	u32 file_idx;
+} SplitInfo;
 
 static Bool on_split_event(void *_udta, GF_Event *evt)
 {
 	Double progress;
-	u32 *prev_progress = (u32 *)_udta;
+	SplitInfo *sinfo = (SplitInfo *)_udta;
 	if (!_udta) return GF_FALSE;
 	if (evt->type != GF_EVENT_PROGRESS) return GF_FALSE;
 	if (!evt->progress.total) return GF_FALSE;
 
 	progress = (Double) (100*evt->progress.done) / evt->progress.total;
-	if ((u32) progress==*prev_progress)
+	if (progress <= sinfo->progress)
 		return GF_FALSE;
 
-	*prev_progress = (u32) progress;
+	if (evt->progress.done == evt->progress.total) {
+		if (sinfo->progress <= 0)
+			return GF_FALSE;
 #ifndef GPAC_DISABLE_LOG
-	GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("splitting: % 2.2f %%\r", progress));
+		GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("splitting: file %d done\n", sinfo->file_idx));
 #else
-	fprintf(stderr, "splitting: % 2.2f %%\r", progress);
+		fprintf(stderr, "splitting: file %d done\n", sinfo->file_idx);
 #endif
+		sinfo->file_idx++;
+		sinfo->progress = -1;
+	} else {
+		sinfo->progress = progress;
+#ifndef GPAC_DISABLE_LOG
+		GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("splitting: % 2.2f %%\r", progress));
+#else
+		fprintf(stderr, "splitting: % 2.2f %%\r", progress);
+#endif
+	}
 	return GF_FALSE;
 }
+
+extern u32 do_flat;
+extern Bool do_frag;
+extern Double interleaving_time;
 
 GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb, char *inName, Double InterleavingTime, Double chunk_start_time, u32 adjust_split_end, char *outName, Bool force_rap_split, const char *split_range_str, u32 fs_dump_flags)
 {
@@ -1782,7 +1807,10 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 	char *filter_args = NULL;
 	GF_FilterSession *fs;
 	GF_Filter *src, *reframe, *dst;
-	u32 progress = (u32) -1;
+	SplitInfo sinfo;
+
+	sinfo.progress = -1;
+	sinfo.file_idx = 1;
 
 	chunk_extraction = (chunk_start>=0) ? GF_TRUE : GF_FALSE;
 	if (split_range_str)
@@ -1809,8 +1837,8 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 		return GF_IO_ERR;
 	}
 
-
-	sprintf(szArgs, "mp4dmx:mov=%p", mp4);
+	//load source with all tracks processing
+	sprintf(szArgs, "mp4dmx:mov=%p:alltk", mp4);
 	src = gf_fs_load_filter(fs, szArgs, &e);
 
 	if (!src) {
@@ -1842,6 +1870,11 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 		} else if (!gf_sys_find_global_arg("xround")) {
 			gf_dynstrcat(&filter_args, ":xround=closest", NULL);
 		}
+		if (!adjust_split_end || (adjust_split_end==3)) {
+			if (!gf_sys_find_global_arg("probe_ref")) {
+				gf_dynstrcat(&filter_args, ":probe_ref", NULL);
+			}
+		}
 
 		if (split_range_str) {
 			Bool is_time = GF_FALSE;
@@ -1854,6 +1887,8 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 				//if another `:` assume time format
 				if (end && strchr(end+1, ':'))
 					is_time = GF_TRUE;
+			} else if (strchr(split_range_str, ':')) {
+				is_time = GF_TRUE;
 			}
 			if (!end) {
 				gf_free(filter_args);
@@ -1906,6 +1941,7 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 
 	reframe = gf_fs_load_filter(fs, filter_args, &e);
 	gf_free(filter_args);
+	filter_args = NULL;
 	if (!reframe) {
 		M4_LOG(GF_LOG_ERROR, ("Failed to load reframer filter: %s\n", gf_error_to_string(e) ));
 		gf_fs_del(fs);
@@ -1917,6 +1953,39 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 	} else {
 		strcpy(szFile, outName);
 	}
+	if (gf_dir_exists(szFile)) {
+		char c = szFile[strlen(szFile)-1];
+		if ((c!='/') && (c!='\\'))
+			strcat(szFile, "/");
+
+		strcat(szFile, szName);
+		strcat(szFile, "_$num%03d$.mp4");
+		M4_LOG(GF_LOG_WARNING, ("Split output is a directory, will use template %s\n", szFile));
+	}
+	else if (split_size_kb || split_dur) {
+		if (!strchr(szFile, '$') && (stricmp(szFile, "null") || !strcmp(szFile, "/dev/null")) ) {
+			char *sep = gf_file_ext_start(szFile);
+			if (sep) sep[0] = 0;
+			strcat(szFile, "_$num$.mp4");
+			M4_LOG(GF_LOG_WARNING, ("Split by %s but output not a template, using %s as output\n", split_size_kb ? "size" : "duration", szFile));
+		}
+	}
+	if (do_frag) {
+		sprintf(szArgs, ":cdur=%g", interleaving_time);
+		strcat(szFile, ":store=frag");
+		strcat(szFile, szArgs);
+	}
+	else if (do_flat==1) {
+		strcat(szFile, ":store=flat");
+	}
+	else if (do_flat || interleaving_time) {
+		if (do_flat==3) {
+			strcat(szFile, ":store=fstart");
+		}
+		sprintf(szArgs, ":cdur=%g", interleaving_time);
+		strcat(szFile, szArgs);
+	}
+
 	dst = gf_fs_load_destination(fs, szFile, NULL, NULL, &e);
 	if (!dst) {
 		M4_LOG(GF_LOG_ERROR, ("Failed to load destination filter: %s\n", gf_error_to_string(e) ));
@@ -1933,7 +2002,7 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 		&& !gf_sys_is_quiet()
 	) {
 		gf_fs_enable_reporting(fs, GF_TRUE);
-		gf_fs_set_ui_callback(fs, on_split_event, &progress);
+		gf_fs_set_ui_callback(fs, on_split_event, &sinfo);
 	}
 #ifdef GPAC_ENABLE_COVERAGE
 	else if (gf_sys_is_cov_mode()) {
@@ -2240,7 +2309,7 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 	for (i=0; i<gf_isom_get_track_count(dest); i++) {
 		u64 track_dur = gf_isom_get_media_duration(dest, i+1);
 		u32 track_ts = gf_isom_get_media_timescale(dest, i+1);
-		if ((u64)aligned_to_DTS_frac.num * track_ts < track_dur * aligned_to_DTS_frac.den) {
+		if (gf_timestamp_less(aligned_to_DTS_frac.num, aligned_to_DTS_frac.den, track_dur, track_ts)) {
 			aligned_to_DTS_frac.num = track_dur;
 			aligned_to_DTS_frac.den = track_ts;
 		}

@@ -32,6 +32,12 @@
 
 typedef struct
 {
+	GF_FilterPid *pid;
+	u32 id;
+} GF_TileAggInput;
+
+typedef struct
+{
 	//options
 	GF_PropUIntList tiledrop;
 
@@ -40,6 +46,7 @@ typedef struct
 	GF_FilterPid *base_ipid;
 	u32 nalu_size_length;
 	u32 base_id;
+	GF_List *ipids;
 
 	GF_BitStream *bs_r;
 
@@ -47,8 +54,17 @@ typedef struct
 	const GF_PropertyValue *sabt;
 
 	Bool check_connections;
+	GF_Err in_error;
+	u32 wait_start, wait_pid;
+	Bool is_playing;
+	GF_FEVT_Play play_evt;
 
 } GF_TileAggCtx;
+
+#define TILEAGG_CFG_ERR(_msg) {\
+		GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TileAgg] Error configuring pid %s: %s\n", gf_filter_pid_get_name(pid), _msg ));\
+		goto config_error;\
+	}
 
 
 static GF_Err tileagg_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
@@ -56,10 +72,17 @@ static GF_Err tileagg_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	u32 codec_id=0;
 	const GF_PropertyValue *p;
 	GF_HEVCConfig *hvcc;
+	GF_TileAggInput *pctx;
 
 	GF_TileAggCtx *ctx = (GF_TileAggCtx *) gf_filter_get_udta(filter);
+	if (ctx->in_error) return GF_SERVICE_ERROR;
 
+	pctx = gf_filter_pid_get_udta(pid);
 	if (is_remove) {
+		if (pctx) {
+			gf_list_del_item(ctx->ipids, pctx);
+			gf_free(pctx);
+		}
 		if (ctx->base_ipid == pid) {
 			if (ctx->opid) {
 				gf_filter_pid_remove(ctx->opid);
@@ -69,8 +92,7 @@ static GF_Err tileagg_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 		return GF_OK;
 	}
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CODECID);
-	if (!p)
-		return GF_NOT_SUPPORTED;
+	if (!p) TILEAGG_CFG_ERR("missing CodecID")
 	codec_id = p->value.uint;
 
 	//a single HEVC base is allowed per instance
@@ -80,22 +102,33 @@ static GF_Err tileagg_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	//a tile pid connected before our base, check we have the same base ID, otherwise we need a new instance
 	if ((codec_id==GF_CODECID_HEVC) && !ctx->base_ipid && ctx->base_id) {
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_ID);
-		if (!p)
-			return GF_NOT_SUPPORTED;
+		if (!p) TILEAGG_CFG_ERR("missing PID ID")
 
 		if (ctx->base_id != p->value.uint)
 			return GF_REQUIRES_NEW_INSTANCE;
 
 		ctx->base_ipid = pid;
+		if (!ctx->opid) {
+			ctx->opid = gf_filter_pid_new(filter);
+		}
 	}
 	//tile pid connecting after another tile pid,  we share the same base
 	if ((codec_id==GF_CODECID_HEVC_TILES) && ctx->base_id) {
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_DEPENDENCY_ID);
-		if (!p) return GF_NOT_SUPPORTED;
+		if (!p) TILEAGG_CFG_ERR("missing PID DependencyID")
+
 		if (ctx->base_id != p->value.uint)
 			return GF_REQUIRES_NEW_INSTANCE;
 	}
 
+	if (!pctx) {
+		GF_SAFEALLOC(pctx, GF_TileAggInput);
+		pctx->pid = pid;
+		gf_filter_pid_set_udta(pid, pctx);
+		gf_list_add(ctx->ipids, pctx);
+	}
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_ID);
+	pctx->id = p ? p->value.uint : 0;
 
 	if (!ctx->base_ipid && (codec_id==GF_CODECID_HEVC) ) {
 		ctx->base_ipid = pid;
@@ -120,21 +153,40 @@ static GF_Err tileagg_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 		if (hvcc) gf_odf_hevc_cfg_del(hvcc);
 
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_ID);
-		if (!p)
-			return GF_NOT_SUPPORTED;
+		if (!p) TILEAGG_CFG_ERR("missing PID ID, base PID assigned")
 		ctx->base_id = p->value.uint;
 
 		ctx->sabt = gf_filter_pid_get_property_str(pid, "isom:sabt");
 	} else {
+		u32 base_id;
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_DEPENDENCY_ID);
-		if (!p) return GF_NOT_SUPPORTED;
+		if (!p) TILEAGG_CFG_ERR("missing PID DependencyID, base PID not assigned")
+
+		base_id = p->value.uint;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_ID);
+		if (!p || (base_id == p->value.uint)) TILEAGG_CFG_ERR("missing PID ID, base PID not assigned")
+
 		if (!ctx->base_ipid) {
-			ctx->base_id = p->value.uint;
+			ctx->base_id = base_id;
 		}
 		//we already checked the same base ID is used
 	}
 
+	//it may happen that we are already running when we get this pid connection, typically with very large number of tiles
+	//post a play event on pid in this case
+	if (ctx->is_playing) {
+		GF_FilterEvent fevt;
+		fevt.play = ctx->play_evt;
+		fevt.base.on_pid = pid;
+		gf_filter_pid_send_event(pid, &fevt);
+	}
 	return GF_OK;
+
+config_error:
+	if (ctx->opid) gf_filter_pid_set_eos(ctx->opid);
+	if (ctx->base_id) ctx->in_error = GF_NON_COMPLIANT_BITSTREAM;
+	return GF_SERVICE_ERROR;
+
 }
 
 static GF_Err tileagg_set_eos(GF_Filter *filter, GF_TileAggCtx *ctx)
@@ -149,11 +201,13 @@ static GF_Err tileagg_set_eos(GF_Filter *filter, GF_TileAggCtx *ctx)
 	return GF_EOS;
 }
 
+
 static GF_Err tileagg_process(GF_Filter *filter)
 {
 	GF_TileAggCtx *ctx = (GF_TileAggCtx *) gf_filter_get_udta(filter);
-	u32 i, j, count = gf_filter_get_ipid_count(filter);
+	u32 i, j;
 	GF_FilterPacket *dst_pck, *base_pck;
+	u32 count;
 	u64 min_cts = GF_FILTER_NO_TS;
 	u32 pck_size, final_size, size = 0;
 	u32 pos, nb_ready=0;
@@ -161,13 +215,19 @@ static GF_Err tileagg_process(GF_Filter *filter)
 	Bool has_sei_suffix = GF_FALSE;
 	const char *data;
 	u8 *output;
+
+	if (ctx->in_error) {
+		return ctx->in_error;
+	}
 	if (!ctx->base_ipid) return GF_EOS;
 
 	if (ctx->check_connections) {
-		if (gf_filter_connections_pending(filter))
+		if (gf_filter_connections_pending(filter)) {
 			return GF_OK;
+		}
 		ctx->check_connections = GF_FALSE;
 	}
+
 
 	base_pck = gf_filter_pid_get_packet(ctx->base_ipid);
 	if (!base_pck) {
@@ -177,33 +237,46 @@ static GF_Err tileagg_process(GF_Filter *filter)
 		}
 		return GF_OK;
 	}
+
 	min_cts = gf_filter_pck_get_cts(base_pck);
 	gf_filter_pck_get_data(base_pck, &pck_size);
 	size = pck_size;
 
+	count = gf_list_count(ctx->ipids);
 	for (i=0; i<count; i++) {
 		GF_FilterPacket *pck;
 		u64 cts;
 		Bool do_drop=GF_FALSE;
-		GF_FilterPid *pid = gf_filter_get_ipid(filter, i);
-		if (pid==ctx->base_ipid) continue;
+		GF_TileAggInput *pctx = gf_list_get(ctx->ipids, i);
+		if (pctx->pid==ctx->base_ipid) continue;
 		while (1) {
-			pck = gf_filter_pid_get_packet(pid);
+			pck = gf_filter_pid_get_packet(pctx->pid);
 			if (!pck) {
-				if (gf_filter_pid_is_eos(pid)) {
+				if (gf_filter_pid_is_eos(pctx->pid)) {
 					return tileagg_set_eos(filter, ctx);
 				}
 				//if we are flushing a segment, consider the PID discarded if no packet
 				//otherwise wait for packet
-				if (! ctx->flush_packets)
-					return GF_OK;
+				if (! ctx->flush_packets) {
+					if (ctx->wait_pid != pctx->id) {
+						ctx->wait_start = gf_sys_clock();
+						ctx->wait_pid = pctx->id;
+						return GF_OK;
+					} else if (gf_sys_clock() - ctx->wait_start < 10000) {
+						gf_filter_ask_rt_reschedule(filter, 0);
+						return GF_OK;
+					} else {
+						GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TileAgg] No frames on tiled pid %s after %d ms, reaggregating with lost tiles\n", gf_filter_pid_get_name(pctx->pid), gf_sys_clock() - ctx->wait_start ));
+						break;
+					}
+				}
 				break;
 			}
 
 			cts = gf_filter_pck_get_cts(pck);
 			if (cts < min_cts) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TileAgg] Tiled pid %s with cts "LLU" less than base tile pid cts "LLU" - discarding packet\n", gf_filter_pid_get_name(pid), cts, min_cts ));
-				gf_filter_pid_drop_packet(pid);
+				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TileAgg] Tiled pid %s with cts "LLU" less than base tile pid cts "LLU" - discarding packet\n", gf_filter_pid_get_name(pctx->pid), cts, min_cts ));
+				gf_filter_pid_drop_packet(pctx->pid);
 			} else {
 				break;
 			}
@@ -218,7 +291,7 @@ static GF_Err tileagg_process(GF_Filter *filter)
 				do_drop=GF_TRUE;
 		}
 		if (do_drop) {
-			gf_filter_pid_drop_packet(pid);
+			gf_filter_pid_drop_packet(pctx->pid);
 			continue;
 		}
 
@@ -228,10 +301,13 @@ static GF_Err tileagg_process(GF_Filter *filter)
 	}
 
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[TileAgg] reaggregating CTS "LLU" %d ready %d pids (nb flush pck %d)\n", min_cts, nb_ready+1, count, ctx->flush_packets));
-	if (ctx->flush_packets)
+	if (ctx->flush_packets) {
 		ctx->flush_packets--;
+	}
 
 	dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+	if (!dst_pck) return GF_OUT_OF_MEM;
+	
 	final_size = size;
 
 	gf_filter_pck_merge_properties(base_pck, dst_pck);
@@ -269,14 +345,12 @@ static GF_Err tileagg_process(GF_Filter *filter)
 		for (i=0; i<count; i++) {
 			u64 cts;
 			GF_FilterPacket *pck;
-			GF_FilterPid *pid = gf_filter_get_ipid(filter, i);
-			if (pid==ctx->base_ipid) continue;
-			if (pid_id) {
-				const GF_PropertyValue *p = gf_filter_pid_get_property(pid, GF_PROP_PID_ID);
-				if (!p || (p->value.uint != pid_id))
+			GF_TileAggInput *pctx = gf_list_get(ctx->ipids, i);
+			if (pctx->pid==ctx->base_ipid) continue;
+			if (pid_id && (pctx->id != pid_id)) {
 					continue;
 			}
-			pck = gf_filter_pid_get_packet(pid);
+			pck = gf_filter_pid_get_packet(pctx->pid);
 			//can happen if we drop one tile
 			if (!pck) continue;
 
@@ -287,7 +361,7 @@ static GF_Err tileagg_process(GF_Filter *filter)
 			memcpy(output+size, data, pck_size);
 			size += pck_size;
 
-			gf_filter_pid_drop_packet(pid);
+			gf_filter_pid_drop_packet(pctx->pid);
 			if (pid_id)
 				break;
 		}
@@ -329,7 +403,7 @@ static GF_Err tileagg_initialize(GF_Filter *filter)
 {
 	GF_TileAggCtx *ctx = (GF_TileAggCtx *) gf_filter_get_udta(filter);
 	ctx->bs_r = gf_bs_new((char *)ctx, 1, GF_BITSTREAM_READ);
-
+	ctx->ipids = gf_list_new();
 	return GF_OK;
 }
 
@@ -337,22 +411,41 @@ static void tileagg_finalize(GF_Filter *filter)
 {
 	GF_TileAggCtx *ctx = (GF_TileAggCtx *) gf_filter_get_udta(filter);
 	gf_bs_del(ctx->bs_r);
+	while (gf_list_count(ctx->ipids)) {
+		GF_TileAggInput *pctx = gf_list_pop_back(ctx->ipids);
+		gf_free(pctx);
+	}
+	gf_list_del(ctx->ipids);
 }
 
 static Bool tileagg_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 {
 	GF_TileAggCtx *ctx = (GF_TileAggCtx *) gf_filter_get_udta(filter);
-	if (evt->base.type != GF_FEVT_PLAY_HINT) return GF_FALSE;
-	if (evt->play.forced_dash_segment_switch) {
-		//this assumes the dashin module performs regulation of output in case of losses
-		//otherwise it may dispatch more than one segment in the input buffer
-		if (!ctx->flush_packets)
-			gf_filter_pid_get_buffer_occupancy(ctx->base_ipid, NULL, &ctx->flush_packets, NULL, NULL);
-		else {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TileAgg] Something is wrong in demuxer, received segment flush event but previous segment is not yet flushed !\n" ));
+
+	switch (evt->base.type) {
+	case GF_FEVT_PLAY:
+		ctx->is_playing = GF_TRUE;
+		ctx->play_evt = evt->play;
+		return GF_FALSE;
+	case GF_FEVT_STOP:
+		ctx->is_playing = GF_FALSE;
+		return GF_FALSE;
+	case GF_FEVT_PLAY_HINT:
+		if (evt->play.forced_dash_segment_switch) {
+			//this assumes the dashin module performs regulation of output in case of losses
+			//otherwise it may dispatch more than one segment in the input buffer
+			if (!ctx->flush_packets)
+				gf_filter_pid_get_buffer_occupancy(ctx->base_ipid, NULL, &ctx->flush_packets, NULL, NULL);
+			else {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TileAgg] Something is wrong in demuxer, received segment flush event but previous segment is not yet flushed !\n" ));
+			}
+			ctx->wait_start = 0;
 		}
+		return GF_TRUE;
+	default:
+		break;
 	}
-	return GF_TRUE;
+	return GF_FALSE;
 }
 
 static const GF_FilterCapability TileAggCaps[] =

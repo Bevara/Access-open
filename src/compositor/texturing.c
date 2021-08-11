@@ -102,10 +102,6 @@ GF_Err gf_sc_texture_play_from_to(GF_TextureHandler *txh, MFURL *url, Double sta
 
 	txh->last_frame_time = (u32) (-1);
 
-	//we need to rework the raw memory stuff to be transparent
-#ifdef FILTER_FIXME
-	txh->raw_memory = GF_FALSE;
-#endif
 	/*request play*/
 	return GF_OK;
 }
@@ -250,7 +246,7 @@ void gf_sc_texture_update_frame(GF_TextureHandler *txh, Bool disable_resync)
 	} else if (txh->data && size && txh->size && (size != txh->size)) {
 		needs_reload = 1;
 	}
-	
+
 	if (needs_reload) {
 		/*if we had a texture this means the object has changed - delete texture and resetup. Do not skip
 		texture update as this may lead to an empty rendering pass (blank frame for this object), especially in DASH*/

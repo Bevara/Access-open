@@ -196,6 +196,8 @@ enum
 	GF_ISOM_BOX_TYPE_VVC1	= GF_4CC( 'v', 'v', 'c', '1' ),
 	GF_ISOM_BOX_TYPE_VVI1	= GF_4CC( 'v', 'v', 'i', '1' ),
 	GF_ISOM_BOX_TYPE_VVCC	= GF_4CC( 'v', 'v', 'c', 'C' ),
+	GF_ISOM_BOX_TYPE_VVS1	= GF_4CC( 'v', 'v', 's', '1' ),
+	GF_ISOM_BOX_TYPE_VVNC	= GF_4CC( 'v', 'v', 'n', 'C' ),
 
 	GF_ISOM_BOX_TYPE_AV1C = GF_4CC('a', 'v', '1', 'C'),
 	GF_ISOM_BOX_TYPE_AV01 = GF_4CC('a', 'v', '0', '1'),
@@ -418,6 +420,10 @@ enum
 	/* MIAF Boxes */
 	GF_ISOM_BOX_TYPE_CLLI	= GF_4CC('c', 'l', 'l', 'i'),
 	GF_ISOM_BOX_TYPE_MDCV	= GF_4CC('m', 'd', 'c', 'v'),
+
+	/* AVIF Boxes */
+	GF_ISOM_BOX_TYPE_A1LX   = GF_4CC('a', '1', 'l', 'x'),
+	GF_ISOM_BOX_TYPE_A1OP   = GF_4CC('a', '1', 'o', 'p'),
 
 	GF_ISOM_BOX_TYPE_ALTR	= GF_4CC( 'a', 'l', 't', 'r' ),
 
@@ -898,6 +904,7 @@ typedef struct
 
 	u64 magic;
 	u32 index;
+	u32 nb_base_refs;
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 	u64 first_dts_chunk;
@@ -1394,9 +1401,6 @@ void gf_isom_video_sample_entry_write(GF_VisualSampleEntryBox *ent, GF_BitStream
 void gf_isom_video_sample_entry_size(GF_VisualSampleEntryBox *ent);
 #endif
 
-void gf_isom_sample_entry_predestroy(GF_SampleEntryBox *ptr);
-
-
 GF_Box *gf_isom_box_find_child(GF_List *parent_child_list, u32 code);
 void gf_isom_box_del_parent(GF_List **parent_child_list, GF_Box*b);
 GF_Box *gf_isom_box_new_parent(GF_List **parent_child_list, u32 code);
@@ -1416,9 +1420,15 @@ typedef struct
 
 typedef struct
 {
-	GF_ISOM_BOX
+	GF_ISOM_FULL_BOX
 	GF_VVCConfig *config;
 } GF_VVCConfigurationBox;
+
+typedef struct
+{
+	GF_ISOM_FULL_BOX
+	u8 nal_unit_size;
+} GF_VVCNaluConfigurationBox;
 
 
 typedef struct
@@ -2364,7 +2374,7 @@ typedef struct
 	// if not 0, full_path is actually the data to write.
 	u32 data_len;
 
-	u32 tk_id, sample_num;
+	u32 tk_id, sample_num, ref_it_id;
 } GF_ItemInfoEntryBox;
 
 typedef struct
@@ -2488,7 +2498,7 @@ typedef struct __tag_meta_box
 	GF_ItemReferenceBox *item_refs;
 	GF_GroupListBox *groups_list;
 
-	Bool use_item_sample_sharing;
+	u8 use_item_sample_sharing, use_item_item_sharing;
 } GF_MetaBox;
 
 typedef struct
@@ -3434,6 +3444,7 @@ typedef struct
 	bin128 *KIDs;
 	u32 private_data_size;
 	u8 *private_data;
+	u8 moof_defined;
 } GF_ProtectionSystemHeaderBox;
 
 typedef struct __cenc_tenc_box
@@ -3654,6 +3665,17 @@ typedef struct __item_association_box {
 	GF_ISOM_FULL_BOX
 	GF_List *entries;
 } GF_ItemPropertyAssociationBox;
+
+typedef struct {
+	GF_ISOM_BOX
+	u8 large_size;
+	u32 layer_size[3];
+} GF_AV1LayeredImageIndexingPropertyBox;
+
+typedef struct {
+	GF_ISOM_BOX
+	u8 op_index;
+} GF_AV1OperatingPointSelectorPropertyBox;
 
 
 typedef struct {
@@ -4025,6 +4047,7 @@ struct __tag_isom {
 	GF_SegmentIndexBox *main_sidx;
 	u64 main_sidx_end_pos;
 
+	Bool has_pssh_moof;
 #endif
 	GF_ProducerReferenceTimeBox *last_producer_ref_time;
 
@@ -4256,7 +4279,7 @@ Bool gf_isom_cenc_has_saiz_saio_track(GF_SampleTableBox *stbl, u32 scheme_type);
 Bool gf_isom_cenc_has_saiz_saio_traf(GF_TrackFragmentBox *traf, u32 scheme_type);
 void gf_isom_cenc_set_saiz_saio(GF_SampleEncryptionBox *senc, GF_SampleTableBox *stbl, GF_TrackFragmentBox  *traf, u32 len, Bool saio_32bits, Bool use_mkey);
 #endif
-GF_Err gf_isom_cenc_merge_saiz_saio(GF_SampleEncryptionBox *senc, GF_SampleTableBox *stbl, u64 offset, u32 len);
+GF_Err gf_isom_cenc_merge_saiz_saio(GF_SampleEncryptionBox *senc, GF_SampleTableBox *stbl, u32 sample_number, u64 offset, u32 len);
 
 void gf_isom_parse_trif_info(const u8 *data, u32 size, u32 *id, u32 *independent, Bool *full_picture, u32 *x, u32 *y, u32 *w, u32 *h);
 

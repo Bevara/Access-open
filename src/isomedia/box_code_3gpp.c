@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -241,6 +241,7 @@ GF_Err ftab_box_size(GF_Box *s)
 GF_Box *text_box_new()
 {
 	ISOM_DECL_BOX_ALLOC(GF_TextSampleEntryBox, GF_ISOM_BOX_TYPE_TEXT);
+	gf_isom_sample_entry_init((GF_SampleEntryBox *)tmp);
 	return (GF_Box *) tmp;
 }
 
@@ -257,6 +258,7 @@ void text_box_del(GF_Box *s)
 GF_Box *tx3g_box_new()
 {
 	ISOM_DECL_BOX_ALLOC(GF_Tx3gSampleEntryBox, GF_ISOM_BOX_TYPE_TX3G);
+	gf_isom_sample_entry_init((GF_SampleEntryBox *)tmp);
 	return (GF_Box *) tmp;
 }
 
@@ -345,10 +347,21 @@ GF_Err text_box_read(GF_Box *s, GF_BitStream *bs)
 	u16 pSize;
 	GF_TextSampleEntryBox *ptr = (GF_TextSampleEntryBox*)s;
 
-	ISOM_DECREASE_SIZE(ptr, 51);
-
+	ISOM_DECREASE_SIZE(ptr, 8);
 	e = gf_isom_base_sample_entry_read((GF_SampleEntryBox *)ptr, bs);
 	if (e) return e;
+
+	ptr->textJustification = 1;
+
+	//some weird text entries are not QT text nor 3gpp, cf issue #1030
+	if (!ptr->size) {
+		return GF_OK;
+	}
+	if (ptr->size < 43) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Broken text box (%d bytes but min 43 required), skiping parsing.\n", ptr->size));
+		return GF_OK;
+	}
+	ISOM_DECREASE_SIZE(ptr, 43);
 
 	ptr->displayFlags = gf_bs_read_u32(bs);			/*Display flags*/
 	ptr->textJustification = gf_bs_read_u32(bs);	/*Text justification*/
@@ -410,6 +423,13 @@ GF_Err text_box_read(GF_Box *s, GF_BitStream *bs)
 		ptr->textName[pSize] = '\0';				/*Font name*/
 	}
 	ISOM_DECREASE_SIZE(ptr, pSize);
+
+	u32 next_size = gf_bs_peek_bits(bs, 32, 0);
+	if (next_size > ptr->size) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Broken text box detected, skiping parsing.\n"));
+		ptr->textJustification = 1;
+		return GF_OK;
+	}
 	return gf_isom_box_array_read(s, bs);
 }
 
@@ -470,6 +490,7 @@ GF_Err text_box_write(GF_Box *s, GF_BitStream *bs)
 	if (e) return e;
 	gf_bs_write_data(bs, ptr->reserved, 6);
 	gf_bs_write_u16(bs, ptr->dataReferenceIndex);
+
 	gf_bs_write_u32(bs, ptr->displayFlags);			/*Display flags*/
 	gf_bs_write_u32(bs, ptr->textJustification);	/*Text justification*/
 	gf_bs_write_data(bs, ptr->background_color, 6);	/*Background color*/
@@ -501,8 +522,9 @@ GF_Err text_box_size(GF_Box *s)
 {
 	GF_TextSampleEntryBox *ptr = (GF_TextSampleEntryBox*)s;
 
+	s->size += 8;
 	/*base + this + string length*/
-	s->size += 51 + 1;
+	s->size += 43 + 1;
 	if (ptr->textName)
 		s->size += strlen(ptr->textName);
 	return GF_OK;
@@ -530,7 +552,7 @@ GF_Err styl_box_read(GF_Box *s, GF_BitStream *bs)
 	ISOM_DECREASE_SIZE(ptr, 2);
 	ptr->entry_count = gf_bs_read_u16(bs);
 
-	if (ptr->size<ptr->entry_count * GPP_STYLE_SIZE)
+	if (ptr->size / GPP_STYLE_SIZE < ptr->entry_count)
 		return GF_ISOM_INVALID_FILE;
 
 	if (ptr->entry_count) {
@@ -666,7 +688,7 @@ GF_Err krok_box_read(GF_Box *s, GF_BitStream *bs)
 	ISOM_DECREASE_SIZE(ptr, 6)
 	ptr->highlight_starttime = gf_bs_read_u32(bs);
 	ptr->nb_entries = gf_bs_read_u16(bs);
-	if (ptr->size < ptr->nb_entries * 8)
+	if (ptr->size / 8 < ptr->nb_entries)
 		return GF_ISOM_INVALID_FILE;
 
 	if (ptr->nb_entries) {
@@ -1147,6 +1169,7 @@ GF_Err diST_box_size(GF_Box *s)
 GF_Box *dims_box_new()
 {
 	ISOM_DECL_BOX_ALLOC(GF_DIMSSampleEntryBox, GF_ISOM_BOX_TYPE_DIMS);
+	gf_isom_sample_entry_init((GF_SampleEntryBox *)tmp);
 	return (GF_Box*)tmp;
 }
 void dims_box_del(GF_Box *s)

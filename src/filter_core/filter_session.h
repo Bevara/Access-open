@@ -139,6 +139,32 @@ typedef struct __gf_filter_pck_inst
 } GF_FilterPacketInstance;
 
 
+/*URI relocators are used for containers like zip or ISO FF with file items. The relocator
+is in charge of translating the URI, potentially extracting the associated resource and sending
+back the new (local or not) URI. Only the interface is defined, URI translators are free to derive from them
+
+relocate a URI - if NULL is returned, this relocator is not concerned with the URI
+otherwise returns the translated URI
+*/
+
+#define GF_FS_URI_RELOCATOR	\
+	Bool (*relocate_uri)(void *__self, const char *parent_uri, const char *uri, char *out_relocated_uri, char *out_localized_uri);		\
+
+typedef struct __gf_uri_relocator GF_URIRelocator;
+
+struct __gf_uri_relocator
+{
+	GF_FS_URI_RELOCATOR
+};
+
+typedef struct
+{
+	GF_FS_URI_RELOCATOR
+	GF_FilterSession *sess;
+	char *szAbsRelocatedPath;
+} GF_FSLocales;
+
+
 //packet flags
 enum
 {
@@ -221,9 +247,6 @@ struct __gf_filter_pck
 
 	//for allocated memory packets
 	u32 alloc_size;
-	//for shared memory packets: 0: cloned mem, 1: read/write mem from source filter, 2: read-only mem from filter
-	//note that packets with frame_ifce are always considered as read-only memory
-	u32 filter_owns_mem;
 	gf_fsess_packet_destructor destructor;
 	//for packet reference  packets (sharing data from other packets)
 	struct __gf_filter_pck *reference;
@@ -234,6 +257,12 @@ struct __gf_filter_pck
 	GF_PropertyMap *props;
 	//pid properties applying to this packet
 	GF_PropertyMap *pid_props;
+
+	//for shared memory packets: 0: cloned mem, 1: read/write mem from source filter, 2: read-only mem from filter
+	//note that packets with frame_ifce are always considered as read-only memory
+	u8 filter_owns_mem;
+	u8 is_dangling;
+
 };
 
 /*!
@@ -262,7 +291,10 @@ struct __gf_fs_task
 };
 
 void gf_fs_post_task(GF_FilterSession *fsess, gf_fs_task_callback fun, GF_Filter *filter, GF_FilterPid *pid, const char *log_name, void *udta);
-void gf_fs_post_task_ex(GF_FilterSession *fsess, gf_fs_task_callback task_fun, GF_Filter *filter, GF_FilterPid *pid, const char *log_name, void *udta, Bool requires_main_thread, Bool force_direct_call);
+/* extended version of gf_fs_post_task
+force_direct_call shall only be true for gf_filter_process_task
+*/
+void gf_fs_post_task_ex(GF_FilterSession *fsess, gf_fs_task_callback task_fun, GF_Filter *filter, GF_FilterPid *pid, const char *log_name, void *udta, Bool is_configure, Bool force_direct_call);
 
 void gf_filter_pid_send_event_downstream(GF_FSTask *task);
 
@@ -291,10 +323,11 @@ typedef struct
 {
 	char *argname;
 	u32 type;
-	Bool found;
+	//0: not found, 1: found but can be later reset to 0, 2: found no reset
+	u32 found_type;
 } GF_FSArgItem;
 
-void gf_fs_push_arg(GF_FilterSession *session, const char *szArg, Bool was_found, u32 type);
+void gf_fs_push_arg(GF_FilterSession *session, const char *szArg, u32 was_found, u32 type);
 
 enum
 {
@@ -302,6 +335,9 @@ enum
 	GF_FS_NOBLOCK_FANOUT,
 	GF_FS_NOBLOCK
 };
+
+//#define GF_FS_ENABLE_LOCALES
+
 
 struct __gf_filter_session
 {
@@ -431,6 +467,11 @@ struct __gf_filter_session
 
 	gf_fs_on_filter_creation on_filter_create_destroy;
 	void *rt_udta;
+
+#ifdef GF_FS_ENABLE_LOCALES
+	GF_List *uri_relocators;
+	GF_FSLocales locales;
+#endif
 };
 
 #ifdef GPAC_HAS_QJS
@@ -553,6 +594,7 @@ struct __gf_filter
 	volatile u32 in_pid_connection_pending;
 	volatile u32 out_pid_connection_pending;
 	volatile u32 pending_packets;
+	volatile u32 nb_ref_packets;
 
 	volatile u32 stream_reset_pending;
 	volatile u32 num_events_queued;
@@ -678,7 +720,7 @@ struct __gf_filter
 	u32 encoder_stream_type;
 
 	Bool act_as_sink;
-	
+	Bool require_source_id;
 #ifndef GPAC_DISABLE_REMOTERY
 	rmtU32 rmt_hash;
 #endif
@@ -713,6 +755,14 @@ struct __gf_filter
 	GF_Filter *multi_sink_target;
 
 	Bool event_target;
+
+	u64 last_schedule_task_time;
+
+	//set to NULL, or to the only source filter for this filter
+	//this is a helper for the graph resolver to avoid browing all input pids when checking
+	//for cycles or fetching last defined ID.
+	//typically helps for tiling case with hundreds of tiles
+	GF_Filter *single_source;
 
 #ifdef GPAC_HAS_QJS
 	char *iname;
@@ -773,7 +823,7 @@ struct __gf_filter_pid_inst
 	Bool last_block_ended;
 	Bool first_block_started;
 	//set during play/stop/reset phases
-	Bool discard_packets;
+	volatile u32 discard_packets;
 
 	Bool force_reconfig;
 
@@ -786,6 +836,7 @@ struct __gf_filter_pid_inst
 	volatile s32 detach_pending;
 
 	void *udta;
+	u32 udta_flags;
 
 	//statistics per pid instance
 	u64 last_pck_fetch_time;
@@ -797,6 +848,8 @@ struct __gf_filter_pid_inst
 	u64 max_process_time, max_sap_process_time;
 	u64 first_frame_time;
 	Bool is_end_of_stream;
+	Bool is_playing, is_paused;
+	
 	volatile u32 nb_eos_signaled;
 
 	Bool is_encoder_input;
@@ -819,6 +872,9 @@ struct __gf_filter_pid_inst
 	GF_Filter *alias_orig;
 
 	GF_Fraction64 last_ts_drop;
+
+	u64 last_buf_query_clock;
+	u64 last_buf_query_dur;
 };
 
 struct __gf_filter_pid
@@ -870,7 +926,7 @@ struct __gf_filter_pid
 
 	Bool duration_init;
 	u64 last_pck_dts, last_pck_cts, min_pck_cts, max_pck_cts;
-	u32 min_pck_duration, nb_unreliable_dts;
+	u32 min_pck_duration, nb_unreliable_dts, last_pck_dur;
 	Bool recompute_dts;
 	Bool ignore_blocking;
 
@@ -883,6 +939,7 @@ struct __gf_filter_pid
 	Bool initial_play_done;
 	Bool is_playing;
 	void *udta;
+	u32 udta_flags;
 
 	GF_PropertyMap *caps_negociate;
 	Bool caps_negociate_direct;
@@ -933,7 +990,7 @@ typedef struct
 #define CAP_MATCH_LOADED_INPUT_ONLY		1
 #define CAP_MATCH_LOADED_OUTPUT_ONLY	1<<1
 
-u32 gf_filter_caps_to_caps_match(const GF_FilterRegister *src, u32 src_bundle_idx, const GF_FilterRegister *dst, GF_Filter *dst_filter, u32 *dst_bundle_idx, s32 for_dst_bundle, u32 *loaded_filter_flags, GF_CapsBundleStore *capstore);
+u32 gf_filter_caps_to_caps_match(const GF_FilterRegister *src, u32 src_bundle_idx, const GF_FilterRegister *dst, GF_Filter *dst_filter, u32 *dst_bundle_idx, u32 for_dst_bundle, u32 *loaded_filter_flags, GF_CapsBundleStore *capstore);
 Bool gf_filter_has_out_caps(const GF_FilterCapability *caps, u32 nb_caps);
 Bool gf_filter_has_in_caps(const GF_FilterCapability *caps, u32 nb_caps);
 

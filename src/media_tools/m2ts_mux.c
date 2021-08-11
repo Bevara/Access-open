@@ -936,8 +936,8 @@ static void gf_m2ts_remap_timestamps_for_pes(GF_M2TS_Mux_Stream *stream, u32 pck
 
 	/*Rescale our timestamps and express them in PCR*/
 	if (stream->ts_scale.den) {
-		*cts = *cts * stream->ts_scale.num / stream->ts_scale.den ;
-		*dts = *dts * stream->ts_scale.num / stream->ts_scale.den ;
+		*cts = gf_timestamp_rescale(*cts, stream->ts_scale.den, stream->ts_scale.num);
+		*dts = gf_timestamp_rescale(*dts, stream->ts_scale.den, stream->ts_scale.num);
 		if (duration) *duration = (u32)( *duration * stream->ts_scale.num / stream->ts_scale.den ) ;
 	}
 	if (!stream->program->initial_ts_set) {
@@ -1153,8 +1153,8 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 				u64 first_dts = stream->curr_pck.dts;
 
 				if (stream->ts_scale.den) {
-					first_pts = first_pts * stream->ts_scale.num / stream->ts_scale.den;
-					first_dts = first_dts * stream->ts_scale.num / stream->ts_scale.den;
+					first_pts = gf_timestamp_rescale(first_pts, stream->ts_scale.den, stream->ts_scale.num);
+					first_dts = gf_timestamp_rescale(first_dts, stream->ts_scale.den, stream->ts_scale.num);
 				}
 
 				/*the final PTS is computed by:
@@ -2886,7 +2886,7 @@ const u8 *gf_m2ts_mux_process(GF_M2TS_Mux *muxer, GF_M2TSMuxState *status, u32 *
 	nb_streams = nb_streams_done = 0;
 	*status = GF_M2TS_STATE_IDLE;
 
-	muxer->sap_inserted = GF_FALSE;
+	muxer->sap_inserted = 0;
 	muxer->last_pid = 0;
 
 	now_us = gf_sys_clock_high_res();
@@ -3093,13 +3093,15 @@ send_pck:
 			gf_m2ts_mux_table_get_next_packet(muxer, stream_to_process, muxer->dst_pck);
 		} else {
 			gf_m2ts_mux_pes_get_next_packet(stream_to_process, muxer->dst_pck);
-			if (stream_to_process->pck_sap_type) {
-				muxer->sap_inserted = GF_TRUE;
-				muxer->sap_type = stream_to_process->pck_sap_type;
-				muxer->sap_time = stream_to_process->pck_sap_time;
+			if (stream_to_process->pid == muxer->ref_pid) {
+				if (stream_to_process->pck_sap_type) {
+					muxer->sap_inserted = GF_TRUE;
+					muxer->sap_type = stream_to_process->pck_sap_type;
+					muxer->sap_time = stream_to_process->pck_sap_time;
+				}
+				muxer->last_pts = stream_to_process->curr_pck.cts;
+				muxer->last_pid = stream_to_process->pid;
 			}
-			muxer->last_pts = stream_to_process->curr_pck.cts;
-			muxer->last_pid = stream_to_process->pid;
 		}
 
 		ret = muxer->dst_pck;

@@ -648,12 +648,12 @@ static GF_Err gf_m4v_parse_frame_mpeg12(GF_M4VParser *m4v, GF_M4VDecSpecInfo *ds
 	firstObj = 1;
 	hasVOP = 0;
 	*is_coded = GF_FALSE;
-	m4v->current_object_type = (u32)-1;
 	*frame_type = 0;
 
 	if (!m4v->step_mode)
 		M4V_Reset(m4v, m4v->current_object_start);
 
+	m4v->current_object_type = (u32)-1;
 	go = 1;
 	while (go) {
 		o_type = M4V_LoadObject(m4v);
@@ -4099,7 +4099,7 @@ GF_EXPORT
 GF_Err gf_av1_parse_obu(GF_BitStream *bs, ObuType *obu_type, u64 *obu_size, u32 *obu_hdr_size, AV1State *state)
 {
 	GF_Err e = GF_OK;
-	u32 hdr_size;
+	u32 i, hdr_size;
 	u64 pos = gf_bs_get_position(bs);
 
 	if (!bs || !obu_type || !state)
@@ -4149,6 +4149,12 @@ GF_Err gf_av1_parse_obu(GF_BitStream *bs, ObuType *obu_type, u64 *obu_size, u32 
 	}
 
 	e = GF_OK;
+
+	/* for AVIF a1lx */
+	for (i = state->spatial_id; i < 4; i++) {
+		state->layer_size[i] = (u32) (pos + *obu_size);
+	}
+
 	switch (*obu_type) {
 	case OBU_SEQUENCE_HEADER:
 		av1_parse_sequence_header_obu(bs, state);
@@ -7475,6 +7481,11 @@ static Bool hevc_parse_vps_extension(HEVC_VPS *vps, GF_BitStream *bs)
 	}
 	vps->num_output_layer_sets = num_add_olss + NumLayerSets;
 
+	if (vps->num_output_layer_sets > MAX_LHVC_LAYERS) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[HEVC] Wrong number of output layer sets in VPS %d, max %d supported\n", vps->num_output_layer_sets, MAX_LHVC_LAYERS));
+		vps->num_output_layer_sets = 1;
+		return GF_FALSE;
+	}
 
 	layer_set_idx_for_ols_minus1[0] = 1;
 	vps->output_layer_flag[0][0] = 1;
@@ -9234,6 +9245,9 @@ s32 gf_mpegh_get_mhas_pl(u8 *ptr, u32 size, u64 *ch_layout)
 	GF_BitStream *bs;
 	u32 i;
 	s32 sync_pos=-1;
+
+	if (!ptr || !size) return 0;
+	
 	for (i=0; i<size-3; i++) {
 		if ((ptr[i]==0xC0) && (ptr[i+1]== 0x01) && (ptr[i+2]==0xA5)) {
 			sync_pos = i;
@@ -9424,7 +9438,7 @@ static s32 gf_media_vvc_read_vps_bs_internal(GF_BitStream *bs, VVCState *vvc, Bo
 		if (!vps_default_ptl_dpb_hrd_max_tid_flag)
 			vps->ptl[i].ptl_max_tid = gf_bs_read_int_log_idx(bs, 3, "ptl_max_tid", i);
 		else
-			vps->ptl[i].ptl_max_tid = vps->max_sub_layers - 1;;
+			vps->ptl[i].ptl_max_tid = vps->max_sub_layers - 1;
 	}
 	//align
 	gf_bs_align(bs);
@@ -9779,16 +9793,9 @@ static s32 vvc_parse_slice(GF_BitStream *bs, VVCState *vvc, VVCSliceInfo *si)
 	return 0;
 }
 
-/*this needs further tests !*/
 static void vvc_compute_poc(VVCSliceInfo *si)
 {
 	u32 max_poc_lsb = 1 << (si->sps->log2_max_poc_lsb);
-
-	/*POC reset for IDR frames, NOT for CRA*/
-	if (si->irap_or_gdr_pic && !si->gdr_pic) {
-		si->poc_lsb_prev = 0;
-		si->poc_msb_prev = 0;
-	}
 
 	if (si->poc_msb_cycle_present_flag) {
 		si->poc_msb = si->poc_msb_cycle;
@@ -9810,6 +9817,7 @@ s32 gf_media_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_typ
 {
 	Bool is_slice = GF_FALSE;
 	s32 ret = -1;
+	Bool poc_reset = GF_FALSE;
 	VVCSliceInfo n_state;
 
 	gf_bs_enable_emulation_byte_removal(bs, GF_TRUE);
@@ -9826,12 +9834,13 @@ s32 gf_media_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_typ
 		ret = 1;
 		break;
 
+	case GF_VVC_NALU_SLICE_IDR_W_RADL:
+	case GF_VVC_NALU_SLICE_IDR_N_LP:
+		poc_reset = GF_TRUE;
 	case GF_VVC_NALU_SLICE_TRAIL:
 	case GF_VVC_NALU_SLICE_STSA:
 	case GF_VVC_NALU_SLICE_RADL:
 	case GF_VVC_NALU_SLICE_RASL:
-	case GF_VVC_NALU_SLICE_IDR_W_RADL:
-	case GF_VVC_NALU_SLICE_IDR_N_LP:
 	case GF_VVC_NALU_SLICE_CRA:
 	case GF_VVC_NALU_SLICE_GDR:
 		/* slice - read the info and compare.*/
@@ -9839,8 +9848,14 @@ s32 gf_media_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_typ
 		if (ret < 0) return ret;
 
 		ret = 0;
-		if (n_state.picture_header_in_slice_header_flag) {
+		if (n_state.compute_poc_defer || n_state.picture_header_in_slice_header_flag) {
 			is_slice = GF_TRUE;
+			n_state.compute_poc_defer = 0;
+			if (poc_reset) {
+				n_state.poc_lsb_prev = 0;
+				n_state.poc_msb_prev = 0;
+			}
+
 			vvc_compute_poc(&n_state);
 			if (vvc->s_info.poc != n_state.poc) {
 				ret = 1;
@@ -9859,7 +9874,18 @@ s32 gf_media_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_typ
 			break;
 		}
 		is_slice = GF_TRUE;
-		vvc_compute_poc(&n_state);
+
+		/*POC reset for IDR frames, NOT for CRA*/
+		if (n_state.irap_or_gdr_pic && !n_state.gdr_pic) {
+			n_state.poc_lsb_prev = 0;
+			n_state.poc_msb_prev = 0;
+			vvc_compute_poc(&n_state);
+		} else {
+			//we cannot compute poc until we know the first picture unit type, since IDR will reset poc count
+			//and irap_or_gdr_pic=0 does not prevent IDR from following
+			n_state.compute_poc_defer = 1;
+		}
+
 		if (!(*layer_id) || (n_state.prev_layer_id_plus1 && ((*layer_id) <= n_state.prev_layer_id_plus1 - 1))) {
 			ret = 1;
 		}
@@ -9899,7 +9925,7 @@ s32 gf_media_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_typ
 		if (is_slice)
 			n_state.prev_layer_id_plus1 = *layer_id + 1;
 	}
-	if (is_slice) vvc_compute_poc(&n_state);
+
 	memcpy(&vvc->s_info, &n_state, sizeof(VVCSliceInfo));
 
 	return ret;

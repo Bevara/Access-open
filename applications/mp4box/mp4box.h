@@ -123,6 +123,8 @@ void dump_isom_timestamps(GF_ISOFile *file, char *inName, Bool is_final_name, Bo
 void dump_isom_nal(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool is_final_name, u32 dump_flags);
 void dump_isom_saps(GF_ISOFile *file, GF_ISOTrackID trackID, u32 dump_saps_mode, char *inName, Bool is_final_name);
 
+void dump_isom_chunks(GF_ISOFile *file, char *inName, Bool is_final_name);
+
 #ifndef GPAC_DISABLE_ISOM_DUMP
 void dump_isom_ismacryp(GF_ISOFile *file, char *inName, Bool is_final_name);
 void dump_isom_timed_text(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool is_final_name, Bool is_convert, GF_TextDumpType dump_type);
@@ -130,7 +132,7 @@ void dump_isom_timed_text(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName,
 
 
 void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool is_track_num, Bool dump_m4sys);
-void DumpMovieInfo(GF_ISOFile *file);
+void DumpMovieInfo(GF_ISOFile *file, Bool full_dump);
 u32 PrintLanguages(char *argv, u32 opt);
 
 #ifndef GPAC_DISABLE_MPEG2TS

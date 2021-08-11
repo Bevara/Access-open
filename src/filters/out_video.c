@@ -54,13 +54,19 @@
 
 
 static char *default_glsl_vertex = "\
-	attribute vec4 gfVertex;\
-	attribute vec2 gfTexCoord;\
-	varying vec2 TexCoord;\
-	void main(void)\
-	{\
-		gl_Position = gl_ModelViewProjectionMatrix * gfVertex;\
-		TexCoord = gfTexCoord;\
+	attribute vec4 gfVertex;\n\
+	attribute vec4 gfTexCoord;\n\
+	uniform mat4 gfTextureMatrix;\n\
+	uniform bool hasTextureMatrix;\n\
+	varying vec2 TexCoord;\n\
+	void main(void)\n\
+	{\n\
+		gl_Position = gl_ModelViewProjectionMatrix * gfVertex;\n\
+		if (hasTextureMatrix) {\n\
+			TexCoord = vec2(gfTextureMatrix * gfTexCoord);\n\
+		} else {\n\
+			TexCoord = vec2(gfTexCoord);\n\
+		}\n\
 	}";
 
 #endif
@@ -124,6 +130,8 @@ typedef struct
 
 	u32 key_states;
 
+	Float c_w, c_h, c_x, c_y;
+
 	//if source is raw live grab (webcam/etc), we don't trust cts and always draw the frame
 	//this is needed for cases where we have a sudden jump in timestamps as is the case with ffmpeg: not doing so would
 	//hold the frame until its CTS is reached, triggering drops at capture time
@@ -169,6 +177,7 @@ typedef struct
 	u64 rebuffer;
 
 	Bool force_reconfig_pid;
+	u32 pid_vflip, pid_vrot;
 } GF_VideoOutCtx;
 
 static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx);
@@ -297,12 +306,48 @@ static GF_Err resize_video_output(GF_VideoOutCtx *ctx, u32 dw, u32 dh)
 	return GF_OK;
 }
 
+static void load_gl_tx_matrix(GF_VideoOutCtx *ctx)
+{
+#ifdef VOUT_USE_OPENGL
+	s32 loc;
+	if (ctx->disp >= MODE_2D) return;
+	glUseProgram(ctx->glsl_program);
+	if (ctx->c_w && ctx->c_h) {
+		Float c_x, c_y;
+		GF_Matrix mx;
+		gf_mx_init(mx);
+		//clean aperture center in pixel coords
+		c_x = ctx->width / 2 + ctx->c_x;
+		c_y = ctx->height / 2 + ctx->c_y;
+		//left/top of clean aperture zone, in pixel coordinates
+		c_x -= ctx->c_w / 2;
+		c_y -= ctx->c_h / 2;
+
+		gf_mx_add_translation(&mx, c_x / ctx->width, c_y / ctx->height, 0);
+		gf_mx_add_scale(&mx, ctx->c_w / ctx->width, ctx->c_h / ctx->height, 1);
+		loc = glGetUniformLocation(ctx->glsl_program, "gfTextureMatrix");
+		if (loc>=0) {
+			glUniformMatrix4fv(loc, 1, GL_FALSE, mx.m);
+			loc = glGetUniformLocation(ctx->glsl_program, "hasTextureMatrix");
+			if (loc>=0)
+				glUniform1i(loc, 1);
+			glUseProgram(0);
+			return;
+		}
+	}
+	loc = glGetUniformLocation(ctx->glsl_program, "hasTextureMatrix");
+	if (loc>=0) glUniform1i(loc, 0);
+	glUseProgram(0);
+#endif
+
+}
+
 static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 {
 	GF_Event evt;
 	const GF_PropertyValue *p;
 	u32 w, h, pfmt, stride, stride_uv, timescale, dw, dh, hw, hh;
-	Bool full_range;
+	Bool full_range, check_mx = GF_TRUE;
 	Bool sar_changed = GF_FALSE;
 	s32 cmx;
 	GF_VideoOutCtx *ctx = (GF_VideoOutCtx *) gf_filter_get_udta(filter);
@@ -367,6 +412,32 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_MX);
 	cmx = p ? (s32) p->value.uint : GF_CICP_MX_UNSPECIFIED;
 
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_ROTATE);
+	ctx->pid_vrot = p ? (s32) p->value.uint : ctx->vrot;
+	if (p) check_mx = GF_FALSE;
+
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_MIRROR);
+	ctx->pid_vflip = p ? (s32) (p->value.uint) : ctx->vflip;
+	if (p) check_mx = GF_FALSE;
+
+	ctx->c_w = ctx->c_h = ctx->c_x = ctx->c_y = 0;
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CLAP_W);
+	if (p && p->value.frac.den) { ctx->c_w = (Float) p->value.frac.num; ctx->c_w /= p->value.frac.den; }
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CLAP_H);
+	if (p && p->value.frac.den) { ctx->c_h = (Float) p->value.frac.num; ctx->c_h /= p->value.frac.den; }
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CLAP_X);
+	if (p && p->value.frac.den) { ctx->c_x = (Float) p->value.frac.num; ctx->c_x /= p->value.frac.den; }
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CLAP_Y);
+	if (p && p->value.frac.den) { ctx->c_y = (Float) p->value.frac.num; ctx->c_y /= p->value.frac.den; }
+
+	if (check_mx) {
+		GF_Err gf_prop_matrix_decompose(const GF_PropertyValue *p, u32 *flip_mode, u32 *rot_mode);
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_ISOM_TRACK_MATRIX);
+		if (p)
+			gf_prop_matrix_decompose(p, &ctx->pid_vflip, &ctx->pid_vrot);
+	}
+
 
 	if (!ctx->pid) {
 		GF_FilterEvent fevt;
@@ -398,8 +469,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 	if (ctx->first_cts_plus_one && ctx->timescale && (ctx->timescale != timescale) ) {
 		ctx->first_cts_plus_one-=1;
-		ctx->first_cts_plus_one *= timescale;
-		ctx->first_cts_plus_one /= ctx->timescale;
+		ctx->first_cts_plus_one = gf_timestamp_rescale(ctx->first_cts_plus_one, ctx->timescale, timescale);
 		ctx->first_cts_plus_one+=1;
 	}
 	if (!timescale) timescale = 1;
@@ -408,14 +478,24 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	//pid not yet ready
 	if (!pfmt || !w || !h) return GF_OK;
 
-	if ((ctx->width==w) && (ctx->height == h) && (ctx->pfmt == pfmt) && (full_range==ctx->full_range) && (cmx==ctx->cmx) && !sar_changed && !ctx->force_reconfig_pid) return GF_OK;
-
+	if ((ctx->width==w) && (ctx->height == h) && (ctx->pfmt == pfmt)
+		&& (full_range==ctx->full_range) && (cmx==ctx->cmx)
+		&& !sar_changed && !ctx->force_reconfig_pid
+	) {
+		load_gl_tx_matrix(ctx);
+		return GF_OK;
+	}
 	ctx->full_range = full_range;
 	ctx->cmx = cmx;
-	dw = w;
-	dh = h;
+	if (ctx->c_w && ctx->c_h) {
+		dw = (u32) ctx->c_w;
+		dh = (u32) ctx->c_h;
+	} else {
+		dw = w;
+		dh = h;
+	}
 
-	if ((ctx->disp<MODE_2D) && (ctx->vrot % 2)) {
+	if ((ctx->disp<MODE_2D) && (ctx->pid_vrot % 2)) {
 		dw = h;
 		dh = w;
 	}
@@ -437,6 +517,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 			dw = dw * ctx->sar.num / ctx->sar.den;
 		}
 	}
+
 
 	if ((dw != ctx->display_width) || (dh != ctx->display_height) ) {
 		resize_video_output(ctx, dw, dh);
@@ -514,6 +595,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ctx->bit_depth = 10;
 	case GF_PIXEL_YUV:
 	case GF_PIXEL_YVU:
+	case GF_PIXEL_YUVA:
 		ctx->uv_w = ctx->width/2;
 		if (ctx->width % 2) ctx->uv_w++;
 		ctx->uv_h = ctx->height/2;
@@ -523,6 +605,8 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 			if (ctx->stride%2) ctx->uv_stride ++;
 		}
 		ctx->is_yuv = GF_TRUE;
+		if (ctx->pfmt==GF_PIXEL_YUVA)
+			ctx->has_alpha = GF_TRUE;
 		break;
 	case GF_PIXEL_NV12_10:
 	case GF_PIXEL_NV21_10:
@@ -619,7 +703,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 		gf_dynstrcat(&frag_shader_src, "#version 120\n", NULL);
 
-		gf_gl_txw_insert_fragment_shader(ctx->tx.pix_fmt, "maintx", &frag_shader_src);
+		gf_gl_txw_insert_fragment_shader(ctx->tx.pix_fmt, "maintx", &frag_shader_src, GF_FALSE);
 		gf_dynstrcat(&frag_shader_src, "varying vec2 TexCoord;\n"
 										"void main(void) {\n"
 										"gl_FragColor = maintx_sample(TexCoord.st);\n"
@@ -670,6 +754,9 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		} else {
 			glDisable(GL_BLEND);
 		}
+
+		load_gl_tx_matrix(ctx);
+
 	} else
 #endif //VOUT_USE_OPENGL
 	{
@@ -938,6 +1025,10 @@ static void vout_draw_overlay(GF_VideoOutCtx *ctx)
 
 	u16 indices[4] = {0, 1, 2, 3};
 
+	glMatrixMode(GL_TEXTURE);
+	glLoadIdentity();
+	glMatrixMode(GL_MODELVIEW);
+
 	glEnable(GL_TEXTURE_2D);
 	glEnable(GL_BLEND);
 	glBindTexture(GL_TEXTURE_2D, ctx->overlay_tx);
@@ -989,7 +1080,7 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 		textureVertices[3] = textureVertices[5] = 0.0f;
 	}
 
-	switch (ctx->vflip) {
+	switch (ctx->pid_vflip) {
 	case FLIP_VERT:
 		flip_v = GF_TRUE;
 		break;
@@ -1014,7 +1105,7 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 		textureVertices[3] = textureVertices[5] = v;
 	}
 
-	for (i=0; i < ctx->vrot; i++)  {
+	for (i=0; i < ctx->pid_vrot; i++)  {
 		GLfloat vx = textureVertices[0];
 		GLfloat vy = textureVertices[1];
 
@@ -1087,8 +1178,6 @@ static void vout_draw_gl_hw_textures(GF_VideoOutCtx *ctx, GF_FilterFrameInterfac
 	ctx->tx.frame_ifce = hwf;
 	gf_gl_txw_bind(&ctx->tx, "maintx", ctx->glsl_program, 0);
 
-	glMatrixMode(GL_TEXTURE);
-	glLoadIdentity();
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
@@ -1109,12 +1198,19 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 
 	if (ctx->display_changed) {
 		u32 v_w, v_h;
-		if (ctx->vrot % 2) {
-			v_h = ctx->width;
-			v_w = ctx->height;
+		u32 w = ctx->width;
+		u32 h = ctx->height;
+		if (ctx->c_w && ctx->c_h) {
+			w = (u32) ctx->c_w;
+			h = (u32) ctx->c_h;
+		}
+
+		if (ctx->pid_vrot % 2) {
+			v_h = w;
+			v_w = h;
 		} else {
-			v_w = ctx->width;
-			v_h = ctx->height;
+			v_w = w;
+			v_h = h;
 		}
 
 		//if we fill width to display width and height is outside
@@ -1143,15 +1239,23 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 
 	glViewport(0, 0, ctx->display_width, ctx->display_height);
 
+	if (!pck)
+		goto exit;
+
+	if (!ctx->glsl_program) return;
+
+	frame_ifce = gf_filter_pck_get_frame_interface(pck);
+	//main framebuffer, just display
+	if (frame_ifce && (frame_ifce->flags & GF_FRAME_IFCE_MAIN_GLFB)) {
+		goto exit;
+	}
+
 	gf_mx_init(mx);
 	hw = ((Float)ctx->display_width)/2;
 	hh = ((Float)ctx->display_height)/2;
 	gf_mx_ortho(&mx, -hw, hw, -hh, hh, 10, -5);
 	glMatrixMode(GL_PROJECTION);
 	glLoadMatrixf(mx.m);
-
-	glMatrixMode(GL_TEXTURE);
-	glLoadIdentity();
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
@@ -1186,16 +1290,6 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 		glClear(GL_COLOR_BUFFER_BIT);
 	}
 
-	if (!pck)
-		goto exit;
-
-	if (!ctx->glsl_program) return;
-
-	frame_ifce = gf_filter_pck_get_frame_interface(pck);
-	if (frame_ifce && (frame_ifce->flags & GF_FRAME_IFCE_MAIN_GLFB)) {
-		goto exit;
-	}
-
 	glUseProgram(ctx->glsl_program);
 
 
@@ -1214,10 +1308,10 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 exit:
 
 	//we don't lock since most of the time overlay is not set
-	if (ctx->oldata.ptr) {
+	if (ctx->oldata.ptr && (ctx->olsize.x>0) && (ctx->olsize.y>0)) {
 		// overlay is set, lock filter to make sure the data is still valid
 		gf_filter_lock(ctx->filter, GF_TRUE);
-		if (ctx->oldata.ptr) {
+		if (ctx->oldata.ptr && ((s32) ctx->oldata.size <= 4 * ctx->olsize.x * ctx->olsize.y) ) {
 			if (!ctx->overlay_tx) {
 				glGenTextures(1, &ctx->overlay_tx);
 
@@ -1601,7 +1695,7 @@ static GF_Err vout_process(GF_Filter *filter)
 		s64 delay;
 
 		if (ctx->dur.num && ctx->clock_at_first_cts && ctx->first_cts_plus_one) {
-			if ((cts - ctx->first_cts_plus_one + 1) * ctx->dur.den > (u64) (ctx->dur.num * ctx->timescale)) {
+			if (gf_timestamp_greater(cts - ctx->first_cts_plus_one + 1, ctx->timescale, ctx->dur.num, ctx->dur.den)) {
 				GF_FilterEvent evt;
 				if (ctx->last_pck) {
 					gf_filter_pck_unref(ctx->last_pck);
@@ -1619,7 +1713,7 @@ static GF_Err vout_process(GF_Filter *filter)
 
 		delay = ctx->pid_delay;
 		if (ctx->vdelay.den)
-			delay += ctx->vdelay.num * (s32)ctx->timescale / (s32)ctx->vdelay.den;
+			delay += gf_timestamp_rescale(ctx->vdelay.num, ctx->vdelay.den, ctx->timescale);
 
 		if (delay>=0) {
 			cts += delay;
@@ -1643,25 +1737,26 @@ static GF_Err vout_process(GF_Filter *filter)
 		if (clock_us && media_ts.den) {
 			u32 safety;
 			//ref frame TS in video stream timescale
-			s64 ref_ts = (s64) (media_ts.num * ctx->timescale);
-			ref_ts /= media_ts.den;
+			u64 ref_ts = gf_timestamp_rescale(media_ts.num, media_ts.den, ctx->timescale);
+
 			//compute time ellapsed since last clock ref in timescale
 			s64 diff = now;
 			diff -= (s64) clock_us;
 			if (ctx->timescale!=1000000) {
-				diff *= ctx->timescale;
-				diff /= 1000000;
+				diff = gf_timestamp_rescale(diff, 1000000, ctx->timescale);
 			}
-			assert(diff>=0);
 			//ref stream hypothetical timestamp at now
 			ref_ts += diff;
-			ctx->first_cts_plus_one = cts + 1;
+			if (!ctx->first_cts_plus_one || (cts >= ref_ts)) {
+				ctx->first_cts_plus_one = ref_ts + 1;
+				ctx->clock_at_first_cts = now;
+			}
 
 			//allow 10ms video advance
 			#define DEF_VIDEO_AUDIO_ADVANCE_MS	15
 			safety = DEF_VIDEO_AUDIO_ADVANCE_MS * ctx->timescale / 1000;
-			if (!ctx->step && !ctx->raw_grab && ((s64) cts > ref_ts + safety)) {
-				u32 resched_time = (u32) ((cts-ref_ts - safety) * 1000000 / ctx->timescale);
+			if (!ctx->step && !ctx->raw_grab && (cts > ref_ts + safety)) {
+				u32 resched_time = (u32) gf_timestamp_rescale(cts-ref_ts - safety, ctx->timescale, 1000000);
 				GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] At %d ms display frame CTS "LLU" CTS greater than reference clock CTS "LLU" (%g sec), waiting\n", gf_sys_clock(), cts, ref_ts, ((Double)media_ts.num)/media_ts.den));
 				//the clock is not updated continuously, only when audio sound card writes. We therefore
 				//cannot know if the sampling was recent or old, so ask for a short reschedule time
@@ -1685,9 +1780,7 @@ static GF_Err vout_process(GF_Filter *filter)
 				ctx->clock_at_first_cts = 1 + cts;
 			} else {
 				//comute CTS diff in ms
-				u64 diff = cts - ctx->clock_at_first_cts + 1;
-				diff *= 1000;
-				diff /= ctx->timescale;
+				u64 diff = gf_timestamp_rescale(cts - ctx->clock_at_first_cts + 1, ctx->timescale, 1000);
 				//diff less than 100ms (eg 10fps or more), init on the second frame
 				//do not apply this if playing at speed lower than nominal speed
 				if ((diff<100) && (ABS(ctx->speed)>=1)) {
@@ -1713,7 +1806,7 @@ static GF_Err vout_process(GF_Filter *filter)
 				diff = (s64) ((now - ctx->clock_at_first_cts) * ctx->speed);
 
 				if (ctx->timescale != 1000000)
-					diff -= (s64) ( (cts - ctx->first_cts_plus_one + 1) * 1000000  / ctx->timescale);
+					diff -= (s64) gf_timestamp_rescale(cts - ctx->first_cts_plus_one + 1, ctx->timescale, 1000000);
 				else
 					diff -= (s64) (cts - ctx->first_cts_plus_one + 1);
 
@@ -1721,7 +1814,7 @@ static GF_Err vout_process(GF_Filter *filter)
 				diff = (s64) ((now - ctx->clock_at_first_cts) * -ctx->speed);
 
 				if (ctx->timescale != 1000000)
-					diff -= (s64) ( (ctx->first_cts_plus_one-1 - cts) * 1000000  / ctx->timescale);
+					diff -= (s64) gf_timestamp_rescale(ctx->first_cts_plus_one-1 - cts, ctx->timescale, 1000000);
 				else
 					diff -= (s64) (ctx->first_cts_plus_one-1 - cts);
 			}
@@ -1742,13 +1835,11 @@ static GF_Err vout_process(GF_Filter *filter)
 			}
 
 			if (ctx->timescale != 1000000)
-				ref_clock = diff * ctx->timescale / 1000000 + cts;
+				ref_clock = gf_timestamp_rescale(diff, 1000000, ctx->timescale) + cts;
 			else
 				ref_clock = diff + cts;
 
-			ctx->last_pck_dur_us = gf_filter_pck_get_duration(pck);
-			ctx->last_pck_dur_us *= 1000000;
-			ctx->last_pck_dur_us /= ctx->timescale;
+			ctx->last_pck_dur_us = (u32) gf_timestamp_rescale(gf_filter_pck_get_duration(pck), ctx->timescale, 1000000);
 		}
 		//detach packet from pid, so that we can query next cts
 		gf_filter_pck_ref(&pck);

@@ -52,6 +52,7 @@ typedef struct
 
 	GF_WebVTTParser *parser;
 
+	Bool dash_mode;
 } GF_WebVTTMxCtx;
 
 static void vttmx_write_cue(void *ctx, GF_WebVTTCue *cue);
@@ -111,6 +112,10 @@ GF_Err vttmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 		gf_webvtt_parser_cue_callback(ctx->parser, vttmx_write_cue, ctx);
 	}
 	gf_filter_pid_set_framing_mode(pid, GF_TRUE);
+
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DASH_MODE);
+	ctx->dash_mode = (p && p->value.uint) ? GF_TRUE : GF_FALSE;
+
 	return GF_OK;
 }
 
@@ -191,14 +196,15 @@ void vttmx_parser_flush(GF_WebVTTMxCtx *ctx)
 		u32 size;
 		gf_bs_get_content_no_truncate(ctx->bs_w, &ctx->cues_buffer, &size, &ctx->cues_buffer_size);
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
-		memcpy(output, ctx->cues_buffer, size);
+		if (dst_pck) {
+			memcpy(output, ctx->cues_buffer, size);
 
-		gf_filter_pck_set_byte_offset(dst_pck, GF_FILTER_NO_BO);
+			gf_filter_pck_set_byte_offset(dst_pck, GF_FILTER_NO_BO);
 
-		gf_filter_pck_set_framing(dst_pck, GF_FALSE, GF_TRUE);
-		gf_filter_pck_send(dst_pck);
+			gf_filter_pck_set_framing(dst_pck, GF_FALSE, GF_TRUE);
+			gf_filter_pck_send(dst_pck);
+		}
 	}
-
 
 	gf_webvtt_parser_del(ctx->parser);
 	ctx->parser = NULL;
@@ -225,11 +231,18 @@ GF_Err vttmx_process(GF_Filter *filter)
 		return GF_OK;
 	}
 
+	if (ctx->dash_mode && gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENUM)) {
+		ctx->first = GF_TRUE;
+	}
+
+
 	data = (char *) gf_filter_pck_get_data(pck, &pck_size);
 
 	if (ctx->first && ctx->dcd) {
 		size = (u32) strlen(ctx->dcd)+2;
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+		if (!dst_pck) return GF_OUT_OF_MEM;
+
 		memcpy(output, ctx->dcd, size-2);
 		output[size-2] = '\n';
 		output[size-1] = '\n';
@@ -243,14 +256,14 @@ GF_Err vttmx_process(GF_Filter *filter)
 	if (!ctx->bs_w) ctx->bs_w = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 	else gf_bs_reassign_buffer(ctx->bs_w, ctx->cues_buffer, ctx->cues_buffer_size);
 
-	start_ts = gf_filter_pck_get_cts(pck);
-	end_ts = start_ts + gf_filter_pck_get_duration(pck);
-	start_ts *= 1000;
-	end_ts *= 1000;
 	timescale = gf_filter_pck_get_timescale(pck);
 	if (!timescale) timescale=1000;
-	start_ts /= timescale;
-	end_ts /= timescale;
+
+	start_ts = gf_filter_pck_get_cts(pck);
+	end_ts = start_ts + gf_filter_pck_get_duration(pck);
+
+	start_ts = gf_timestamp_rescale(start_ts, timescale, 1000);
+	end_ts = gf_timestamp_rescale(end_ts, timescale, 1000);
 
 	cues = gf_webvtt_parse_cues_from_data(data, pck_size, start_ts, end_ts);
 	if (ctx->parser) {
@@ -267,12 +280,16 @@ GF_Err vttmx_process(GF_Filter *filter)
 	gf_bs_get_content_no_truncate(ctx->bs_w, &ctx->cues_buffer, &size, &ctx->cues_buffer_size);
 	if (size) {
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
-		memcpy(output, ctx->cues_buffer, size);
+		if (!dst_pck) return GF_OUT_OF_MEM;
 
+		memcpy(output, ctx->cues_buffer, size);
 		gf_filter_pck_merge_properties(pck, dst_pck);
 		gf_filter_pck_set_byte_offset(dst_pck, GF_FILTER_NO_BO);
-
-
+		if (ctx->dash_mode) {
+			gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_FILENUM, NULL);
+			gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_FILENAME, NULL);
+		}
+		
 		gf_filter_pck_set_framing(dst_pck, ctx->first, GF_FALSE);
 		ctx->first = GF_FALSE;
 

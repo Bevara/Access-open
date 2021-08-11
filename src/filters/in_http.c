@@ -276,6 +276,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			gf_filter_pid_raw_new(filter, ctx->src, ctx->src, NULL, NULL, NULL, 0, GF_FALSE, &ctx->pid);
 			ctx->is_end = GF_TRUE;
 			pck = gf_filter_pck_new_shared(ctx->pid, ctx->block, 0, httpin_rel_pck);
+			if (!pck) return GF_TRUE;
 			gf_filter_pck_set_framing(pck, GF_TRUE, GF_TRUE);
 
 			ctx->pck_out = GF_TRUE;
@@ -353,7 +354,7 @@ static GF_Err httpin_process(GF_Filter *filter)
 	GF_Err e=GF_OK;
 	u32 bytes_per_sec=0;
 	u64 bytes_done=0, total_size, byte_offset;
-	GF_NetIOStatus net_status;
+	GF_NetIOStatus net_status = GF_NETIO_DATA_EXCHANGE;
 	GF_HTTPInCtx *ctx = (GF_HTTPInCtx *) gf_filter_get_udta(filter);
 
 	//until packet is released we return EOS (no processing), and ask for processing again upon release
@@ -389,8 +390,9 @@ static GF_Err httpin_process(GF_Filter *filter)
 			to_read = (u32) lto_read;
 
 		if (ctx->full_file_only) {
-			ctx->is_end = GF_TRUE;
 			pck = gf_filter_pck_new_shared(ctx->pid, ctx->block, 0, httpin_rel_pck);
+			if (!pck) return GF_OUT_OF_MEM;
+			ctx->is_end = GF_TRUE;
 			gf_filter_pck_set_framing(pck, is_start, ctx->is_end);
 
 			//mark packet out BEFORE sending, since the call to send() may destroy the packet if cloned
@@ -410,19 +412,33 @@ static GF_Err httpin_process(GF_Filter *filter)
 		assert(cached);
 
 		gf_blob_get(cached, &b_data, &b_size, NULL);
-		assert(ctx->nb_read <= b_size);
-		nb_read = b_size - (u32) ctx->nb_read;
-		if (nb_read>ctx->block_size)
-			nb_read = ctx->block_size;
 
-		if (nb_read) {
-			memcpy(ctx->block, b_data + ctx->nb_read, nb_read);
-			e = GF_OK;
+		//we should NEVER have this case (file size less than at last call), abort download
+		if (ctx->nb_read > b_size) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPIn] Error fetching %s, corrupted blob (URL %s prev size %d new size %d)\n", ctx->src, cached, ctx->blob_size, b_size ) );
+			nb_read = 0;
+			ctx->blob_size = b_size;
+			ctx->nb_read = ctx->file_size = b_size;
+			net_status = GF_NETIO_DATA_TRANSFERED;
+			e = GF_EOS;
 		} else {
-			if (b_size == ctx->blob_size) {
-				e = gf_dm_sess_fetch_data(ctx->sess, ctx->block, ctx->block_size, &nb_read);
+			nb_read = b_size - (u32) ctx->nb_read;
+			if (nb_read>ctx->block_size)
+				nb_read = ctx->block_size;
+
+			if (nb_read) {
+				memcpy(ctx->block, b_data + ctx->nb_read, nb_read);
+				e = GF_OK;
+				gf_filter_ask_rt_reschedule(filter, 1);
 			} else {
-				ctx->blob_size = b_size;
+				if (b_size == ctx->blob_size) {
+					e = gf_dm_sess_fetch_data(ctx->sess, ctx->block, ctx->block_size, &nb_read);
+					if (e==GF_EOS) {
+						net_status = GF_NETIO_DATA_TRANSFERED;
+					}
+				} else {
+					ctx->blob_size = b_size;
+				}
 			}
 		}
         gf_blob_release(cached);
@@ -543,7 +559,7 @@ static GF_Err httpin_process(GF_Filter *filter)
 	}
 
 	pck = gf_filter_pck_new_shared(ctx->pid, ctx->block, nb_read, httpin_rel_pck);
-	if (!pck) return GF_OK;
+	if (!pck) return GF_OUT_OF_MEM;
 
 	gf_filter_pck_set_cts(pck, 0);
 

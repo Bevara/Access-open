@@ -43,6 +43,8 @@ typedef struct
 	u32 freq, nb_ch, afmt;
 	u64 ch_cfg;
 	u64 out_cts_plus_one;
+	char *olayout;
+
 	//source is planar
 	Bool src_is_planar;
 	GF_AudioInterface input_ai;
@@ -211,9 +213,24 @@ static GF_Err resample_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		ctx->afmt = ctx->ofmt ? ctx->ofmt : afmt;
 		ctx->freq = ctx->osr ? ctx->osr : sr;
 		ctx->nb_ch = ctx->och ? ctx->och : nb_ch;
+
+		if (ctx->olayout) {
+			ch_cfg = gf_audio_fmt_get_layout_from_name(ctx->olayout);
+			if (!ch_cfg) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Resampler] Unrecognized CICP layout %s, will infer layout from channel numbers (%d)", ctx->olayout, ctx->nb_ch));
+			} else {
+				ctx->nb_ch = nb_ch = gf_audio_fmt_get_num_channels_from_layout(ch_cfg);
+			}
+		}
 		ctx->ch_cfg = ch_cfg;
 
-		e = gf_mixer_set_config(ctx->mixer, ctx->freq, ctx->nb_ch, afmt, ctx->ch_cfg);
+		if (ctx->nb_ch != nb_ch) {
+			//TODO, find LFE and surround
+			u32 cicp = gf_audio_fmt_get_cicp_layout(ctx->nb_ch, 0, 0);
+			ctx->ch_cfg = gf_audio_fmt_get_layout_from_cicp(cicp);
+		}
+
+		e = gf_mixer_set_config(ctx->mixer, ctx->freq, ctx->nb_ch, ctx->afmt, ctx->ch_cfg);
 		if (e) return e;
 	}
 	//input reconfig
@@ -274,9 +291,7 @@ static GF_Err resample_process(GF_Filter *filter)
 				}
 			} else {
 				ctx->data = gf_filter_pck_get_data(ctx->in_pck, &ctx->size);
-				u64 cts = gf_filter_pck_get_cts(ctx->in_pck);
-				cts *= ctx->freq;
-				cts /= FIX2INT(ctx->speed * ctx->timescale);
+				u64 cts = gf_timestamp_rescale(gf_filter_pck_get_cts(ctx->in_pck), FIX2INT(ctx->speed * ctx->timescale), ctx->freq);
 				if (!ctx->out_cts_plus_one) {
 					ctx->out_cts_plus_one = cts + 1;
 				} else if (ctx->freq != ctx->input_ai.samplerate) {
@@ -313,7 +328,7 @@ static GF_Err resample_process(GF_Filter *filter)
 		}
 
 		dstpck = gf_filter_pck_new_alloc(ctx->opid, osize, &output);
-		if (!dstpck) return GF_OK;
+		if (!dstpck) return GF_OUT_OF_MEM;
 
 		if (ctx->in_pck)
 			gf_filter_pck_merge_properties(ctx->in_pck, dstpck);
@@ -322,15 +337,17 @@ static GF_Err resample_process(GF_Filter *filter)
 		if (!written) {
 			gf_filter_pck_discard(dstpck);
 		} else {
+			u32 dur = written / bytes_per_samp;
 			if (written != osize) {
 				gf_filter_pck_truncate(dstpck, written);
 			}
 			gf_filter_pck_set_dts(dstpck, ctx->out_cts_plus_one - 1);
 			gf_filter_pck_set_cts(dstpck, ctx->out_cts_plus_one - 1);
+			gf_filter_pck_set_duration(dstpck, dur);
 			gf_filter_pck_send(dstpck);
 
 			//out_cts is in output time scale ( = freq), increase by the amount of bytes/bps
-			ctx->out_cts_plus_one += written / bytes_per_samp;
+			ctx->out_cts_plus_one += dur;
 		}
 
 		//still some bytes to use from packet, do not discard
@@ -424,6 +441,8 @@ static Bool resample_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			anevt.buffer_req.max_buffer_us = FIX2INT( ctx->speed * 100000 );
 			gf_filter_pid_send_event(ctx->ipid, &anevt);
 		}
+		//reset output ts
+		ctx->out_cts_plus_one = 0;
 	}
 	return GF_FALSE;
 }
@@ -437,11 +456,12 @@ static const GF_FilterCapability ResamplerCaps[] =
 };
 
 #define OFFS(_n)	#_n, offsetof(GF_ResampleCtx, _n)
-static const GF_FilterArgs ResamplerArgs[] =
+static GF_FilterArgs ResamplerArgs[] =
 {
 	{ OFFS(och), "desired number of output audio channels - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
 	{ OFFS(osr), "desired sample rate of output audio - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
 	{ OFFS(ofmt), "desired format of output audio - none for auto", GF_PROP_PCMFMT, "none", NULL, 0},
+	{ OFFS(olayout), "desired CICP layout of output audio - null for auto", GF_PROP_STRING, NULL, NULL, 0},
 	{0}
 };
 
@@ -453,6 +473,7 @@ GF_FilterRegister ResamplerRegister = {
 	.initialize = resample_initialize,
 	.finalize = resample_finalize,
 	.args = ResamplerArgs,
+	.flags = GF_FS_REG_ALLOW_CYCLIC,
 	SETCAPS(ResamplerCaps),
 	.configure_pid = resample_configure_pid,
 	.process = resample_process,
@@ -460,9 +481,11 @@ GF_FilterRegister ResamplerRegister = {
 	.process_event = resample_process_event,
 };
 
+const char *gf_audio_fmt_cicp_all_names();
 
 const GF_FilterRegister *resample_register(GF_FilterSession *session)
 {
+	ResamplerArgs[3].min_max_enum = gf_audio_fmt_cicp_all_names();
 	return &ResamplerRegister;
 }
 #else

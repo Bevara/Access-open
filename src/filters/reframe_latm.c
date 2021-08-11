@@ -343,8 +343,7 @@ static void latm_dmx_check_pid(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	if (!ctx->timescale) {
 		//we change sample rate, change cts
 		if (ctx->cts && (ctx->sr_idx != ctx->acfg.base_sr_index)) {
-			ctx->cts *= sr;
-			ctx->cts /= GF_M4ASampleRates[ctx->sr_idx];
+			ctx->cts = gf_timestamp_rescale(ctx->cts, GF_M4ASampleRates[ctx->sr_idx], sr);
 		}
 	}
 	ctx->sr_idx = ctx->acfg.base_sr_index;
@@ -532,6 +531,8 @@ GF_Err latm_dmx_process(GF_Filter *filter)
 			GF_FilterSAPType sap = GF_FILTER_SAP_1;
 
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, latm_frame_size, &output);
+			if (!dst_pck) return GF_OUT_OF_MEM;
+
 			if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
 
 			memcpy(output, latm_buffer, latm_frame_size);
@@ -615,7 +616,7 @@ static const char *latm_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 	}
 	gf_bs_del(bs);
 	if (nb_frames>=2) {
-		*score = nb_skip ? GF_FPROBE_MAYBE_SUPPORTED : GF_FPROBE_SUPPORTED;
+		*score = nb_skip ? GF_FPROBE_MAYBE_NOT_SUPPORTED : GF_FPROBE_SUPPORTED;
 		return "audio/aac+latm";
 	}
 	return NULL;

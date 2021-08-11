@@ -1717,7 +1717,7 @@ GF_Err vvcc_box_dump(GF_Box *a, FILE * trace)
 		} else {
 			gf_fprintf(trace, "<VVCDecoderConfigurationRecord nal_unit_size=\"\" configurationVersion=\"\" ");
 			gf_fprintf(trace, "general_profile_idc=\"\" general_tier_flag=\"\" general_sub_profile_idc=\"\" general_constraint_info=\"\" general_level_idc=\"\" ");
-			gf_fprintf(trace, "chroma_format=\"\" luma_bit_depth=\"\" chroma_bit_depth=\"\" avgFrameRate=\"\" constantFrameRate=\"\" numTemporalLayers=\"\"");
+			gf_fprintf(trace, "chroma_format=\"\" luma_bit_depth=\"\" chroma_bit_depth=\"\" avgFrameRate=\"\" constantFrameRate=\"\" numTemporalLayers=\"\" maxWidth=\"\" maxHeight=\"\"");
 
 			gf_fprintf(trace, ">\n");
 			gf_fprintf(trace, "<ParameterSetArray nalu_type=\"\" complete_set=\"\">\n");
@@ -1730,21 +1730,22 @@ GF_Err vvcc_box_dump(GF_Box *a, FILE * trace)
 	}
 
 	gf_fprintf(trace, "<VVCDecoderConfigurationRecord nal_unit_size=\"%d\" ", p->config->nal_unit_size);
-	gf_fprintf(trace, "configurationVersion=\"%u\" ", p->config->configurationVersion);
-	gf_fprintf(trace, "general_profile_idc=\"%u\" ", p->config->general_profile_idc);
-	gf_fprintf(trace, "general_tier_flag=\"%u\" ", p->config->general_tier_flag);
-	gf_fprintf(trace, "general_sub_profile_idc=\"%u\" ", p->config->general_sub_profile_idc);
-	if (p->config->general_constraint_info) {
-		gf_fprintf(trace, "general_constraint_info=\"");
-		dump_data_hex(trace, p->config->general_constraint_info, p->config->num_constraint_info);
-		gf_fprintf(trace, "\" ");
+	if (p->config->ptl_present) {
+
+		gf_fprintf(trace, "chroma_format=\"%s\" chroma_bit_depth=\"%u\" avgFrameRate=\"%u\" constantFrameRate=\"%u\" numTemporalLayers=\"%u\" maxWidth=\"%u\" maxHeight=\"%u\" ",
+			gf_avc_hevc_get_chroma_format_name(p->config->chroma_format),
+			p->config->bit_depth, p->config->avgFrameRate, p->config->constantFrameRate, p->config->numTemporalLayers, p->config->maxPictureWidth, p->config->maxPictureHeight);
+
+		gf_fprintf(trace, "general_profile_idc=\"%u\" ", p->config->general_profile_idc);
+		gf_fprintf(trace, "general_tier_flag=\"%u\" ", p->config->general_tier_flag);
+		gf_fprintf(trace, "general_sub_profile_idc=\"%u\" ", p->config->general_sub_profile_idc);
+		if (p->config->general_constraint_info) {
+			gf_fprintf(trace, "general_constraint_info=\"");
+			dump_data_hex(trace, p->config->general_constraint_info, p->config->num_constraint_info);
+			gf_fprintf(trace, "\" ");
+		}
+		gf_fprintf(trace, "general_level_idc=\"%u\" ", p->config->general_level_idc);
 	}
-	gf_fprintf(trace, "general_level_idc=\"%u\" ", p->config->general_level_idc);
-
-	gf_fprintf(trace, "chroma_format=\"%s\" chroma_bit_depth=\"%u\" avgFrameRate=\"%u\" constantFrameRate=\"%u\" numTemporalLayers=\"%u\" ",
-			p->config->chromaformat_plus_one ? gf_avc_hevc_get_chroma_format_name(p->config->chromaformat_plus_one) : "n/a",
-			p->config->bit_depth_plus_one - 1, p->config->avgFrameRate, p->config->constantFrameRate, p->config->numTemporalLayers);
-
 	gf_fprintf(trace, ">\n");
 
 	count = gf_list_count(p->config->param_array);
@@ -1767,6 +1768,18 @@ GF_Err vvcc_box_dump(GF_Box *a, FILE * trace)
 	gf_isom_box_dump_done(boxname, a, trace);
 	return GF_OK;
 }
+
+
+GF_Err vvnc_box_dump(GF_Box *a, FILE * trace)
+{
+	GF_VVCNaluConfigurationBox *p = (GF_VVCNaluConfigurationBox *) a;
+
+	gf_isom_box_dump_start(a, "VVCNaluConfigurationBox", trace);
+	gf_fprintf(trace, " nal_unit_size=\"%d\">\n", p->nal_unit_size);
+	gf_isom_box_dump_done("VVCNaluConfigurationBox", a, trace);
+	return GF_OK;
+}
+
 
 GF_Err av1c_box_dump(GF_Box *a, FILE *trace) {
 	GF_AV1ConfigurationBox *ptr = (GF_AV1ConfigurationBox*)a;
@@ -3856,8 +3869,8 @@ GF_Err ilst_item_box_dump(GF_Box *a, FILE * trace)
 		if (idx>=0) {
 			name = gf_itags_get_name((u32) idx);
 			itype = gf_itags_get_type((u32) idx);
+			dbox = itune->data;
 		}
-		dbox = itune->data;
 	}
 	gf_isom_box_dump_start(a, name, trace);
 
@@ -3886,6 +3899,14 @@ GF_Err ilst_item_box_dump(GF_Box *a, FILE * trace)
 			break;
 		case GF_ISOM_ITUNE_GAPLESS:
 			gf_fprintf(trace, " IsGapeless=\"%s\" ", (dbox && dbox->data && itune->data->data[0]) ? "yes" : "no");
+			break;
+		case GF_ISOM_ITUNE_GENRE:
+			if (dbox && dbox->data && itune->data->dataSize>=2) {
+				u32 genre = itune->data->data[0];
+				genre<<=8;
+				genre |= itune->data->data[1];
+				gf_fprintf(trace, " value=\"%s\" ", gf_id3_get_genre((u32) genre));
+			}
 			break;
 		default:
 			if (dbox && dbox->data) {
@@ -5295,6 +5316,26 @@ GF_Err ispe_box_dump(GF_Box *a, FILE * trace)
 	gf_isom_box_dump_start(a, "ImageSpatialExtentsPropertyBox", trace);
 	gf_fprintf(trace, "image_width=\"%d\" image_height=\"%d\">\n", ptr->image_width, ptr->image_height);
 	gf_isom_box_dump_done("ImageSpatialExtentsPropertyBox", a, trace);
+	return GF_OK;
+}
+
+GF_Err a1lx_box_dump(GF_Box *a, FILE * trace)
+{
+    GF_AV1LayeredImageIndexingPropertyBox *ptr = (GF_AV1LayeredImageIndexingPropertyBox*)a;
+	if (!a) return GF_BAD_PARAM;
+	gf_isom_box_dump_start(a, "AV1LayeredImageIndexingPropertyBox", trace);
+	gf_fprintf(trace, "large_size=\"%d\" layer_size0=\"%d\" layer_size1=\"%d\" layer_size2=\"%d\">\n", ptr->large_size, ptr->layer_size[0], ptr->layer_size[1], ptr->layer_size[2]);
+	gf_isom_box_dump_done("AV1LayeredImageIndexingPropertyBox", a, trace);
+	return GF_OK;
+}
+
+GF_Err a1op_box_dump(GF_Box *a, FILE * trace)
+{
+    GF_AV1OperatingPointSelectorPropertyBox *ptr = (GF_AV1OperatingPointSelectorPropertyBox*)a;
+	if (!a) return GF_BAD_PARAM;
+	gf_isom_box_dump_start(a, "AV1OperatingPointSelectorPropertyBox", trace);
+	gf_fprintf(trace, "op_index=\"%d\">\n", ptr->op_index);
+	gf_isom_box_dump_done("AV1OperatingPointSelectorPropertyBox", a, trace);
 	return GF_OK;
 }
 

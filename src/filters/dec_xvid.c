@@ -296,6 +296,7 @@ static GF_Err xviddec_process(GF_Filter *filter)
 packed_frame :
 
 	dst_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->width*ctx->height*3/2, &buffer);
+	if (!dst_pck) return GF_OUT_OF_MEM;
 
 #ifdef XVID_USE_OLD_API
 	frame.colorspace = XVID_CSP_I420;
@@ -382,6 +383,7 @@ packed_frame :
 		gf_filter_pck_merge_properties(src_pck, dst_pck);
 		is_seek = gf_filter_pck_get_seek_flag(src_pck);
 		ctx->next_cts = gf_filter_pck_get_cts(src_pck);
+		gf_filter_pck_set_dts(dst_pck, ctx->next_cts);
 		ctx->next_cts += gf_filter_pck_get_duration(src_pck);
 		gf_filter_pck_unref(src_pck);
 		gf_list_pop_front(ctx->src_packets);

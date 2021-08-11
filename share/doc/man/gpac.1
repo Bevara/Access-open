@@ -133,6 +133,11 @@ specify an input file to wrap as GF_FileIO object (testing of GF_FileIO)
 specify an output file to wrap as GF_FileIO object (testing of GF_FileIO)
 .br
 .TP
+.B \-step
+.br
+test step mode in non-blocking session
+.br
+.TP
 .B \-h,-help,-ha,-hx,-hh (string)
 .br
 print help. Use -help or -h for basic options, -ha for advanced options, -hx for expert options and -hh for all.  
@@ -164,6 +169,8 @@ Note: The @ character can be used in place of the * character. String parameter 
 * props: print the supported builtin PID and packet properties
 .br
 * colors: print the builtin color names and their values
+.br
+* layouts: print the builtin CICP audio channel layout names and their values
 .br
 * links: print possible connections between each supported filters
 .br
@@ -587,7 +594,9 @@ get or set configuration file value. The string parameter can be formatted as:
 .br
 * `section:key=null`, `section:key`: remove the key
 .br
-* `section:*=null`: remove the section- no argument: print the entire configuration file
+* `section=null`: remove the section
+.br
+* no argument: print the entire configuration file
 .br
 * `section`: print the given section
 .br
@@ -627,6 +636,11 @@ cache size for bitstream read and write from file (0 disable cache, slower IOs)
 .B \-no-check
 .br
 disable compliancy tests for inputs (ISOBMFF for now). This will likely result in random crashes
+.br
+.TP
+.B \-unhandled-rejection
+.br
+dump unhandled promise rejections
 .br
 .TP
 .B \-cache (string)
@@ -1006,12 +1020,12 @@ set output log file
 .TP
 .B \-log-clock,-lc
 .br
-log time in micro sec since start time of GPAC before each log line
+log time in micro sec since start time of GPAC before each log line except for app tool
 .br
 .TP
 .B \-log-utc,-lu
 .br
-log UTC time in ms before each log line
+log UTC time in ms before each log line except for app tool
 .br
 .TP
 .B \-logs (string)
@@ -1151,21 +1165,23 @@ Each filter exposes a set of argument to configure itself, using property types 
 .br
 * string: formatted as:
 .br
- * `value`: copies value to string.
+  * `value`: copies value to string.
 .br
- * `file@FILE`: load string from local FILE (opened in binary mode).
+  * `file@FILE`: load string from local FILE (opened in binary mode).
 .br
- * `bxml@FILE`: binarize XML from local FILE and set property type to data - see https://wiki.gpac.io/NHML-Format.
+  * `bxml@FILE`: binarize XML from local FILE and set property type to data - see https://wiki.gpac.io/NHML-Format.
 .br
 * data: formatted as:
 .br
- * `size@address`: constant data block, not internally copied; size gives the size of the block, address the data pointer.
+  * `size@address`: constant data block, not internally copied; size gives the size of the block, address the data pointer.
 .br
- * `0xBYTESTRING`: data block specified in hexadecimal, internally copied.
+  * `0xBYTESTRING`: data block specified in hexadecimal, internally copied.
 .br
- * `file@FILE`: load data from local FILE (opened in binary mode).
+  * `file@FILE`: load data from local FILE (opened in binary mode).
 .br
- * `bxml@FILE`: binarize XML from local FILE - see https://wiki.gpac.io/NHML-Format.
+  * `bxml@FILE`: binarize XML from local FILE - see https://wiki.gpac.io/NHML-Format.
+.br
+  * `b64@DATA`: load data from base-64 encoded DATA.
 .br
 * pointer: are formatted as address giving the pointer address (32 or 64 bit depending on platforms).
 .br
@@ -2133,7 +2149,7 @@ Media stream type
 .TP
 .B StreamSubtype (PSST,4cc,D )
 .br
-Media subtype 4CC (auxiliary, pic sequence, etc ..)
+Media subtype 4CC (auxiliary, pic sequence, etc ..), matches ISOM handler type
 .br
 .TP
 .B ISOMSubtype (PIST,4cc,D )
@@ -2179,6 +2195,11 @@ Media duration
 .B NumFrames (NFRM,uint,D )
 .br
 Number of frames in the stream
+.br
+.TP
+.B FrameOffset (FRMO,uint,D )
+.br
+Index of first frame in the stream (used for reporting)
 .br
 .TP
 .B ConstantFrameSize (CFRS,uint,  )
@@ -2346,7 +2367,7 @@ Maximum width (video / text / graphics) of all enhancement layers
 Maximum height (video / text / graphics) of all enhancement layers
 .br
 .TP
-.B ZOrder (VZIX,uint,  )
+.B ZOrder (VZIX,sint,  )
 .br
 Z-order of the video, from 0 (first) to max int (last)
 .br
@@ -2398,6 +2419,41 @@ Mapping of input videos in reconstructed video, expressed as {Ox,Oy,Ow,Oh,Dx,Dy,
 .B Alpha (VALP,bool,  )
 .br
 Indicates the video in this pid is an alpha map
+.br
+.TP
+.B Mirror (VMIR,uint,  )
+.br
+Indicates a mirror mode (0: no mirror, 1: along Y-axis, 2: along X-axis)
+.br
+.TP
+.B Rotate (VROT,uint,  )
+.br
+Indicates the video rotation as value*90 degree anti-clockwise
+.br
+.TP
+.B ClapW (CLPW,frac,  )
+.br
+Width of clean aperture in luma pixels
+.br
+.TP
+.B ClapH (CLPH,frac,  )
+.br
+Height of clean aperture in luma pixels
+.br
+.TP
+.B ClapX (CLPX,frac,  )
+.br
+Horizontal offset of clean aperture center in luma pixels, 0 at image center
+.br
+.TP
+.B ClapY (CLPY,frac,  )
+.br
+Vertical offset of clean aperture center in luma pixels, 0 at image center
+.br
+.TP
+.B NumViews (PNBV,uint,  )
+.br
+Indicates the number of views packed in a frame (top-to-bottom only)
 .br
 .TP
 .B Bitrate (RATE,uint,  )
@@ -2495,7 +2551,7 @@ indicates that some blocks in file need patching (replace or insertion) upon clo
 indicates ISOBMFF brands associated with PID/file
 .br
 .TP
-.B IsoBrand (MBRD,uint,D )
+.B IsoBrand (MBRD,4cc,D )
 .br
 indicates ISOBMFF major brand associated with PID/file
 .br
@@ -2783,7 +2839,7 @@ ISOBMFF serialized sample description box (stsd entry) for this PID - used by is
 ISOBMFF serialized moov UDTA and other moov-level boxes (list) for this PID - used by isomuxer to re-inject specific boxes of input ISOBMFF moov
 .br
 .TP
-.B TrackHandler (IHDL,str,D )
+.B HandlerName (IHDL,str,D )
 .br
 ISOBMFF track handler name
 .br
@@ -2793,9 +2849,19 @@ ISOBMFF track handler name
 ISOBMFF track header flags
 .br
 .TP
-.B TrackMatrix (ITKM,uintl,D )
+.B TrackMatrix (ITKM,sintl,D )
 .br
 ISOBMFF track header matrix
+.br
+.TP
+.B AltGroup (IALG,uint,D )
+.br
+ISOBMFF alt group ID
+.br
+.TP
+.B Disable (ITKD,bool,D )
+.br
+ISOBMFF disable flag
 .br
 .TP
 .B Period (PEID,str,D )
@@ -3118,9 +3184,59 @@ Number of pixels to pad from edge of each face in cube map
 Clamping of frame for EQR as 0.32 fixed point (x is top, y is bottom, z is left and w is right)
 .br
 .TP
+.B SceneNode (PSND,bool,  )
+.br
+Indicate the PID is a scene node decoder (AFX BitWrapper in BIFS)
+.br
+.TP
+.B OrigCryptoScheme (POCS,uint,  )
+.br
+Indicate the original cryptor scheme on a decrypted PID
+.br
+.TP
 .B SkipBegin (PCKS,uint, P)
 .br
 Amount of media to skip from begining of packet in PID timescale
+.br
+.TP
+.B SkipPres (PCKD,bool, P)
+.br
+Indicate the packet and any following with CTS greater than this packet shall not be presented (used by reframer to create edit lists)
+.br
+.TP
+.B HLSRef (HPLR,luint,DP)
+.br
+HLS playlist reference, gives a unique ID identifying media mux, and indicated in packets carrying child playlists
+.br
+.TP
+.B LLHLS (HLSL,uint,D )
+.br
+HLS low latency mode
+.br
+.TP
+.B LLHLSFragNum (HLSN,uint, P)
+.br
+LLHLS fragment number
+.br
+.TP
+.B DownloadSession (GHTT,ptr,D )
+.br
+Pointer to download session
+.br
+.TP
+.B HasTemi (PTEM,bool,D )
+.br
+TEMI present flag
+.br
+.TP
+.B XPSMask (PXPM,uint,DP)
+.br
+Parameter set mask
+.br
+.TP
+.B RangeEnd (PCER,bool, P)
+.br
+Signal packet is the last in the desired play range
 .br
 .SH Pixel formats
 .LP
@@ -4035,6 +4151,109 @@ xHEAAC / USAC Audio
 .br
 v210 YUV 422 10 bits
 .br
+.SH Stream types
+.LP
+.br
+.TP
+.B mono (int 1)
+.br
+Layout 0x0000000000000004
+.br
+.TP
+.B stereo (int 2)
+.br
+Layout 0x0000000000000003
+.br
+.TP
+.B 3/0.0 (int 3)
+.br
+Layout 0x0000000000000007
+.br
+.TP
+.B 3/1.0 (int 4)
+.br
+Layout 0x0000000000000407
+.br
+.TP
+.B 3/2.0 (int 5)
+.br
+Layout 0x0000000000000307
+.br
+.TP
+.B 3/2.1 (int 6)
+.br
+Layout 0x000000000000030f
+.br
+.TP
+.B 5/2.1 (int 7)
+.br
+Layout 0x000000000000030f
+.br
+.TP
+.B 1+1 (int 8)
+.br
+Layout 0x0000000000000003
+.br
+.TP
+.B 2/1.0 (int 9)
+.br
+Layout 0x0000000000000403
+.br
+.TP
+.B 2/2.0 (int 10)
+.br
+Layout 0x0000000000000033
+.br
+.TP
+.B 3/3.1 (int 11)
+.br
+Layout 0x000000000000043f
+.br
+.TP
+.B 3/4.1 (int 12)
+.br
+Layout 0x000000000000033f
+.br
+.TP
+.B 11/11.2 (int 13)
+.br
+Layout 0x000000003ffe67cf
+.br
+.TP
+.B 5/2.1 (int 14)
+.br
+Layout 0x000000000006030f
+.br
+.TP
+.B 5/5.2 (int 15)
+.br
+Layout 0x000000000606630f
+.br
+.TP
+.B 5/4.1 (int 16)
+.br
+Layout 0x000000000036003f
+.br
+.TP
+.B 6/5.1 (int 17)
+.br
+Layout 0x00000000023e003f
+.br
+.TP
+.B 6/7.1 (int 18)
+.br
+Layout 0x00000600023e003f
+.br
+.TP
+.B 5/6.1 (int 19)
+.br
+Layout 0x000000000036630f
+.br
+.TP
+.B 7/6.1 (int 20)
+.br
+Layout 0x000000600036630f
+.br
 .SH EXAMPLES
 .TP
 Basic and advanced examples are available at https://wiki.gpac.io/Filters
@@ -4044,7 +4263,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev753-g3b246ee75-master
+build: 1.1.0-DEV-rev1160-g501dcf757-master
 .br
 Copyright: (c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

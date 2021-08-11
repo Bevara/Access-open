@@ -134,6 +134,10 @@ readonly attribute unsigned long long clock_hint_mediatime;
 readonly attribute unsigned long long connections_pending;
 /*! internal name - this can only be set and modified by JS API and allows for filter identification from JS*/
 attribute DOMString iname;
+/*! requires source ID for the filter - see \ref gf_filter_require_source_id*/
+writeonly unsigned boolean require_source_id;
+/*! gets JS path*/
+readonly attribute DOMString jspath;
 
 
 /*! sets filter description as visible when checking filter info
@@ -237,6 +241,16 @@ void hint_clock(unsigned long long time_in_microseconds, double media_time_sec);
 */
 void send_update(DOMString filter_id, DOMString arg_name, DOMString arg_value, long propagate_mask);
 
+/*! locks filter session - see \ref gf_filter_lock_all
+\param do_lock if true locks filter
+*/
+void lock_all(boolean do_lock);
+
+/*! locks a filter - see \ref gf_filter_lock
+\param do_lock if true locks filter
+*/
+void lock(boolean do_lock);
+
 /*! adds a source filter in the media session - see \ref gf_filter_connect_source
 \param source URL of source to load
 \param parent URL of parent, used as baseURL for the source. May be NULL
@@ -273,6 +287,22 @@ void block_eos(boolean do_block);
 
 /*! aborts the filter - see \ref gf_filter_abort*/
 void abort();
+
+
+/*! assigns source name to a filter - see \ref gf_filter_set_source
+\param from a Filter or a FilterInstance object to set a a source for this filter
+\param source_id the source ID to assign
+*/
+void set_source(Filter from, optional DOMString source_id=null);
+
+/*! assigns restricted source name to a filter - see \ref gf_filter_set_source_restricted
+\param from a Filter or a FilterInstance object to set a a source for this filter
+\param source_id the source ID to assign
+*/
+void set_source_restricted(Filter from, optional DOMString source_id=null);
+
+/*! reset source identifier for the filter - see \ref gf_filter_reset_source*/
+void reset_source();
 
 };
 
@@ -341,6 +371,16 @@ void disable_inputs();
 
 /*! reset source identifier for the filter - see \ref gf_filter_reset_source*/
 void reset_source();
+
+/*! filter name*/
+attribute readonly DOMString name;
+
+/*! filter type (registry name)*/
+attribute readonly DOMString type;
+
+/*! internal name - this can only be set and modified by JS API and allows for filter identification from JS*/
+attribute DOMString iname;
+
 };
 
 /*! The FilterPid object is a binding for \ref GF_FilterPid*/
@@ -400,6 +440,8 @@ writeonly unsigned boolean recompute_dts;
 readonly attribute unsigned long min_pck_dur;
 /*! playing state - see \ref gf_filter_pid_is_playing*/
 readonly attribute unsigned long playing;
+/*! next estimated timestamp, or null if not computable - see \ref gf_filter_pid_get_next_ts*/
+readonly attribute boolean next_ts;
 
 /*! sends an event on the pid - see \ref gf_filter_pid_send_event
 \param evt the event to send*/
@@ -560,6 +602,7 @@ void reset_props();
 */
 void copy_props(FilterPid from);
 
+
 /*! ignore this pid in blocking computations - see gf_filter_pid_ignore_blocking*
 \param do_ignore if true, pid is not used in blocking mode evaluation
 */
@@ -670,6 +713,7 @@ readonly attribute ArrayBuffer data;
 /*! set to true if data of the packet is available through a GF_FilterFrameInterface object*/
 readonly attribute boolean frame_ifce;
 
+
 /*! sets packet readonly - see gf_filter_pck_set_readonly*/
 void set_readonly();
 
@@ -747,6 +791,17 @@ void truncate(unsigned long size);
 \param from the source packet to copy properties from
 */
 void copy_props(FilterPacket from);
+
+/*! creates a new packet cloning a source packet - see \ref gf_filter_pck_dangling_copy.
+
+The resulting packet is in read/write mode and may have its own memory allocated.
+This is typically used by sink filters wishing to access underling GPU data of a packet using frame interface.
+The resulting packet can be explicitly discarded using \ref discard, otherwise will be garrbage collected.
+
+\param cached_pck if set, will be reuse for creation of new packet. This can greatly reduce memory allocations
+\return the new FilterPacket or None if failure or None if failure ( if grabbing the frame into a local copy failed)
+*/
+void clone(optional FilterPacket cached_pck = null);
 
 };
 

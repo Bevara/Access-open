@@ -119,13 +119,21 @@ typedef struct _gf_ffenc_ctx
 	u64 orig_ts;
 	u32 nb_forced;
 
-	AVCodec *force_codec;
+	const AVCodec *force_codec;
 
 	//we don't forward media delay, we directly offset CTS/DTS
 	s64 in_tk_delay;
 
 	Bool discontunity;
 	GF_FilterPacket *disc_pck_ref;
+
+#if (LIBAVCODEC_VERSION_MAJOR < 59)
+	AVPacket pkt;
+#else
+	AVPacket *pkt;
+#endif
+
+	u32 premul_timescale;
 } GF_FFEncodeCtx;
 
 static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove, Bool is_force_reconf);
@@ -166,6 +174,9 @@ static GF_Err ffenc_initialize(GF_Filter *filter)
 
 	ffmpeg_setup_logs(GF_LOG_CODEC);
 
+#if (LIBAVCODEC_VERSION_MAJOR >= 59)
+	ctx->pkt = av_packet_alloc();
+#endif
 
 	if (!ctx->c) return GF_OK;
 
@@ -199,6 +210,10 @@ static void ffenc_finalize(GF_Filter *filter)
 		gf_filter_pck_unref(pck);
 	}
 	gf_list_del(ctx->src_packets);
+
+#if (LIBAVCODEC_VERSION_MAJOR >= 59)
+	av_packet_free(&ctx->pkt);
+#endif
 
 	if (ctx->encoder) {
 		avcodec_free_context(&ctx->encoder);
@@ -246,12 +261,12 @@ static void ffenc_copy_pid_props(GF_FFEncodeCtx *ctx)
 
 static u64 ffenc_get_cts(GF_FFEncodeCtx *ctx, GF_FilterPacket *pck)
 {
-	u64 ts = gf_filter_pck_get_cts(pck);
-	if ((ctx->in_tk_delay<0) && (ts < -ctx->in_tk_delay)) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[FFEnc] Negative input TS \n"));
+	u64 cts = gf_filter_pck_get_cts(pck);
+	if ((ctx->in_tk_delay<0) && (cts < (u64) -ctx->in_tk_delay)) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[FFEnc] Negative input timestamp (cts="LLU" media delay="LLD")\n", cts, ctx->in_tk_delay));
 		return 0;
 	}
-	return ts + ctx->in_tk_delay;
+	return cts + ctx->in_tk_delay;
 }
 
 //TODO add more feedback
@@ -271,7 +286,11 @@ static void ffenc_log_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx, AVPack
 
 
 #if LIBAVCODEC_VERSION_MAJOR >= 58
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
 	u32 sq_size;
+#else
+	size_t sq_size;
+#endif
 	u8 *side_q = av_packet_get_side_data(pkt, AV_PKT_DATA_QUALITY_STATS, &sq_size);
 	if (side_q) {
 		gf_bs_reassign_buffer(ctx->sdbs, side_q, sq_size);
@@ -323,7 +342,7 @@ static void ffenc_log_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx, AVPack
 
 static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 {
-	AVPacket pkt;
+	AVPacket *pkt;
 	s32 gotpck;
 	const char *data = NULL;
 	u32 size=0, i, count, offset, to_copy;
@@ -357,9 +376,11 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 
 	if (pck) data = gf_filter_pck_get_data(pck, &size);
 
-	av_init_packet(&pkt);
-	pkt.data = (uint8_t*)ctx->enc_buffer;
-	pkt.size = ctx->enc_buffer_size;
+
+	FF_INIT_PCK(ctx, pkt)
+
+	pkt->data = (uint8_t*)ctx->enc_buffer;
+	pkt->size = ctx->enc_buffer_size;
 
 	ctx->frame->pict_type = 0;
 	ctx->frame->width = ctx->width;
@@ -469,14 +490,10 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		ctx->frame->pts = ffenc_get_cts(ctx, pck);
 		ctx->frame->pkt_duration = gf_filter_pck_get_duration(pck);
 
-#define SCALE_TS(_ts) if (_ts != GF_FILTER_NO_TS) { _ts *= ctx->encoder->time_base.den; _ts /= ctx->timescale; }
-#define UNSCALE_TS(_ts) if (_ts != AV_NOPTS_VALUE)  { _ts *= ctx->timescale; _ts /= ctx->encoder->time_base.den; }
-#define UNSCALE_DUR(_ts) { _ts *= ctx->timescale; _ts /= ctx->encoder->time_base.den; }      
-        
-		//store first frame CTS before rescaling, we use it after rescaling the output packet timing to compute CTS-DTS
-		if (!ctx->cts_first_frame_plus_one) {
-			ctx->cts_first_frame_plus_one = 1 + ctx->frame->pts;
-		}
+//use signed version of timestamp rescale since we may have negative dts
+#define SCALE_TS(_ts) if (_ts != GF_FILTER_NO_TS) { _ts = gf_timestamp_rescale_signed(_ts, ctx->premul_timescale, ctx->encoder->time_base.den); }
+#define UNSCALE_TS(_ts) if (_ts != AV_NOPTS_VALUE)  { _ts = gf_timestamp_rescale_signed(_ts, ctx->encoder->time_base.den, ctx->premul_timescale); }
+#define UNSCALE_DUR(_ts) { _ts = gf_timestamp_rescale(_ts, ctx->encoder->time_base.den, ctx->premul_timescale); }
 
 		if (ctx->remap_ts) {
 			SCALE_TS(ctx->frame->pts);
@@ -484,11 +501,53 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 			SCALE_TS(ctx->frame->pkt_duration);
 		}
 
-		ctx->frame->pkt_dts = ctx->frame->pkt_pts = ctx->frame->pts;
-		res = avcodec_encode_video2(ctx->encoder, &pkt, ctx->frame, &gotpck);
-		ctx->nb_frames_in++;
+		//store first frame CTS as will be seen after rescaling (to cope with rounding errors
+		//we use it after rescaling the output packet timing to compute CTS-DTS
+		if (!ctx->cts_first_frame_plus_one) {
+			s64 ts = ctx->frame->pts;
+			UNSCALE_TS(ts)
+			ctx->cts_first_frame_plus_one = 1 + ts;
+		}
 
-		//keep ref to ource properties
+
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
+		ctx->frame->pkt_dts = ctx->frame->pkt_pts = ctx->frame->pts;
+		res = avcodec_encode_video2(ctx->encoder, pkt, ctx->frame, &gotpck);
+		ctx->nb_frames_in++;
+#else
+		ctx->frame->pkt_dts = ctx->frame->pts;
+		res = avcodec_send_frame(ctx->encoder, ctx->frame);
+		switch (res) {
+		case AVERROR(EAGAIN):
+			return GF_OK;
+		case 0:
+			break;
+		case AVERROR_EOF:
+			break;
+		default:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] PID %s failed to encode frame PTS "LLU": %s\n", gf_filter_pid_get_name(ctx->in_pid), pkt->pts, av_err2str(res) ));
+			break;
+		}
+		ctx->nb_frames_in++;
+		gotpck = 0;
+		res = avcodec_receive_packet(ctx->encoder, pkt);
+		switch (res) {
+		case AVERROR(EAGAIN):
+			res = 0;
+			break;
+		case 0:
+			gotpck = 1;
+			break;
+		case AVERROR_EOF:
+			res = 0;
+			break;
+		default:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] PID %s failed to retrieve encoded packet PTS "LLU": %s\n", gf_filter_pid_get_name(ctx->in_pid), pkt->pts, av_err2str(res) ));
+			break;
+		}
+#endif
+
+		//keep ref to source properties
 		gf_filter_pck_ref_props(&pck);
 		gf_list_add(ctx->src_packets, pck);
 		if (ctx->discontunity) {
@@ -501,14 +560,25 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		if (ctx->remap_ts) {
 			UNSCALE_TS(ctx->frame->pts);
 			UNSCALE_TS(ctx->frame->pkt_duration);
-
-			UNSCALE_TS(pkt.dts);
-			UNSCALE_TS(pkt.pts);
-			UNSCALE_DUR(pkt.duration);
+			if (gotpck) {
+				UNSCALE_TS(pkt->dts);
+				UNSCALE_TS(pkt->pts);
+				UNSCALE_DUR(pkt->duration);
+			}
 		}
 	} else {
-		res = avcodec_encode_video2(ctx->encoder, &pkt, NULL, &gotpck);
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
+		res = avcodec_encode_video2(ctx->encoder, pkt, NULL, &gotpck);
+#else
+		//flush by sending NULL frame
+		avcodec_send_frame(ctx->encoder, NULL);
+		gotpck = 0;
+		res = avcodec_receive_packet(ctx->encoder, pkt);
+		if (!res) gotpck = 1;
+#endif
+
 		if (!gotpck) {
+			FF_RELEASE_PCK(pkt)
 			//done flushing encoder while reconfiguring
 			if (ctx->reconfig_pending) {
 				GF_Err e;
@@ -527,34 +597,36 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 			return GF_EOS;
 		}
 		if (ctx->remap_ts) {
-			UNSCALE_TS(pkt.dts);
-			UNSCALE_TS(pkt.pts);
-			UNSCALE_DUR(pkt.duration);
+			UNSCALE_TS(pkt->dts);
+			UNSCALE_TS(pkt->pts);
+			UNSCALE_DUR(pkt->duration);
 		}
 	}
 	now = gf_sys_clock_high_res() - now;
 	ctx->time_spent += now;
 
 	if (res<0) {
-		av_packet_free_side_data(&pkt);
+		av_packet_free_side_data(pkt);
 		ctx->nb_frames_out++;
+		FF_RELEASE_PCK(pkt)
 		return GF_SERVICE_ERROR;
 	}
 
 	if (!gotpck) {
-		av_packet_free_side_data(&pkt);
+		av_packet_free_side_data(pkt);
+		FF_RELEASE_PCK(pkt)
 		return GF_OK;
 	}
 
 	ctx->nb_frames_out++;
 	if (ctx->init_cts_setup) {
 		ctx->init_cts_setup = GF_FALSE;
-		if (ctx->frame->pts != pkt.pts) {
+		if (ctx->frame->pts != pkt->pts) {
 			//check shift in PTS - most of the time this is 0 (ffmpeg does not restamp video pts)
-			ctx->ts_shift = (s64) ctx->cts_first_frame_plus_one - 1 - (s64) pkt.pts;
+			ctx->ts_shift = (s64) ctx->cts_first_frame_plus_one - 1 - (s64) pkt->pts;
 
 			//check shift in DTS
-			ctx->ts_shift += (s64) ctx->cts_first_frame_plus_one - 1 - (s64) pkt.dts;
+			ctx->ts_shift += (s64) ctx->cts_first_frame_plus_one - 1 - (s64) pkt->dts;
 		}
 
 		//if ts_shift>0, this means we have a skip
@@ -569,20 +641,20 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 	count = gf_list_count(ctx->src_packets);
 	for (i=0; i<count; i++) {
 		src_pck = gf_list_get(ctx->src_packets, i);
-		if (ffenc_get_cts(ctx, src_pck) == pkt.pts) break;
+		if (ffenc_get_cts(ctx, src_pck) == pkt->pts) break;
 		src_pck = NULL;
 	}
 
 	offset = 0;
-	to_copy = size = pkt.size;
+	to_copy = size = pkt->size;
 
 	if (ctx->codecid == GF_CODECID_J2K) {
-		u32 b4cc = GF_4CC(pkt.data[4], pkt.data[5], pkt.data[6], pkt.data[7]);
+		u32 b4cc = GF_4CC(pkt->data[4], pkt->data[5], pkt->data[6], pkt->data[7]);
 		if (b4cc == GF_4CC('j','P',' ',' ')) {
 			u32 jp2h_offset = 0;
 			offset = 12;
-			while (offset+8 < (u32) pkt.size) {
-				b4cc = GF_4CC(pkt.data[offset+4], pkt.data[offset+5], pkt.data[offset+6], pkt.data[offset+7]);
+			while (offset+8 < (u32) pkt->size) {
+				b4cc = GF_4CC(pkt->data[offset+4], pkt->data[offset+5], pkt->data[offset+6], pkt->data[offset+7]);
 				if (b4cc == GF_4CC('j','p','2','c')) {
 					break;
 				}
@@ -592,18 +664,18 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 				offset++;
 			}
 			if (jp2h_offset) {
-				u32 len = pkt.data[jp2h_offset];
+				u32 len = pkt->data[jp2h_offset];
 				len <<= 8;
-				len |= pkt.data[jp2h_offset+1];
+				len |= pkt->data[jp2h_offset+1];
 				len <<= 8;
-				len |= pkt.data[jp2h_offset+2];
+				len |= pkt->data[jp2h_offset+2];
 				len <<= 8;
-				len |= pkt.data[jp2h_offset+3];
+				len |= pkt->data[jp2h_offset+3];
 
-				u32 dsi_crc = gf_crc_32(pkt.data + jp2h_offset + 8, len-8);
+				u32 dsi_crc = gf_crc_32(pkt->data + jp2h_offset + 8, len-8);
 				if (dsi_crc != ctx->dsi_crc) {
 					ctx->dsi_crc = dsi_crc;
-					gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA(pkt.data + jp2h_offset + 8, len-8) );
+					gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA(pkt->data + jp2h_offset + 8, len-8) );
 				}
 			}
 			size -= offset;
@@ -633,8 +705,12 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 	}
 
 	dst_pck = gf_filter_pck_new_alloc(ctx->out_pid, size, &output);
+	if (!dst_pck) {
+		FF_RELEASE_PCK(pkt)
+		return GF_OUT_OF_MEM;
+	}
 	if (insert_jp2c) {
-		u32 bsize = pkt.size + 8;
+		u32 bsize = pkt->size + 8;
 		output[0] = (bsize >> 24) & 0xFF;
 		output[1] = (bsize >> 16) & 0xFF;
 		output[2] = (bsize >> 8) & 0xFF;
@@ -645,7 +721,7 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		output[7] = 'c';
 		output += 8;
 	}
-	memcpy(output, pkt.data + offset, to_copy);
+	memcpy(output, pkt->data + offset, to_copy);
 
 	if (src_pck) {
 		if (ctx->disc_pck_ref == src_pck) {
@@ -657,21 +733,21 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		gf_list_del_item(ctx->src_packets, src_pck);
 		gf_filter_pck_unref(src_pck);
 	} else {
-		if (pkt.duration) {
-			gf_filter_pck_set_duration(dst_pck, (u32) pkt.duration);
+		if (pkt->duration) {
+			gf_filter_pck_set_duration(dst_pck, (u32) pkt->duration);
 		} else {
 			gf_filter_pck_set_duration(dst_pck, (u32) ctx->frame->pkt_duration);
 		}
 	}
 
-	ffenc_log_video(filter, ctx, &pkt, gf_filter_reporting_enabled(filter));
+	ffenc_log_video(filter, ctx, pkt, gf_filter_reporting_enabled(filter));
 
-	gf_filter_pck_set_cts(dst_pck, pkt.pts + ctx->ts_shift);
-	gf_filter_pck_set_dts(dst_pck, pkt.dts + ctx->ts_shift);
+	gf_filter_pck_set_cts(dst_pck, pkt->pts + ctx->ts_shift);
+	gf_filter_pck_set_dts(dst_pck, pkt->dts + ctx->ts_shift);
 
 	//this is not 100% correct since we don't have any clue if this is SAP1/2/3/4 ...
 	//since we send the output to our reframers we should be fine
-	if (pkt.flags & AV_PKT_FLAG_KEY) {
+	if (pkt->flags & AV_PKT_FLAG_KEY) {
 		gf_filter_pck_set_sap(dst_pck, GF_FILTER_SAP_1);
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[FFEnc] frame %d is SAP\n", ctx->nb_frames_out));
 	}
@@ -679,13 +755,14 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		gf_filter_pck_set_sap(dst_pck, 0);
 
 #if LIBAVCODEC_VERSION_MAJOR >= 58
-	if (pkt.flags & AV_PKT_FLAG_DISPOSABLE) {
+	if (pkt->flags & AV_PKT_FLAG_DISPOSABLE) {
 		gf_filter_pck_set_dependency_flags(dst_pck, 0x8);
 	}
 #endif
 	gf_filter_pck_send(dst_pck);
 
-	av_packet_free_side_data(&pkt);
+	av_packet_free_side_data(pkt);
+	FF_RELEASE_PCK(pkt)
 
 	//we're in final flush, request a process task until all frames flushe
 	//we could recursiveley call ourselves, same result
@@ -758,7 +835,7 @@ static void ffenc_audio_append_samples(struct _gf_ffenc_ctx *ctx, const u8 *data
 
 static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 {
-	AVPacket pkt;
+	AVPacket *pkt;
 	s32 gotpck;
 	const char *data = NULL;
 	u32 size=0, nb_copy=0, i, count;
@@ -840,9 +917,7 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 			ctx->samples_in_audio_buffer = 0;
 			if (data && (nb_samples > nb_copy)) {
 				ffenc_audio_append_samples(ctx, data, size, nb_copy, nb_samples - nb_copy);
-				ts_diff = nb_copy;
-				ts_diff *= ctx->timescale;
-				ts_diff /= ctx->sample_rate;
+				ts_diff = gf_timestamp_rescale(nb_copy, ctx->sample_rate,  ctx->timescale);
 				ctx->first_byte_cts = ffenc_get_cts(ctx, pck) + ts_diff;
 			}
 			gf_filter_pid_drop_packet(ctx->in_pid);
@@ -871,9 +946,10 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		}
 	}
 
-	av_init_packet(&pkt);
-	pkt.data = (uint8_t*)ctx->enc_buffer;
-	pkt.size = ctx->enc_buffer_size;
+	FF_INIT_PCK(ctx, pkt)
+
+	pkt->data = (uint8_t*)ctx->enc_buffer;
+	pkt->size = ctx->enc_buffer_size;
 
 	if (pck)
 		ctx->frame->nb_samples = ctx->encoder->frame_size;
@@ -882,21 +958,63 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 	ctx->frame->channel_layout = ctx->encoder->channel_layout;
 	gotpck = 0;
 	if (pck || ctx->samples_in_audio_buffer) {
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
 		ctx->frame->pkt_dts = ctx->frame->pkt_pts = ctx->frame->pts = ctx->first_byte_cts;
-		res = avcodec_encode_audio2(ctx->encoder, &pkt, ctx->frame, &gotpck);
+		res = avcodec_encode_audio2(ctx->encoder, pkt, ctx->frame, &gotpck);
+#else
+		ctx->frame->pkt_dts = ctx->frame->pts = ctx->first_byte_cts;
+		res = avcodec_send_frame(ctx->encoder, ctx->frame);
+		switch (res) {
+		case AVERROR(EAGAIN):
+			return GF_OK;
+		case 0:
+			break;
+		case AVERROR_EOF:
+			break;
+		default:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] PID %s failed to encode frame PTS "LLU": %s\n", gf_filter_pid_get_name(ctx->in_pid), pkt->pts, av_err2str(res) ));
+			break;
+		}
+		gotpck = 0;
+		res = avcodec_receive_packet(ctx->encoder, pkt);
+		switch (res) {
+		case AVERROR(EAGAIN):
+			res = 0;
+			break;
+		case 0:
+			gotpck = 1;
+			break;
+		case AVERROR_EOF:
+			ctx->flush_done = GF_TRUE;
+			gf_filter_pid_set_eos(ctx->out_pid);
+			return GF_EOS;
+		default:
+			break;
+		}
+#endif
+
+
 		if (!pck) {
 			if (! (ctx->encoder->codec->capabilities & AV_CODEC_CAP_DELAY)) {
-				pkt.duration = ctx->samples_in_audio_buffer;
+				pkt->duration = ctx->samples_in_audio_buffer;
 				if (ctx->timescale != ctx->sample_rate) {
-					pkt.duration *= ctx->timescale;
-					pkt.duration /= ctx->sample_rate;
+					pkt->duration = gf_timestamp_rescale(pkt->duration, ctx->sample_rate, ctx->timescale);
 				}
 			}
 			ctx->samples_in_audio_buffer = 0;
 		}
 	} else {
-		res = avcodec_encode_audio2(ctx->encoder, &pkt, NULL, &gotpck);
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
+		res = avcodec_encode_audio2(ctx->encoder, pkt, NULL, &gotpck);
+#else
+		//flush by sending NULL frame
+		avcodec_send_frame(ctx->encoder, NULL);
+		gotpck = 0;
+		res = avcodec_receive_packet(ctx->encoder, pkt);
+		if (!res) gotpck = 1;
+#endif
 		if (!gotpck) {
+			FF_RELEASE_PCK(pkt);
 			//done flushing encoder while reconfiguring
 			if (ctx->reconfig_pending) {
 				GF_Err e;
@@ -937,8 +1055,7 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 	//increase timestamp
 	ts_diff = ctx->frame->nb_samples;
 	if (ctx->timescale!=ctx->sample_rate) {
-		ts_diff *= ctx->timescale;
-		ts_diff /= ctx->sample_rate;
+		ts_diff = gf_timestamp_rescale(ts_diff, ctx->sample_rate, ctx->timescale);
 	}
 	ctx->first_byte_cts += ts_diff;
 
@@ -952,23 +1069,29 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 
 	if (res<0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] Error encoding frame: %s\n", av_err2str(res) ));
-		av_packet_free_side_data(&pkt);
+		av_packet_free_side_data(pkt);
+		FF_RELEASE_PCK(pkt);
 		return GF_SERVICE_ERROR;
 	}
 	if (!gotpck) {
-		av_packet_free_side_data(&pkt);
+		av_packet_free_side_data(pkt);
+		FF_RELEASE_PCK(pkt);
 		return GF_OK;
 	}
-	dst_pck = gf_filter_pck_new_alloc(ctx->out_pid, pkt.size, &output);
-	memcpy(output, pkt.data, pkt.size);
+	dst_pck = gf_filter_pck_new_alloc(ctx->out_pid, pkt->size, &output);
+	if (!dst_pck) {
+		FF_RELEASE_PCK(pkt);
+		return GF_OUT_OF_MEM;
+	}
+	memcpy(output, pkt->data, pkt->size);
 
 	if (ctx->init_cts_setup) {
 		u64 octs;
 		ctx->init_cts_setup = GF_FALSE;
 		src_pck = gf_list_get(ctx->src_packets, 0);
 		octs = src_pck ? ffenc_get_cts(ctx, src_pck) : ctx->frame->pts;
-		if (octs != pkt.pts) {
-			ctx->ts_shift = (s64) octs - (s64) pkt.pts;
+		if (octs != pkt->pts) {
+			ctx->ts_shift = (s64) octs - (s64) pkt->pts;
 		}
 		if (ctx->ts_shift) {
 			gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_DELAY, &PROP_LONGSINT( - ctx->ts_shift) );
@@ -989,11 +1112,11 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		acts = ffenc_get_cts(ctx, src_pck);
 		adur = gf_filter_pck_get_duration(src_pck);
 
-		if (((s64) acts >= pkt.pts) && ((s64) acts < pkt.pts + pkt.duration)) {
+		if (((s64) acts >= pkt->pts) && ((s64) acts < pkt->pts + pkt->duration)) {
 			break;
 		}
 
-		if (acts + adur <= (u64) ( pkt.pts + ctx->ts_shift) ) {
+		if (acts + adur <= (u64) ( pkt->pts + ctx->ts_shift) ) {
 			gf_list_rem(ctx->src_packets, i);
 			gf_filter_pck_unref(src_pck);
 			i--;
@@ -1012,19 +1135,21 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		gf_filter_pck_unref(src_pck);
 	}
 
-	gf_filter_pck_set_cts(dst_pck, pkt.pts + ctx->ts_shift);
-	gf_filter_pck_set_dts(dst_pck, pkt.dts + ctx->ts_shift);
+	gf_filter_pck_set_cts(dst_pck, pkt->pts + ctx->ts_shift);
+	gf_filter_pck_set_dts(dst_pck, pkt->dts + ctx->ts_shift);
 	//this is not 100% correct since we don't have any clue if this is SAP1/4 (roll info missing)
-	if (pkt.flags & AV_PKT_FLAG_KEY)
+	if (pkt->flags & AV_PKT_FLAG_KEY)
 		gf_filter_pck_set_sap(dst_pck, GF_FILTER_SAP_1);
 	else
 		gf_filter_pck_set_sap(dst_pck, 0);
 
-	gf_filter_pck_set_duration(dst_pck, (u32) pkt.duration);
+	gf_filter_pck_set_duration(dst_pck, (u32) pkt->duration);
 
 	gf_filter_pck_send(dst_pck);
 
-	av_packet_free_side_data(&pkt);
+	av_packet_free_side_data(pkt);
+	FF_RELEASE_PCK(pkt);
+
 	//we're in final flush, request a process task until all frames flushe
 	//we could recursiveley call ourselves, same result
 	if (!pck) {
@@ -1048,6 +1173,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	u32 i=0;
 	AVDictionary *options = NULL;
 	u32 change_input_fmt = 0;
+	AVRational timebase;
 	const GF_PropertyValue *prop;
 	const AVCodec *codec=NULL;
 	const AVCodec *desired_codec=NULL;
@@ -1182,6 +1308,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	}\
 	_a = prop->value.uint;
 
+	timebase.num = timebase.den = 0;
 	pfmt = afmt = 0;
 	if (type==GF_STREAM_VISUAL) {
 		GET_PROP(ctx->width, GF_PROP_PID_WIDTH, "width")
@@ -1193,6 +1320,19 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		if (prop) ctx->stride = prop->value.uint;
 		prop = gf_filter_pid_caps_query(pid, GF_PROP_PID_STRIDE_UV);
 		if (prop) ctx->stride_uv = prop->value.uint;
+
+		//compute new timebase
+		prop = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
+		if (prop) {
+			timebase.num = 1;
+			timebase.den = prop->value.uint;
+		}
+		prop = gf_filter_pid_get_property(pid, GF_PROP_PID_FPS);
+		if (prop) {
+			timebase.num = prop->value.frac.den;
+			timebase.den = prop->value.frac.num;
+		}
+		gf_media_get_reduced_frame_rate(&timebase.den, &timebase.num);
 	} else {
 		GET_PROP(ctx->sample_rate, GF_PROP_PID_SAMPLE_RATE, "sample rate")
 		GET_PROP(ctx->channels, GF_PROP_PID_NUM_CHANNELS, "nb channels")
@@ -1270,13 +1410,13 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 				i++;
 			}
 			if (!ctx->force_codec && (change_input_fmt == AV_PIX_FMT_NONE)) {
-#if (LIBAVCODEC_VERSION_MAJOR >= 58) && (LIBAVCODEC_VERSION_MINOR>=20)
+#if ((LIBAVCODEC_VERSION_MAJOR >= 58) && (LIBAVCODEC_VERSION_MINOR>=20)) || (LIBAVFORMAT_VERSION_MAJOR>=59)
 				void *ff_opaque=NULL;
 #else
 				AVCodec *codec_alt = NULL;
 #endif
 				while (1) {
-#if (LIBAVCODEC_VERSION_MAJOR >= 58) && (LIBAVCODEC_VERSION_MINOR>=20)
+#if ((LIBAVCODEC_VERSION_MAJOR >= 58) && (LIBAVCODEC_VERSION_MINOR>=20)) || (LIBAVFORMAT_VERSION_MAJOR>=59)
 					const AVCodec *codec_alt = av_codec_iterate(&ff_opaque);
 #else
 					codec_alt = av_codec_next(codec_alt);
@@ -1531,16 +1671,20 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	if (res < 0) {
 		if (options) av_dict_free(&options);
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] PID %s failed to open codec context: %s\n", gf_filter_pid_get_name(pid), av_err2str(res) ));
+		avcodec_free_context(&ctx->encoder);
+		ctx->encoder = NULL;
 		return GF_BAD_PARAM;
 	}
-	ctx->remap_ts = (ctx->encoder->time_base.den && (ctx->encoder->time_base.den != ctx->timescale)) ? GF_TRUE : GF_FALSE;
+	//precompute gpac_timescale * encoder->time_base.num for rescale operations
+	//do that AFTER opening the codec, since some codecs may touch this field ...
+	ctx->premul_timescale = ctx->timescale;
+	ctx->premul_timescale *= ctx->encoder->time_base.num;
+
+	ctx->remap_ts = (ctx->encoder->time_base.den && (ctx->encoder->time_base.den != ctx->premul_timescale)) ? GF_TRUE : GF_FALSE;
 	if (!ctx->target_rate)
 		ctx->target_rate = (u32)ctx->encoder->bit_rate;
 
-	if (options) {
-		ffmpeg_report_unused_options(filter, options);
-		av_dict_free(&options);
-	}
+	ffmpeg_report_options(filter, options, ctx->options);
 
 	if (!is_force_reconf)
 		ffenc_copy_pid_props(ctx);
@@ -1600,11 +1744,11 @@ static GF_Err ffenc_update_arg(GF_Filter *filter, const char *arg_name, const GF
 			}
 			res = av_dict_set(&ctx->options, arg_name, arg_val_str, 0);
 			if (res<0) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] Failed to set option %s:%s\n", arg_name, arg_val ));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] Failed to set option %s:%s\n", arg_name, arg_val_str ));
 			}
 			break;
 		default:
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] Failed to set option %s:%s, unrecognized type %d\n", arg_name, arg_val, arg_val->type ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] Failed to set option %s, unrecognized type %d\n", arg_name, arg_val->type ));
 			return GF_NOT_SUPPORTED;
 		}
 		return GF_OK;
@@ -1681,7 +1825,7 @@ static const GF_FilterArgs FFEncodeArgs[] =
 {
 	{ OFFS(c), "codec identifier. Can be any supported GPAC codec name or ffmpeg codec name", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(pfmt), "pixel format for input video. When not set, input format is used", GF_PROP_PIXFMT, "none", NULL, 0},
-	{ OFFS(fintra), "force intra / IDR frames at the given period in sec, eg `fintra=60000/1001` will force an intra every 2 seconds on 29.97 fps video; ignored for audio", GF_PROP_FRACTION, "-1/1", NULL, 0},
+	{ OFFS(fintra), "force intra / IDR frames at the given period in sec, e.g. `fintra=2` will force an intra every 2 seconds and `fintra=1001/1000` will force an intra every 30 frames on 30000/1001=29.97 fps video; ignored for audio", GF_PROP_FRACTION, "-1/1", NULL, 0},
 
 	{ OFFS(all_intra), "only produce intra frames", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ls), "log stats", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},

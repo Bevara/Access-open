@@ -566,10 +566,13 @@ GF_Err infe_box_read(GF_Box *s, GF_BitStream *bs)
 				ptr->content_type = (char*)gf_malloc(sizeof(char)*string_len);
 				if (!ptr->content_type) return GF_OUT_OF_MEM;
 				memcpy(ptr->content_type, buf+string_start, string_len);
-			} else {
+			} else if (!ptr->content_encoding) {
 				ptr->content_encoding = (char*)gf_malloc(sizeof(char)*string_len);
 				if (!ptr->content_encoding) return GF_OUT_OF_MEM;
 				memcpy(ptr->content_encoding, buf+string_start, string_len);
+			} else {
+				//we could throw an error but we silently accept this infe
+				break;
 			}
 			string_start += string_len;
 			string_len = 0;
@@ -797,7 +800,7 @@ GF_Err ireftype_box_read(GF_Box *s, GF_BitStream *bs)
 	ISOM_DECREASE_SIZE(ptr, 4)
 	ptr->from_item_id = gf_bs_read_u16(bs);
 	ptr->reference_count = gf_bs_read_u16(bs);
-	if (ptr->size < ptr->reference_count*2)
+	if (ptr->size / 2 < ptr->reference_count)
 		return GF_ISOM_INVALID_FILE;
 
 	ptr->to_item_IDs = (u32 *)gf_malloc(ptr->reference_count * sizeof(u32));

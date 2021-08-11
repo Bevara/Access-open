@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2018
+ *			Copyright (c) Telecom ParisTech 2017-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / common ffmpeg filters
@@ -34,8 +34,30 @@
 #include <libavutil/dict.h>
 #include <libavdevice/avdevice.h>
 #include <libswscale/swscale.h>
+#include <libavutil/channel_layout.h>
 
+//can be pointer or uint
 #define GF_FFMPEG_DECODER_CONFIG GF_4CC('f','f','D','C')
+
+#if (LIBAVFORMAT_VERSION_MAJOR < 59)
+#define AVFMT_URL(_mux) _mux->filename
+#else
+#define AVFMT_URL(_mux) _mux->url
+#endif
+
+#if (LIBAVFORMAT_VERSION_MAJOR < 59)
+#define FF_FREE_PCK(_pkt)	av_free_packet(_pkt);
+#define FF_RELEASE_PCK(_pkt)
+#define FF_INIT_PCK(ctx, _pkt) { pkt = &ctx->pkt; av_init_packet(pkt); }
+#define FF_OFMT_CAST	(AVOutputFormat *)
+#define FF_IFMT_CAST	(AVInputFormat *)
+#else
+#define FF_FREE_PCK(_pkt)	av_packet_unref(_pkt);
+#define FF_RELEASE_PCK(_pkt) av_packet_unref(_pkt);
+#define FF_INIT_PCK(ctx, _pkt) { pkt = ctx->pkt; }
+#define FF_OFMT_CAST
+#define FF_IFMT_CAST
+#endif
 
 
 //rendering/translating to internal supported formats for text streams is not yet implemented
@@ -77,4 +99,5 @@ void ffmpeg_set_mx_dmx_flags(const AVDictionary *options, AVFormatContext *ctx);
 u64 ffmpeg_channel_layout_from_gpac(u64 gpac_ch_layout);
 u64 ffmpeg_channel_layout_to_gpac(u64 ff_ch_layout);
 
-void ffmpeg_report_unused_options(GF_Filter *filter, AVDictionary *options);
+//this will destroy unknown_options if set
+void ffmpeg_report_options(GF_Filter *filter, AVDictionary *unknown_options, AVDictionary *all_options);

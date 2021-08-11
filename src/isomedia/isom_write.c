@@ -1399,6 +1399,35 @@ GF_Err gf_isom_update_sample_reference(GF_ISOFile *movie, u32 trackNumber, u32 s
 	return GF_OK;
 }
 
+//for gf_isom_remove_sample and gf_isom_remove_track: check all items sharing their data with a sample being removed
+//and remove sharing flag
+// sample_number can be 0 for complete track removal
+static void gf_isom_meta_track_remove(GF_ISOFile *movie, GF_TrackBox *trak, u32 sample_number)
+{
+	u32 i, count;
+	if (!movie || !movie->meta || !movie->meta->use_item_sample_sharing)
+		return;
+
+	count = gf_list_count(movie->meta->item_locations->location_entries);
+	for (i=0; i<count; i++) {
+		u32 j;
+		GF_ItemLocationEntry *iloc = (GF_ItemLocationEntry *)gf_list_get(movie->meta->item_locations->location_entries, i);
+		/*get item info*/
+		GF_ItemInfoEntryBox *iinf = NULL;
+		j=0;
+		while ((iinf = (GF_ItemInfoEntryBox *)gf_list_enum(movie->meta->item_infos->item_infos, &j))) {
+			if (iinf->item_ID==iloc->item_ID) break;
+		}
+		if (!iinf || !iinf->tk_id) continue;
+		if (iinf->tk_id != trak->Header->trackID) continue;
+
+		if (sample_number && (iinf->sample_num != sample_number)) continue;
+		iinf->tk_id = 0;
+		iinf->sample_num = 0;
+	}
+}
+
+
 
 //Remove a given sample
 GF_EXPORT
@@ -1460,6 +1489,8 @@ GF_Err gf_isom_remove_sample(GF_ISOFile *movie, u32 trackNumber, u32 sampleNumbe
 	if (e) return e;
 
 	gf_isom_disable_inplace_rewrite(movie);
+
+	gf_isom_meta_track_remove(movie, trak, sampleNumber);
 
 	return SetTrackDuration(trak);
 }
@@ -2448,15 +2479,24 @@ static GF_Err gf_isom_set_edit_internal(GF_ISOFile *movie, u32 trackNumber, u64 
 		startTime += ent->segmentDuration;
 	}
 
-	//not found, add a new entry and adjust the prev one if any
+	//not found, add a new entry, insert empty one if gap
 	if (!ent) {
+		Bool empty_inserted = GF_FALSE;
+		if (startTime != EditTime) {
+			newEnt = CreateEditEntry(EditTime - startTime, 0, GF_ISOM_EDIT_EMPTY);
+			if (!newEnt) return GF_OUT_OF_MEM;
+			empty_inserted = GF_TRUE;
+			gf_list_add(elst->entryList, newEnt);
+		}
 		newEnt = CreateEditEntry(EditDuration, MediaTime, EditMode);
 		if (!newEnt) return GF_OUT_OF_MEM;
 		if (EditMode==GF_ISOM_EDIT_NORMAL+1) {
 			newEnt->mediaRate = media_rate;
 		}
 		gf_list_add(elst->entryList, newEnt);
-		return SetTrackDuration(trak);
+		e = SetTrackDuration(trak);
+		if (e) return e;
+		return empty_inserted ? GF_EOS : GF_OK;
 	}
 
 	startTime -= ent->segmentDuration;
@@ -2765,6 +2805,8 @@ GF_Err gf_isom_remove_track(GF_ISOFile *movie, u32 trackNumber)
 	}
 
 	gf_isom_disable_inplace_rewrite(movie);
+
+	gf_isom_meta_track_remove(movie, the_trak, 0);
 
 	//delete the track
 	gf_isom_box_del_parent(&movie->moov->child_boxes, (GF_Box *)the_trak);
@@ -5031,14 +5073,15 @@ Bool gf_isom_is_same_sample_description(GF_ISOFile *f1, u32 tk1, u32 sdesc_index
 
 	need_memcmp = GF_TRUE;
 	for (i=0; i<count; i++) {
-		GF_Box *ent1 = (GF_Box *)gf_list_get(trak1->Media->information->sampleTable->SampleDescription->child_boxes, i);
-		GF_Box *ent2 = (GF_Box *)gf_list_get(trak2->Media->information->sampleTable->SampleDescription->child_boxes, i);
+		GF_SampleEntryBox *ent1 = (GF_SampleEntryBox *)gf_list_get(trak1->Media->information->sampleTable->SampleDescription->child_boxes, i);
+		GF_SampleEntryBox *ent2 = (GF_SampleEntryBox *)gf_list_get(trak2->Media->information->sampleTable->SampleDescription->child_boxes, i);
 
-		if (sdesc_index1) ent1 = (GF_Box *)gf_list_get(trak1->Media->information->sampleTable->SampleDescription->child_boxes, sdesc_index1 - 1);
-		if (sdesc_index2) ent2 = (GF_Box *)gf_list_get(trak2->Media->information->sampleTable->SampleDescription->child_boxes, sdesc_index2 - 1);
+		if (sdesc_index1) ent1 = (GF_SampleEntryBox *)gf_list_get(trak1->Media->information->sampleTable->SampleDescription->child_boxes, sdesc_index1 - 1);
+		if (sdesc_index2) ent2 = (GF_SampleEntryBox *)gf_list_get(trak2->Media->information->sampleTable->SampleDescription->child_boxes, sdesc_index2 - 1);
 
 		if (!ent1 || !ent2) return GF_FALSE;
 		if (ent1->type != ent2->type) return GF_FALSE;
+		if (ent1->internal_type != ent2->internal_type) return GF_FALSE;
 
 		switch (ent1->type) {
 		/*for MPEG-4 streams, only compare decSpecInfo (bitrate may not be the same but that's not an issue)*/
@@ -5181,7 +5224,6 @@ Bool gf_isom_is_same_sample_description(GF_ISOFile *f1, u32 tk1, u32 sdesc_index
 		case GF_QT_SUBTYPE_QDMC2:
 		case GF_QT_SUBTYPE_QCELP:
 		case GF_QT_SUBTYPE_kMP3:
-			return GF_TRUE;
 		case GF_QT_SUBTYPE_APCH:
 		case GF_QT_SUBTYPE_APCO:
 		case GF_QT_SUBTYPE_APCN:
@@ -5203,6 +5245,20 @@ Bool gf_isom_is_same_sample_description(GF_ISOFile *f1, u32 tk1, u32 sdesc_index
 		case GF_QT_SUBTYPE_YVYU:
 		case GF_QT_SUBTYPE_RGBA:
 		case GF_QT_SUBTYPE_ABGR:
+		default:
+			if (ent1->internal_type == GF_ISOM_SAMPLE_ENTRY_VIDEO) {
+				GF_VisualSampleEntryBox *vent1 = (GF_VisualSampleEntryBox *) ent1;
+				GF_VisualSampleEntryBox *vent2 = (GF_VisualSampleEntryBox *) ent2;
+				if (vent1->Width != vent2->Width) return GF_FALSE;
+				if (vent1->Height != vent2->Height) return GF_FALSE;
+			}
+			else if (ent1->internal_type == GF_ISOM_SAMPLE_ENTRY_AUDIO) {
+				GF_AudioSampleEntryBox *aent1 = (GF_AudioSampleEntryBox *) ent1;
+				GF_AudioSampleEntryBox *aent2 = (GF_AudioSampleEntryBox *) ent2;
+				if (aent1->samplerate_hi != aent2->samplerate_hi) return GF_FALSE;
+				if (aent1->samplerate_lo != aent2->samplerate_lo) return GF_FALSE;
+				if (aent1->channel_count != aent2->channel_count) return GF_FALSE;
+			}
 			return GF_TRUE;
 		}
 
@@ -5905,9 +5961,11 @@ GF_Err gf_isom_apple_set_tag(GF_ISOFile *mov, GF_ISOiTunesTag tag, const u8 *dat
 		if ((data_len>4) && (data[0] == 0x89) && (data[1] == 0x50) && (data[2] == 0x4E) && (data[3] == 0x47) ) {
 			info->data->flags = 14;
 		}
-		else if ((data_len>4) && (data[0] == 0xFF) && (data[1] == 0xD8) && (data[2] == 0xFF) && (data[3] == 0xE0) ) {
+		//JPG and JFIF - do not check second tag type
+		else if ((data_len>4) && (data[0] == 0xFF) && (data[1] == 0xD8) && (data[2] == 0xFF) /*&& ((data[3] == 0xE0) || (data[3] == 0xDB))*/ ) {
 			info->data->flags = 13;
 		}
+		//GIF
 		else if ((data_len>3) && (data[0] == 'G') && (data[1] == 'I') && (data[2] == 'F') ) {
 			info->data->flags = 12;
 		}
@@ -6805,7 +6863,11 @@ GF_Err gf_isom_set_ctts_v1(GF_ISOFile *file, u32 track, u32 ctts_shift)
 	if (!trak) return GF_BAD_PARAM;
 
 	ctts = trak->Media->information->sampleTable->CompositionOffset;
-	shift = ctts->version ? ctts_shift : ctts->entries[0].decodingOffset;
+	if (ctts->version) {
+		shift = ctts_shift;
+	} else {
+		shift = ctts->nb_entries ? ctts->entries[0].decodingOffset : 0;
+	}
 	leastCTTS = GF_INT_MAX;
 	greatestCTTS = 0;
 	for (i=0; i<ctts->nb_entries; i++) {

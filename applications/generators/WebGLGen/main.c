@@ -205,7 +205,7 @@ static void put_arg_get(FILE *ifce_c, char *fname, int idx, char *arg_type, char
 		else if (strstr(fname, "4fv")) vlen = 4;
 
 		if (!strcmp(native_type, "s32 *"))
-			fprintf(ifce_c, "\tif (!WGL_LOAD_INT32_VEC(ctx, argv[%d], (s32 **) &%s, &%s_size, %d)) return js_throw_err(ctx, WGL_INVALID_VALUE);;\n", idx, arg_name, arg_name, vlen);
+			fprintf(ifce_c, "\tif (!WGL_LOAD_INT32_VEC(ctx, argv[%d], (s32 **) &%s, &%s_size, %d)) return js_throw_err(ctx, WGL_INVALID_VALUE);\n", idx, arg_name, arg_name, vlen);
 		else {
 			Bool is_matrix = GF_FALSE;
 			if (strstr(fname, "Matrix")) is_matrix = GF_TRUE;
@@ -254,7 +254,7 @@ static void put_arg_decl(FILE *ifce_c, char *fname, char *arg_type, char *arg_na
 	}
 }
 /*all functions that cannot be mapped directly due to to heavy syntax pacthing or our own hacking*/
-static const char *not_autogen_funcs = "getContextAttributes,isContextLost,getSupportedExtensions,getExtension,getBufferParameter,getParameter,getFramebufferAttachmentParameter,getProgramParameter,getRenderbufferParameter,getShaderParameter,getShaderPrecisionFormat,getProgramInfoLog,getShaderParameter,getShaderInfoLog,getShaderSource,getTexParameter,getUniform,getVertexAttrib,getVertexAttribOffset,readPixels,shaderSource,texImage2D,texSubImage2D,useProgram,activeTexture,bindTexture,getUniformLocation,createTexture,bindFramebuffer";
+static const char *not_autogen_funcs = "getContextAttributes,isContextLost,getSupportedExtensions,getExtension,getBufferParameter,getParameter,getFramebufferAttachmentParameter,getProgramParameter,getRenderbufferParameter,getShaderParameter,getShaderPrecisionFormat,getProgramInfoLog,getShaderParameter,getShaderInfoLog,getShaderSource,getTexParameter,getUniform,getVertexAttrib,getVertexAttribOffset,readPixels,shaderSource,texImage2D,texSubImage2D,useProgram,activeTexture,bindTexture,getUniformLocation,createTexture,bindFramebuffer,pixelStorei";
 
 static void wrap_func(FILE *ifce_c, char *fname, char *fun_def)
 {

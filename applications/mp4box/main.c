@@ -88,7 +88,7 @@ typedef enum {
 	META_ACTION_DUMP_ITEM			= 7,
 	META_ACTION_DUMP_XML			= 8,
 	META_ACTION_ADD_IMAGE_ITEM		= 9,
-	META_ACTION_ADD_IMAGE_GRID		= 10,
+	META_ACTION_ADD_IMAGE_DERIVED	= 10,
 } MetaActionType;
 
 typedef struct {
@@ -115,28 +115,28 @@ typedef struct
 
 
 typedef enum {
-	TRAC_ACTION_REM_TRACK= 0,
-	TRAC_ACTION_SET_LANGUAGE,
-	TRAC_ACTION_SET_DELAY,
-	TRAC_ACTION_SET_KMS_URI,
-	TRAC_ACTION_SET_PAR,
-	TRAC_ACTION_SET_HANDLER_NAME,
-	TRAC_ACTION_ENABLE,
-	TRAC_ACTION_DISABLE,
-	TRAC_ACTION_REFERENCE,
-	TRAC_ACTION_RAW_EXTRACT,
-	TRAC_ACTION_REM_NON_RAP,
-	TRAC_ACTION_SET_KIND,
-	TRAC_ACTION_REM_KIND,
-	TRAC_ACTION_SET_ID,
-	TRAC_ACTION_SET_UDTA,
-	TRAC_ACTION_SWAP_ID,
-	TRAC_ACTION_REM_NON_REFS,
-	TRAC_ACTION_SET_CLAP,
-	TRAC_ACTION_SET_MX,
-	TRAC_ACTION_SET_EDITS,
-	TRAC_ACTION_SET_TIME,
-	TRAC_ACTION_SET_MEDIA_TIME,
+	TRACK_ACTION_REM_TRACK= 0,
+	TRACK_ACTION_SET_LANGUAGE,
+	TRACK_ACTION_SET_DELAY,
+	TRACK_ACTION_SET_KMS_URI,
+	TRACK_ACTION_SET_PAR,
+	TRACK_ACTION_SET_HANDLER_NAME,
+	TRACK_ACTION_ENABLE,
+	TRACK_ACTION_DISABLE,
+	TRACK_ACTION_REFERENCE,
+	TRACK_ACTION_RAW_EXTRACT,
+	TRACK_ACTION_REM_NON_RAP,
+	TRACK_ACTION_SET_KIND,
+	TRACK_ACTION_REM_KIND,
+	TRACK_ACTION_SET_ID,
+	TRACK_ACTION_SET_UDTA,
+	TRACK_ACTION_SWAP_ID,
+	TRACK_ACTION_REM_NON_REFS,
+	TRACK_ACTION_SET_CLAP,
+	TRACK_ACTION_SET_MX,
+	TRACK_ACTION_SET_EDITS,
+	TRACK_ACTION_SET_TIME,
+	TRACK_ACTION_SET_MEDIA_TIME,
 } TrackActionType;
 
 typedef struct
@@ -236,7 +236,7 @@ Bool align_cat=GF_TRUE;
 
 Double mpd_live_duration=0;
 Bool do_hint=0, do_save=0, full_interleave=0, do_frag=0, hint_interleave=0, dump_rtp=0, regular_iod=0, remove_sys_tracks=0, remove_hint=0, remove_root_od=0;
-Bool print_sdp=0, open_edit=0, dump_cr=0, force_ocr=0, encode=0, do_scene_log=0, dump_srt=0, dump_ttxt=0, do_saf=0, dump_m2ts=0, dump_cart=0;
+Bool print_sdp=0, open_edit=0, dump_cr=0, force_ocr=0, encode=0, do_scene_log=0, dump_srt=0, dump_ttxt=0, do_saf=0, dump_m2ts=0, dump_cart=0, dump_chunk=0;
 Bool do_hash=0, verbose=0, force_cat=0, pack_wgt=0, single_group=0, clean_groups=0, dash_live=0, no_fragments_defaults=0;
 Bool single_traf_per_moof=0, tfdt_per_traf=0, hls_clock=0, do_mpd_rip=0, merge_vtt_cues=0, get_nb_tracks=0;
 u32 compress_moov=0;
@@ -352,7 +352,7 @@ MP4BoxArg m4b_gen_args[] =
  	{"inter", NULL, "interleave file, producing track chunks with given duration in ms. A value of 0 disables interleaving ", "0.5", NULL, GF_ARG_DOUBLE, 0, parse_store_mode, 0, ARG_IS_FUN},
  	MP4BOX_ARG("old-inter", "same as [-inter]() but without drift correction", GF_ARG_DOUBLE, GF_ARG_HINT_EXPERT, parse_store_mode, 1, ARG_IS_FUN),
  	MP4BOX_ARG("tight", "tight interleaving (sample based) of the file. This reduces disk seek operations but increases file size", GF_ARG_BOOL, GF_ARG_HINT_EXPERT, &full_interleave, 0, ARG_OPEN_EDIT|ARG_NEED_SAVE),
- 	MP4BOX_ARG("flat", "store file with all media data first, non-interleaved. This speeds up writing time when creating new files", GF_ARG_BOOL, 0, &do_flat, 0, ARG_OPEN_EDIT| ARG_NO_INPLACE),
+ 	MP4BOX_ARG("flat", "store file with all media data first, non-interleaved. This speeds up writing time when creating new files", GF_ARG_BOOL, 0, &do_flat, 0, ARG_NO_INPLACE),
  	MP4BOX_ARG("frag", "fragment file, producing track fragments of given duration in ms. This disables interleaving", GF_ARG_DOUBLE, 0, parse_store_mode, 2, ARG_IS_FUN),
  	MP4BOX_ARG("out", "specify ISOBMFF output file name. By default input file is overwritten", GF_ARG_STRING, 0, &outName, 0, 0),
  	MP4BOX_ARG("co64","force usage of 64-bit chunk offsets for ISOBMF files", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &force_co64, 0, ARG_OPEN_EDIT),
@@ -376,32 +376,32 @@ MP4BoxArg m4b_gen_args[] =
 		"  - SMPTE codes: `h:m:s;nb_f/fps chapter_name` and `h:m:s;nb_f chapter_name` with `nb_f` the number of frames and `fps` the framerate with 1 chapter per line\n"
 		"  - Common syntax: `CHAPTERX=h:m:s[:ms or .ms]` on first line and `CHAPTERXNAME=name` on next line (reverse order accepted)", GF_ARG_STRING, GF_ARG_HINT_ADVANCED, &chap_file, 0, ARG_OPEN_EDIT),
  	MP4BOX_ARG("chapqt", "set chapter information from given file, using QT signaling for text tracks", GF_ARG_STRING, GF_ARG_HINT_ADVANCED, &chap_file_qt, 0, ARG_OPEN_EDIT),
- 	MP4BOX_ARG_S("set-track-id", "id1:id2", "change id of track with id1 to id2", 0, parse_track_action, TRAC_ACTION_SET_ID, ARG_IS_FUN),
- 	MP4BOX_ARG_S("swap-track-id", "id1:id2", "swap the id between tracks with id1 to id2", 0, parse_track_action, TRAC_ACTION_SWAP_ID, ARG_IS_FUN),
- 	MP4BOX_ARG("rem", "remove given track from file", GF_ARG_INT, 0, parse_track_action, TRAC_ACTION_REM_TRACK, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("set-track-id", "id1:id2", "change id of track with id1 to id2", 0, parse_track_action, TRACK_ACTION_SET_ID, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("swap-track-id", "id1:id2", "swap the id between tracks with id1 to id2", 0, parse_track_action, TRACK_ACTION_SWAP_ID, ARG_IS_FUN),
+ 	MP4BOX_ARG("rem", "remove given track from file", GF_ARG_INT, 0, parse_track_action, TRACK_ACTION_REM_TRACK, ARG_IS_FUN),
  	MP4BOX_ARG("rap", "remove all non-RAP samples from given track", GF_ARG_INT, GF_ARG_HINT_ADVANCED, parse_rap_ref, 0, ARG_IS_FUN | ARG_EMPTY),
  	MP4BOX_ARG("refonly", "remove all non-reference pictures from given track", GF_ARG_INT, GF_ARG_HINT_ADVANCED, parse_rap_ref, 1, ARG_IS_FUN | ARG_EMPTY),
- 	MP4BOX_ARG("enable", "enable given track", GF_ARG_INT, 0, parse_track_action, TRAC_ACTION_ENABLE, ARG_IS_FUN),
- 	MP4BOX_ARG("disable", "disable given track", GF_ARG_INT, 0, parse_track_action, TRAC_ACTION_DISABLE, ARG_IS_FUN),
+ 	MP4BOX_ARG("enable", "enable given track", GF_ARG_INT, 0, parse_track_action, TRACK_ACTION_ENABLE, ARG_IS_FUN),
+ 	MP4BOX_ARG("disable", "disable given track", GF_ARG_INT, 0, parse_track_action, TRACK_ACTION_DISABLE, ARG_IS_FUN),
  	{"timescale", NULL, "set movie timescale to given value (ticks per second)", "600", NULL, GF_ARG_INT, 0, &timescale, 0, ARG_OPEN_EDIT},
- 	MP4BOX_ARG_S("lang", "[tkID=]LAN", "set language. LAN is the BCP-47 code (eng, en-UK, ...). If no track ID is given, sets language to all tracks", 0, parse_track_action, TRAC_ACTION_SET_LANGUAGE, ARG_IS_FUN),
- 	MP4BOX_ARG_S("delay", "tkID=TIME", "set track start delay in ms or in fractional seconds (`N/D`)", 0, parse_track_action, TRAC_ACTION_SET_DELAY, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("lang", "[tkID=]LAN", "set language. LAN is the BCP-47 code (eng, en-UK, ...). If no track ID is given, sets language to all tracks", 0, parse_track_action, TRACK_ACTION_SET_LANGUAGE, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("delay", "tkID=TIME", "set track start delay (>0) or initial skip (<0) in ms or in fractional seconds (`N/D`)", 0, parse_track_action, TRACK_ACTION_SET_DELAY, ARG_IS_FUN),
  	MP4BOX_ARG_S("par", "tkID=PAR", "set visual track pixel aspect ratio. PAR is:\n"
 					"  - N:D: set PAR to N:D in track, do not modify the bitstream\n"
 					"  - wN:D: set PAR to N:D in track and try to modify the bitstream\n"
 					"  - none: remove PAR info from track, do not modify the bitstream\n"
 					"  - auto: retrieve PAR info from bitstream and set it in track\n"
-					"  - force: force 1:1 PAR in track, do not modify the bitstream", GF_ARG_HINT_ADVANCED, parse_track_action, TRAC_ACTION_SET_PAR, ARG_IS_FUN
+					"  - force: force 1:1 PAR in track, do not modify the bitstream", GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_SET_PAR, ARG_IS_FUN
 					),
  	MP4BOX_ARG_S("clap", "tkID=CLAP", "set visual track clean aperture. CLAP is `Wn,Wd,Hn,Hd,HOn,HOd,VOn,VOd` or `none`\n"
  			"- n, d: numerator, denominator\n"
 	        "- W, H, HO, VO: clap width, clap height, clap horizontal offset, clap vertical offset\n"
- 			, GF_ARG_HINT_ADVANCED, parse_track_action, TRAC_ACTION_SET_CLAP, ARG_IS_FUN),
+ 			, GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_SET_CLAP, ARG_IS_FUN),
  	MP4BOX_ARG_S("mx", "tkID=MX", "set track matrix, with MX is M1:M2:M3:M4:M5:M6:M7:M8:M9 in 16.16 fixed point intergers or hexa"
- 			, GF_ARG_HINT_ADVANCED, parse_track_action, TRAC_ACTION_SET_MX, ARG_IS_FUN),
-	MP4BOX_ARG_S("kind", "tkID=schemeURI=value", "set kind for the track or for all tracks using `all=schemeURI=value`", 0, parse_track_action, TRAC_ACTION_SET_KIND, ARG_IS_FUN),
-	MP4BOX_ARG_S("kind-rem", "tkID=schemeURI=value", "remove kind if given schemeID for the track or for all tracks with `all=schemeURI=value`", 0, parse_track_action, TRAC_ACTION_REM_KIND, ARG_IS_FUN),
- 	MP4BOX_ARG_S("name", "tkID=NAME", "set track handler name to NAME (UTF-8 string)", GF_ARG_HINT_ADVANCED, parse_track_action, TRAC_ACTION_SET_HANDLER_NAME, ARG_IS_FUN),
+ 			, GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_SET_MX, ARG_IS_FUN),
+	MP4BOX_ARG_S("kind", "tkID=schemeURI=value", "set kind for the track or for all tracks using `all=schemeURI=value`", 0, parse_track_action, TRACK_ACTION_SET_KIND, ARG_IS_FUN),
+	MP4BOX_ARG_S("kind-rem", "tkID=schemeURI=value", "remove kind if given schemeID for the track or for all tracks with `all=schemeURI=value`", 0, parse_track_action, TRACK_ACTION_REM_KIND, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("name", "tkID=NAME", "set track handler name to NAME (UTF-8 string)", GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_SET_HANDLER_NAME, ARG_IS_FUN),
  	MP4BOX_ARG("itags", "set iTunes tags to file, see `-h tags`", GF_ARG_STRING, GF_ARG_HINT_ADVANCED, &itunes_tags, 0, ARG_OPEN_EDIT),
  	MP4BOX_ARG("group-add", "create a new grouping information in the file. Format is a colon-separated list of following options:\n"
 	        "- refTrack=ID: ID of the track used as a group reference. If not set, the track will belong to the same group as the "
@@ -416,7 +416,7 @@ MP4BoxArg m4b_gen_args[] =
 	MP4BOX_ARG("group-rem-track", "remove given track from its group", GF_ARG_INT, GF_ARG_HINT_ADVANCED, parse_tsel_args, TSEL_ACTION_REMOVE_TSEL, ARG_IS_FUN),
 	MP4BOX_ARG("group-rem", "remove the track's group", GF_ARG_INT, GF_ARG_HINT_ADVANCED, parse_tsel_args, TSEL_ACTION_REMOVE_ALL_TSEL_IN_GROUP, ARG_IS_FUN),
 	MP4BOX_ARG("group-clean", "remove all group information from all tracks", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &clean_groups, 0, ARG_OPEN_EDIT),
-	MP4BOX_ARG_S("ref", "id:XXXX:refID", "add a reference of type 4CC from track ID to track refID", GF_ARG_HINT_ADVANCED, parse_track_action, TRAC_ACTION_REFERENCE, ARG_IS_FUN),
+	MP4BOX_ARG_S("ref", "id:XXXX:refID", "add a reference of type 4CC from track ID to track refID", GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_REFERENCE, ARG_IS_FUN),
 	MP4BOX_ARG("keep-utc", "keep UTC timing in the file after edit", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &keep_utc, 0, 0),
 	MP4BOX_ARG_S("udta", "tkID:[OPTS]", "set udta for given track or movie if tkID is 0. OPTS is a colon separated list of:\n"
 	        "- type=CODE: 4CC code of the UDTA (not needed for `box=` option)\n"
@@ -425,7 +425,7 @@ MP4BoxArg m4b_gen_args[] =
 	        "- src=FILE: location of the udta data (will be stored in a single box of type CODE)\n"
 	        "- src=base64,DATA: base64 encoded udta data (will be stored in a single box of type CODE)\n"
 	        "- str=STRING: use the given string as payload for the udta box\n"
-	        "Note: If no source is set, UDTA of type CODE will be removed\n", GF_ARG_HINT_ADVANCED, parse_track_action, TRAC_ACTION_SET_UDTA, ARG_IS_FUN|ARG_OPEN_EDIT),
+	        "Note: If no source is set, UDTA of type CODE will be removed\n", GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_SET_UDTA, ARG_IS_FUN|ARG_OPEN_EDIT),
 	MP4BOX_ARG_S("patch", "[tkID=]FILE", "apply box patch described in FILE, for given trackID if set", GF_ARG_HINT_ADVANCED, parse_boxpatch, 0, ARG_IS_FUN),
 	MP4BOX_ARG("bo", "freeze the order of boxes in input file", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &freeze_box_order, 0, 0),
 	MP4BOX_ARG("init-seg", "use the given file as an init segment for dumping or for encryption", GF_ARG_STRING, GF_ARG_HINT_ADVANCED, &use_init_seg, 0, 0),
@@ -433,21 +433,19 @@ MP4BoxArg m4b_gen_args[] =
 	MP4BOX_ARG("xmov", "same as zmov and wraps ftyp in otyp", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, parse_compress, 1, ARG_IS_FUN),
  	MP4BOX_ARG_S("edits", "tkID=EDITS", "set edit list. The following syntax is used (no separators between entries):\n"
 			" - `r`: removes all edits\n"
-			" - `eSTART`: add empty edit with given start time (fractional or milliseconds). START can be\n"
-			"   - `VAL`: start time in milliseconds (media duration used as edit duration)\n"
-			"   - `VAL-DUR`: start time and duration in milliseconds\n"
-			"   - `VAL/NUM`: start time as fractional seconds (media duration used as edit duration)\n"
-			"   - `VAL-DUR/NUM`: start time and duration as fractional seconds\n"
-			" - `eSTART,MEDIA[,RATE]`: add regular edit with given start, media start time (ms or fraction) and rate (fraction or INT/1000)\n"
+			" - `eSTART`: add empty edit with given start time. START can be\n"
+			"   - `VAL`: start time in seconds (int, double, fraction), media duration used as edit duration\n"
+			"   - `VAL-DUR`: start time and duration in seconds (int, double, fraction)\n"
+			" - `eSTART,MEDIA[,RATE]`: add regular edit with given start, media start time in seconds (int, double, fraction) and rate (fraction or INT)\n"
 			" - Examples: \n"
-			"   - `-edits=re0-5/1e5-3/1,100/25`: remove edits, add empty edit at 0s for 5s, then add regular edit at 5s for 3s starting at 4s in media track\n"
-			"   - `-edits=re0-4/1,0,2/1`: remove edits, add single edit at 0s for 4s starting at 0s in media track and playing at speed 2\n"
-				, 0, parse_track_action, TRAC_ACTION_SET_EDITS, ARG_IS_FUN),
+			"   - `re0-5e5-3,4`: remove edits, add empty edit at 0s for 5s, then add regular edit at 5s for 3s starting at 4s in media track\n"
+			"   - `re0-4,0,0.5`: remove edits, add single edit at 0s for 4s starting at 0s in media track and playing at speed 0.5\n"
+				, 0, parse_track_action, TRACK_ACTION_SET_EDITS, ARG_IS_FUN),
  	MP4BOX_ARG("moovpad", "specify amount of padding to keep after moov box for later inplace editing - if 0, moov padding is disabled", GF_ARG_INT, GF_ARG_HINT_EXPERT, &moov_pading, 0, ARG_NEED_SAVE),
  	MP4BOX_ARG("no-inplace", "disable inplace rewrite", GF_ARG_BOOL, GF_ARG_HINT_EXPERT, &no_inplace, 0, 0),
  	MP4BOX_ARG("hdr", "update HDR information based on given XML", GF_ARG_STRING, GF_ARG_HINT_EXPERT, &high_dynamc_range_filename, 0, ARG_OPEN_EDIT),
- 	MP4BOX_ARG_S("time", "[tkID=]DAY/MONTH/YEAR-H:M:S", "set movie or track creation time", GF_ARG_HINT_EXPERT, parse_track_action, TRAC_ACTION_SET_TIME, ARG_IS_FUN),
- 	MP4BOX_ARG_S("mtime", "tkID=DAY/MONTH/YEAR-H:M:S", "set media creation time", GF_ARG_HINT_EXPERT, parse_track_action, TRAC_ACTION_SET_MEDIA_TIME, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("time", "[tkID=]DAY/MONTH/YEAR-H:M:S", "set movie or track creation time", GF_ARG_HINT_EXPERT, parse_track_action, TRACK_ACTION_SET_TIME, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("mtime", "tkID=DAY/MONTH/YEAR-H:M:S", "set media creation time", GF_ARG_HINT_EXPERT, parse_track_action, TRACK_ACTION_SET_MEDIA_TIME, ARG_IS_FUN),
 	{0}
 };
 
@@ -457,13 +455,16 @@ void PrintGeneralUsage()
 	gf_sys_format_help(helpout, help_flags, "# General Options\n"
 		"MP4Box is a multimedia packager, with a vast number of functionalities: conversion, splitting, hinting, dumping, DASH-ing, encryption, transcoding and others.\n"
 		"MP4Box provides a large set of options, classified by categories (see [-h]()). These options do not follow any particular ordering.\n"
-		"MP4Box performs in-place rewrite of IsoMedia files (the input file is overwritten). You can change this behavior by using the [-out]() option.\n"
-		"MP4Box stores by default the file with 0.5 second interleaving and meta-data (`moov` ...) at the beginning, making it suitable for HTTP streaming. This may however takes longer to store the file, use [-flat]() to change this behavior.\n"
+		"  \n"
+		"By default, MP4Box rewrites the input file. You can change this behavior by using the [-out]() option.\n"
+		"MP4Box stores by default the file with 0.5 second interleaving and meta-data (`moov` ...) at the beginning, making it suitable for HTTP download-and-play. This may however takes longer to store the file, use [-flat]() to change this behavior.\n"
+		"  \n"
 		"MP4Box usually generates a temporary file when creating a new IsoMedia file. The location of this temporary file is OS-dependent, and it may happen that the drive/partition the temporary file is created on has not enough space or no write access. In such a case, you can specify a temporary file location with [-tmp]().\n"
-		"Note: Track operations identify tracks through their ID (usually referred to as tkID in the help), not their order.\n"
+		"  \n"
 		"Option values:\n"
 		"Unless specified otherwise, an option of type `integer` expects a trackID value following it."
 		"An option of type `boolean` expects no following value."
+		"Note: Track operations identify tracks through their ID (usually referred to as tkID in the help), not their order.\n"
 		"  \n"
 	);
 
@@ -478,22 +479,26 @@ void PrintGeneralUsage()
 
 MP4BoxArg m4b_split_args[] =
 {
- 	MP4BOX_ARG("split", "split in files of given max duration", GF_ARG_STRING, 0, parse_split, 0, ARG_IS_FUN),
+ 	MP4BOX_ARG("split", "split in files of given max duration (float number) in seconds. A trailing unit can be specified:\n"
+	"- `M`, `m`: duration is in minutes\n"
+	"- `H`, `h`: size is in hours", GF_ARG_STRING, 0, parse_split, 0, ARG_IS_FUN),
 	MP4BOX_ARG_ALT("split-rap", "splitr", "split in files at each new RAP", GF_ARG_STRING, 0, parse_split, 1, ARG_IS_FUN),
-	MP4BOX_ARG_ALT("split-size", "splits", "split in files of given max size (in kb)", GF_ARG_STRING, 0, parse_split, 2, ARG_IS_FUN),
-	MP4BOX_ARG_ALT("split-chunk", "splitx", "extract the specified time range formatted as:\n"
-	"- `S:E` or `S-E`: `S` start time and `E` end time in seconds (int, double, fraction)\n"
-	"- `S:end` or `S:end-N`: `S` start time in seconds (int, double), `N` number of seconds (int, double) before the end\n"
-	"- `S-E`: start and end dates, each formatted as `HH:MM:SS.ms` or `MM:SS.ms`", GF_ARG_STRING, 0, parse_split, 3, ARG_IS_FUN),
-	MP4BOX_ARG("splitz", "same as -splitx, but adjust range times so that ranges `A:B` and `B:C` share exactly the same boundary `B`:\n"
+	MP4BOX_ARG_ALT("split-size", "splits", "split in files of given max size (integer number) in kilobytes. A trailing unit can be specified:\n"
+	"- `M`, `m`: size is in megabytes\n"
+	"- `G`, `g`: size is in gigabytes", GF_ARG_STRING, 0, parse_split, 2, ARG_IS_FUN),
+	MP4BOX_ARG_ALT("split-chunk", "splitx", "extract the specified time range as follows:\n"
+	"- the start time is moved to the RAP sample closest to the specified start time\n"
+	"- the end time is kept as requested"
+		, GF_ARG_STRING, 0, parse_split, 3, ARG_IS_FUN),
+	MP4BOX_ARG("splitz", "extract the specified time range so that ranges `A:B` and `B:C` share exactly the same boundary `B`:\n"
 	"- the start time is moved to the RAP sample at or after the specified start time\n"
 	"- the end time is moved to the frame preceeding the RAP sample at or following the specified end time"
-	, GF_ARG_STRING, 0, parse_split, 4, ARG_IS_FUN),
-	MP4BOX_ARG("splitg", "same as -splitx, but adjust range times so that:\n"
+		, GF_ARG_STRING, 0, parse_split, 4, ARG_IS_FUN),
+	MP4BOX_ARG("splitg", "extract the specified time range as follows:\n"
 	"- the start time is moved to the RAP sample at or before the specified start time\n"
 	"- the end time is moved to the frame preceeding the RAP sample at or following the specified end time"
-	, GF_ARG_STRING, 0, parse_split, 5, ARG_IS_FUN),
-	MP4BOX_ARG("splitf", "same as -splitx but insert edits such that the extracted output is exactly the specified range\n", GF_ARG_STRING, 0, parse_split, 6, ARG_IS_FUN),
+		, GF_ARG_STRING, 0, parse_split, 5, ARG_IS_FUN),
+	MP4BOX_ARG("splitf", "extract the specified time range and insert edits such that the extracted output is exactly the specified range\n", GF_ARG_STRING, 0, parse_split, 6, ARG_IS_FUN),
 	{0}
 };
 
@@ -509,13 +514,21 @@ static void PrintSplitUsage()
 		"The input file must have enough random access points in order to be split. If this is not the case, you will have to re-encode the content.\n"
 		"You can add media to a file and split it in the same pass. In this case, the destination file (the one which would be obtained without splitting) will not be stored.\n"
 		"  \n"
+		"Time ranges are specified as follows:\n"
+		"- `S-E`: `S` start and `E` end times, formatted as `HH:MM:SS.ms`, `MM:SS.ms` or time in seconds (int, double, fraction)\n"
+		"- `S:E`: `S` start time and `E` end times in seconds (int, double, fraction)\n"
+		"- `S:end` or `S:end-N`: `S` start time in seconds (int, double), `N` number of seconds (int, double) before the end\n"
+		"  \n"
 		"MP4Box splitting runs a filter session using the `reframer` filter as follows:\n"
 		"- `splitrange` option of the reframer is always set\n"
+		"- source is demuxed with `alltk` option set\n"
 		"- start and end ranges are passed to `xs` and `xe` options of the reframer\n"
-		"- `xadjust` and `xround=after` options are enforced for `-splitz`\n"
-		"- `xadjust` and `xround=before` options are enforced for `-splitg`\n"
-		"- `xround=seek` option is enforced for `-splitf`\n"
-		"- for other modes, `xround` defaults to `closest` if not specified at prompt\n"
+		"- for `-splitz`, options `xadjust` and `xround=after` are enforced\n"
+		"- for `-splitg`, options `xadjust` and `xround=before` are enforced\n"
+		"- for `-splitf`, option `xround=seek` is enforced and `propbe_ref`set if not specified at prompt\n"
+		"- for `-splitx`, option `xround=closest` and `propbe_ref` are enforced if not specified at prompt\n"
+		"  \n"
+		"The default output storage mode is to full interleave and will require a temp file for each output. This behaviour can be modified using -flat, -newfs, -inter and -frag\n"
 		"  \n"
 	);
 
@@ -705,7 +718,7 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 		"  - negative integer: specifies duration in number of coded frames", NULL, NULL, GF_ARG_INT, 0),
 	GF_DEF_ARG("start", NULL, "`C` target start time in source media, may not be supported depending on the source", NULL, NULL, GF_ARG_DOUBLE, 0),
 	GF_DEF_ARG("lang", NULL, "`S` set imported media language code", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("delay", NULL, "`S` set imported media initial delay in ms or as fractional seconds (`N/D`)", NULL, NULL, GF_ARG_INT, 0),
+	GF_DEF_ARG("delay", NULL, "`S` set imported media initial delay (>0) or initial skip (<0) in ms or as fractional seconds (`N/D`)", NULL, NULL, GF_ARG_INT, 0),
 	GF_DEF_ARG("par", NULL, "`S` set visual pixel aspect ratio (see [-par](MP4B_GEN) )", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("clap", NULL, "`S` set visual clean aperture (see [-clap](MP4B_GEN) )", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("mx", NULL, "`S` set track matrix (see [-mx](MP4B_GEN) )", NULL, NULL, GF_ARG_STRING, 0),
@@ -822,8 +835,8 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 		"  - no value: use the previous sample duration\n"
 		"  - integer: indicate the duration in milliseconds\n"
 		"  - N/D: indicate the duration as fractional second", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("fstat", NULL, "`C` print filter session stats after import", NULL, NULL, GF_ARG_BOOL, 0),
-	GF_DEF_ARG("fgraph", NULL, "`C` print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
+	GF_DEF_ARG("stats", "fstat", "`C` print filter session stats after import", NULL, NULL, GF_ARG_BOOL, 0),
+	GF_DEF_ARG("graph", "fgraph", "`C` print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
 	{"sopt:[OPTS]", NULL, "set `OPTS` as additional arguments to source filter. `OPTS` can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
 	{"dopt:[OPTS]", NULL, "`X` set `OPTS` as additional arguments to [destination filter](mp4mx). OPTS can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
 	{"@f1[:args][@fN:args]", NULL, "set a filter chain to insert before the muxer. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](Filters). A `@@` separator starts a new chain (see DASH help). The last filter in each chain shall not have any ID specified"},
@@ -973,7 +986,7 @@ MP4BoxArg m4b_crypt_args[] =
 {
  	MP4BOX_ARG("crypt", "encrypt the input file using the given `CryptFile`", GF_ARG_STRING, 0, parse_cryp, 0, ARG_IS_FUN),
  	MP4BOX_ARG("decrypt", "decrypt the input file, potentially using the given `CryptFile`. If `CryptFile` is not given, will fail if the key management system is not supported", GF_ARG_STRING, 0, parse_cryp, 1, ARG_IS_FUN | ARG_EMPTY),
- 	MP4BOX_ARG_S("set-kms", "tkID=kms_uri", "change ISMA/OMA KMS location for a given track or for all tracks if `all=` is used", 0, parse_track_action, TRAC_ACTION_SET_KMS_URI, ARG_IS_FUN),
+ 	MP4BOX_ARG_S("set-kms", "tkID=kms_uri", "change ISMA/OMA KMS location for a given track or for all tracks if `all=` is used", 0, parse_track_action, TRACK_ACTION_SET_KMS_URI, ARG_IS_FUN),
  	{0}
 };
 
@@ -1075,8 +1088,9 @@ MP4BoxArg m4b_dump_args[] =
  	MP4BOX_ARG("std", "dump/write to stdout and assume stdout is opened in binary mode", GF_ARG_BOOL, 0, &dump_std, 2, 0),
  	MP4BOX_ARG("stdb", "dump/write to stdout and try to reopen stdout in binary mode", GF_ARG_BOOL, 0, &dump_std, 1, 0),
  	MP4BOX_ARG("tracks", "print the number of tracks on stdout", GF_ARG_BOOL, 0, &get_nb_tracks, 0, 0),
- 	MP4BOX_ARG("info", "print movie info (no parameter) or track info with specified ID", GF_ARG_STRING, 0, parse_file_info, 0, ARG_IS_FUN|ARG_EMPTY),
+ 	MP4BOX_ARG("info", "print movie info (no parameter) or track extended info with specified ID", GF_ARG_STRING, 0, parse_file_info, 0, ARG_IS_FUN|ARG_EMPTY),
  	MP4BOX_ARG("infon", "print track info for given track number, 1 being the first track in the file", GF_ARG_STRING, 0, parse_file_info, 1, ARG_IS_FUN|ARG_EMPTY),
+ 	MP4BOX_ARG("infox", "print movie and track extended info (same as -info N` for each track)", GF_ARG_BOOL, 0, parse_file_info, 2, ARG_IS_FUN|ARG_EMPTY),
  	MP4BOX_ARG_ALT("diso", "dmp4", "dump IsoMedia file boxes in XML output", GF_ARG_BOOL, 0, &dump_isom, 1, 0),
  	MP4BOX_ARG("dxml", "dump IsoMedia file boxes and known track samples in XML output", GF_ARG_BOOL, 0, &dump_isom, 2, 0),
  	MP4BOX_ARG("disox", "dump IsoMedia file boxes except sample tables in XML output", GF_ARG_BOOL, 0, &dump_isom, 3, 0),
@@ -1104,6 +1118,7 @@ MP4BoxArg m4b_dump_args[] =
  	MP4BOX_ARG("dsapd", "same as [-dsap]() but only print DTS", GF_ARG_INT, 0, parse_dsap, 3, ARG_IS_FUN),
  	MP4BOX_ARG("dsapp", "same as [-dsap]() but only print presentation time", GF_ARG_INT, 4, parse_dsap, 4, ARG_IS_FUN),
  	MP4BOX_ARG("dcr", "dump ISMACryp samples structure to XML output", GF_ARG_BOOL, 0, &dump_cr, 0, 0),
+ 	MP4BOX_ARG("dchunk", "dump chunk info", GF_ARG_BOOL, 0, &dump_chunk, 0, 0),
  	MP4BOX_ARG("dump-cover", "extract cover art", GF_ARG_BOOL, 0, &dump_cart, 0, 0),
  	MP4BOX_ARG("dump-chap", "extract chapter file as TTXT format", GF_ARG_BOOL, 0, &dump_chap, 1, 0),
  	MP4BOX_ARG("dump-chap-ogg", "extract chapter file as OGG format", GF_ARG_BOOL, 0, &dump_chap, 2, 0),
@@ -1112,9 +1127,9 @@ MP4BoxArg m4b_dump_args[] =
  	MP4BOX_ARG("mergevtt", "merge vtt cues while dumping", GF_ARG_BOOL, 0, &merge_vtt_cues, 0, 0),
  	MP4BOX_ARG("ttxt", "convert input subtitle to GPAC TTXT format if no parameter. Otherwise, dump given text track to GPAC TTXT format", GF_ARG_INT, 0, parse_ttxt, 0, ARG_IS_FUN),
  	MP4BOX_ARG("srt", "convert input subtitle to SRT format if no parameter. Otherwise, dump given text track to SRT format", GF_ARG_INT, 0, parse_ttxt, 1, ARG_IS_FUN),
- 	MP4BOX_ARG("stat", "generate node/field statistics for scene", GF_ARG_BOOL, 0, &stat_level, 1, 0),
- 	MP4BOX_ARG("stats", "generate node/field statistics per Access Unit", GF_ARG_BOOL, 0, &stat_level, 2, 0),
- 	MP4BOX_ARG("statx", "generate node/field statistics for scene after each AU", GF_ARG_BOOL, 0, &stat_level, 3, 0),
+ 	MP4BOX_ARG("nstat", "generate node/field statistics for scene", GF_ARG_BOOL, 0, &stat_level, 1, 0),
+ 	MP4BOX_ARG("nstats", "generate node/field statistics per Access Unit", GF_ARG_BOOL, 0, &stat_level, 2, 0),
+ 	MP4BOX_ARG("nstatx", "generate node/field statistics for scene after each AU", GF_ARG_BOOL, 0, &stat_level, 3, 0),
  	MP4BOX_ARG("hash", "generate SHA-1 Hash of the input file", GF_ARG_BOOL, 0, &do_hash, 0, 0),
  	MP4BOX_ARG("comp", "replace with compressed version all top level box types given as parameter, formatted as `orig_4cc_1=comp_4cc_1[,orig_4cc_2=comp_4cc_2]`", GF_ARG_STRING, 0, parse_comp_box, 0, ARG_IS_FUN),
  	MP4BOX_ARG("topcount", "print to stdout the number of top-level boxes matching box types given as parameter, formatted as `4cc_1,4cc_2N`", GF_ARG_STRING, 0, parse_comp_box, 2, ARG_IS_FUN),
@@ -1168,22 +1183,30 @@ MP4BoxArg m4b_meta_args[] =
 		" - If `e` is set (float, in sec), import all sync samples between `t` and `e`\n"
 		" - If `i` is set (float, in sec), sets time increment between samples to import\n"
 		"- split_tiles: for an HEVC tiled image, each tile is stored as a separate item\n"
-		"- image-size=wxh: force setting the image size and ignoring the bitstream info, used for grid images also\n"
+		"- image-size=wxh: force setting the image size and ignoring the bitstream info, used for grid, overlay and identity derived images also\n"
 		"- rotation=a: set the rotation angle for this image to 90*a degrees anti-clockwise\n"
 		"- mirror-axis=axis: set the mirror axis: vertical, horizontal\n"
 		"- clap=Wn,Wd,Hn,Hd,HOn,HOd,VOn,VOd: see track clap\n"
+ 		"- image-pasp=axb: force the aspect ratio of the image\n"
+ 		"- image-pixi=(a|a,b,c): force the bit depth (1 or 3 channels)\n"
 		"- hidden: indicate that this image item should be hidden\n"
 		"- icc_path: path to icc data to add as color info\n"
 		"- alpha: indicate that the image is an alpha image (should use ref=auxl also)\n"
+		"- depth: indicate that the image is a depth image (should use ref=auxl also)\n"
+		"- it=ID: indicate the item ID of the source item to import\n"
+		"- itp=ID: same as `it=` but copy over all properties of the source item\n"
 		"- tk=tkID: indicate the track ID of the source sample. If 0, uses the first video track in the file\n"
 		"- samp=N: indicate the sample number of the source sample\n"
-		"- ref: do not copy the data but refer to the final sample location\n"
+		"- ref: do not copy the data but refer to the final sample/item location, ignored if `filepath` is set\n"
 		"- agrid[=AR]: creates an automatic grid from the image items present in the file, in their declaration order. The grid will **try to** have `AR` aspect ratio if specified (float), or the aspect ratio of the source otherwise. The grid will be the primary item and all other images will be hidden\n"
+		"- av1_op_index: select the AV1 operating point to use via a1op box\n"
 		"- any other options will be passed as options to the media importer, see [-add]()"
 		, GF_ARG_STRING, 0, parse_meta_args, META_ACTION_ADD_IMAGE_ITEM, ARG_IS_FUN),
-	MP4BOX_ARG("add-image-grid", "create an image grid item, with parameter syntax `grid[:opt1:optN]`\n"
+	MP4BOX_ARG("add-derived-image", "create an image grid, overlay or identity item, with parameter syntax `:type=(grid|iovl|iden)[:opt1:optN]`\n"
 		"- image-grid-size=rxc: set the number of rows and columns of the grid\n"
-	    "- any other options from [-add-image]() can be used\n", GF_ARG_STRING, 0, parse_meta_args, META_ACTION_ADD_IMAGE_GRID, ARG_IS_FUN),
+ 		"- image-overlay-offsets=h,v[,h,v]*: set the horizontal and vertical offsets of the images in the overlay\n"
+ 		"- image-overlay-color=r,g,b,a: set the canvas color of the overlay [0-65535]\n"
+	    "- any other options from [-add-image]() can be used\n", GF_ARG_STRING, 0, parse_meta_args, META_ACTION_ADD_IMAGE_DERIVED, ARG_IS_FUN),
 	MP4BOX_ARG_S_ALT("rem-item", "rem-image", "item_ID[:tk=tkID]", "remove resource from meta", 0, parse_meta_args, META_ACTION_REM_ITEM, ARG_IS_FUN),
 	MP4BOX_ARG_S("set-primary", "item_ID[:tk=tkID]", "set item as primary for meta", 0, parse_meta_args, META_ACTION_SET_PRIMARY_ITEM, ARG_IS_FUN),
 	MP4BOX_ARG_S("set-xml", "xml_file_path[:tk=tkID][:binary]", "set meta XML data", 0, parse_meta_args, META_ACTION_SET_XML, ARG_IS_FUN),
@@ -1406,8 +1429,8 @@ MP4BoxArg m4b_usage_args[] =
  	MP4BOX_ARG("languages", "list supported ISO 639 languages", GF_ARG_BOOL, 0, PrintLanguages, 0, ARG_IS_FUN),
  	MP4BOX_ARG("boxes", "list all supported ISOBMF boxes and their syntax", GF_ARG_BOOL, 0, PrintBuiltInBoxes, 0, ARG_IS_FUN),
  	MP4BOX_ARG("boxcov", "perform coverage of box IO coode", GF_ARG_BOOL, GF_ARG_HINT_HIDE, PrintBuiltInBoxes, 1, ARG_IS_FUN|ARG_PUSH_SYSARGS),
- 	MP4BOX_ARG("fstat", "print filter session statistics (import/export/encrypt/decrypt/dashing)", GF_ARG_BOOL, 0, &fs_dump_flags, 1, ARG_BIT_MASK),
- 	MP4BOX_ARG("fgraph", "print filter session graph (import/export/encrypt/decrypt/dashing)", GF_ARG_BOOL, 0, &fs_dump_flags, 2, ARG_BIT_MASK),
+ 	MP4BOX_ARG_ALT("stats", "fstat", "print filter session statistics (import/export/encrypt/decrypt/dashing)", GF_ARG_BOOL, 0, &fs_dump_flags, 1, ARG_BIT_MASK),
+ 	MP4BOX_ARG_ALT("graph", "fgraph", "print filter session graph (import/export/encrypt/decrypt/dashing)", GF_ARG_BOOL, 0, &fs_dump_flags, 2, ARG_BIT_MASK),
  	MP4BOX_ARG("v", "verbose mode", GF_ARG_BOOL, 0, &verbose, 0, ARG_INT_INC),
  	MP4BOX_ARG("version", "get build version", GF_ARG_BOOL, 0, print_version, 0, ARG_IS_FUN),
  	MP4BOX_ARG("genmd", "generate MD doc", GF_ARG_BOOL, GF_ARG_HINT_HIDE, parse_gendoc, 0, ARG_IS_FUN),
@@ -1690,6 +1713,12 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 	if (act_type == META_ACTION_ADD_IMAGE_ITEM)
 		has_add_image = GF_TRUE;
 
+#define CHECK_IMGPROP\
+			if (!meta->image_props) {\
+				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);\
+				if (!meta->image_props) return 2;\
+			}\
+
 	while (1) {
 		char *next;
 		char *szSlot;
@@ -1702,7 +1731,8 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 
 		if (!strnicmp(szSlot, "tk=", 3)) {
 			sscanf(szSlot, "tk=%u", &meta->trackID);
-			meta->root_meta = 0;
+			if (act_type == META_ACTION_ADD_ITEM)
+				meta->root_meta = 0;
 		}
 		else if (!strnicmp(szSlot, "id=", 3)) {
 			meta->item_id = atoi(szSlot+3);
@@ -1738,84 +1768,119 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 			meta->enc_type = gf_strdup(szSlot+9);
 		}
 		else if (!strnicmp(szSlot, "image-size=", 11)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			sscanf(szSlot+11, "%dx%d", &meta->image_props->width, &meta->image_props->height);
 		}
 		else if (!strnicmp(szSlot, "image-grid-size=", 16)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-			}
+			CHECK_IMGPROP
 			sscanf(szSlot+16, "%dx%d", &meta->image_props->num_grid_rows, &meta->image_props->num_grid_columns);
 		}
-		else if (!strnicmp(szSlot, "image-pasp=", 11)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
+		else if (!strnicmp(szSlot, "image-overlay-color=", 20)) {
+			CHECK_IMGPROP
+			sscanf(szSlot+20, "%d,%d,%d,%d", &meta->image_props->overlay_canvas_fill_value_r,&meta->image_props->overlay_canvas_fill_value_g,&meta->image_props->overlay_canvas_fill_value_b,&meta->image_props->overlay_canvas_fill_value_a);
+		}
+		else if (!strnicmp(szSlot, "image-overlay-offsets=", 22)) {
+			CHECK_IMGPROP
+			u32 position = 22;
+			u32 comma_count = 0;
+			u32 offset_index = 0;
+			char *prev = szSlot+position;
+			char *next = strchr(szSlot+position, ',');
+			while (next != NULL) {
+				comma_count++;
+				next++;
+				next = strchr(next, ',');
 			}
+			meta->image_props->overlay_count = comma_count/2+1;
+			meta->image_props->overlay_offsets = (GF_ImageItemOverlayOffset *)gf_malloc(meta->image_props->overlay_count*sizeof(GF_ImageItemOverlayOffset));
+			if (!meta->image_props->overlay_offsets) {
+				return 0;
+			}
+			next = strchr(szSlot+position, ',');
+			while (next != NULL) {
+				*next = 0;
+				meta->image_props->overlay_offsets[offset_index].horizontal = atoi(prev);
+				*next = ',';
+				next++;
+				prev = next;
+				if (next) {
+					next = strchr(next, ',');
+					if (next) *next = 0;
+					meta->image_props->overlay_offsets[offset_index].vertical = atoi(prev);
+					if (next) {
+						*next = ',';
+						next++;
+						prev = next;
+						next = strchr(next, ',');
+					}
+				} else {
+					meta->image_props->overlay_offsets[offset_index].vertical = 0;
+				}
+				offset_index++;
+			}
+		}
+		else if (!strnicmp(szSlot, "image-pasp=", 11)) {
+			CHECK_IMGPROP
 			sscanf(szSlot+11, "%dx%d", &meta->image_props->hSpacing, &meta->image_props->vSpacing);
 		}
-		else if (!strnicmp(szSlot, "image-rloc=", 11)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
+		else if (!strnicmp(szSlot, "image-pixi=", 11)) {
+			CHECK_IMGPROP
+			if (strchr(szSlot+11, ',') == NULL) {
+				meta->image_props->num_channels = 1;
+				meta->image_props->bits_per_channel[0] = atoi(szSlot+11);
+			} else {
+				meta->image_props->num_channels = 3;
+				sscanf(szSlot+11, "%u,%u,%u", &(meta->image_props->bits_per_channel[0]), &(meta->image_props->bits_per_channel[1]), &(meta->image_props->bits_per_channel[2]));
 			}
+		}
+		else if (!strnicmp(szSlot, "image-rloc=", 11)) {
+			CHECK_IMGPROP
 			sscanf(szSlot+11, "%dx%d", &meta->image_props->hOffset, &meta->image_props->vOffset);
 		}
 		else if (!strnicmp(szSlot, "rotation=", 9)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->angle = atoi(szSlot+9);
 		}
 		else if (!strnicmp(szSlot, "mirror-axis=", 12)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->mirror = (!strnicmp(szSlot+12, "vertical", 8) ? 1 : 2);
 		}
 		else if (!strnicmp(szSlot, "clap=", 5)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			sscanf(szSlot + 5, "%d,%d,%d,%d,%d,%d,%d,%d", &meta->image_props->clap_wnum, &meta->image_props->clap_wden,
 					   &meta->image_props->clap_hnum, &meta->image_props->clap_hden,
 					   &meta->image_props->clap_honum, &meta->image_props->clap_hoden,
 					   &meta->image_props->clap_vonum, &meta->image_props->clap_voden);
 		}
 		else if (!stricmp(szSlot, "hidden")) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->hidden = GF_TRUE;
 		}
 		else if (!stricmp(szSlot, "alpha")) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->alpha = GF_TRUE;
 		}
+		else if (!stricmp(szSlot, "depth")) {
+			CHECK_IMGPROP
+			meta->image_props->depth = GF_TRUE;
+ 		}
 		//"ref" (without '=') is for data reference, "ref=" is for item references
 		else if (!stricmp(szSlot, "ref")) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->use_reference = GF_TRUE;
+		}
+		else if (!strnicmp(szSlot, "it=", 3)) {
+			CHECK_IMGPROP
+			meta->image_props->item_ref_id = atoi(szSlot+3);
+		}
+		else if (!strnicmp(szSlot, "itp=", 4)) {
+			CHECK_IMGPROP
+			meta->image_props->item_ref_id = atoi(szSlot+4);
+			meta->image_props->copy_props = 1;
 		}
 		else if (!strnicmp(szSlot, "time=", 5)) {
 			Float s=0, e=0, step=0;
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			if (sscanf(szSlot+5, "%f-%f/%f", &s, &e, &step)==3) {
 				meta->image_props->time = s;
 				meta->image_props->end_time = e;
@@ -1831,10 +1896,7 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 			}
 		}
 		else if (!strnicmp(szSlot, "samp=", 5)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->sample_num = atoi(szSlot+5);
 			meta->root_meta = 1;
 		}
@@ -1844,10 +1906,7 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 			meta->group_type = GF_4CC(type[0], type[1], type[2], type[3]);
 		}
 		else if (!stricmp(szSlot, "split_tiles")) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->tile_mode = TILE_ITEM_ALL_BASE;
 		}
 		else if (!stricmp(szSlot, "dref")) {
@@ -1860,20 +1919,18 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 			if (meta->act_type==META_ACTION_SET_XML) meta->act_type=META_ACTION_SET_BINARY_XML;
 		}
 		else if (!strnicmp(szSlot, "icc_path=", 9)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			strcpy(meta->image_props->iccPath, szSlot+9);
 		}
 		else if (!stricmp(szSlot, "agrid") || !strnicmp(szSlot, "agrid=", 6)) {
-			if (!meta->image_props) {
-				GF_SAFEALLOC(meta->image_props, GF_ImageItemProperties);
-				if (!meta->image_props) return 2;
-			}
+			CHECK_IMGPROP
 			meta->image_props->auto_grid = GF_TRUE;
 			if (!strnicmp(szSlot, "agrid=", 6))
 				meta->image_props->auto_grid_ratio = atof(szSlot+6);
+		}
+		else if (!strnicmp(szSlot, "av1_op_index=", 13)) {
+			CHECK_IMGPROP
+			meta->image_props->av1_op_index = atoi(szSlot+13);
 		}
 		else if (!strchr(szSlot, '=')) {
 			switch (meta->act_type) {
@@ -2111,19 +2168,19 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 	memset(tka, 0, sizeof(TrackAction) );
 	tka->act_type = act_type;
 	tka->dump_type = dump_type;
-	if (act_type != TRAC_ACTION_RAW_EXTRACT) {
+	if (act_type != TRACK_ACTION_RAW_EXTRACT) {
 		open_edit = GF_TRUE;
 		do_save = GF_TRUE;
 	}
 
-	if ((act_type==TRAC_ACTION_SET_ID) || (act_type==TRAC_ACTION_SWAP_ID)) {
+	if ((act_type==TRACK_ACTION_SET_ID) || (act_type==TRACK_ACTION_SWAP_ID)) {
 		if (sscanf(param, "%d:%u", &tka->trackID, &tka->newTrackID) != 2) {
 			M4_LOG(GF_LOG_ERROR, ("Bad format for -set-track-id - expecting \"id1:id2\" got \"%s\"\n", param));
 			return GF_FALSE;
 		}
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_SET_PAR) {
+	if (act_type==TRACK_ACTION_SET_PAR) {
 		char *ext;
 		ext = strchr(param, '=');
 		if (!ext) {
@@ -2156,7 +2213,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		}
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_SET_CLAP) {
+	if (act_type==TRACK_ACTION_SET_CLAP) {
 		char *ext = strchr(param, '=');
 		if (!ext) {
 			M4_LOG(GF_LOG_ERROR, ("Bad format for track clap - expecting tkID=none or tkID=Wn,Wd,Hn,Hd,HOn,HOd,VOn,VOd got %s\n", param));
@@ -2175,7 +2232,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		return GF_TRUE;
 	}
 
-	if (act_type==TRAC_ACTION_SET_MX) {
+	if (act_type==TRACK_ACTION_SET_MX) {
 		char *ext = strchr(param, '=');
 		if (!ext) {
 			M4_LOG(GF_LOG_ERROR, ("Bad format for track matrix - expecting ID=none or ID=M1:M2:M3:M4:M5:M6:M7:M8:M9 got %s\n", param));
@@ -2201,7 +2258,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		}
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_SET_EDITS) {
+	if (act_type==TRACK_ACTION_SET_EDITS) {
 		char *ext = strchr(param, '=');
 		if (!ext) {
 			M4_LOG(GF_LOG_ERROR, ("Bad format for track edits - expecting ID=EDITS got %s\n", param));
@@ -2213,7 +2270,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		tka->string = gf_strdup(ext+1);
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_SET_LANGUAGE) {
+	if (act_type==TRACK_ACTION_SET_LANGUAGE) {
 		char *ext = strchr(param, '=');
 		if (!strnicmp(param, "all=", 4)) {
 			strncpy(tka->lang, param + 4, 10-1);
@@ -2228,7 +2285,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		}
 		return GF_TRUE;
 	}
-	if ((act_type==TRAC_ACTION_SET_KIND) || (act_type==TRAC_ACTION_REM_KIND)) {
+	if ((act_type==TRACK_ACTION_SET_KIND) || (act_type==TRACK_ACTION_REM_KIND)) {
 		char *ext;
 		char *scheme_start = NULL;
 
@@ -2267,7 +2324,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		}
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_SET_DELAY) {
+	if (act_type==TRACK_ACTION_SET_DELAY) {
 		char *ext = strchr(param, '=');
 		if (!ext) {
 			M4_LOG(GF_LOG_ERROR, ("Bad format for track delay - expecting tkID=DLAY got %s\n", param));
@@ -2282,7 +2339,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		}
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_REFERENCE) {
+	if (act_type==TRACK_ACTION_REFERENCE) {
 		char *ext = strchr(param, '=');
 		if (!ext) ext = strchr(param, ':');
 		if (!ext) {
@@ -2304,7 +2361,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		tka->newTrackID = (s32) atoi(ext2 + 1);
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_SET_HANDLER_NAME) {
+	if (act_type==TRACK_ACTION_SET_HANDLER_NAME) {
 		char *ext = strchr(param, '=');
 		if (!ext) {
 			M4_LOG(GF_LOG_ERROR, ("Bad format for track name - expecting tkID=name got %s\n", param));
@@ -2316,7 +2373,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		tka->hdl_name = ext + 1;
 		return GF_TRUE;
 	}
-	if (act_type==TRAC_ACTION_SET_KMS_URI) {
+	if (act_type==TRACK_ACTION_SET_KMS_URI) {
 		char *ext = strchr(param, '=');
 
 		if (!strnicmp(param, "all=", 4)) {
@@ -2331,7 +2388,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		}
 		return GF_TRUE;
 	}
-	if ((act_type==TRAC_ACTION_SET_TIME) || (act_type==TRAC_ACTION_SET_MEDIA_TIME)) {
+	if ((act_type==TRACK_ACTION_SET_TIME) || (act_type==TRACK_ACTION_SET_MEDIA_TIME)) {
 		struct tm time;
 		char *ext = strchr(arg_val, '=');
 		if (ext) {
@@ -2385,7 +2442,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 		if (!strcmp(arg_val, "*")) {
 			tka->trackID = (u32) -1;
 		} else {
-			if (act_type==TRAC_ACTION_RAW_EXTRACT) {
+			if (act_type==TRACK_ACTION_RAW_EXTRACT) {
 				if (!strncmp(arg_val, "video", 5)) {
 					arg_val += 5;
 					tka->dump_track_type = 1;
@@ -2404,7 +2461,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 
 u32 parse_track_dump(char *arg, u32 dump_type)
 {
-	if (!create_new_track_action(arg, TRAC_ACTION_RAW_EXTRACT, dump_type))
+	if (!create_new_track_action(arg, TRACK_ACTION_RAW_EXTRACT, dump_type))
 		return 2;
 	track_dump_type = dump_type;
 	return 0;
@@ -2484,7 +2541,7 @@ u32 parse_rap_ref(char *arg_val, u32 opt)
 {
 	if (arg_val) {
 		if (sscanf(arg_val, "%d", &trackID) == 1) {
-			parse_track_action(arg_val, opt ? TRAC_ACTION_REM_NON_REFS : TRAC_ACTION_REM_NON_RAP);
+			parse_track_action(arg_val, opt ? TRACK_ACTION_REM_NON_REFS : TRACK_ACTION_REM_NON_RAP);
 		}
 	}
 	hint_flags |= GP_RTP_PCK_SIGNAL_RAP;
@@ -2612,9 +2669,21 @@ u32 parse_fps(char *arg_val, u32 opt)
 
 u32 parse_split(char *arg_val, u32 opt)
 {
+	u32 scale=1;
+	char *unit;
 	switch (opt) {
 	case 0://-split
-		split_duration = atof(arg_val);
+		unit = arg_val + (u32) (strlen(arg_val) - 1);
+		if (strchr("Mm", unit[0])) scale = 60;
+		else if (strchr("Hh", unit[0])) scale = 3600;
+		if (scale > 1) {
+			char c = unit[0];
+			unit[0] = 0;
+			split_duration = scale * atof(arg_val);
+			unit[0] = c;
+		} else {
+			split_duration = atof(arg_val);
+		}
 		if (split_duration < 0) split_duration = 0;
 		split_size = 0;
 		break;
@@ -2623,7 +2692,17 @@ u32 parse_split(char *arg_val, u32 opt)
 		split_size = -1;
 		break;
 	case 2: //-split-size, -splits
-		split_size = (u32)atoi(arg_val);
+		unit = arg_val + (u32) (strlen(arg_val) - 1);
+		if (strchr("Mm", unit[0])) scale = 1000;
+		else if (strchr("Gg", unit[0])) scale = 1000000;
+		if (scale > 1) {
+			char c = unit[0];
+			unit[0] = 0;
+			split_size = scale * (u32)atoi(arg_val);
+			unit[0] = c;
+		} else {
+			split_size = (u32)atoi(arg_val);
+		}
 		split_duration = 0;
 		break;
 	case 3: //-split-chunk, -splitx
@@ -2692,6 +2771,11 @@ u32 parse_mpegu(char *arg_val, u32 opt)
 u32 parse_file_info(char *arg_val, u32 opt)
 {
 	print_info = opt ? 2 : 1;
+	if (opt==2) {
+		print_info = 2;
+		if (arg_val) return 3;
+		return 0;
+	}
 	if (arg_val) {
 		if (sscanf(arg_val, "%u", &info_track_id) == 1) {
 			char szTk[20];
@@ -2894,6 +2978,7 @@ u32 parse_gendoc(char *name, u32 opt)
 		fprintf(helpout, "<!-- automatically generated - do not edit, patch gpac/applications/mp4box/main.c -->\n");
 		PrintExtractUsage();
 		PrintDumpUsage();
+		PrintSplitUsage();
 		gf_fclose(helpout);
 
 		helpout = gf_fopen("mp4box-meta-opts.md", "w");
@@ -4540,7 +4625,7 @@ static GF_Err do_export_tracks_non_isobmf()
 	for (i=0; i<nb_track_act; i++) {
 		GF_Err e;
 		TrackAction *tka = &tracks[i];
-		if (tka->act_type != TRAC_ACTION_RAW_EXTRACT) continue;
+		if (tka->act_type != TRACK_ACTION_RAW_EXTRACT) continue;
 		memset(&mdump, 0, sizeof(mdump));
 		mdump.in_name = inName;
 		mdump.flags = tka->dump_type;
@@ -4610,7 +4695,7 @@ static GF_Err do_export_tracks()
 	for (i=0; i<nb_track_act; i++) {
 		u32 j;
 		TrackAction *tka = &tracks[i];
-		if (tka->act_type != TRAC_ACTION_RAW_EXTRACT) continue;
+		if (tka->act_type != TRACK_ACTION_RAW_EXTRACT) continue;
 		memset(&mdump, 0, sizeof(mdump));
 		mdump.file = file;
 		mdump.flags = tka->dump_type;
@@ -4709,6 +4794,8 @@ static GF_Err do_meta_act()
 					meta->image_props->src_file = gf_isom_open(meta->szPath, GF_ISOM_OPEN_READ, NULL);
 					e = gf_isom_last_error(meta->image_props->src_file);
 					fsrc = meta->image_props->src_file;
+					if (meta->image_props->item_ref_id)
+						src_tk_id = 0;
 				} else {
 					e = import_file(file, meta->szPath, 0, _frac, 0, NULL, NULL, 0);
 				}
@@ -4731,7 +4818,7 @@ static GF_Err do_meta_act()
 						e = gf_isom_meta_get_next_item_id(file, meta->root_meta, tk, &meta->item_id);
 					}
 					if (e == GF_OK) {
-						if (!src_tk_id) {
+						if (!src_tk_id && (!meta->image_props || !meta->image_props->item_ref_id) ) {
 							u32 j;
 							for (j=0; j<gf_isom_get_track_count(fsrc); j++) {
 								if (gf_isom_is_video_handler_type (gf_isom_get_media_type(fsrc, j+1))) {
@@ -4777,7 +4864,7 @@ static GF_Err do_meta_act()
 			do_save = GF_TRUE;
 		}
 			break;
-		case META_ACTION_ADD_IMAGE_GRID:
+		case META_ACTION_ADD_IMAGE_DERIVED:
 		{
 			u32 meta_type = gf_isom_get_meta_type(file, meta->root_meta, tk);
 			e = GF_OK;
@@ -4793,11 +4880,25 @@ static GF_Err do_meta_act()
 				if (!meta->item_id) {
 					e = gf_isom_meta_get_next_item_id(file, meta->root_meta, tk, &meta->item_id);
 				}
-				if (e == GF_OK) {
-					e = gf_isom_iff_create_image_grid_item(file, meta->root_meta, tk,
-							meta->szName && strlen(meta->szName) ? meta->szName : NULL,
-							meta->item_id,
-							meta->image_props);
+				if (e == GF_OK && meta->item_type) {
+					if (meta->item_type == GF_4CC('g','r','i','d')) {
+						e = gf_isom_iff_create_image_grid_item(file, meta->root_meta, tk,
+								meta->szName && strlen(meta->szName) ? meta->szName : NULL,
+								meta->item_id,
+								meta->image_props);
+					} else if (meta->item_type == GF_4CC('i','o','v','l')) {
+						e = gf_isom_iff_create_image_overlay_item(file, meta->root_meta, tk,
+								meta->szName && strlen(meta->szName) ? meta->szName : NULL,
+								meta->item_id,
+								meta->image_props);
+					} else if (meta->item_type == GF_4CC('i','d','e','n')) {
+						e = gf_isom_iff_create_image_identity_item(file, meta->root_meta, tk,
+								meta->szName && strlen(meta->szName) ? meta->szName : NULL,
+								meta->item_id,
+								meta->image_props);
+					} else {
+						e = GF_NOT_SUPPORTED;
+					}
 					if (e == GF_OK && meta->primary) {
 						e = gf_isom_set_meta_primary_item(file, meta->root_meta, tk, meta->item_id);
 					}
@@ -4863,10 +4964,7 @@ static GF_Err do_meta_act()
 			gf_list_del(meta->item_refs);
 			meta->item_refs = NULL;
 		}
-		if (meta->image_props) {
-			gf_free(meta->image_props);
-			meta->image_props = NULL;
-		}
+		// meta->image_props is freed in mp4box_cleanup
 		if (e) return e;
 	}
 	return GF_OK;
@@ -4975,7 +5073,7 @@ static GF_Err do_track_act()
 
 		timescale = gf_isom_get_timescale(file);
 		switch (tka->act_type) {
-		case TRAC_ACTION_REM_TRACK:
+		case TRACK_ACTION_REM_TRACK:
 			e = gf_isom_remove_track(file, track);
 			if (e) {
 				M4_LOG(GF_LOG_ERROR, ("Error Removing track ID %d: %s\n", tka->trackID, gf_error_to_string(e)));
@@ -4984,7 +5082,7 @@ static GF_Err do_track_act()
 			}
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_LANGUAGE:
+		case TRACK_ACTION_SET_LANGUAGE:
 			for (i=0; i<gf_isom_get_track_count(file); i++) {
 				if (track && (track != i+1)) continue;
 				e = gf_isom_set_media_language(file, i+1, tka->lang);
@@ -4993,7 +5091,7 @@ static GF_Err do_track_act()
 			}
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_KIND:
+		case TRACK_ACTION_SET_KIND:
 			for (i=0; i<gf_isom_get_track_count(file); i++) {
 				if (track && (track != i+1)) continue;
 				e = gf_isom_add_track_kind(file, i+1, tka->kind_scheme, tka->kind_value);
@@ -5002,7 +5100,7 @@ static GF_Err do_track_act()
 			}
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_REM_KIND:
+		case TRACK_ACTION_REM_KIND:
 			for (i=0; i<gf_isom_get_track_count(file); i++) {
 				if (track && (track != i+1)) continue;
 				e = gf_isom_remove_track_kind(file, i+1, tka->kind_scheme, tka->kind_value);
@@ -5011,7 +5109,7 @@ static GF_Err do_track_act()
 			}
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_DELAY:
+		case TRACK_ACTION_SET_DELAY:
 			if (tka->delay.num && tka->delay.den) {
 				u64 tk_dur;
 
@@ -5046,7 +5144,7 @@ static GF_Err do_track_act()
 				do_save = GF_TRUE;
 			}
 			break;
-		case TRAC_ACTION_SET_KMS_URI:
+		case TRACK_ACTION_SET_KMS_URI:
 			for (i=0; i<gf_isom_get_track_count(file); i++) {
 				if (track && (track != i+1)) continue;
 				if (!gf_isom_is_media_encrypted(file, i+1, 1)) continue;
@@ -5056,7 +5154,7 @@ static GF_Err do_track_act()
 				do_save = GF_TRUE;
 			}
 			break;
-		case TRAC_ACTION_SET_ID:
+		case TRACK_ACTION_SET_ID:
 			if (!tka->trackID && (gf_isom_get_track_count(file) == 1)) {
 				M4_LOG(GF_LOG_WARNING, ("Warning: track id is not specified, but file has only one track - assume that you want to change id for this track\n"));
 				track = 1;
@@ -5075,7 +5173,7 @@ static GF_Err do_track_act()
 				M4_LOG(GF_LOG_WARNING, ("Error: Cannot change id for track %d because it does not exist - ignoring", tka->trackID));
 			}
 			break;
-		case TRAC_ACTION_SWAP_ID:
+		case TRACK_ACTION_SWAP_ID:
 			if (track) {
 				u32 tk1, tk2;
 				tk1 = gf_isom_get_track_by_id(file, tka->trackID);
@@ -5095,55 +5193,55 @@ static GF_Err do_track_act()
 				M4_LOG(GF_LOG_WARNING, ("Error: Cannot change id for track %d because it does not exist - ignoring", tka->trackID));
 			}
 			break;
-		case TRAC_ACTION_SET_PAR:
+		case TRACK_ACTION_SET_PAR:
 			e = gf_media_change_par(file, track, tka->par_num, tka->par_den, tka->force_par, tka->rewrite_bs);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_CLAP:
+		case TRACK_ACTION_SET_CLAP:
 			e = gf_isom_set_clean_aperture(file, track, 1, tka->clap_wnum, tka->clap_wden, tka->clap_hnum, tka->clap_hden, tka->clap_honum, tka->clap_hoden, tka->clap_vonum, tka->clap_voden);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_MX:
+		case TRACK_ACTION_SET_MX:
 			e = gf_isom_set_track_matrix(file, track, tka->mx);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_HANDLER_NAME:
+		case TRACK_ACTION_SET_HANDLER_NAME:
 			e = gf_isom_set_handler_name(file, track, tka->hdl_name);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_ENABLE:
+		case TRACK_ACTION_ENABLE:
 			if (!gf_isom_is_track_enabled(file, track)) {
 				e = gf_isom_set_track_enabled(file, track, GF_TRUE);
 				do_save = GF_TRUE;
 			}
 			break;
-		case TRAC_ACTION_DISABLE:
+		case TRACK_ACTION_DISABLE:
 			if (gf_isom_is_track_enabled(file, track)) {
 				e = gf_isom_set_track_enabled(file, track, GF_FALSE);
 				do_save = GF_TRUE;
 			}
 			break;
-		case TRAC_ACTION_REFERENCE:
+		case TRACK_ACTION_REFERENCE:
 			e = gf_isom_set_track_reference(file, track, GF_4CC(tka->lang[0], tka->lang[1], tka->lang[2], tka->lang[3]), tka->newTrackID);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_REM_NON_RAP:
+		case TRACK_ACTION_REM_NON_RAP:
 			e = gf_media_remove_non_rap(file, track, GF_FALSE);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_REM_NON_REFS:
+		case TRACK_ACTION_REM_NON_REFS:
 			e = gf_media_remove_non_rap(file, track, GF_TRUE);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_UDTA:
+		case TRACK_ACTION_SET_UDTA:
 			e = set_file_udta(file, track, tka->udta_type, tka->string ? tka->string : tka->src_name , tka->sample_num ? GF_TRUE : GF_FALSE, tka->string ? GF_TRUE : GF_FALSE);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_EDITS:
+		case TRACK_ACTION_SET_EDITS:
 			e = apply_edits(file, track, tka->string);
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_TIME:
+		case TRACK_ACTION_SET_TIME:
 			if (!tka->trackID) {
 				e = gf_isom_set_creation_time(file, tka->time, tka->time);
 				if (e) return e;
@@ -5156,7 +5254,7 @@ static GF_Err do_track_act()
 			}
 			do_save = GF_TRUE;
 			break;
-		case TRAC_ACTION_SET_MEDIA_TIME:
+		case TRACK_ACTION_SET_MEDIA_TIME:
 			for (i=0; i<gf_isom_get_track_count(file); i++) {
 				if (track && (track != i+1)) continue;
 				e = gf_isom_set_media_creation_time(file, i+1, tka->time, tka->time);
@@ -5181,7 +5279,7 @@ static GF_Err do_itunes_tag()
 	if (gf_file_exists(itunes_tags)) {
 		u32 len;
 		e = gf_file_load_data(itunes_tags, (u8 **) &itunes_data, &len);
-		if (e) return e;;
+		if (e) return e;
 		tags = itunes_data;
 	}
 
@@ -5341,6 +5439,11 @@ static u32 mp4box_cleanup(u32 ret_code) {
 			if (metas[i].mime_type) gf_free(metas[i].mime_type);
 			if (metas[i].szName) gf_free(metas[i].szName);
 			if (metas[i].szPath) gf_free(metas[i].szPath);
+			if (metas[i].image_props) {
+				GF_ImageItemProperties *iprops = metas[i].image_props;
+				if (iprops->overlay_offsets) gf_free(iprops->overlay_offsets);
+				gf_free(iprops);
+			}
 		}
 		gf_free(metas);
 		metas = NULL;
@@ -5428,6 +5531,14 @@ static u32 mp4box_cleanup(u32 ret_code) {
 	}
 	if (logfile) gf_fclose(logfile);
 	gf_sys_close();
+
+#ifdef GPAC_MEMORY_TRACKING
+	if (mem_track && (gf_memory_size() || gf_file_handles_count() )) {
+		gf_log_set_tool_level(GF_LOG_MEMORY, GF_LOG_INFO);
+		gf_memory_print();
+	}
+#endif
+
 	return ret_code;
 }
 
@@ -5524,7 +5635,7 @@ int mp4boxMain(int argc, char **argv)
 		/*by default use single fragment per dash segment*/
 		if (dash_duration)
 			interleaving_time = dash_duration;
-		else if (!do_flat) {
+		else if (!do_flat && !(split_duration || split_size || split_range_str)) {
 			interleaving_time = DEFAULT_INTERLEAVING_IN_SEC;
 		}
 	}
@@ -5682,6 +5793,16 @@ int mp4boxMain(int argc, char **argv)
 		e = do_dash();
 		if (e) return mp4box_cleanup(1);
 		goto exit;
+	}
+
+	if (split_duration || split_size || split_range_str) {
+		if (force_new==2) {
+			do_flat = 3;
+			force_new = 0;
+		}
+	} else {
+		if (do_flat)
+			open_edit = GF_TRUE;
 	}
 
 	//need to open input
@@ -5899,7 +6020,7 @@ int mp4boxMain(int argc, char **argv)
 			M4_LOG(GF_LOG_ERROR, ("Cannot print info on a non ISOM file (%s)\n", inName));
 		} else {
 			if (info_track_id) DumpTrackInfo(file, info_track_id, 1, (print_info==2) ? GF_TRUE : GF_FALSE, GF_FALSE);
-			else DumpMovieInfo(file);
+			else DumpMovieInfo(file, (print_info==2) ? GF_TRUE : GF_FALSE);
 		}
 	}
 #ifndef GPAC_DISABLE_ISOM_DUMP
@@ -5945,6 +6066,7 @@ int mp4boxMain(int argc, char **argv)
 	}
 #endif
 
+	if (dump_chunk) dump_isom_chunks(file, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE);
 	if (dump_cart) dump_isom_cover_art(file, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE);
 	if (dump_chap) dump_isom_chapters(file, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE, dump_chap);
 	if (dump_udta_type) dump_isom_udta(file, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE, dump_udta_type, dump_udta_track);

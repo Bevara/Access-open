@@ -278,7 +278,8 @@ typedef enum
 	GF_M2TS_AUDIO_EC3				= 0x84,
 	GF_M2TS_MPE_SECTIONS            = 0x90,
 	GF_M2TS_SUBTITLE_DVB			= 0x100,
-
+	GF_M2TS_AUDIO_OPUS				= 0x101,
+	
 	GF_M2TS_DVB_TELETEXT			= 0x152,
 	GF_M2TS_DVB_VBI					= 0x153,
 	GF_M2TS_DVB_SUBTITLE			= 0x154,
@@ -290,7 +291,14 @@ typedef enum
 enum
 {
 	GF_M2TS_RA_STREAM_AC3	= GF_4CC('A','C','-','3'),
+	GF_M2TS_RA_STREAM_EAC3	= GF_4CC('E','A','C','3'),
 	GF_M2TS_RA_STREAM_VC1	= GF_4CC('V','C','-','1'),
+	GF_M2TS_RA_STREAM_HEVC	= GF_4CC('H','E','V','C'),
+	GF_M2TS_RA_STREAM_DTS1	= GF_4CC('D','T','S','1'),
+	GF_M2TS_RA_STREAM_DTS2	= GF_4CC('D','T','S','2'),
+	GF_M2TS_RA_STREAM_DTS3	= GF_4CC('D','T','S','3'),
+	GF_M2TS_RA_STREAM_OPUS	= GF_4CC('O','p','u','s'),
+
 
 	GF_M2TS_RA_STREAM_GPAC	= GF_4CC('G','P','A','C')
 };
@@ -474,7 +482,9 @@ enum
 	/*! a TEMI locator has been found or repeated*/
 	GF_M2TS_EVT_TEMI_LOCATION,
 	/*! a TEMI timecode has been found*/
-	GF_M2TS_EVT_TEMI_TIMECODE
+	GF_M2TS_EVT_TEMI_TIMECODE,
+	/*! a stream is about to be removed -  - associated parameter: pointer to GF_M2TS_ES being removed*/
+	GF_M2TS_EVT_STREAM_REMOVED
 };
 
 /*! table parsing state*/
@@ -604,7 +614,7 @@ typedef struct
 	const char *external_URL;
 	Bool is_announce, is_splicing;
 	Bool reload_external;
-	Double activation_countdown;
+	GF_Fraction activation_countdown;
 } GF_M2TS_TemiLocationDescriptor;
 
 /*! MPEG-2 TS demuxer TEMI timecode*/
@@ -699,7 +709,9 @@ enum
 	/*! flag used to signal next discontinuity on stream should be ignored*/
 	GF_M2TS_ES_IGNORE_NEXT_DISCONTINUITY = 1<<17,
 	/*! flag used by importers/readers to mark streams that have been seen already in PMT process (update/found)*/
-	GF_M2TS_ES_ALREADY_DECLARED = 1<<18
+	GF_M2TS_ES_ALREADY_DECLARED = 1<<18,
+	/*! flag indicates TEMI info is declared on this stream*/
+	GF_M2TS_ES_TEMI_INFO = 1<<19
 };
 
 /*! macro for abstract Section/PES stream object, only used for type casting*/
@@ -854,6 +866,8 @@ typedef struct tag_m2ts_pes
 	GF_M2TS_TemiTimecodeDescriptor temi_tc;
 	/*! flag set to indicate a TEMI descriptor should be flushed with next packet*/
 	Bool temi_pending;
+	/*! flag set to indicate the last PES packet was not flushed (HLS) to avoid warning on same PTS/DTS used*/
+	Bool is_resume;
 } GF_M2TS_PES;
 
 /*! reserved streamID for PES headers*/
@@ -1168,13 +1182,15 @@ GF_M2TS_SDT *gf_m2ts_get_sdt_info(GF_M2TS_Demuxer *demux, u32 program_id);
 /*! flushes a given stream. This is used to flush internal demultiplexer buffers on end of stream
 \param demux the target MPEG-2 demultiplexer
 \param pes the target stream to flush
+\param force_flush if GF_TRUE, flushes all streams, otherwise do not flush stream with known PES length and not yet completed (for HLS)
 */
-void gf_m2ts_flush_pes(GF_M2TS_Demuxer *demux, GF_M2TS_PES *pes);
+void gf_m2ts_flush_pes(GF_M2TS_Demuxer *demux, GF_M2TS_PES *pes, Bool force_flush);
 
 /*! flushes all streams in the mux. This is used to flush internal demultiplexer buffers on end of stream
 \param demux the target MPEG-2 demultiplexer
+\param no_force_flush do not force a flush of incomplete PES (used for HLS)
 */
-void gf_m2ts_flush_all(GF_M2TS_Demuxer *demux);
+void gf_m2ts_flush_all(GF_M2TS_Demuxer *demux, Bool no_force_flush);
 
 
 /*! MPEG-2 TS packet header*/
@@ -1770,7 +1786,9 @@ struct __m2ts_mux {
 
 	/*! static write bitstream object for formatting packets*/
 	GF_BitStream *pck_bs;
-	/*set to TRUE if the packet output is the first packet of a SAP AU (used when dashing)*/
+	/*! PID to watch for SAP insertions*/
+	u32 ref_pid;
+	/* if the packet output starts (first PES) with the first packet of a SAP AU (used when dashing), set to TRUE*/
 	Bool sap_inserted;
 	/*! SAP time (used when dashing)*/
 	u64 sap_time;

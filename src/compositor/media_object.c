@@ -183,7 +183,7 @@ GF_MediaObject *gf_mo_register(GF_Node *node, MFURL *url, Bool lock_timelines, B
 	while (scene->secondary_resource && scene->root_od->parentscene)
 		scene = scene->root_od->parentscene;
 
-	res = gf_scene_get_media_object_ex(scene, url, obj_type, lock_timelines, syncRef, force_new_res, node);
+	res = gf_scene_get_media_object_ex(scene, url, obj_type, lock_timelines, syncRef, force_new_res, node, NULL);
 	return res;
 }
 
@@ -212,7 +212,7 @@ Bool gf_mo_get_visual_info(GF_MediaObject *mo, u32 *width, u32 *height, u32 *str
 {
 	if ((mo->type != GF_MEDIA_OBJECT_VIDEO) && (mo->type!=GF_MEDIA_OBJECT_TEXT)) return GF_FALSE;
 
-	if (mo->config_changed) {
+	if (mo->config_changed || !mo->width || !mo->height) {
 		gf_mo_update_caps(mo);
 	}
 	if (width) *width = mo->width;
@@ -228,13 +228,6 @@ GF_EXPORT
 void gf_mo_get_nb_views(GF_MediaObject *mo, u32 *nb_views)
 {
 	if (mo) *nb_views = mo->nb_views;
-}
-
-GF_EXPORT
-
-void gf_mo_get_nb_layers(GF_MediaObject *mo, u32 *nb_layers)
-{
-	if (mo) *nb_layers = mo->nb_layers;
 }
 
 GF_EXPORT
@@ -283,15 +276,48 @@ void gf_mo_update_caps(GF_MediaObject *mo)
 		if (v) {\
 			if (mo->_field && (mo->_field != v->value.uint)) changed=GF_TRUE;\
 			mo->_field = v->value.uint;\
+		} else if (mo->_field) {\
+			changed=GF_TRUE;\
+			mo->_field=0;\
 		}\
 
 	if (mo->odm->type==GF_STREAM_VISUAL) {
+		Bool check_mx = GF_TRUE;
 
 		UPDATE_CAP(GF_PROP_PID_WIDTH, width)
 		UPDATE_CAP(GF_PROP_PID_HEIGHT, height)
 		UPDATE_CAP(GF_PROP_PID_STRIDE, stride)
 		UPDATE_CAP(GF_PROP_PID_PIXFMT, pixelformat)
 		UPDATE_CAP(GF_PROP_PID_BITRATE, bitrate)
+
+		UPDATE_CAP(GF_PROP_PID_ROTATE, rotate)
+		if (v) check_mx = GF_FALSE;
+
+		UPDATE_CAP(GF_PROP_PID_MIRROR, flip)
+		if (v) check_mx = GF_FALSE;
+
+		if (check_mx) {
+			v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_ISOM_TRACK_MATRIX);
+			if (v) {
+				GF_Err gf_prop_matrix_decompose(const GF_PropertyValue *p, u32 *flip_mode, u32 *rot_mode);
+				u32 flip, rotate;
+
+				if (gf_prop_matrix_decompose(v, &flip, &rotate)==GF_OK) {
+					if (flip != mo->flip) {
+						mo->flip = flip;
+						changed = GF_TRUE;
+					}
+					if (rotate != mo->rotate) {
+						mo->rotate = rotate;
+						changed = GF_TRUE;
+					}
+				}
+			} else {
+				if (mo->flip || mo->rotate) changed = GF_TRUE;
+				mo->flip = 0;
+				mo->rotate = 0;
+			}
+		}
 
 		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_SAR);
 		if (v) {
@@ -343,6 +369,20 @@ void gf_mo_update_caps(GF_MediaObject *mo)
 				mo->srd_full_h = v2->value.vec2i.y;
 			}
 		}
+
+		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_NUM_VIEWS);
+		mo->nb_views = v ? v->value.uint : 0;
+
+		mo->c_w = mo->c_h = mo->c_x = mo->c_y = 0;
+		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_CLAP_W);
+		if (v && v->value.frac.den) { mo->c_w = (Float) v->value.frac.num; mo->c_w /= v->value.frac.den; }
+		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_CLAP_H);
+		if (v && v->value.frac.den) { mo->c_h = (Float) v->value.frac.num; mo->c_h /= v->value.frac.den; }
+		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_CLAP_X);
+		if (v && v->value.frac.den) { mo->c_x = (Float) v->value.frac.num; mo->c_x /= v->value.frac.den; }
+		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_CLAP_Y);
+		if (v && v->value.frac.den) { mo->c_y = (Float) v->value.frac.num; mo->c_y /= v->value.frac.den; }
+
 	} else if (mo->odm->type==GF_STREAM_AUDIO) {
 		UPDATE_CAP(GF_PROP_PID_SAMPLE_RATE, sample_rate)
 		UPDATE_CAP(GF_PROP_PID_NUM_CHANNELS, num_channels)
@@ -390,9 +430,77 @@ static u64 convert_ts_to_ms(GF_MediaObject *mo, u64 ts, u32 timescale, Bool *dis
 			ts -= -mo->odm->timestamp_offset;
 		}
 	}
-	ts *= 1000;
-	ts /= timescale;
+
+	ts = gf_timestamp_rescale(ts, timescale, 1000);
+	
+	//if addon, translate back into main content timing
+	if (mo->odm->parentscene && mo->odm->parentscene->root_od->addon) {
+		if (!mo->odm->parentscene->root_od->addon->timeline_ready) {
+			ts = 0;
+		} else {
+			s64 res = gf_scene_adjust_timestamp_for_addon(mo->odm->parentscene->root_od->addon, ts);
+			if (res<0) res=0;
+			ts = (u64) res;
+		}
+	}
 	return ts;
+}
+
+
+static void check_temi(GF_MediaObject *mo)
+{
+	u32 idx=0;
+	if (!(mo->odm->flags & GF_ODM_HAS_TEMI)) return;
+
+	while (1) {
+		const GF_PropertyValue *p;
+		u32 p4cc = 0;
+		const char *pname = NULL;
+		p = gf_filter_pck_enum_properties(mo->pck, &idx, &p4cc, &pname);
+		if (!p) break;
+		if (!pname) continue;
+		if (p->type != GF_PROP_DATA) continue;
+		if (!strncmp(pname, "temi_l:", 7)) {
+			GF_AssociatedContentLocation temi_l;
+			u8 *data = p->value.data.ptr;
+			u32 len = (u32) strlen(data);
+			memset(&temi_l, 0, sizeof(GF_AssociatedContentLocation));
+			temi_l.timeline_id = atoi(pname+7);
+			temi_l.is_announce = data[len+1] & 0x80 ? GF_TRUE : GF_FALSE;
+			temi_l.is_splicing = data[len+1] & 0x40 ? GF_TRUE : GF_FALSE;
+			temi_l.reload_external = data[len+1] & 0x20 ? GF_TRUE : GF_FALSE;
+			if (temi_l.is_announce) {
+				temi_l.activation_countdown.den = GF_4CC(data[len+2], data[len+3], data[len+4], data[len+5]);
+				temi_l.activation_countdown.num = GF_4CC(data[len+6], data[len+7], data[len+8], data[len+9]);
+			}
+			temi_l.external_URL = data;
+
+			gf_scene_register_associated_media(mo->odm->subscene ? mo->odm->subscene : mo->odm->parentscene, &temi_l);
+			continue;
+		}
+		if (!strncmp(pname, "temi_t:", 7)) {
+			GF_BitStream *bs;
+			GF_AssociatedContentTiming temi_t;
+			memset(&temi_t, 0, sizeof(GF_AssociatedContentTiming));
+			temi_t.timeline_id = atoi(pname+7);
+			bs = gf_bs_new(p->value.data.ptr, p->value.data.size, GF_BITSTREAM_READ);
+			temi_t.media_timescale = gf_bs_read_u32(bs);
+			temi_t.media_timestamp = gf_bs_read_u64(bs);
+			temi_t.media_pts = gf_bs_read_u64(bs);
+			temi_t.force_reload = gf_bs_read_int(bs, 1);
+			temi_t.is_paused = gf_bs_read_int(bs, 1);
+			temi_t.is_discontinuity = gf_bs_read_int(bs, 1);
+			temi_t.ntp = gf_bs_read_int(bs, 1);
+			gf_bs_read_int(bs, 4);
+			if (temi_t.ntp)
+				temi_t.ntp = gf_bs_read_u64(bs);
+
+			gf_bs_del(bs);
+
+			gf_scene_notify_associated_media_timeline(mo->odm->subscene ? mo->odm->subscene : mo->odm->parentscene, &temi_t);
+			continue;
+		}
+	}
 }
 
 GF_EXPORT
@@ -465,6 +573,7 @@ retry:
 		} else {
 			gf_filter_pck_ref(&mo->pck);
 			gf_filter_pid_drop_packet(mo->odm->pid);
+			check_temi(mo);
 		}
 		is_first = GF_TRUE;
 	}
@@ -515,6 +624,8 @@ retry:
 					mediasensor_update_timing(mo->odm, GF_TRUE);
 					gf_odm_on_eos(mo->odm, mo->odm->pid);
 					force_decode_mode=0;
+					if (!mo->pck)
+						goto retry;
 				}
 				break;
 			}
@@ -638,6 +749,7 @@ retry:
 			mo->pck = gf_filter_pid_get_packet(mo->odm->pid);
 			assert(mo->pck);
 			gf_filter_pck_ref( &mo->pck);
+			check_temi(mo);
 
 			pck_ts = convert_ts_to_ms(mo, gf_filter_pck_get_cts(mo->pck), timescale, &discard);
 			//drop next packet from pid
@@ -667,15 +779,16 @@ retry:
 	mo->frame = (char *) gf_filter_pck_get_data(mo->pck, &mo->size);
 	mo->framesize = mo->size - mo->RenderedLength;
 
-	//planar mode, RenderedLength correspond to all channels, so move frame pointer
-	//to first sample non consumed = RenderedLength/nb_channels
-	if (mo->planar_audio) {
-		mo->frame += mo->RenderedLength / mo->num_channels;
-	} else {
-		mo->frame += mo->RenderedLength;
+	if (mo->type == GF_MEDIA_OBJECT_AUDIO) {
+		//planar mode, RenderedLength correspond to all channels, so move frame pointer
+		//to first sample non consumed = RenderedLength/nb_channels
+		if (mo->planar_audio) {
+			mo->frame += mo->RenderedLength / mo->num_channels;
+		} else {
+			mo->frame += mo->RenderedLength;
+		}
 	}
 	mo->frame_ifce = gf_filter_pck_get_frame_interface(mo->pck);
-//	mo->media_frame = CU->frame;
 
 	diff = (s32) ( (mo->speed >= 0) ? ( (s64) pck_ts - (s64) obj_time) : ( (s64) obj_time - (s64) pck_ts) );
 	mo->ms_until_pres = FIX2INT(diff * mo->speed);
@@ -1072,14 +1185,14 @@ Bool gf_mo_is_same_url(GF_MediaObject *obj, MFURL *an_url, Bool *keep_fragment, 
 			}
 
 			scene = gf_scene_get_root_scene(obj->odm->parentscene ? obj->odm->parentscene : obj->odm->subscene);
-			while ( (sns = (GF_SceneNamespace*) gf_list_enum(scene->namespaces, &j) ) ) {
-				/*sub-service of an existing service - don't touch any fragment*/
-#ifdef FILTER_FIXME
-				if (gf_term_service_can_handle_url(sns, an_url->vals[i].url)) {
-					*keep_fragment = GF_TRUE;
-					return GF_FALSE;
+			if (scene->root_od->scene_ns && scene->root_od->scene_ns->url) {
+				while ( (sns = (GF_SceneNamespace*) gf_list_enum(scene->namespaces, &j) ) ) {
+					/*sub-service of an existing service - don't touch any fragment*/
+					if (gf_filter_is_supported_source(scene->compositor->filter, an_url->vals[i].url, scene->root_od->scene_ns->url)) {
+						*keep_fragment = GF_TRUE;
+						return GF_FALSE;
+					}
 				}
-#endif
 			}
 		}
 	}
@@ -1346,9 +1459,7 @@ void gf_mo_set_flag(GF_MediaObject *mo, GF_MOUserFlags flag, Bool set_on)
 GF_EXPORT
 u32 gf_mo_has_audio(GF_MediaObject *mo)
 {
-#ifdef FILTER_FIXME
 	char *sub_url;
-#endif
 	u32 i;
 	GF_SceneNamespace *ns;
 	GF_Scene *scene;
@@ -1358,22 +1469,19 @@ u32 gf_mo_has_audio(GF_MediaObject *mo)
 
 	ns = mo->odm->scene_ns;
 	scene = mo->odm->parentscene;
-#ifdef FILTER_FIXME
 	sub_url = strchr(ns->url, '#');
-#endif
+
 	for (i=0; i<gf_list_count(scene->resources); i++) {
 		GF_ObjectManager *odm = (GF_ObjectManager *)gf_list_get(scene->resources, i);
 		if (odm->scene_ns != ns) continue;
 		//object already associated
 		if (odm->mo) continue;
 
-#ifdef FILTER_FIXME
 		if (sub_url) {
 			char *ext = mo->URLs.count ? mo->URLs.vals[0].url : NULL;
 			if (ext) ext = strchr(ext, '#');
 			if (!ext || strcmp(sub_url, ext)) continue;
 		}
-#endif
 		/*we have one audio object not bound with the scene from the same service, let's use it*/
 		if (odm->type == GF_STREAM_AUDIO) return 1;
 	}

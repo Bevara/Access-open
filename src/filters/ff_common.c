@@ -86,6 +86,11 @@ static const GF_FF_PFREG FF2GPAC_PixelFormats[] =
 	{AV_PIX_FMT_P010LE, GF_PIXEL_NV12_10},
 #endif
 	{AV_PIX_FMT_NV21, GF_PIXEL_NV21},
+	{AV_PIX_FMT_YUVA420P, GF_PIXEL_YUVA},
+	{AV_PIX_FMT_YUVA444P, GF_PIXEL_YUVA444},
+	{AV_PIX_FMT_YUV444P, GF_PIXEL_YUV444},
+
+
 	{AV_PIX_FMT_0RGB, GF_PIXEL_XRGB},
 	{AV_PIX_FMT_RGB0, GF_PIXEL_RGBX},
 	{AV_PIX_FMT_0BGR, GF_PIXEL_XBGR},
@@ -447,34 +452,116 @@ u32 ffmpeg_stream_type_to_gpac(u32 streamtype)
 	return GF_STREAM_METADATA;
 }
 
-//static void ff_log_callback(void *avcl, int level, const char *fmt, va_list vl) { }
+#ifndef GPAC_DISABLE_LOG
+
+static GF_LOG_Level ffmpeg_to_gpac_log_level(int level)
+{
+	switch (level) {
+	case AV_LOG_DEBUG: return GF_LOG_DEBUG;
+	case AV_LOG_TRACE: return GF_LOG_DEBUG;
+	case AV_LOG_VERBOSE: return GF_LOG_DEBUG;
+	case AV_LOG_INFO: return GF_LOG_INFO;
+	case AV_LOG_WARNING: return GF_LOG_WARNING;
+	case AV_LOG_ERROR: return GF_LOG_ERROR;
+	case AV_LOG_FATAL: return GF_LOG_ERROR;
+	case AV_LOG_PANIC: return GF_LOG_ERROR;
+	default: return GF_LOG_QUIET;
+	}
+}
+
+static int gpac_to_ffmpeg_log_level(GF_LOG_Level level)
+{
+	switch (level) {
+	case GF_LOG_QUIET: return AV_LOG_QUIET;
+	case GF_LOG_DEBUG: return AV_LOG_DEBUG;
+	case GF_LOG_INFO: return AV_LOG_INFO;
+	case GF_LOG_WARNING: return AV_LOG_WARNING;
+	case GF_LOG_ERROR: return AV_LOG_ERROR;
+	default: return AV_LOG_QUIET;
+	}
+}
+
+static GF_LOG_Tool gpac_to_ffmpeg_log_tool(AVClass* avc)
+{
+	if (!avc) return GF_LOG_CORE;
+	switch (avc->category) {
+	case AV_CLASS_CATEGORY_INPUT:
+	case AV_CLASS_CATEGORY_OUTPUT:
+	case AV_CLASS_CATEGORY_MUXER:
+	case AV_CLASS_CATEGORY_DEMUXER:
+		return GF_LOG_CONTAINER;
+	case AV_CLASS_CATEGORY_ENCODER:
+	case AV_CLASS_CATEGORY_DECODER:
+		return GF_LOG_CODEC;
+	case AV_CLASS_CATEGORY_FILTER:
+		return GF_LOG_AUTHOR;
+	case AV_CLASS_CATEGORY_BITSTREAM_FILTER:
+		return GF_LOG_PARSER;
+	case AV_CLASS_CATEGORY_SWSCALER:
+	case AV_CLASS_CATEGORY_SWRESAMPLER:
+		return GF_LOG_MEDIA;
+	case AV_CLASS_CATEGORY_DEVICE_VIDEO_OUTPUT:
+	case AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT:
+	case AV_CLASS_CATEGORY_DEVICE_AUDIO_OUTPUT:
+	case AV_CLASS_CATEGORY_DEVICE_AUDIO_INPUT:
+	case AV_CLASS_CATEGORY_DEVICE_OUTPUT:
+	case AV_CLASS_CATEGORY_DEVICE_INPUT:
+		return GF_LOG_MMIO;
+	default:
+		return GF_LOG_CORE;
+	}
+}
+
+#define FF_LOG_SIZE 2000
+static void ff_log_callback(void *avcl, int level, const char *fmt, va_list vl)
+{
+	AVClass* avc = avcl ? *(AVClass**)avcl : NULL;
+	GF_LOG_Level glevel = ffmpeg_to_gpac_log_level(level);
+	GF_LOG_Tool gtool = gpac_to_ffmpeg_log_tool(avc);
+
+	if (!gf_log_tool_level_on(gtool, glevel))
+		return;
+	gf_log_lt(glevel, gtool);
+
+	if (avc) {
+		char buffer[FF_LOG_SIZE+1];
+		buffer[FF_LOG_SIZE] = 0;
+		vsnprintf(buffer, FF_LOG_SIZE, fmt, vl);
+//		gf_log( "[%s@%p] %s", avc->item_name(avcl), avcl, buffer);
+		gf_log( "[%s] %s", avc->item_name(avcl), buffer);
+	} else {
+		gf_log_va_list(glevel, gtool, fmt, vl);
+	}
+}
 
 void ffmpeg_setup_logs(u32 log_class)
 {
 	u32 level = gf_log_get_tool_level(log_class);
-	switch (level) {
-	case GF_LOG_DEBUG:
-		av_log_set_level(AV_LOG_DEBUG);
-		break;
-	case GF_LOG_INFO:
-		av_log_set_level(AV_LOG_INFO);
-		break;
-	case GF_LOG_WARNING:
-		av_log_set_level(AV_LOG_WARNING);
-		break;
-	default:
-		av_log_set_level(AV_LOG_ERROR);
-		break;
-	}
-//	av_log_set_callback(ff_log_callback);
+	int av_level = gpac_to_ffmpeg_log_level(level);
+	//only set if more verbose
+	if (av_level > av_log_get_level())
+		av_log_set_level(av_level);
 }
+#else
+void ffmpeg_setup_logs(u32 log_class)
+{
+
+}
+#endif
 
 void ffmpeg_initialize()
 {
 	if (ffmpeg_init) return;
+#if (LIBAVFORMAT_VERSION_MAJOR < 59)
 	av_register_all();
+#endif
 	avformat_network_init();
 	ffmpeg_init = GF_TRUE;
+
+#ifndef GPAC_DISABLE_LOG
+	av_log_set_callback(&ff_log_callback);
+#endif
+
 }
 
 static void ffmpeg_register_free(GF_FilterSession *session, GF_FilterRegister *reg)
@@ -665,15 +752,15 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 #endif
 	const struct AVOption *opt;
 	GF_List *all_filters = gf_list_new();
-	AVInputFormat *fmt = NULL;
+	const AVInputFormat *fmt = NULL;
 	const AVOutputFormat *ofmt = NULL;
-	AVCodec *codec = NULL;
+	const AVCodec *codec = NULL;
 #if (LIBAVFILTER_VERSION_MAJOR > 5)
 	const AVFilter *avf = NULL;
 #endif
 
-#if !defined(NO_AVIO_PROTO) || (LIBAVFILTER_VERSION_MAJOR > 6)
-	void *av_it;
+#if !defined(NO_AVIO_PROTO) || (LIBAVFILTER_VERSION_MAJOR > 6) || (LIBAVFORMAT_VERSION_MAJOR >= 59)
+	void *av_it = NULL;
 #endif
 
 	const char *fname = "";
@@ -707,7 +794,7 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 second_pass:
 #endif
 
-#if !defined(NO_AVIO_PROTO) || (LIBAVFILTER_VERSION_MAJOR > 6)
+#if !defined(NO_AVIO_PROTO) || (LIBAVFILTER_VERSION_MAJOR > 6) || (LIBAVFORMAT_VERSION_MAJOR >= 59)
 	av_it = NULL;
 #endif
 
@@ -731,8 +818,14 @@ second_pass:
 			} else
 #endif
 			{
+
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
 				fmt = av_iformat_next(fmt);
+#else
+				fmt = av_demuxer_iterate(&av_it);
+#endif
 				if (!fmt) break;
+
 				av_class = fmt->priv_class;
 				subname = fmt->name;
 #ifndef GPAC_DISABLE_DOC
@@ -740,7 +833,11 @@ second_pass:
 #endif
 			}
 		} else if (type==FF_REG_TYPE_DECODE) {
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
 			codec = av_codec_next(codec);
+#else
+			codec = av_codec_iterate(&av_it);
+#endif
 			if (!codec) break;
 			if (!av_codec_is_decoder(codec))
 				continue;
@@ -752,7 +849,7 @@ second_pass:
 #endif
 		} else if (type==FF_REG_TYPE_DEV_IN) {
 #if (LIBAVCODEC_VERSION_MAJOR >= 58) && (LIBAVCODEC_VERSION_MINOR>=20)
-			fmt = av_input_video_device_next(fmt);
+			fmt = av_input_video_device_next(FF_IFMT_CAST fmt);
 			if (!fmt) break;
 			av_class = fmt->priv_class;
 			subname = fmt->name;
@@ -761,7 +858,12 @@ second_pass:
 #endif
     		if (!av_class || (av_class->category!=AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT) ) continue;
 #else
+
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
 			fmt = av_iformat_next(fmt);
+#else
+			fmt = av_demuxer_iterate(&av_it);
+#endif
 			if (!fmt) break;
 			av_class = fmt->priv_class;
 			subname = fmt->name;
@@ -790,7 +892,11 @@ second_pass:
 			else continue;
 #endif
 		} else if (type==FF_REG_TYPE_ENCODE) {
+#if (LIBAVFORMAT_VERSION_MAJOR<59)
 			codec = av_codec_next(codec);
+#else
+			codec = av_codec_iterate(&av_it);
+#endif
 			if (!codec) break;
 			if (!av_codec_is_encoder(codec))
 				continue;
@@ -1090,6 +1196,8 @@ void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_re
 
 	ffmpeg_initialize();
 
+	orig_reg->author = avfilter_configuration();
+	
 	//by default no need to load option descriptions, everything is handled by av_set_opt in update_args
 	if (!load_meta_filters) {
 		orig_reg->args = default_args;
@@ -1097,12 +1205,12 @@ void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_re
 		return;
 	}
 
-
 	if (reg_type==FF_REG_TYPE_ENCODE) opt_type = AV_OPT_FLAG_ENCODING_PARAM;
 	else if (reg_type==FF_REG_TYPE_MUX) opt_type = AV_OPT_FLAG_ENCODING_PARAM;
 	else if (reg_type==FF_REG_TYPE_AVF) opt_type = 0xFFFFFFFF;
 
 	if ((reg_type==FF_REG_TYPE_ENCODE) || (reg_type==FF_REG_TYPE_DECODE)) {
+		orig_reg->author = avcodec_configuration();
 		codec_ctx = avcodec_alloc_context3(NULL);
 		av_class = codec_ctx->av_class;
 	} else if (reg_type==FF_REG_TYPE_AVF) {
@@ -1293,14 +1401,22 @@ void ffmpeg_set_mx_dmx_flags(const AVDictionary *options, AVFormatContext *ctx)
 	}
 }
 
-void ffmpeg_report_unused_options(GF_Filter *filter, AVDictionary *options)
+void ffmpeg_report_options(GF_Filter *filter, AVDictionary *options, AVDictionary *all_options)
 {
 	AVDictionaryEntry *prev_e = NULL;
-	while (options) {
-		prev_e = av_dict_get(options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
-		if (!prev_e) break;
-		gf_filter_report_unused_meta_option(filter, prev_e->key);
-	}
 
+	while (all_options) {
+		Bool unknown_opt = GF_FALSE;
+		prev_e = av_dict_get(all_options, "", prev_e, AV_DICT_IGNORE_SUFFIX);
+		if (!prev_e) break;
+		if (options) {
+			AVDictionaryEntry *unkn = av_dict_get(options, prev_e->key, NULL, 0);
+			if (unkn) unknown_opt = GF_TRUE;
+		}
+		gf_filter_report_meta_option(filter, prev_e->key, unknown_opt ? GF_FALSE : GF_TRUE);
+	}
+	if (options)
+		av_dict_free(&options);
 }
+
 #endif

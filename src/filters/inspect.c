@@ -157,10 +157,10 @@ GF_Err gf_bs_set_logger(GF_BitStream *bs, void (*on_bs_log)(void *udta, const ch
 		gf_fprintf(dump, " %s 0x%08X", _name, _val);\
 	}
 
-#define DUMP_ATT_F(_name, _val)  if (ctx->xml) { \
-		gf_fprintf(dump, " %s=\"%f\"", _name, _val);\
+#define DUMP_ATT_FRAC(_name, _val)  if (ctx->xml) { \
+		gf_fprintf(dump, " %s=\"%d/%u\"", _name, _val.num, _val.den);\
 	} else {\
-		gf_fprintf(dump, " %s %f", _name, _val);\
+		gf_fprintf(dump, " %s %d/%u", _name, _val.num, _val.den);\
 	}
 
 
@@ -341,7 +341,35 @@ static void dump_sei(FILE *dump, GF_BitStream *bs, Bool is_hevc)
 			i++;
 		}
 
-		gf_fprintf(dump, "    <SEIMessage ptype=\"%u\" psize=\"%u\" type=\"%s\"/>\n", sei_type, sei_size, get_sei_name(sei_type, is_hevc) );
+		gf_fprintf(dump, "    <SEIMessage ptype=\"%u\" psize=\"%u\" type=\"%s\"", sei_type, sei_size, get_sei_name(sei_type, is_hevc) );
+		if (sei_type == 144) {
+			u16 max_content_light_level = gf_bs_read_int(bs, 16);
+			u16 max_pic_average_light_level = gf_bs_read_int(bs, 16);
+			gf_fprintf(dump, " max_content_light_level=\"%u\" max_pic_average_light_level=\"%u\"/>\n", max_content_light_level, max_pic_average_light_level);
+		} else if (sei_type == 137) {
+			u8 c;
+			u16 display_primaries_x[3];
+			u16 display_primaries_y[3];
+			u16 white_point_x;
+			u16 white_point_y;
+			u32 max_display_mastering_luminance;
+			u32 min_display_mastering_luminance;
+			for(c=0;c<3;c++) {
+				display_primaries_x[c] = gf_bs_read_int(bs, 16);
+				display_primaries_y[c] = gf_bs_read_int(bs, 16);
+			}
+			white_point_x = gf_bs_read_int(bs, 16);
+			white_point_y = gf_bs_read_int(bs, 16);
+			max_display_mastering_luminance = gf_bs_read_int(bs, 32);
+			min_display_mastering_luminance = gf_bs_read_int(bs, 32);
+			gf_fprintf(dump, " display_primaries_x=\"%u %u %u\" display_primaries_y=\"%u %u %u\" white_point_x=\"%u\" white_point_y=\"%u\" max_display_mastering_luminance=\"%u\" min_display_mastering_luminance=\"%u\"/>\n",
+					   display_primaries_x[0], display_primaries_x[1], display_primaries_x[2],
+					   display_primaries_y[0], display_primaries_y[1], display_primaries_y[2],
+					   white_point_x, white_point_y,
+					   max_display_mastering_luminance, min_display_mastering_luminance);
+		} else {
+			gf_fprintf(dump, "/>\n");
+		}
 		if (gf_bs_peek_bits(bs, 8, 0) == 0x80) {
 			break;
 		}
@@ -1628,7 +1656,8 @@ static void inspect_finalize(GF_Filter *filter)
 static void dump_temi_loc(GF_InspectCtx *ctx, PidCtx *pctx, FILE *dump, const char *pname, const GF_PropertyValue *att)
 {
 	u32 val;
-	Double dval;
+	Bool is_announce = GF_FALSE;
+
 	if (ctx->xml) {
 		gf_fprintf(dump, " <TEMILocation");
 	} else {
@@ -1650,6 +1679,7 @@ static void dump_temi_loc(GF_InspectCtx *ctx, PidCtx *pctx, FILE *dump, const ch
 	DUMP_ATT_STR("url", att->value.data.ptr)
 	if (gf_bs_read_int(pctx->bs, 1)) {
 		DUMP_ATT_D("announce", 1)
+		is_announce = GF_TRUE;
 	}
 	if (gf_bs_read_int(pctx->bs, 1)) {
 		DUMP_ATT_D("splicing", 1)
@@ -1658,14 +1688,14 @@ static void dump_temi_loc(GF_InspectCtx *ctx, PidCtx *pctx, FILE *dump, const ch
 		DUMP_ATT_D("reload", 1)
 	}
 	gf_bs_read_int(pctx->bs, 5);
-	dval =	gf_bs_read_double(pctx->bs);
-	if (dval) {
-		DUMP_ATT_F("splice_start", dval)
+	if (is_announce) {
+		GF_Fraction time;
+		time.den = gf_bs_read_u32(pctx->bs);
+		time.num = gf_bs_read_u32(pctx->bs);
+
+		DUMP_ATT_FRAC("splice_start", time)
 	}
-	dval =	gf_bs_read_double(pctx->bs);
-	if (dval) {
-		DUMP_ATT_F("splice_end", dval)
-	}
+
 	if (ctx->xml) {
 		gf_fprintf(dump, "/>\n");
 	} else {
@@ -1763,6 +1793,8 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 	}
 
 	if (p4cc==GF_PROP_PID_DOWNLOAD_SESSION)
+		return;
+	if (p4cc==GF_PROP_PCK_END_RANGE)
 		return;
 
 	if (p4cc==GF_PROP_PID_CENC_KEY_INFO) {
@@ -3349,7 +3381,7 @@ static GF_Err inspect_process(GF_Filter *filter)
 			if (ts == GF_FILTER_NO_TS) ts = gf_filter_pck_get_cts(pck);
 
 			if (!pctx->init_ts) pctx->init_ts = ts+1;
-			else if ((ts + dur - pctx->init_ts + 1) * (u64)ctx->dur.den >= timescale * (u64) ctx->dur.num) {
+			else if (gf_timestamp_greater_or_equal(ts + dur - pctx->init_ts + 1, timescale, ctx->dur.num, ctx->dur.den)) {
 				GF_FilterEvent evt;
 				GF_FEVT_INIT(evt, GF_FEVT_STOP, pctx->src_pid);
 
@@ -3612,7 +3644,7 @@ static Bool inspect_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 #define OFFS(_n)	#_n, offsetof(GF_InspectCtx, _n)
 static const GF_FilterArgs InspectArgs[] =
 {
-	{ OFFS(log), "set inspect log filename", GF_PROP_STRING, "stderr", "fileName, stderr, stdout or null", 0},
+	{ OFFS(log), "set inspect log filename", GF_PROP_STRING, "stdout", "fileName, stderr, stdout or null", 0},
 	{ OFFS(mode), "dump mode\n"
 	"- pck: dump full packet\n"
 	"- blk: dump packets before reconstruction\n"

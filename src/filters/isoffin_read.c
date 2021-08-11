@@ -117,13 +117,22 @@ static GF_Err isoffin_setup(GF_Filter *filter, ISOMReader *read)
 		read->end_range = prop->value.lfrac.den;
 	}
 
+	read->missing_bytes = 0;
 	e = gf_isom_open_progressive(szURL, read->start_range, read->end_range, read->sigfrag, &read->mov, &read->missing_bytes);
 
 	if (e == GF_ISOM_INCOMPLETE_FILE) {
 		read->moov_not_loaded = 1;
 		return GF_OK;
 	}
+
 	read->input_loaded = GF_TRUE;
+	//if missing bytes is set, file is incomplete, check if cache is complete
+	if (read->missing_bytes) {
+		read->input_loaded = GF_FALSE;
+		prop = gf_filter_pid_get_property(read->pid, GF_PROP_PID_FILE_CACHED);
+		if (prop && prop->value.boolean)
+			read->input_loaded = GF_TRUE;
+	}
 
 	if (e != GF_OK) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[IsoMedia] error while opening %s, error=%s\n", szURL,gf_error_to_string(e)));
@@ -138,7 +147,7 @@ static GF_Err isoffin_setup(GF_Filter *filter, ISOMReader *read)
         return e;
     }
     
-	read->time_scale = gf_isom_get_timescale(read->mov);
+	read->timescale = gf_isom_get_timescale(read->mov);
 	if (!read->input_loaded && read->frag_type)
 		read->refresh_fragmented = GF_TRUE;
 
@@ -202,7 +211,9 @@ static GF_Err isoffin_reconfigure(GF_Filter *filter, ISOMReader *read, const cha
 		gf_isom_reset_fragment_info(read->mov, GF_TRUE);
 
 		if (read->no_order_check) flags |= GF_ISOM_SEGMENT_NO_ORDER_FLAG;
-#ifdef FILTER_FIXME
+
+		//no longer used in filters
+#if 0
 		if (scalable_segment) flags |= GF_ISOM_SEGMENT_SCALABLE_FLAG;
 #endif
 		e = gf_isom_open_segment(read->mov, next_url, read->start_range, read->end_range, flags);
@@ -443,7 +454,7 @@ GF_Err isoffin_initialize(GF_Filter *filter)
 		read->extern_mov = GF_TRUE;
 		read->input_loaded = GF_TRUE;
 		read->frag_type = gf_isom_is_fragmented(read->mov) ? 1 : 0;
-		read->time_scale = gf_isom_get_timescale(read->mov);
+		read->timescale = gf_isom_get_timescale(read->mov);
 
 		if (read->sigfrag) {
 			gf_isom_enable_traf_map_templates(read->mov);
@@ -685,7 +696,7 @@ ISOMChannel *isor_create_channel(ISOMReader *read, GF_FilterPid *pid, u32 track,
 	//to see if we are all-intra (as detected here) or not
 	if (!ch->has_rap && ch->owner->frag_type)
 		ch->check_has_rap = GF_TRUE;
-	ch->time_scale = gf_isom_get_media_timescale(ch->owner->mov, ch->track);
+	ch->timescale = gf_isom_get_media_timescale(ch->owner->mov, ch->track);
 
 	ts_shift = gf_isom_get_cts_to_dts_shift(ch->owner->mov, ch->track);
 	if (ts_shift) {
@@ -774,9 +785,7 @@ u32 isoffin_channel_switch_quality(ISOMChannel *ch, GF_ISOFile *the_file, Bool s
 						u64 resume_at;
 						GF_Err e;
 						//try to locate sync after current time in base
-						resume_at = base->static_sample->DTS;
-						resume_at *= ch->time_scale;
-						resume_at /= base->time_scale;
+						resume_at = gf_timestamp_rescale(base->static_sample->DTS, base->timescale, ch->timescale);
 						e = gf_isom_get_sample_for_media_time(ch->owner->mov, ch->track, resume_at, &sample_desc_index, GF_ISOM_SEARCH_SYNC_FORWARD, &ch->static_sample, &ch->sample_num, &ch->sample_data_offset);
 						//found, rewind so that next fetch is the sync
 						if (e==GF_OK) {
@@ -864,23 +873,23 @@ static Bool isoffin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			Double t;
 			if (evt->play.start_range>=0) {
 				t = evt->play.start_range;
-				t *= ch->time_scale;
+				t *= ch->timescale;
 				ch->start = (u64) t;
 			}
 			if (evt->play.end_range >= evt->play.start_range) {
 				ch->end = (u64) -1;
 				if (evt->play.end_range<FLT_MAX) {
 					t = evt->play.end_range;
-					t *= ch->time_scale;
+					t *= ch->timescale;
 					ch->end = (u64) t;
 				}
 			}
 		} else {
 			Double end = evt->play.end_range;
 			if (end==-1) end = 0;
-			ch->start = (u64) (s64) (evt->play.start_range * ch->time_scale);
+			ch->start = (u64) (s64) (evt->play.start_range * ch->timescale);
 			if (end <= evt->play.start_range)
-				ch->end = (u64) (s64) (end  * ch->time_scale);
+				ch->end = (u64) (s64) (end  * ch->timescale);
 		}
 		ch->playing = GF_TRUE;
 		ch->sample_num = evt->play.from_pck;
@@ -920,11 +929,10 @@ static Bool isoffin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 					is_sidx_seek = GF_TRUE;
 					//in case we loaded moov but not sidx, update duration
 					if ((gf_isom_get_sidx_duration(read->mov, &dur, &ts)==GF_OK) && dur) {
-						dur *= read->time_scale;
-						dur /= ts;
+						dur = gf_timestamp_rescale(dur, ts, read->timescale);
 						if (ch->duration != dur) {
 							ch->duration = dur;
-							gf_filter_pid_set_property(ch->pid, GF_PROP_PID_DURATION, &PROP_FRAC64_INT(ch->duration, read->time_scale));
+							gf_filter_pid_set_property(ch->pid, GF_PROP_PID_DURATION, &PROP_FRAC64_INT(ch->duration, read->timescale));
 						}
 					}
 				}
@@ -938,7 +946,7 @@ static Bool isoffin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 					u64 time;
 					ch = gf_list_get(read->channels, i);
 					mode = ch->disable_seek ? GF_ISOM_SEARCH_BACKWARD : GF_ISOM_SEARCH_SYNC_BACKWARD;
-					time = (u64) (evt->play.start_range * ch->time_scale);
+					time = (u64) (evt->play.start_range * ch->timescale);
 
 					/*take care of seeking out of the track range*/
 					if (!read->frag_type && (ch->duration < time)) {
@@ -1042,7 +1050,7 @@ static void isoffin_push_buffer(GF_Filter *filter, ISOMReader *read, const u8 *p
 		}
 
 		read->frag_type = gf_isom_is_fragmented(read->mov) ? 1 : 0;
-		read->time_scale = gf_isom_get_timescale(read->mov);
+		read->timescale = gf_isom_get_timescale(read->mov);
 		isor_declare_objects(read);
 		read->mem_load_mode = 2;
 		read->moov_not_loaded = 0;
@@ -1308,11 +1316,15 @@ static GF_Err isoffin_process(GF_Filter *filter)
 				//strip param sets from payload, trigger reconfig if needed
 				isor_reader_check_config(ch);
 
-				pck = gf_filter_pck_new_alloc(ch->pid, ch->sample->dataLength, &data);
-				assert(pck);
+				if (read->nodata) {
+					pck = gf_filter_pck_new_shared(ch->pid, NULL, ch->sample->dataLength, NULL);
+					if (!pck) return GF_OUT_OF_MEM;
+				} else {
+					pck = gf_filter_pck_new_alloc(ch->pid, ch->sample->dataLength, &data);
+					if (!pck) return GF_OUT_OF_MEM;
 
-				memcpy(data, ch->sample->data, ch->sample->dataLength);
-
+					memcpy(data, ch->sample->data, ch->sample->dataLength);
+				}
 				gf_filter_pck_set_dts(pck, ch->dts);
 				gf_filter_pck_set_cts(pck, ch->cts);
 				if (ch->sample->IsRAP==-1) {
@@ -1334,6 +1346,11 @@ static GF_Err isoffin_process(GF_Filter *filter)
 					sample_dur *= ch->sample->nb_pack;
 				gf_filter_pck_set_duration(pck, sample_dur);
 				gf_filter_pck_set_seek_flag(pck, ch->seek_flag);
+
+				//for now we only signal xPS mask for non-sap
+				if (ch->xps_mask && !gf_filter_pck_get_sap(pck) ) {
+					gf_filter_pck_set_property(pck, GF_PROP_PCK_XPS_MASK, &PROP_UINT(ch->xps_mask) );
+				}
 
 				dep_flags = ch->isLeading;
 				dep_flags <<= 2;
@@ -1397,6 +1414,12 @@ static GF_Err isoffin_process(GF_Filter *filter)
 					}
 				}
 				ch->eos_sent = GF_FALSE;
+
+				//this might not be the true end of stream
+				if ((ch->streamType==GF_STREAM_AUDIO) && (ch->sample_num == gf_isom_get_sample_count(read->mov, ch->track))) {
+					gf_filter_pck_set_property(pck, GF_PROP_PCK_END_RANGE, &PROP_BOOL(GF_TRUE));
+				}
+
 				gf_filter_pck_send(pck);
 				isor_reader_release_sample(ch);
 
@@ -1421,8 +1444,10 @@ static GF_Err isoffin_process(GF_Filter *filter)
 					tfrf = (void *) gf_isom_get_tfrf(read->mov, ch->track);
 					if (tfrf) {
 						gf_filter_pid_set_info_str(ch->pid, "smooth_tfrf", &PROP_POINTER(tfrf) );
-					} else {
-						gf_filter_pid_set_info_str(ch->pid, "smooth_tfrf", NULL );
+						ch->last_has_tfrf = GF_TRUE;
+					} else if (ch->last_has_tfrf) {
+						gf_filter_pid_set_info_str(ch->pid, "smooth_tfrf", NULL);
+						ch->last_has_tfrf = GF_FALSE;
 					}
 
 					gf_filter_pid_set_eos(ch->pid);
@@ -1504,6 +1529,7 @@ static const GF_FilterArgs ISOFFInArgs[] =
 	"- rem: removes all inband xPS and notify configuration changes accordingly\n"
 	"- auto: resolves to `keep` for `smode=splix` (dasher mode), `rem` otherwise"
 	, GF_PROP_UINT, "auto", "auto|keep|rem", GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(nodata), "do not load sample data", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -1521,7 +1547,10 @@ static const GF_FilterCapability ISOFFInCaps[] =
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_ENCRYPTED),
 
 	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
-	//we don't set output cap for streamtype FILE for now.
+	{0},
+	//also declare generic file output for embedded files (cover art & co), but explicit to skip this cap in chain resolution
+	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_UINT(GF_CAPS_OUTPUT | GF_CAPFLAG_LOADED_FILTER ,GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE)
 };
 
 GF_FilterRegister ISOFFInRegister = {

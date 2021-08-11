@@ -265,10 +265,8 @@ void id3dmx_flush(GF_Filter *filter, u8 *id3_buf, u32 id3_buf_size, GF_FilterPid
 		buf = _buf+1;
 
 		tag_idx = gf_itags_find_by_id3tag(ftag);
-		if (tag_idx>=0) {
-			const char *tag_name = gf_itags_get_name((u32) tag_idx);
-			id3dmx_set_string(audio_pid, (char *) tag_name, buf+1, GF_FALSE);
-		} else if (ftag==GF_ID3V2_FRAME_TXXX) {
+
+		if (ftag==GF_ID3V2_FRAME_TXXX) {
 			sep = memchr(buf, 0, fsize);
 			if (sep) {
 				if (!stricmp(buf+1, "comment")) {
@@ -302,9 +300,11 @@ void id3dmx_flush(GF_Filter *filter, u8 *id3_buf, u32 id3_buf_size, GF_FilterPid
 						gf_filter_pid_set_name(*video_pid_p, "CoverArt");
 						gf_filter_pid_set_property(*video_pid_p, GF_PROP_PID_COVER_ART, &PROP_BOOL(GF_TRUE));
 						dst_pck = gf_filter_pck_new_alloc(*video_pid_p, pic_size, &out_buffer);
-						gf_filter_pck_set_framing(dst_pck, GF_TRUE, GF_TRUE);
-						memcpy(out_buffer, sep_desc+1, pic_size);
-						gf_filter_pck_send(dst_pck);
+						if (dst_pck) {
+							gf_filter_pck_set_framing(dst_pck, GF_TRUE, GF_TRUE);
+							memcpy(out_buffer, sep_desc+1, pic_size);
+							gf_filter_pck_send(dst_pck);
+						}
 
 						gf_filter_pid_set_eos(*video_pid_p);
 					}
@@ -312,6 +312,9 @@ void id3dmx_flush(GF_Filter *filter, u8 *id3_buf, u32 id3_buf_size, GF_FilterPid
 					gf_filter_pid_set_property(audio_pid, GF_PROP_PID_COVER_ART, &PROP_DATA(sep_desc+1, pic_size) );
 				}
 			}
+		} else if (tag_idx>=0) {
+			const char *tag_name = gf_itags_get_name((u32) tag_idx);
+			id3dmx_set_string(audio_pid, (char *) tag_name, buf+1, GF_FALSE);
 		} else {
 			sprintf(szTag, "tag_%s", gf_4cc_to_str(ftag));
 			if ((ftag>>24) == 'T') {
@@ -319,7 +322,6 @@ void id3dmx_flush(GF_Filter *filter, u8 *id3_buf, u32 id3_buf_size, GF_FilterPid
 			} else {
 				gf_filter_pid_set_property_dyn(audio_pid, szTag, &PROP_DATA(buf, fsize) );
 			}
-			break;
 		}
 		size -= fsize;
 	}
@@ -365,8 +367,7 @@ static void mp3_dmx_check_pid(GF_Filter *filter, GF_MP3DmxCtx *ctx)
 	if (!ctx->timescale) {
 		//we change sample rate, change cts
 		if (ctx->cts && ctx->sr && (ctx->sr != sr)) {
-			ctx->cts *= sr;
-			ctx->cts /= ctx->sr;
+			ctx->cts = gf_timestamp_rescale(ctx->cts, ctx->sr, sr);
 		}
 	}
 	ctx->sr = sr;
@@ -636,6 +637,7 @@ GF_Err mp3_dmx_process(GF_Filter *filter)
 
 		if (!ctx->in_seek) {
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+			if (!dst_pck) break;
 			memcpy(output, sync, size);
 
 			gf_filter_pck_set_cts(dst_pck, ctx->cts);
@@ -791,7 +793,7 @@ static const char *mp3_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 	}
 
 	if (nb_frames>=2) {
-		*score = (init_pos==0) ? GF_FPROBE_SUPPORTED : GF_FPROBE_MAYBE_SUPPORTED;
+		*score = (init_pos==0) ? GF_FPROBE_SUPPORTED : GF_FPROBE_MAYBE_NOT_SUPPORTED;
 		return "audio/mp3";
 	}
 	if (nb_frames && has_id3) {

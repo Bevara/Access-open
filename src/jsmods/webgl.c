@@ -36,6 +36,8 @@
 
 #include "webgl.h"
 
+#include <gpac/internal/mesh.h>
+
 JSClassID WebGLRenderingContextBase_class_id;
 
 static void webgl_finalize(JSRuntime *rt, JSValue obj)
@@ -65,8 +67,11 @@ static void webgl_finalize(JSRuntime *rt, JSValue obj)
 	glDeleteTextures(1, &glctx->tex_id);
 	glDeleteRenderbuffers(1, &glctx->depth_id);
 	glDeleteFramebuffers(1, &glctx->fbo_id);
+	if (glctx->pix_data) gf_free(glctx->pix_data);
+	if (glctx->pix_line) gf_free(glctx->pix_line);
 	gf_free(glctx);
 }
+
 static void webgl_gc_mark(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_func)
 {
 	u32 i, count;
@@ -122,6 +127,7 @@ static void _name##_finalize(JSRuntime *rt, JSValue obj)\
 	GF_WebGLObject *glo = JS_GetOpaque(obj, _name##_class_id);\
 	if (!glo) return;\
 	if (glo->gl_id) _destr(1, &glo->gl_id);\
+	if (glo->par_ctx) gf_list_del_item(glo->par_ctx->all_objects, glo);\
 	gf_free(glo);\
 }\
 JSClassDef _name##_class =\
@@ -135,6 +141,7 @@ static void _name##_finalize(JSRuntime *rt, JSValue obj)\
 {\
 	GF_WebGLObject *glo = JS_GetOpaque(obj, _name##_class_id);\
 	if (!glo) return;\
+	if (glo->par_ctx) gf_list_del_item(glo->par_ctx->all_objects, glo);\
 	gf_free(glo);\
 }\
 JSClassDef _name##_class =\
@@ -161,8 +168,11 @@ static void NamedTexture_finalize(JSRuntime *rt, JSValue obj)
 {
 	GF_WebGLNamedTexture *named_tx = JS_GetOpaque(obj, NamedTexture_class_id);
 	if (!named_tx) return;
-	if (named_tx->par_ctx)
+	if (named_tx->par_ctx) {
 		gf_list_del_item(named_tx->par_ctx->named_textures, named_tx);
+		if (named_tx->par_ctx->bound_named_texture == named_tx)
+			named_tx->par_ctx->bound_named_texture = NULL;
+	}
 
 	if (named_tx->tx.nb_textures) glDeleteTextures(named_tx->tx.nb_textures, named_tx->tx.textures);
 	if (named_tx->tx_name) gf_free(named_tx->tx_name);
@@ -181,12 +191,17 @@ Bool WGL_LOAD_INT32_VEC(JSContext *ctx, JSValue val, s32 **values, u32 *v_size, 
 	JSValue v;
 	int res;
 	u32 i, len;
-	if (!JS_IsArray(ctx, val)) return GF_FALSE;
-	v = JS_GetPropertyStr(ctx, val, "length");
-	res = JS_ToInt32(ctx, &len, v);
-	JS_FreeValue(ctx, v);
-	if (res) return GF_FALSE;
-
+	if (JS_IsArray(ctx, val) || JS_IsObject(val) ) {
+		v = JS_GetPropertyStr(ctx, val, "length");
+		if (JS_IsException(v))
+			res = 1;
+		else
+			res = JS_ToInt32(ctx, &len, v);
+		JS_FreeValue(ctx, v);
+		if (res) return GF_FALSE;
+	} else {
+		return GF_FALSE;
+	}
 	if (! *values) {
 		*values = gf_malloc(sizeof(s32) * len);
 		*v_size = len;
@@ -208,11 +223,19 @@ Bool WGL_LOAD_FLOAT_VEC(JSContext *ctx, JSValue val, Float **values, u32 *v_size
 	JSValue v;
 	int res;
 	u32 i, len;
-	if (!JS_IsArray(ctx, val)) return GF_FALSE;
-	v = JS_GetPropertyStr(ctx, val, "length");
-	res = JS_ToInt32(ctx, &len, v);
-	JS_FreeValue(ctx, v);
-	if (res) return GF_FALSE;
+
+	if (JS_IsArray(ctx, val) || JS_IsObject(val) ) {
+		v = JS_GetPropertyStr(ctx, val, "length");
+		if (JS_IsException(v))
+			res = 1;
+		else
+			res = JS_ToInt32(ctx, &len, v);
+
+		JS_FreeValue(ctx, v);
+		if (res) return GF_FALSE;
+	} else {
+		return GF_FALSE;
+	}
 
 	if (! *values) {
 		*values = gf_malloc(sizeof(Float) * len);
@@ -239,10 +262,15 @@ uint8_t *wgl_GetArrayBuffer(JSContext *ctx, u32 *size, JSValueConst obj)
 	JSValue v;
 	/*ArrayBuffer*/
 	size_t psize;
-	uint8_t *res = JS_GetArrayBuffer(ctx, &psize, obj);
-	if (res) {
-		*size = (u32) psize;
-		return res;
+	uint8_t *res;
+	if (JS_IsArrayBuffer(ctx, obj)) {
+		res = JS_GetArrayBuffer(ctx, &psize, obj);
+		if (res) {
+			*size = (u32) psize;
+			return res;
+		}
+		*size = 0;
+		return NULL;
 	}
 	/*ArrayView*/
 	v = JS_GetPropertyStr(ctx, obj, "buffer");
@@ -377,6 +405,7 @@ static JSValue wgl_getSupportedExtensions(JSContext *ctx, JSValueConst this_val,
 
 static JSValue wgl_getExtension(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+#if 0
 	const char *gl_exts, *ext;
 	Bool found = GF_FALSE;
 	GF_WebGLContext *glc = JS_GetOpaque(this_val, WebGLRenderingContextBase_class_id);
@@ -392,6 +421,8 @@ static JSValue wgl_getExtension(JSContext *ctx, JSValueConst this_val, int argc,
 
 	JS_FreeCString(ctx, ext);
 	if (!found) return JS_NULL;
+#endif
+
 	return JS_NULL;
 }
 
@@ -539,11 +570,14 @@ static JSValue wgl_getParameter(JSContext *ctx, JSValueConst this_val, int argc,
 	case GL_SCISSOR_TEST:
 	case GL_STENCIL_TEST:
 #if 0
-	case GL_UNPACK_FLIP_Y_WEBGL:
 	case GL_UNPACK_PREMULTIPLY_ALPHA_WEBGL:
 #endif
 		glGetBooleanv(pname, bools);
 		return bools[0] ? JS_TRUE : JS_FALSE;
+	case GL_UNPACK_FLIP_Y_WEBGL:
+		if (glc->bound_texture && glc->bound_texture->flip_y) return JS_TRUE;
+		if (glc->bound_named_texture && glc->bound_named_texture->flip_y) return JS_TRUE;
+		return JS_FALSE;
 
 	//floats
 	case GL_DEPTH_CLEAR_VALUE:
@@ -702,7 +736,7 @@ static JSValue wgl_getShaderPrecisionFormat(JSContext *ctx, JSValueConst this_va
 #else
 	range[0] = 0;
 	range[1] = 128;
-	precision = 128;
+	precision = 1;
 #endif
 	ret = JS_NewObject(ctx);
 	JS_SetPropertyStr(ctx, ret, "rangeMin", JS_NewInt32(ctx, range[0]));
@@ -767,6 +801,30 @@ static JSValue wgl_getTexParameter(JSContext *ctx, JSValueConst this_val, int ar
 	glGetTexParameteriv(target, pname, &params);
 	return JS_NewInt32(ctx, params);
 }
+
+JSValue wgl_pixelStorei(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	JSValue ret_val_js = JS_UNDEFINED;
+	u32 pname = 0;
+	s32 param = 0;
+	GF_WebGLContext *glc = JS_GetOpaque(this_val, WebGLRenderingContextBase_class_id);
+	if (!glc) return js_throw_err(ctx, WGL_INVALID_OPERATION);
+
+	if (argc<2) return js_throw_err(ctx, WGL_INVALID_VALUE);
+	WGL_GET_U32(pname, argv[0]);
+	WGL_GET_S32(param, argv[1]);
+	if (pname==GL_UNPACK_FLIP_Y_WEBGL) {
+		if (glc->bound_named_texture)
+			glc->bound_named_texture->flip_y = param ? GF_TRUE : GF_FALSE;
+		else if (glc->bound_texture)
+			glc->bound_texture->flip_y = param ? GF_TRUE : GF_FALSE;
+		return ret_val_js;
+	}
+	glPixelStorei(pname, param);
+	return ret_val_js;
+}
+
+
 static JSValue wgl_getUniform(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
 	GLint program_shader=0;
@@ -996,7 +1054,7 @@ static JSValue wgl_shaderSource(JSContext *ctx, JSValueConst this_val, int argc,
 {
 	GLint shader=0;
 	Bool has_gptx=GF_FALSE;
-	char *source, *gf_source=NULL;
+	char *source, *gf_source=NULL, *patch_precision = NULL;
 	const char *final_source;
 	u32 len = 0;
 	u32 count, i;
@@ -1070,8 +1128,8 @@ static JSValue wgl_shaderSource(JSContext *ctx, JSValueConst this_val, int argc,
 					return ret;
 				}
 				//insert our uniform declaration and code
-				if (gf_gl_txw_insert_fragment_shader(named_tx->tx.pix_fmt, named_tx->tx_name, &gf_source_pass1))
-					named_tx->shader_attached = GF_TRUE;
+				if (gf_gl_txw_insert_fragment_shader(named_tx->tx.pix_fmt, named_tx->tx_name, &gf_source_pass1, named_tx->flip_y))
+					named_tx->shader_attached = 1;
 				continue;
 			}
 			c = sep[0];
@@ -1138,22 +1196,36 @@ static JSValue wgl_shaderSource(JSContext *ctx, JSValueConst this_val, int argc,
 		return js_throw_err_msg(ctx, WGL_INVALID_VALUE, "Failed to rewrite shader");
 	}
 
-	len = (u32) strlen(final_source);
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_CONSOLE, ("[WebGL] Shader rewritten as\n%s", final_source));
+	if (strstr(final_source, "highp") || strstr(final_source, "mediump") || strstr(final_source, "lowp")) {
+		while (1) {
+			char *next = strstr(final_source, "precision ");
+			if (!next) break;
+			final_source = strchr(next, '\n');
+		}
+		patch_precision = NULL;
+		gf_dynstrcat(&patch_precision, "#define highp\n#define mediump\n#define lowp\n", NULL);
+		gf_dynstrcat(&patch_precision, final_source, NULL);
+		final_source = patch_precision;
+	}
 
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_CONSOLE, ("[WebGL] Shader source is\n%s", final_source));
+
+	len = (u32) strlen(final_source);
 	glShaderSource(shader, 1, &final_source, &len);
 
 	JS_FreeCString(ctx, source);
 	if (gf_source) gf_free(gf_source);
+	if (patch_precision) gf_free(patch_precision);
 	return JS_UNDEFINED;
 }
 
 const GF_FilterPacket *jsf_get_packet(JSContext *c, JSValue obj);
 
-static JSValue wgl_named_texture_upload(JSContext *c, JSValueConst pck_obj, GF_WebGLNamedTexture *named_tx)
+JSValue wgl_named_texture_upload(JSContext *c, JSValueConst pck_obj, void *_named_tx, Bool force_resetup)
 {
 	GF_FilterPacket *pck = NULL;
 	GF_FilterFrameInterface *frame_ifce = NULL;
+	GF_WebGLNamedTexture *named_tx = (GF_WebGLNamedTexture *)_named_tx;
 	const u8 *data=NULL;
 
 	/*try GF_FilterPacket*/
@@ -1170,13 +1242,15 @@ static JSValue wgl_named_texture_upload(JSContext *c, JSValueConst pck_obj, GF_W
 	}
 
 	//setup texture
-	if (!named_tx->tx.pix_fmt) {
+	if (!named_tx->tx.pix_fmt || force_resetup) {
 		u32 pix_fmt=0, width=0, height=0, stride=0, uv_stride=0;
 		if (pck) {
 			jsf_get_filter_packet_planes(c, pck_obj, &width, &height, &pix_fmt, &stride, &uv_stride, NULL, NULL, NULL, NULL);
 		} else {
 			js_evg_get_texture_info(c, pck_obj, &width, &height, &pix_fmt, NULL, &stride, NULL, NULL, &uv_stride, NULL);
 		}
+		if (force_resetup)
+			named_tx->tx.uniform_setup = GF_FALSE;
 
 		if (!gf_gl_txw_setup(&named_tx->tx, pix_fmt, width, height, stride, uv_stride, GF_FALSE, frame_ifce, named_tx->tx.fullrange, named_tx->tx.mx_cicp)) {
 			return js_throw_err_msg(c, WGL_INVALID_VALUE, "[WebGL] Pixel format %s unknown, cannot setup NamedTexture\n", gf_4cc_to_str(pix_fmt));
@@ -1200,6 +1274,45 @@ static JSValue wgl_named_texture_upload(JSContext *c, JSValueConst pck_obj, GF_W
 	gf_gl_txw_upload(&named_tx->tx, data, frame_ifce);
 
 	return JS_UNDEFINED;
+}
+
+const char *js_evg_get_texture_named(JSContext *ctx, JSValue this_obj);
+void js_evg_set_named_texture_gl(JSContext *ctx, JSValue this_obj, void *gl_named_tx);
+
+static void wgl_tex_image_2d(GF_WebGLContext *glc, GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const u8 *pixels)
+{
+	u32 bpp=3;
+	u32 i;
+	if (!glc->bound_texture) return;
+
+	glc->bound_texture->tx_height = height;
+
+	if (!glc->bound_texture->flip_y) {
+		glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
+		return;
+	}
+
+	switch (format) {
+	case GF_PIXEL_GREYSCALE:
+		bpp = 1;
+		break;
+	case GF_PIXEL_ALPHAGREY:
+	case GF_PIXEL_GREYALPHA:
+		bpp = 2;
+		break;
+	case GF_PIXEL_RGB:
+		bpp = 3;
+		break;
+	case GF_PIXEL_RGBA:
+		bpp = 4;
+		break;
+	}
+	glTexImage2D(target, level, internalformat, width, height, border, format, type, NULL);
+
+	for (i=0; i<(u32) height; i++) {
+		const u8 *pix_buf = pixels + bpp * width * (height-i-1);
+		glTexSubImage2D(target, level, 0, i, width, 1, format, type, pix_buf);
+	}
 }
 
 static JSValue wgl_texImage2D(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
@@ -1248,13 +1361,43 @@ static JSValue wgl_texImage2D(JSContext *ctx, JSValueConst this_val, int argc, J
 		WGL_GET_U32(type, argv[7]);
 		pix_buf = wgl_GetArrayBuffer(ctx, &pix_buf_size, argv[8]);
 
-		glTexImage2D(target, level, internalformat, width, height, border, format, type, pix_buf);
+		wgl_tex_image_2d(glc, target, level, internalformat, width, height, border, format, type, pix_buf);
 		return JS_UNDEFINED;
+	}
+
+	if (js_evg_is_texture(ctx, argv[5]) && !glc->bound_named_texture) {
+		const char *tx_named = js_evg_get_texture_named(ctx, argv[5]);
+		if (tx_named && glc->bound_texture) {
+			GF_WebGLNamedTexture *named_tx;
+
+			GF_SAFEALLOC(named_tx, GF_WebGLNamedTexture);
+			if (!named_tx) return js_throw_err(ctx, WGL_OUT_OF_MEMORY);
+			named_tx->par_ctx = glc;
+			named_tx->tx_name = gf_strdup(tx_named);
+			named_tx->tx.mx_cicp = -1;
+			named_tx->shader_attached = 0;
+			named_tx->flip_y = glc->bound_texture->flip_y;
+			js_evg_set_named_texture_gl(ctx, argv[5], named_tx);
+
+			JS_SwitchClassID(glc->bound_texture->obj, NamedTexture_class_id);
+			JS_SetOpaque(glc->bound_texture->obj, named_tx);
+			gf_list_add(glc->named_textures, named_tx);
+			gf_list_del_item(glc->all_objects, glc->bound_texture);
+
+			JS_FreeValue(ctx, glc->bound_texture->obj);
+			glDeleteTextures(1, &glc->bound_texture->gl_id);
+
+			gf_free(glc->bound_texture);
+			glc->bound_texture = NULL;
+			glc->bound_texture_target = 0;
+			glc->bound_named_texture = named_tx;
+		}
+
 	}
 
 	/*bound texture is a named texture, use tx.upload() */
 	if (glc->bound_named_texture) {
-		return wgl_named_texture_upload(ctx, argv[5], glc->bound_named_texture);
+		return wgl_named_texture_upload(ctx, argv[5], glc->bound_named_texture, GF_FALSE);
 	}
 
 	/*check if this is an EVG texture*/
@@ -1262,31 +1405,70 @@ static JSValue wgl_texImage2D(JSContext *ctx, JSValueConst this_val, int argc, J
 		switch (pixfmt) {
 		case GF_PIXEL_GREYSCALE:
 			format = GL_LUMINANCE;
+			internalformat = GL_RGB;
 			type = GL_TEXTURE_2D;
 			break;
 		case GF_PIXEL_ALPHAGREY:
 		case GF_PIXEL_GREYALPHA:
 			format = GL_LUMINANCE_ALPHA;
 			type = GL_UNSIGNED_BYTE;
+			internalformat = GL_RGBA;
 			break;
 		case GF_PIXEL_RGB:
 			format = GL_RGB;
 			type = GL_UNSIGNED_BYTE;
+			internalformat = GL_RGB;
 			break;
 		case GF_PIXEL_RGBA:
 			format = GL_RGBA;
 			type = GL_UNSIGNED_BYTE;
+			internalformat = GL_RGBA;
 			break;
 		default:
+			//not set yet
+			if (!width && !height && !pixfmt) return JS_UNDEFINED;
 			return js_throw_err_msg(ctx, WGL_INVALID_ENUM, "[WebGL] Pixel format %s not yet mapped to texImage2D", gf_pixel_fmt_name(pixfmt) );
 		}
 		internalformat = GL_RGBA;
 		target = GL_TEXTURE_2D;
-		glTexImage2D(target, level, internalformat, width, height, border, format, type, pix_buf);
+		wgl_tex_image_2d(glc, target, level, internalformat, width, height, border, format, type, pix_buf);
 		return JS_UNDEFINED;
 	}
 	/*otherwise not supported*/
 	return js_throw_err(ctx, WGL_INVALID_OPERATION);
+}
+
+void wgl_tex_sub_image_2d(GF_WebGLContext *glc, GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, u8 *pixels)
+{
+	u32 i, bpp=3;
+	if (!glc->bound_texture) return;
+	if (!glc->bound_texture->flip_y) {
+		glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
+		return;
+	}
+	if (!glc->bound_texture->tx_height) return;
+	if ((yoffset<0) || (yoffset+height > (s32) glc->bound_texture->tx_height)) return;
+
+	switch (format) {
+	case GF_PIXEL_GREYSCALE:
+		bpp = 1;
+		break;
+	case GF_PIXEL_ALPHAGREY:
+	case GF_PIXEL_GREYALPHA:
+		bpp = 2;
+		break;
+	case GF_PIXEL_RGB:
+		bpp = 3;
+		break;
+	case GF_PIXEL_RGBA:
+		bpp = 4;
+		break;
+	}
+
+	for (i=0; i<(u32) height; i++) {
+		const u8 *pix_buf = pixels + bpp * width * (height - (i+yoffset) - 1) + xoffset*bpp;
+		glTexSubImage2D(target, level, xoffset, i+yoffset, width, 1, format, type, pix_buf);
+	}
 }
 
 static JSValue wgl_texSubImage2D(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
@@ -1302,7 +1484,10 @@ static JSValue wgl_texSubImage2D(JSContext *ctx, JSValueConst this_val, int argc
 	u32 pixfmt, stride, stride_uv;
 	u8 *pix_buf, *p_u, *p_v, *p_a;
 	u32 pix_buf_size=0;
-	WGL_CHECK_CONTEXT
+
+	GF_WebGLContext *glc = JS_GetOpaque(this_val, WebGLRenderingContextBase_class_id);
+	if (!glc) return js_throw_err(ctx, WGL_INVALID_OPERATION);
+
 	if (argc<7) return js_throw_err(ctx, WGL_INVALID_VALUE);
 
 	WGL_GET_U32(target, argv[0]);
@@ -1328,7 +1513,7 @@ static JSValue wgl_texSubImage2D(JSContext *ctx, JSValueConst this_val, int argc
 		pix_buf = wgl_GetArrayBuffer(ctx, &pix_buf_size, argv[8]);
 		if (!pix_buf) return js_throw_err(ctx, WGL_INVALID_VALUE);
 
-		glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pix_buf);
+		wgl_tex_sub_image_2d(glc, target, level, xoffset, yoffset, width, height, format, type, pix_buf);
 		return JS_UNDEFINED;
 	}
 
@@ -1355,7 +1540,7 @@ static JSValue wgl_texSubImage2D(JSContext *ctx, JSValueConst this_val, int argc
 		default:
 			return js_throw_err_msg(ctx, WGL_INVALID_ENUM, "[WebGL] Pixel format %s not yet mapped to texImage2D", gf_pixel_fmt_name(pixfmt) );
 		}
-		glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pix_buf);
+		wgl_tex_sub_image_2d(glc, target, level, xoffset, yoffset, width, height, format, type, pix_buf);
 		return JS_UNDEFINED;
 	}
 	return js_throw_err(ctx, WGL_INVALID_OPERATION);
@@ -1402,6 +1587,7 @@ static JSValue wgl_createTexture(JSContext *ctx, JSValueConst this_val, int argc
 		if (!named_tx) return js_throw_err(ctx, WGL_OUT_OF_MEMORY);
 		named_tx->par_ctx = glc;
 		named_tx->tx_name = gf_strdup(tx_name);
+		named_tx->tx.mx_cicp = -1;
 		JS_FreeCString(ctx, tx_name);
 		ret_val_js = JS_NewObjectClass(ctx, NamedTexture_class_id);
 		JS_SetOpaque(ret_val_js, named_tx);
@@ -1446,6 +1632,8 @@ static JSValue wgl_bindTexture(JSContext *ctx, JSValueConst this_val, int argc, 
 	GF_WebGLContext *glc = JS_GetOpaque(this_val, WebGLRenderingContextBase_class_id);
 	if (!glc|| (argc<2)) return js_throw_err(ctx, WGL_INVALID_VALUE);
 	glc->bound_named_texture = NULL;
+	glc->bound_texture = NULL;
+	glc->bound_texture_target = 0;
 
 	WGL_GET_U32(target, argv[0]);
 	tx = JS_GetOpaque(argv[1], WebGLTexture_class_id);
@@ -1456,6 +1644,8 @@ static JSValue wgl_bindTexture(JSContext *ctx, JSValueConst this_val, int argc, 
 		return ret_val_js;
 	}
 	if (tx) {
+		glc->bound_texture = tx;
+		glc->bound_texture_target = target;
 		glBindTexture(target, tx->gl_id);
 		return ret_val_js;
 	}
@@ -1502,11 +1692,16 @@ static JSValue wgl_getUniformLocation(JSContext *ctx, JSValueConst this_val, int
 				break;
 			}
 		}
-		if (uni_loc==-1)
+		if (uni_loc==-1) {
+			JS_FreeCString(ctx, name);
 			return JS_NULL;
+		}
 	}
 	GF_SAFEALLOC(wglo, GF_WebGLObject);
-	if (!wglo) return js_throw_err(ctx, WGL_OUT_OF_MEMORY);
+	if (!wglo) {
+		JS_FreeCString(ctx, name);
+		return js_throw_err(ctx, WGL_OUT_OF_MEMORY);
+	}
 	wglo->par_ctx = JS_GetOpaque(this_val, WebGLRenderingContextBase_class_id);
 	wglo->gl_id = uni_loc;
 
@@ -1546,6 +1741,8 @@ void webgl_pck_tex_depth_del(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPack
 	GF_WebGLContext *glc = (GF_WebGLContext *)f_ifce->user_data;
 	if (!glc) return;
 
+	gf_js_lock(glc->ctx, GF_TRUE);
+
 	if (is_depth)
 		fun = &glc->depth_frame_flush;
 	else
@@ -1558,6 +1755,7 @@ void webgl_pck_tex_depth_del(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPack
 		JS_FreeValue(glc->ctx, *fun);
 		*fun = JS_UNDEFINED;
 	}
+	gf_js_lock(glc->ctx, GF_FALSE);
 }
 void webgl_pck_tex_del(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPacket *pck)
 {
@@ -1569,7 +1767,7 @@ void webgl_pck_depth_del(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPacket *
 	webgl_pck_tex_depth_del(filter, PID, pck, GF_TRUE);
 }
 
-JSValue webgl_get_frame_interface(JSContext *ctx, int argc, JSValueConst *argv, gf_fsess_packet_destructor *pck_del, GF_FilterFrameInterface **f_ifce)
+JSValue webgl_get_frame_interface(JSContext *ctx, int argc, JSValueConst *argv, GF_FilterPid *for_pid, gf_fsess_packet_destructor *pck_del, GF_FilterFrameInterface **f_ifce)
 {
 	JSValue *frame_flush_fun = NULL;
 	GF_WebGLContext *glc;
@@ -1590,6 +1788,17 @@ JSValue webgl_get_frame_interface(JSContext *ctx, int argc, JSValueConst *argv, 
 		*pck_del = webgl_pck_tex_del;
 		frame_flush_fun = &glc->tex_frame_flush;
 		*f_ifce = &glc->tex_f_ifce;
+
+		const GF_PropertyValue *p = gf_filter_pid_get_property(for_pid, GF_PROP_PID_PIXFMT);
+		if (p && (p->value.uint == GF_PIXEL_RGB)) {
+			glc->fetch_required_pfmt = 1;
+		}
+		else if (p && (p->value.uint == GF_PIXEL_RGBA)) {
+			glc->fetch_required_pfmt = 2;
+		}
+		else {
+			return js_throw_err_msg(ctx, GF_BAD_PARAM, "Only RGB and RGBA output format supported for WebGL output\n");
+		}
 	}
 	if (!JS_IsUndefined(*frame_flush_fun))
 		return js_throw_err(ctx, WGL_INVALID_OPERATION);
@@ -1624,6 +1833,75 @@ static GF_Err webgl_get_depth(GF_FilterFrameInterface *ifce, u32 plane_idx, u32 
 		gf_mx_add_scale(texcoordmatrix, FIX_ONE, -FIX_ONE, FIX_ONE);
 	return GF_OK;
 }
+
+GF_Err webgl_get_plane(GF_FilterFrameInterface *ifce, u32 plane_idx, const u8 **outPlane, u32 *outStride)
+{
+	GF_WebGLContext *glc = ifce->user_data;
+	if (!glc) return GF_BAD_PARAM;
+	if (plane_idx) return GF_BAD_PARAM;
+
+	gf_js_lock(glc->ctx, GF_TRUE);
+
+	if (glc->fetch_required_pfmt) {
+		u32 i, hy;
+		jsf_set_gl_active(glc->ctx);
+
+		if (glc->creation_attrs.primary) {
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		} else {
+			glBindFramebuffer(GL_FRAMEBUFFER, glc->fbo_id);
+
+			GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+			switch (status) {
+			case GL_FRAMEBUFFER_COMPLETE:
+				break;
+			default:
+				gf_js_lock(glc->ctx, GF_FALSE);
+				return GF_IO_ERR;
+			}
+		}
+		if (!glc->pix_data || !glc->pix_line) {
+			u32 bpp = (glc->fetch_required_pfmt==2) ? 4 : 3;
+			bpp *= glc->width;
+			if (!glc->pix_data) {
+				//we allocate one extra line at the end, workaround for ffsws sometimes trying to access one extra line
+				glc->pix_data = gf_malloc(sizeof(u8) * bpp * (glc->height+1) );
+				if (!glc->pix_data) {
+					gf_js_lock(glc->ctx, GF_FALSE);
+					return GF_OUT_OF_MEM;
+				}
+			}
+			if (!glc->pix_line) {
+				glc->pix_line = gf_malloc(sizeof(u8) * bpp);
+				if (!glc->pix_line) {
+					gf_js_lock(glc->ctx, GF_FALSE);
+					return GF_OUT_OF_MEM;
+				}
+			}
+		}
+
+		glReadPixels(0, 0, glc->width, glc->height, (glc->fetch_required_pfmt==2) ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE, glc->pix_data);
+
+		hy = glc->height/2;
+		glc->pix_stride = (glc->fetch_required_pfmt==2) ? 4 : 3;
+		glc->pix_stride *= glc->width;
+		glc->fetch_required_pfmt = 0;
+
+		for (i=0; i<hy; i++) {
+			memcpy(glc->pix_line, glc->pix_data + i * glc->pix_stride, glc->pix_stride);
+			memcpy(glc->pix_data + i * glc->pix_stride, glc->pix_data + (glc->height - 1 - i) * glc->pix_stride, glc->pix_stride);
+			memcpy(glc->pix_data + (glc->height - 1 - i) * glc->pix_stride, glc->pix_line, glc->pix_stride);
+		}
+	}
+
+	*outPlane = glc->pix_data;
+	*outStride = glc->pix_stride;
+
+	gf_js_lock(glc->ctx, GF_FALSE);
+	return GF_OK;
+}
+
+
 static JSValue webgl_setup_fbo(JSContext *ctx, GF_WebGLContext *glc, u32 width, u32 height)
 {
 	glc->width = width;
@@ -1705,6 +1983,12 @@ static JSValue webgl_setup_fbo(JSContext *ctx, GF_WebGLContext *glc, u32 width, 
    }
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+
+	if (glc->pix_data) {
+		gf_free(glc->pix_data);
+		glc->pix_data = NULL;
+	}
 	return JS_UNDEFINED;
 }
 static JSValue webgl_constructor(JSContext *ctx, JSValueConst new_target, int argc, JSValueConst *argv)
@@ -1806,6 +2090,7 @@ static JSValue webgl_constructor(JSContext *ctx, JSValueConst new_target, int ar
 	if (glc->creation_attrs.primary)
 		glc->tex_f_ifce.flags |= GF_FRAME_IFCE_MAIN_GLFB;
 	glc->tex_f_ifce.get_gl_texture = webgl_get_texture;
+	glc->tex_f_ifce.get_plane = webgl_get_plane;
 	glc->tex_f_ifce.user_data = glc;
 	glc->tex_frame_flush = JS_UNDEFINED;
 
@@ -1857,9 +2142,21 @@ static JSValue wgl_activate_gl(JSContext *ctx, GF_WebGLContext *glc, Bool activa
 			GF_WebGLNamedTexture *named_tx = gf_list_get(glc->named_textures, i);
 			named_tx->tx.frame_ifce = NULL;
 		}
-		glc->active_texture = 0;
-		glc->active_program = 0;
-		glc->bound_named_texture = NULL;
+
+		//restore prev program, texture and rebind
+		glUseProgram(glc->active_program);
+		if (glc->active_texture) {
+			glActiveTexture(glc->active_texture);
+
+			if (glc->bound_named_texture && glc->active_program && glc->bound_named_texture->shader_attached) {
+				if (!gf_gl_txw_bind(&glc->bound_named_texture->tx, glc->bound_named_texture->tx_name, glc->active_program, glc->active_texture)) {
+					return js_throw_err(ctx, WGL_INVALID_OPERATION);
+				}
+			}
+			else if (glc->bound_texture && glc->active_program) {
+				glBindTexture(glc->bound_texture_target, glc->bound_texture->gl_id);
+			}
+		}
 	} else {
 #if!defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
@@ -1911,13 +2208,11 @@ static JSValue wgl_resize(JSContext *ctx, JSValueConst this_val, int argc, JSVal
 	return wgl_activate_gl(ctx, glc, GF_TRUE);
 }
 
-
-
 static JSValue wgl_named_tx_upload(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
 	GF_WebGLNamedTexture *named_tx = JS_GetOpaque(this_val, NamedTexture_class_id);
 	if (!named_tx|| (argc<1)) return js_throw_err(ctx, WGL_INVALID_VALUE);
-	return wgl_named_texture_upload(ctx, argv[0], named_tx);
+	return wgl_named_texture_upload(ctx, argv[0], named_tx, GF_FALSE);
 }
 static JSValue wgl_named_tx_reconfigure(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -1926,10 +2221,9 @@ static JSValue wgl_named_tx_reconfigure(JSContext *ctx, JSValueConst this_val, i
 
 	gf_gl_txw_reset(&named_tx->tx);
 
-	named_tx->shader_attached = GF_FALSE;
+	named_tx->shader_attached = 0;
 	return JS_UNDEFINED;
 }
-
 
 /*GPAC extensions*/
 static const JSCFunctionListEntry webgl_funcs[] =
@@ -1987,6 +2281,121 @@ static const JSCFunctionListEntry webgl_named_tx_funcs[] =
 	JS_CFUNC_DEF("upload", 0, wgl_named_tx_upload),
 };
 
+/*GL-sepcifc code for mesh*/
+Bool mesh_gl_update_buffers(GF_Mesh *mesh)
+{
+	if (!mesh->vbo) {
+		glGenBuffers(1, &mesh->vbo);
+		if (!mesh->vbo) return GF_FALSE;
+	}
+	glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
+	glBufferData(GL_ARRAY_BUFFER, mesh->v_count * sizeof(GF_Vertex) , mesh->vertices, (mesh->vbo_dynamic) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
+
+	if (!mesh->vbo_idx) {
+		glGenBuffers(1, &mesh->vbo_idx);
+		if (!mesh->vbo_idx) return GF_FALSE;
+	}
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->vbo_idx);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh->i_count*sizeof(IDX_TYPE), mesh->indices, (mesh->vbo_dynamic) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
+
+	return GF_TRUE;
+}
+
+JSValue mesh_gl_draw(JSContext *ctx, GF_Mesh *mesh, int argc, JSValueConst *argv)
+{
+	JSValue ret_val_js = JS_UNDEFINED;
+	s32 vx_index = -1;
+	s32 norm_index = -1;
+	s32 color_index = -1;
+	s32 tx_index = -1;
+	void *idx_addr = NULL;
+	u32 prim_type;
+
+	if (argc<2) return JS_EXCEPTION;
+	GF_WebGLContext *glctx = JS_GetOpaque(argv[0], WebGLRenderingContextBase_class_id);
+	if (!glctx) return JS_EXCEPTION;
+
+	if (!mesh->vbo) return JS_EXCEPTION;
+	if (!mesh->vbo_idx) return JS_EXCEPTION;
+
+	WGL_GET_U32(vx_index, argv[1]);
+	if (argc==3) {
+		WGL_GET_U32(tx_index, argv[2]);
+	} else if (argc==4) {
+		WGL_GET_U32(norm_index, argv[2]);
+		WGL_GET_U32(tx_index, argv[3]);
+	} else if (argc>=5) {
+		WGL_GET_U32(norm_index, argv[2]);
+		WGL_GET_U32(color_index, argv[3]);
+		WGL_GET_U32(tx_index, argv[4]);
+	}
+
+	if (vx_index<0) return JS_EXCEPTION;
+
+	glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
+	glEnableVertexAttribArray(vx_index);
+#if defined(GPAC_FIXED_POINT)
+	glVertexAttribPointer(vx_index, 3, GL_FIXED, GL_TRUE, sizeof(GF_Vertex), NULL);
+#else
+	glVertexAttribPointer(vx_index, 3, GL_FLOAT, GL_FALSE, sizeof(GF_Vertex), NULL);
+#endif
+	GL_CHECK_ERR()
+
+	if (norm_index>=0) {
+#ifdef MESH_USE_FIXED_NORMAL
+		glVertexAttribPointer(norm_index, 3, GL_FLOAT, GL_FALSE, sizeof(GF_Vertex), (void *) MESH_NORMAL_OFFSET);
+#else
+		glVertexAttribPointer(norm_index, 3, GL_BYTE, GL_FALSE, sizeof(GF_Vertex), (void *) MESH_NORMAL_OFFSET);
+#endif
+		glEnableVertexAttribArray(norm_index);
+		GL_CHECK_ERR()
+	}
+
+	if (color_index>=0) {
+		//for now colors are 8bit/comp RGB(A), so used GL_UNSIGNED_BYTE and GL_TRUE for normalizing values
+		if (mesh->flags & MESH_HAS_ALPHA) {
+			glEnable(GL_BLEND);
+			glVertexAttribPointer(color_index, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(GF_Vertex), (void *) MESH_COLOR_OFFSET);
+		} else {
+			glVertexAttribPointer(color_index, 3, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(GF_Vertex), (void *) MESH_COLOR_OFFSET);
+		}
+		glEnableVertexAttribArray(color_index);
+		GL_CHECK_ERR()
+	}
+
+	if (tx_index>=0) {
+		glVertexAttribPointer(tx_index, 2, GL_FLOAT, GL_FALSE, sizeof(GF_Vertex), (void *) MESH_TEX_OFFSET);
+		glEnableVertexAttribArray(tx_index);
+		GL_CHECK_ERR()
+	}
+
+	switch (mesh->mesh_type) {
+	case MESH_LINESET:
+		prim_type = GL_LINES;
+		break;
+	case MESH_POINTSET:
+		prim_type = GL_POINTS;
+		break;
+	default:
+		prim_type = GL_TRIANGLES;
+		break;
+	}
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->vbo_idx);
+
+#if defined(GPAC_USE_GLES1X) || defined(GPAC_USE_GLES2)
+	glDrawElements(prim_type, mesh->i_count, GL_UNSIGNED_SHORT, idx_addr);
+#else
+	glDrawElements(prim_type, mesh->i_count, GL_UNSIGNED_INT, idx_addr);
+#endif
+
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+	return ret_val_js;
+
+
+}
 
 static int js_webgl_load_module(JSContext *c, JSModuleDef *m)
 {

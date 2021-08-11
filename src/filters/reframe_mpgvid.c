@@ -372,7 +372,7 @@ static void mpgviddmx_check_pid(GF_Filter *filter, GF_MPGVidDmxCtx *ctx, u32 vos
 				i += 4;
 				continue;
 			}
-			frame = strchr(dcfg + i + 4, 'p');
+			frame = memchr(dcfg + i + 4, 'p', vosh_size - i - 4);
 			if (frame) {
 				ctx->forced_packed = GF_TRUE;
 				frame[0] = 'n';
@@ -655,18 +655,23 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 
 			//no start code in stored buffer
 			if ((current<0) || (current >= (s32) ctx->bytes_in_header) )  {
-				dst_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->bytes_in_header, &pck_data);
-				if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
-				gf_filter_pck_set_cts(dst_pck, GF_FILTER_NO_TS);
-				gf_filter_pck_set_dts(dst_pck, GF_FILTER_NO_TS);
-				memcpy(pck_data, ctx->hdr_store, ctx->bytes_in_header);
-				gf_filter_pck_set_framing(dst_pck, GF_FALSE, GF_FALSE);
+				if (ctx->opid) {
+					dst_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->bytes_in_header, &pck_data);
+					if (!dst_pck) return GF_OUT_OF_MEM;
 
-				if (byte_offset != GF_FILTER_NO_BO) {
-					gf_filter_pck_set_byte_offset(dst_pck, byte_offset - ctx->bytes_in_header);
+					if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
+					gf_filter_pck_set_cts(dst_pck, GF_FILTER_NO_TS);
+					gf_filter_pck_set_dts(dst_pck, GF_FILTER_NO_TS);
+					memcpy(pck_data, ctx->hdr_store, ctx->bytes_in_header);
+					gf_filter_pck_set_framing(dst_pck, GF_FALSE, GF_FALSE);
+
+					if (byte_offset != GF_FILTER_NO_BO) {
+						gf_filter_pck_set_byte_offset(dst_pck, byte_offset - ctx->bytes_in_header);
+					}
+
+					mpgviddmx_enqueue_or_dispatch(ctx, dst_pck, GF_FALSE, GF_FALSE);
 				}
 
-				mpgviddmx_enqueue_or_dispatch(ctx, dst_pck, GF_FALSE, GF_FALSE);
 				if (current<0) current = -1;
 				else current -= ctx->bytes_in_header;
 				ctx->bytes_in_header = 0;
@@ -709,6 +714,8 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 				}
 
 				dst_pck = gf_filter_pck_new_alloc(ctx->opid, (u32) size, &pck_data);
+				if (!dst_pck) return GF_OUT_OF_MEM;
+
 				if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
 				memcpy(pck_data, start, (size_t) size);
 				gf_filter_pck_set_framing(dst_pck, GF_FALSE, GF_FALSE);
@@ -747,6 +754,8 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 		if (current>0) {
 			//flush remaining
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, current, &pck_data);
+			if (!dst_pck) return GF_OUT_OF_MEM;
+
 			if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
 			gf_filter_pck_set_cts(dst_pck, GF_FILTER_NO_TS);
 			gf_filter_pck_set_dts(dst_pck, GF_FILTER_NO_TS);
@@ -973,6 +982,8 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 		ctx->nb_frames++;
 
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, (u32) size, &pck_data);
+		if (!dst_pck) return GF_OUT_OF_MEM;
+
 		if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
 		//bytes come from both our store and the data packet
 		if (bytes_from_store) {
@@ -1068,7 +1079,7 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 {
 	GF_M4VParser *parser;
 	u8 ftype;
-	u32 tinc, nb_frames;
+	u32 tinc, nb_frames, o_start=0;
 	u64 fsize, start;
 	Bool is_coded;
 	GF_Err e;
@@ -1078,22 +1089,40 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 	parser = gf_m4v_parser_new((char*)data, size, GF_FALSE);
 	nb_frames = 0;
 	while (1) {
+		u32 otype;
 		ftype = 0;
 		is_coded = GF_FALSE;
 		e = gf_m4v_parse_frame(parser, &dsi, &ftype, &tinc, &fsize, &start, &is_coded);
-		//if start is more than 4 (start-code size), we have garbage at the beginning, do not parse
-		if (!nb_frames && (start>4))
+		if (!nb_frames && start) o_start = (u32) start;
+
+		otype = gf_m4v_parser_get_obj_type(parser);
+		switch (otype) {
+		case M4V_VOL_START_CODE:
+		case M4V_VOP_START_CODE:
+		case M4V_VISOBJ_START_CODE:
+		case M4V_VOS_START_CODE:
+		case M4V_GOV_START_CODE:
+		case M4V_UDTA_START_CODE:
 			break;
+		default:
+			otype = 0;
+		}
+
+		//if start is more than 4 (start-code size), we have garbage at the beginning, do not parse
+		//except if we have a valid object VOS
+		if (!nb_frames && (start>4) && !otype) {
+			break;
+		}
 		if (is_coded) nb_frames++;
 		if (e==GF_EOS) {
+			e = GF_OK;
 			//special case if the only frame we have is not coded
-			if (gf_m4v_parser_get_obj_type(parser) == M4V_VOP_START_CODE) {
+			if (otype == M4V_VOP_START_CODE) {
 				if (!nb_frames) nb_frames++;
 				is_coded = 1;
 			}
 
 			if (is_coded) nb_frames++;
-			e = GF_OK;
 			break;
 		}
 		if (ftype>2) break;
@@ -1102,7 +1131,7 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 	}
 	gf_m4v_parser_del(parser);
 	if ((e==GF_OK) && (nb_frames>1)) {
-		*score = GF_FPROBE_MAYBE_SUPPORTED;
+		*score = o_start ? GF_FPROBE_MAYBE_NOT_SUPPORTED : GF_FPROBE_MAYBE_SUPPORTED;
 		return "video/mp4v-es";
 	}
 
@@ -1113,9 +1142,11 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 		ftype = 0;
 		is_coded = GF_FALSE;
 		e = gf_m4v_parse_frame(parser, &dsi, &ftype, &tinc, &fsize, &start, &is_coded);
+
 		//if start is more than 4 (start-code size), we have garbage at the beginning, do not parse
-		if (!nb_frames && (start>4))
+		if (!nb_frames && (start>4) ) {
 			break;
+		}
 		if (is_coded) nb_frames++;
 		if (e==GF_EOS) {
 			if (is_coded) nb_frames++;
@@ -1128,7 +1159,7 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 	}
 	gf_m4v_parser_del(parser);
 	if ((e==GF_OK) && (nb_frames>1)) {
-		*score = GF_FPROBE_MAYBE_SUPPORTED;
+		*score = o_start ? GF_FPROBE_MAYBE_NOT_SUPPORTED : GF_FPROBE_MAYBE_SUPPORTED;
 		return "video/mpgv-es";
 	}
 	return NULL;

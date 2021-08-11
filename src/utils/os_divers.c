@@ -552,7 +552,7 @@ void gf_prompt_set_echo_off(Bool echo_off)
 	init_keyboard();
 	if (echo_off) t_orig.c_lflag &= ~ECHO;
 	else t_orig.c_lflag |= ECHO;
-	close_keyboard(0);
+	close_keyboard(GF_FALSE);
 }
 
 GF_EXPORT
@@ -564,10 +564,10 @@ Bool gf_prompt_has_input()
 
 	//we are not foreground nor piped (used for IDEs), can't read stdin
 	if ((fg!=-1) && (fg != getpgrp())) {
-		return 0;
+		return GF_FALSE;
 	}
 	init_keyboard();
-	if (ch_peek != -1) return 1;
+	if (ch_peek != -1) return GF_TRUE;
 	t_new.c_cc[VMIN]=0;
 	tcsetattr(0, TCSANOW, &t_new);
 	nread = (s32) read(0, &ch, 1);
@@ -575,10 +575,10 @@ Bool gf_prompt_has_input()
 	tcsetattr(0, TCSANOW, &t_new);
 	if(nread == 1) {
 		ch_peek = ch;
-		return 1;
+		return GF_TRUE;
 	}
-	close_keyboard(0);
-	return 0;
+	close_keyboard(GF_FALSE);
+	return GF_FALSE;
 }
 
 GF_EXPORT
@@ -588,12 +588,12 @@ char gf_prompt_get_char()
 	if (ch_peek != -1) {
 		ch = ch_peek;
 		ch_peek = -1;
-		close_keyboard(1);
+		close_keyboard(GF_TRUE);
 		return ch;
 	}
 	if (0==read(0,&ch,1))
 		ch = 0;
-	close_keyboard(1);
+	close_keyboard(GF_TRUE);
 	return ch;
 }
 
@@ -1854,7 +1854,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 	entry_time = gf_sys_clock();
 	if (last_update_time && (entry_time - last_update_time < refresh_time_ms)) {
 		memcpy(rti, &the_rti, sizeof(GF_SystemRTInfo));
-		return 0;
+		return GF_FALSE;
 	}
 	u_k_time = idle_time = 0;
 	f = gf_fopen("/proc/stat", "r");
@@ -1934,10 +1934,10 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 		char line[2048];
 		while (gf_fgets(line, 1024, f) != NULL) {
 			if (!strnicmp(line, "MemTotal:", 9)) {
-				sscanf(line, "MemTotal: "LLU" kB",  &the_rti.physical_memory);
+				sscanf(line, "MemTotal: " LLU " kB",  &the_rti.physical_memory);
 				the_rti.physical_memory *= 1024;
 			} else if (!strnicmp(line, "MemFree:", 8)) {
-				sscanf(line, "MemFree: "LLU" kB",  &the_rti.physical_memory_avail);
+				sscanf(line, "MemFree: " LLU " kB",  &the_rti.physical_memory_avail);
 				the_rti.physical_memory_avail *= 1024;
 				break;
 			}
@@ -1998,7 +1998,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 	last_cpu_u_k_time = u_k_time;
 	last_update_time = entry_time;
 	memcpy(rti, &the_rti, sizeof(GF_SystemRTInfo));
-	return 1;
+	return GF_TRUE;
 }
 
 #endif
@@ -2553,12 +2553,12 @@ u64 gf_net_parse_date(const char *val)
 	oh = om = 0;
 	secs = 0;
 
-	if (sscanf(val, "%d-%d-%dT%d:%d:%gZ", &year, &month, &day, &h, &m, &secs) == 6) {
-	}
-	else if (sscanf(val, "%d-%d-%dT%d:%d:%g-%d:%d", &year, &month, &day, &h, &m, &secs, &oh, &om) == 8) {
+	if (sscanf(val, "%d-%d-%dT%d:%d:%g-%d:%d", &year, &month, &day, &h, &m, &secs, &oh, &om) == 8) {
 		neg_time_zone = GF_TRUE;
 	}
 	else if (sscanf(val, "%d-%d-%dT%d:%d:%g+%d:%d", &year, &month, &day, &h, &m, &secs, &oh, &om) == 8) {
+	}
+	else if (sscanf(val, "%d-%d-%dT%d:%d:%gZ", &year, &month, &day, &h, &m, &secs) == 6) {
 	}
 	else if (sscanf(val, "%3s, %d %3s %d %d:%d:%d", szDay, &day, szMonth, &year, &h, &m, &s)==7) {
 		secs  = (Float) s;
@@ -2636,7 +2636,7 @@ u64 gf_net_parse_date(const char *val)
 
 	if (om || oh) {
 		s32 diff = (60*oh + om)*60;
-		if (neg_time_zone) diff = -diff;
+		if (!neg_time_zone) diff = -diff;
 		current_time = current_time + diff;
 	}
 	current_time *= 1000;
@@ -2769,13 +2769,13 @@ GF_Err gf_file_load_data_filep(FILE *file, u8 **out_data, u32 *out_size)
 
 	fsize = gf_fsize(file);
 	if (fsize>0xFFFFFFFFUL) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] file %s is too big to load in memory ("LLU" bytes)\n", fsize));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ( "[Core] file %s is too big to load in memory (" LLU " bytes)\n", fsize) );
 		return GF_OUT_OF_MEM;
 	}
 
 	*out_size = (u32) fsize;
 	if (fsize == 0) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] file is empty\n"));
+		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[Core] file is empty\n"));
 		return GF_OK;
 	}
 

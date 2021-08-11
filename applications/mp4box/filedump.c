@@ -1573,6 +1573,179 @@ void dump_isom_saps(GF_ISOFile *file, GF_ISOTrackID trackID, u32 dump_saps_mode,
 	if (inName) gf_fclose(dump);
 }
 
+
+typedef struct
+{
+	u32 track_num;
+	u32 chunk_num;
+	u32 first_sample_num;
+	u32 timescale;
+	u32 sample_per_chunk;
+	u64 chunk_offset;
+	u64 size;
+} ChunkInfo;
+
+static s32 sort_chunk(const void* e1, const void* e2)
+{
+	const ChunkInfo *p1 = e1;
+	const ChunkInfo *p2 = e2;
+
+	if (p1->chunk_offset < p2->chunk_offset) return -1;
+	if (p1->chunk_offset > p2->chunk_offset) return 1;
+	return 0;
+}
+
+void dump_isom_chunks(GF_ISOFile *file, char *inName, Bool is_final_name)
+{
+	u32 i, count, nb_chunks_total, cur;
+	FILE *dump;
+	Bool dump_stsd = 0;
+	u32 dump_hm = 0;
+	u64 prev_time = 0;
+	u64 unused_space = 0;
+	u64 prev_chunk_end = 0;
+	Bool do_prog=GF_TRUE;
+	ChunkInfo *all_chunks;
+
+	if (inName) {
+		char szBuf[1024];
+		strcpy(szBuf, inName);
+		if (!is_final_name) strcat(szBuf, "_chunks.txt");
+		dump = gf_fopen(szBuf, "wt");
+		if (!dump) {
+			M4_LOG(GF_LOG_ERROR, ("Failed to open %s for dumping\n", szBuf));
+			return;
+		}
+	} else {
+		dump = stdout;
+		do_prog = GF_FALSE;
+	}
+
+	count = gf_isom_get_track_count(file);
+	nb_chunks_total = 0;
+	for (i=0; i<count; i++) {
+		nb_chunks_total += gf_isom_get_chunk_count(file, i+1);
+	}
+	all_chunks = gf_malloc(sizeof(ChunkInfo) * nb_chunks_total);
+	memset(all_chunks, 0, sizeof(ChunkInfo) * nb_chunks_total);
+
+	cur = 0;
+	for (i=0; i<count; i++) {
+		u32 csize = 0;
+		u32 c1, c2;
+		u32 j, nb_chunks = gf_isom_get_chunk_count(file, i+1);
+		u32 ts = gf_isom_get_media_timescale(file, i+1);
+		u64 dur = gf_isom_get_media_duration(file, i+1);
+
+		if (dur > 3600 * ts) dump_hm = 2;
+		else if (dur > 60 * ts) dump_hm = 1;
+
+		if (nb_chunks>1) {
+			csize = gf_isom_get_constant_sample_size(file, i+1);
+			if (csize) {
+				gf_isom_enable_raw_pack(file, i+1, 1024);
+				csize = gf_isom_get_constant_sample_size(file, i+1);
+			}
+		}
+		c1 = c2 = 0;
+		for (j=0; j<nb_chunks; j++) {
+			ChunkInfo *ci;
+			u32 k;
+			u32 sample_num, spc, di;
+			u64 offset;
+			gf_isom_get_chunk_info(file, i+1,j+1, &offset, &sample_num, &spc, &di, &c1, &c2);
+
+			ci = &all_chunks[cur];
+
+			ci->track_num = i+1;
+			ci->chunk_num = j+1;
+			ci->chunk_offset = offset;
+			ci->first_sample_num = sample_num;
+			ci->timescale = ts;
+			ci->sample_per_chunk = spc;
+
+			if (csize) {
+				ci->size += csize * spc;
+			} else {
+				for (k=0; k<spc; k++) {
+					ci->size += gf_isom_get_sample_size(file, i+1, sample_num+k);
+				}
+			}
+
+			if (di>1) dump_stsd=1;
+
+			if (do_prog)
+				gf_set_progress("Analysing chunks", cur+1, nb_chunks_total);
+			cur++;
+		}
+	}
+
+	qsort(all_chunks, nb_chunks_total, sizeof(ChunkInfo), sort_chunk);
+
+	fprintf(stderr, "Dumping chunk info - diff_prev_ms is the diff in ms between start time of current and prev chunk\n");
+
+	if (dump_stsd)
+		fprintf(dump, "ChunkNum\tOffset\tTkNum\tChkNbInTk\tChkSize\tSamp/Chunk\tFirstSample\tDescIdx\tSAP\tTime\tCTS\tdiff_prev_ms\n");
+	else
+		fprintf(dump, "ChunkNum\tOffset\tTkNum\tChkNbInTk\tChkSize\tSamp/Chunk\tFirstSample\tSAP\tTime\tCTS\tdiff_prev_ms\n");
+
+	for (i=0; i<nb_chunks_total; i++) {
+		ChunkInfo *ci = &all_chunks[i];
+		u32 di;
+		GF_ISOSample *samp = gf_isom_get_sample_info(file, ci->track_num, ci->first_sample_num, &di, NULL);
+		if (samp) {
+			u32 h, m, s, ms, secs;
+			u64 time = samp->DTS+samp->CTS_Offset;
+			s64 diff;
+			time *= 1000;
+			time /= ci->timescale;
+
+			secs = (u32) (time/1000);
+			h = secs / 3600;
+			m = (secs - 3600 * h) / 60;
+			s = (secs - 3600 * h - 60 * m);
+			ms = (u32) (time - secs*1000);
+
+			diff = time;
+			diff -= prev_time;
+			prev_time = time;
+
+			fprintf(dump, "%d\t"LLU"\t%d\t%d\t"LLU"\t%d\t%d\t", i+1, ci->chunk_offset, ci->track_num, ci->chunk_num, ci->size, ci->sample_per_chunk, ci->first_sample_num);
+			if (dump_stsd) fprintf(dump, "%d\t", di);
+			fprintf(dump, "%d\t", samp->IsRAP);
+			if (dump_hm==2)
+				fprintf(dump, "%02d:", h);
+			if (dump_hm>=1)
+				fprintf(dump, "%02d:", m);
+			fprintf(dump, "%02d.%03d\t"LLD"\t"LLD"\n", s, ms, samp->DTS+samp->CTS_Offset, diff);
+			gf_isom_sample_del(&samp);
+		} else {
+			fprintf(dump, "%d\t"LLU"\t%d\t%d\t%d\tN/A\tN/A\tN/A\tN/A\n", i+1, ci->chunk_offset, ci->track_num, ci->chunk_num, ci->first_sample_num);
+		}
+		//we assume single mdat ...
+		if (!prev_chunk_end) {
+			prev_chunk_end = gf_isom_get_first_mdat_start(file);
+		}
+
+		if (ci->chunk_offset > prev_chunk_end)
+			unused_space += ci->chunk_offset - prev_chunk_end;
+
+		prev_chunk_end = ci->chunk_offset + ci->size;
+
+		if (do_prog)
+			gf_set_progress("Dumping chunks", i+1, nb_chunks_total);
+	}
+	gf_free(all_chunks);
+	if (inName)
+		gf_fclose(dump);
+
+	prev_chunk_end = gf_isom_get_unused_box_bytes(file);
+	if (prev_chunk_end)
+		fprintf(stderr, "Unused bytes in box structure: "LLU"\n", prev_chunk_end);
+	if (unused_space)
+		fprintf(stderr, "Unused bytes in mdat: "LLU"\n", unused_space);
+}
+
 #ifndef GPAC_DISABLE_ISOM_DUMP
 
 void dump_isom_ismacryp(GF_ISOFile *file, char *inName, Bool is_final_name)
@@ -1885,22 +2058,27 @@ void print_udta(GF_ISOFile *file, u32 track_number, Bool has_itags)
 	fprintf(stderr, "%d UDTA types: ", count);
 
 	for (i=0; i<count; i++) {
-		u32 j, type, nb_items, first=GF_TRUE;
+		u32 j, type, nb_items;
 		bin128 uuid;
 		gf_isom_get_udta_type(file, track_number, i+1, &type, &uuid);
 		nb_items = gf_isom_get_user_data_count(file, track_number, type, uuid);
-		fprintf(stderr, "%s (%d) ", gf_4cc_to_str(type), nb_items);
+		if (!nb_items) continue;
+
+		fprintf(stderr, "\n\t%s: ", gf_4cc_to_str(type));
 		for (j=0; j<nb_items; j++) {
 			u8 *udta=NULL;
 			u32 udta_size;
 			gf_isom_get_user_data(file, track_number, type, uuid, j+1, &udta, &udta_size);
 			if (!udta) continue;
-			if (gf_utf8_is_legal(udta, udta_size)) {
-				if (first) {
-					fprintf(stderr, "\n");
-					first = GF_FALSE;
+			if (j) fprintf(stderr, ", ");
+			if (udta_size && gf_utf8_is_legal(udta, udta_size)) {
+				u32 idx;
+				for (idx=0; idx<udta_size; idx++) {
+					if (!udta[idx]) break;
+					fprintf(stderr, "%c", udta[idx]);
 				}
-				fprintf(stderr, "\t%s\n", (char *) udta);
+			} else {
+				fprintf(stderr, " unknown type (%d bytes)", udta_size);
 			}
 			gf_free(udta);
 		}
@@ -2075,6 +2253,8 @@ static void DumpMetaItem(GF_ISOFile *file, Bool root_meta, u32 tk_num, char *nam
 	}
 
 	count = gf_isom_get_meta_item_count(file, root_meta, tk_num);
+	if (!count && !meta_type) return;
+
 	primary_id = gf_isom_get_meta_primary_item_id(file, root_meta, tk_num);
 	fprintf(stderr, "%s type: \"%s\" - %d resource item(s)\n", name, meta_type ? gf_4cc_to_str(meta_type) : "undefined", (count+(primary_id>0)));
 	switch (gf_isom_has_meta_xml(file, root_meta, tk_num)) {
@@ -2161,8 +2341,8 @@ static void DumpMetaItem(GF_ISOFile *file, Bool root_meta, u32 tk_num, char *nam
 		fprintf(stderr, "\n");
 		if (url) fprintf(stderr, "%sURL: %s\n", szInd, url);
 		if (urn) fprintf(stderr, "%sURN: %s\n", szInd, urn);
-
 	}
+	fprintf(stderr, "\n");
 }
 
 
@@ -2276,18 +2456,19 @@ void dump_vvc_track_info(GF_ISOFile *file, u32 trackNum, GF_VVCConfig *vvccfg
 	u32 idx;
 #endif
 	u32 k;
-	fprintf(stderr, "\tVVC Info:");
-
-	fprintf(stderr, " Profile %d @ Level %d - Chroma Format %s\n", vvccfg->general_profile_idc, vvccfg->general_level_idc, vvccfg->chromaformat_plus_one ? gf_avc_hevc_get_chroma_format_name(vvccfg->chromaformat_plus_one-1) : "n/a");
-	fprintf(stderr, "\n");
 	fprintf(stderr, "\tNAL Unit length bits: %d", 8*vvccfg->nal_unit_size);
-	if (vvccfg->general_constraint_info && vvccfg->num_constraint_info && vvccfg->general_constraint_info[0]) {
-		fprintf(stderr, " - general constraint info 0x");
-		for (idx=0; idx<vvccfg->num_constraint_info; idx++) {
-			fprintf(stderr, "%02X", vvccfg->general_constraint_info[idx]);
+	if (vvccfg->ptl_present) {
+		fprintf(stderr, " Profile %d @ Level %d - Chroma Format %s", vvccfg->general_profile_idc, vvccfg->general_level_idc, gf_avc_hevc_get_chroma_format_name(vvccfg->chroma_format));
+		if (vvccfg->general_constraint_info && vvccfg->num_constraint_info && vvccfg->general_constraint_info[0]) {
+			fprintf(stderr, " - general constraint info 0x");
+			for (idx=0; idx<vvccfg->num_constraint_info; idx++) {
+				fprintf(stderr, "%02X", vvccfg->general_constraint_info[idx]);
+			}
 		}
+		fprintf(stderr, "\n");
+		fprintf(stderr, "\tBit Depth %d - %d temporal layers\n", vvccfg->bit_depth, vvccfg->numTemporalLayers);
 	}
-	fprintf(stderr, "\n");
+
 	fprintf(stderr, "\tParameter Sets: ");
 	for (k=0; k<gf_list_count(vvccfg->param_array); k++) {
 		GF_NALUFFParamArray *ar=gf_list_get(vvccfg->param_array, k);
@@ -2340,7 +2521,6 @@ void dump_vvc_track_info(GF_ISOFile *file, u32 trackNum, GF_VVCConfig *vvccfg
 		}
 	}
 #endif
-	fprintf(stderr, "\tBit Depth %d - %d temporal layers\n", vvccfg->bit_depth_plus_one-1, vvccfg->numTemporalLayers);
 
 	for (k=0; k<gf_list_count(vvccfg->param_array); k++) {
 		GF_NALUFFParamArray *ar=gf_list_get(vvccfg->param_array, k);
@@ -2450,6 +2630,31 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 	}
 
 	print_udta(file, trackNum, GF_FALSE);
+
+	DumpMetaItem(file, 0, trackNum, "\tTrack Meta");
+
+	gf_isom_get_track_switch_group_count(file, trackNum, &alt_group, &nb_groups);
+	if (alt_group) {
+		fprintf(stderr, "Alternate Group ID %d\n", alt_group);
+		for (i=0; i<nb_groups; i++) {
+			u32 nb_crit, switchGroupID;
+			const u32 *criterias = gf_isom_get_track_switch_parameter(file, trackNum, i+1, &switchGroupID, &nb_crit);
+			if (!nb_crit) {
+				fprintf(stderr, "\tNo criteria in %s group\n", switchGroupID ? "switch" : "alternate");
+			} else {
+				if (switchGroupID) {
+					fprintf(stderr, "\tSwitchGroup ID %d criterias: ", switchGroupID);
+				} else {
+					fprintf(stderr, "\tAlternate Group criterias: ");
+				}
+				for (j=0; j<nb_crit; j++) {
+					if (j) fprintf(stderr, " ");
+					fprintf(stderr, "%s", gf_4cc_to_str(criterias[j]) );
+				}
+				fprintf(stderr, "\n");
+			}
+		}
+	}
 
 	if (gf_isom_is_video_handler_type(mtype) ) {
 		s32 tx, ty;
@@ -2704,8 +2909,13 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 					char *szName;
 					gf_isom_get_visual_info(file, trackNum, 1, &w, &h);
 					if (full_dump) fprintf(stderr, "\t");
-					if (!strnicmp((char *) &esd->decoderConfig->decoderSpecificInfo->data[3], "theora", 6)) szName = "Theora";
-					else szName = "Unknown";
+					szName = "Unknown";
+					if (esd->decoderConfig->decoderSpecificInfo
+						&& (esd->decoderConfig->decoderSpecificInfo->dataLength>=10)
+						&& !strnicmp((char *) &esd->decoderConfig->decoderSpecificInfo->data[3], "theora", 6)
+					)
+						szName = "Theora";
+
 					fprintf(stderr, "Ogg/%s video / GPAC Mux  - Visual Size %d x %d\n", szName, w, h);
 				}
 				else {
@@ -2778,14 +2988,16 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 #ifndef GPAC_DISABLE_AV_PARSERS
 						GF_ISOSample *samp = gf_isom_get_sample(file, trackNum, 1, &oti);
 						if (samp) {
-							u32 mhdr = GF_4CC((u8)samp->data[0], (u8)samp->data[1], (u8)samp->data[2], (u8)samp->data[3]);
-							if (full_dump) fprintf(stderr, "\t");
-							fprintf(stderr, "%s Audio - %d Channel(s) - SampleRate %d - Layer %d\n",
-							        gf_mp3_version_name(mhdr),
-							        gf_mp3_num_channels(mhdr),
-							        gf_mp3_sampling_rate(mhdr),
-							        gf_mp3_layer(mhdr)
-							       );
+							if (samp->data && (samp->dataLength>4)) {
+								u32 mhdr = GF_4CC((u8)samp->data[0], (u8)samp->data[1], (u8)samp->data[2], (u8)samp->data[3]);
+								if (full_dump) fprintf(stderr, "\t");
+								fprintf(stderr, "%s Audio - %d Channel(s) - SampleRate %d - Layer %d\n",
+										gf_mp3_version_name(mhdr),
+										gf_mp3_num_channels(mhdr),
+										gf_mp3_sampling_rate(mhdr),
+										gf_mp3_layer(mhdr)
+									   );
+							}
 							gf_isom_sample_del(&samp);
 						} else {
 							M4_LOG(GF_LOG_ERROR, ("Error fetching sample: %s\n", gf_error_to_string(gf_isom_last_error(file)) ));
@@ -2823,13 +3035,17 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 			else if (esd->decoderConfig->streamType==GF_STREAM_SCENE) {
 				if (esd->decoderConfig->objectTypeIndication<=4) {
 					GF_BIFSConfig *b_cfg = gf_odf_get_bifs_config(esd->decoderConfig->decoderSpecificInfo, esd->decoderConfig->objectTypeIndication);
-					fprintf(stderr, "BIFS Scene description - %s stream\n", b_cfg->elementaryMasks ? "Animation" : "Command");
-					if (full_dump && !b_cfg->elementaryMasks) {
-						fprintf(stderr, "\tWidth %d Height %d Pixel Metrics %s\n", b_cfg->pixelWidth, b_cfg->pixelHeight, b_cfg->pixelMetrics ? "yes" : "no");
+					if (b_cfg) {
+						fprintf(stderr, "BIFS Scene description - %s stream\n", b_cfg->elementaryMasks ? "Animation" : "Command");
+						if (full_dump && !b_cfg->elementaryMasks) {
+							fprintf(stderr, "\tWidth %d Height %d Pixel Metrics %s\n", b_cfg->pixelWidth, b_cfg->pixelHeight, b_cfg->pixelMetrics ? "yes" : "no");
+						}
+						gf_odf_desc_del((GF_Descriptor *)b_cfg);
+					} else {
+						fprintf(stderr, "! Invalid BIFS configuration !\n");
 					}
-					gf_odf_desc_del((GF_Descriptor *)b_cfg);
 				} else if (esd->decoderConfig->objectTypeIndication==GF_CODECID_AFX) {
-					u8 tag = esd->decoderConfig->decoderSpecificInfo ? esd->decoderConfig->decoderSpecificInfo->data[0] : 0xFF;
+					u8 tag = (esd->decoderConfig->decoderSpecificInfo && esd->decoderConfig->decoderSpecificInfo->data) ? esd->decoderConfig->decoderSpecificInfo->data[0] : 0xFF;
 					const char *afxtype = gf_stream_type_afx_name(tag);
 					fprintf(stderr, "AFX Stream - type %s (%d)\n", afxtype, tag);
 				} else if (esd->decoderConfig->objectTypeIndication==GF_CODECID_FONT) {
@@ -2874,23 +3090,27 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 		fprintf(stderr, "\tAOM AV1 stream - Resolution %d x %d\n", w, h);
 
 		av1c = gf_isom_av1_config_get(file, trackNum, 1);
-		fprintf(stderr, "\tversion=%u, profile=%u, level_idx0=%u, tier=%u\n", (u32)av1c->version, (u32)av1c->seq_profile, (u32)av1c->seq_level_idx_0, (u32)av1c->seq_tier_0);
-		fprintf(stderr, "\thigh_bitdepth=%u, twelve_bit=%u, monochrome=%u\n", (u32)av1c->high_bitdepth, (u32)av1c->twelve_bit, (u32)av1c->monochrome);
-		fprintf(stderr, "\tchroma: subsampling_x=%u, subsampling_y=%u, sample_position=%u\n", (u32)av1c->chroma_subsampling_x, (u32)av1c->chroma_subsampling_y, (u32)av1c->chroma_sample_position);
+		if (!av1c) {
+			fprintf(stderr, "\tCorrupted av1 config\n");
+		} else {
+			fprintf(stderr, "\tversion=%u, profile=%u, level_idx0=%u, tier=%u\n", (u32)av1c->version, (u32)av1c->seq_profile, (u32)av1c->seq_level_idx_0, (u32)av1c->seq_tier_0);
+			fprintf(stderr, "\thigh_bitdepth=%u, twelve_bit=%u, monochrome=%u\n", (u32)av1c->high_bitdepth, (u32)av1c->twelve_bit, (u32)av1c->monochrome);
+			fprintf(stderr, "\tchroma: subsampling_x=%u, subsampling_y=%u, sample_position=%u\n", (u32)av1c->chroma_subsampling_x, (u32)av1c->chroma_subsampling_y, (u32)av1c->chroma_sample_position);
 
-		if (av1c->initial_presentation_delay_present)
-			fprintf(stderr, "\tInitial presentation delay %u\n", (u32) av1c->initial_presentation_delay_minus_one+1);
+			if (av1c->initial_presentation_delay_present)
+				fprintf(stderr, "\tInitial presentation delay %u\n", (u32) av1c->initial_presentation_delay_minus_one+1);
 
-		count = gf_list_count(av1c->obu_array);
-		for (i=0; i<count; i++) {
-			u8 hash[20];
-			GF_AV1_OBUArrayEntry *obu = gf_list_get(av1c->obu_array, i);
-			gf_sha1_csum((u8*)obu->obu, (u32)obu->obu_length, hash);
-			fprintf(stderr, "\tOBU#%d %s hash: ", i+1, gf_av1_get_obu_name(obu->obu_type) );
-			for (j=0; j<20; j++) fprintf(stderr, "%02X", hash[j]);
-			fprintf(stderr, "\n");
+			count = gf_list_count(av1c->obu_array);
+			for (i=0; i<count; i++) {
+				u8 hash[20];
+				GF_AV1_OBUArrayEntry *obu = gf_list_get(av1c->obu_array, i);
+				gf_sha1_csum((u8*)obu->obu, (u32)obu->obu_length, hash);
+				fprintf(stderr, "\tOBU#%d %s hash: ", i+1, gf_av1_get_obu_name(obu->obu_type) );
+				for (j=0; j<20; j++) fprintf(stderr, "%02X", hash[j]);
+				fprintf(stderr, "\n");
+			}
+			gf_odf_av1_cfg_del(av1c);
 		}
-		gf_odf_av1_cfg_del(av1c);
 	} else if (msub_type == GF_ISOM_SUBTYPE_3GP_H263) {
 		u32 w, h;
 		gf_isom_get_visual_info(file, trackNum, 1, &w, &h);
@@ -3006,10 +3226,12 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 			if (auxiliary_mimes != NULL) {
 				fprintf(stderr, " - auxiliary-mime-types %s", auxiliary_mimes);
 			}
+		} else if (mtype == GF_ISOM_MEDIA_SUBT) {
+			fprintf(stderr, "QT/3GPP subtitle");
 		} else {
 			fprintf(stderr, "Unknown Text Stream");
 		}
-		fprintf(stderr, "\n Size %d x %d - Translation X=%d Y=%d - Layer %d\n", w, h, tx, ty, l);
+		fprintf(stderr, "\n\tSize %d x %d - Translation X=%d Y=%d - Layer %d\n", w, h, tx, ty, l);
 	} else if (mtype == GF_ISOM_MEDIA_META) {
 		const char *content_encoding = NULL;
 		if (msub_type == GF_ISOM_SUBTYPE_METT) {
@@ -3141,16 +3363,18 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 		GF_ISOSample *sample = gf_isom_get_sample(file, trackNum, 1, &stsd_idx);
 		fprintf(stderr, "Time Code stream\n");
 		if (sample) {
-			char szTimecode[100];
 			u32 tmcd_flags, tmcd_num, tmcd_den, tmcd_fpt;
 
 			gf_isom_get_tmcd_config(file, trackNum, stsd_idx, &tmcd_flags, &tmcd_num, &tmcd_den, &tmcd_fpt);
-
-			gf_inspect_format_timecode(sample->data, sample->dataLength, tmcd_flags, tmcd_num, tmcd_den, tmcd_fpt, szTimecode);
-
+			if (sample->data) {
+				char szTimecode[100];
+				gf_inspect_format_timecode(sample->data, sample->dataLength, tmcd_flags, tmcd_num, tmcd_den, tmcd_fpt, szTimecode);
+				fprintf(stderr, "\tFirst timecode: %s\n", szTimecode);
+			}
 			gf_isom_sample_del(&sample);
-			fprintf(stderr, "\tFirst timecode: %s\n", szTimecode);
 		}
+	} else if (msub_type==GF_ISOM_SUBTYPE_OPUS) {
+		fprintf(stderr, "\tOpus Audio - Sample Rate %d ch %d\n", sr, nb_ch);
 	} else {
 		GF_GenericSampleDescription *udesc;
 
@@ -3257,31 +3481,6 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 	}
 
 
-	DumpMetaItem(file, 0, trackNum, "\tTrack Meta");
-
-	gf_isom_get_track_switch_group_count(file, trackNum, &alt_group, &nb_groups);
-	if (alt_group) {
-		fprintf(stderr, "Alternate Group ID %d\n", alt_group);
-		for (i=0; i<nb_groups; i++) {
-			u32 nb_crit, switchGroupID;
-			const u32 *criterias = gf_isom_get_track_switch_parameter(file, trackNum, i+1, &switchGroupID, &nb_crit);
-			if (!nb_crit) {
-				fprintf(stderr, "\tNo criteria in %s group\n", switchGroupID ? "switch" : "alternate");
-			} else {
-				if (switchGroupID) {
-					fprintf(stderr, "\tSwitchGroup ID %d criterias: ", switchGroupID);
-				} else {
-					fprintf(stderr, "\tAlternate Group criterias: ");
-				}
-				for (j=0; j<nb_crit; j++) {
-					if (j) fprintf(stderr, " ");
-					fprintf(stderr, "%s", gf_4cc_to_str(criterias[j]) );
-				}
-				fprintf(stderr, "\n");
-			}
-		}
-	}
-
 	switch (gf_isom_has_sync_points(file, trackNum)) {
 	case 0:
 		fprintf(stderr, "\tAll samples are sync\n");
@@ -3333,7 +3532,7 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 			dur = samp->DTS+samp->CTS_Offset;
 			size += samp->dataLength;
 			rate += samp->dataLength;
-			if (samp->DTS - time_slice > ts) {
+			if ((samp->DTS - time_slice > ts) || (j+1==count) ) {
 				Double max_tmp = rate * ts / (samp->DTS - time_slice);
 				if (max_rate < max_tmp )
 					max_rate = max_tmp;
@@ -3389,7 +3588,7 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 	}
 }
 
-void DumpMovieInfo(GF_ISOFile *file)
+void DumpMovieInfo(GF_ISOFile *file, Bool full_dump)
 {
 	GF_InitialObjectDescriptor *iod;
 	Bool dump_m4sys = GF_FALSE;
@@ -3587,7 +3786,7 @@ void DumpMovieInfo(GF_ISOFile *file)
 	print_udta(file, 0, has_itags);
 	fprintf(stderr, "\n");
 	for (i=0; i<gf_isom_get_track_count(file); i++) {
-		DumpTrackInfo(file, i+1, 0, GF_TRUE, dump_m4sys);
+		DumpTrackInfo(file, i+1, full_dump, GF_TRUE, dump_m4sys);
 	}
 }
 

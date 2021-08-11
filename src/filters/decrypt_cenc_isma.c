@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2020
+ *			Copyright (c) Telecom ParisTech 2018-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / CENC and ISMA decrypt filter
@@ -362,6 +362,7 @@ static GF_Err cenc_dec_process_isma(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 
 	if (! gf_filter_pck_get_crypt_flags(in_pck)) {
 		out_pck = gf_filter_pck_new_ref(cstr->opid, 0, 0, in_pck);
+		if (!out_pck) return GF_OUT_OF_MEM;
 		gf_filter_pck_merge_properties(in_pck, out_pck);
 		gf_filter_pck_set_crypt_flags(out_pck, 0);
 		gf_filter_pck_send(out_pck);
@@ -417,6 +418,7 @@ static GF_Err cenc_dec_process_isma(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 	data_size -= offset;
 
 	out_pck = gf_filter_pck_new_alloc(cstr->opid, data_size, &out_data);
+	if (!out_pck) return GF_OUT_OF_MEM;
 
 	memcpy(out_data, in_data, data_size);
 	/*decrypt*/
@@ -586,11 +588,18 @@ static GF_Err cenc_dec_load_keys(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr)
 			}
 		}
 		if (!found) {
+			char szKID[33];
+			szKID[0] = 0;
+			for (j=0; j<16; j++) {
+				char szV[3];
+				sprintf(szV, "%02X", KID[j]);
+				strcat(szKID, szV);
+			}
 			if (ctx->decrypt==DECRYPT_FULL) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC] Cannot locate key #%d for given KID, abprting !\n\tUse '--decrypt=nokey' to force decrypting\n", i+1));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC] Cannot locate key #%d for given KID 0x%s, aborting !\n\tUse '--decrypt=nokey' to force decrypting\n", i+1, szKID));
 				return cstr->key_error = GF_SERVICE_ERROR;
 			}
-			GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC] Cannot locate key #%d for given KID, will leave data encrypted\n", i+1));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC] Cannot locate key #%d for given KID 0x%s, will leave data encrypted\n", i+1, szKID));
 			cstr->crypts[i].key_valid = GF_FALSE;
 		}
 	}
@@ -805,9 +814,12 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 		return GF_OK;
 	}
 
-	if (ctx->decrypt!=DECRYPT_FULL) return GF_OK;
-	GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC/ISMA] No supported system ID, no key found, aborting!\n\tUse '--decrypt=nokey' to force decrypting\n"));
-	return GF_NOT_SUPPORTED;
+	if (ctx->decrypt!=DECRYPT_FULL) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC/ISMA] No keys found but playback forced\n"));
+		return GF_OK;
+	}
+	GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC/ISMA] No key found, aborting!\n\tUse '--decrypt=nokey' to force decrypting\n"));
+	return GF_FILTER_NOT_SUPPORTED;
 }
 
 static GF_Err cenc_dec_setup_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u32 scheme_type, u32 scheme_version, const char *scheme_uri, const char *kms_uri)
@@ -998,6 +1010,7 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 
 	if (!data_size || ! gf_filter_pck_get_crypt_flags(in_pck)) {
 		out_pck = gf_filter_pck_new_ref(cstr->opid, 0, 0, in_pck);
+		if (!out_pck) return GF_OUT_OF_MEM;
 		gf_filter_pck_merge_properties(in_pck, out_pck);
 		gf_filter_pck_set_property(out_pck, GF_PROP_PCK_CENC_SAI, NULL);
 		gf_filter_pck_set_crypt_flags(out_pck, 0);
@@ -1015,11 +1028,7 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 
 	//CENC can use inplace processing for decryption
 	out_pck = gf_filter_pck_new_clone(cstr->opid, in_pck, &out_data);
-	if (!out_pck) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC] Failed to allocated/clone packet for decrypting payload\n" ) );
-		gf_filter_pid_drop_packet(cstr->ipid);
-		return GF_SERVICE_ERROR;
-	}
+	if (!out_pck) return GF_OUT_OF_MEM;
 
 	subsample_count = 0;
 
@@ -1091,7 +1100,9 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 				e = GF_OK;
 				goto send_packet;
 			}
-			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC] Packet encrypted but no SAI info nor constant IV\n" ) );
+			if (gf_filter_pck_get_crypt_flags(in_pck)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC] Packet encrypted but no SAI info nor constant IV\n" ) );
+			}
 			return GF_SERVICE_ERROR;
 		}
 
@@ -1271,6 +1282,7 @@ static GF_Err cenc_dec_process_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr,
 
 	in_data = gf_filter_pck_get_data(in_pck, &data_size);
 	out_pck = gf_filter_pck_new_alloc(cstr->opid, data_size, &out_data);
+	if (!out_pck) return GF_OUT_OF_MEM;
 
 	memcpy(out_data, in_data, data_size);
 
@@ -1479,6 +1491,9 @@ static GF_Err cenc_dec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_CENC_KEY_INFO, NULL);
 	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_CENC_PATTERN, NULL);
 	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_HLS_KMS, NULL);
+
+	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_ORIG_CRYPT_SCHEME, &PROP_UINT(scheme_type) );
+
 
 	cstr->is_nalu = GF_FALSE;;
 	prop = gf_filter_pid_get_property(pid, GF_PROP_PID_CODECID);

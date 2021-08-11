@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2020
+ *			Copyright (c) Telecom ParisTech 2018-2021
  *					All rights reserved
  *
  *  This file is part of GPAC / ROUTE (ATSC3, DVB-I) input filter
@@ -124,8 +124,7 @@ static void routein_repair_segment_ts(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo *fi
 static const char *top_codes[] = {"styp", "emsg", "prft", "moof", "mdat", "free", "sidx", "ssix"};
 static u32 nb_top_codes = GF_ARRAY_LENGTH(top_codes);
 
-
-u32 next_top_level_box(GF_ROUTEEventFileInfo *finfo, u8 *data, u32 size, u32 *cur_pos, u32 *box_size)
+static u32 next_top_level_box(GF_ROUTEEventFileInfo *finfo, u8 *data, u32 size, u32 *cur_pos, u32 *box_size)
 {
     u32 pos = *cur_pos;
 	u32 cur_frag = 0;
@@ -146,7 +145,7 @@ u32 next_top_level_box(GF_ROUTEEventFileInfo *finfo, u8 *data, u32 size, u32 *cu
 			return 0;
 	}
 		
-    while (pos < size) {
+    while (pos + 8 < size) {
         u32 i;
         u32 type_idx = 0;
 		u32 first_box = 0;
@@ -185,7 +184,7 @@ static void routein_repair_segment_isobmf(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo
     //if box completely in a received byte range, keep as is
     //if mdat or free box, keep as is
     //otherwise change box type to free
-    while (pos < size) {
+    while (pos + 8 < size) {
         u32 i;
 		Bool is_mdat = GF_FALSE;
         Bool box_complete = GF_FALSE;
@@ -398,10 +397,12 @@ static void routein_send_file(ROUTEInCtx *ctx, u32 service_id, GF_ROUTEEventFile
 		gf_filter_pid_set_property(pid, GF_PROP_PID_FILE_EXT, &PROP_STRING(ext ? (ext+1) : "*" ));
 
 		pck = gf_filter_pck_new_alloc(pid, finfo->blob->size, &output);
-		memcpy(output, finfo->blob->data, finfo->blob->size);
-		if (finfo->blob->flags & GF_BLOB_CORRUPTED) gf_filter_pck_set_corrupted(pck, GF_TRUE);
-		gf_filter_pck_send(pck);
-
+		if (pck) {
+			memcpy(output, finfo->blob->data, finfo->blob->size);
+			if (finfo->blob->flags & GF_BLOB_CORRUPTED) gf_filter_pck_set_corrupted(pck, GF_TRUE);
+			gf_filter_pck_send(pck);
+		}
+		
         if (ctx->max_segs && (evt_type==GF_ROUTE_EVT_DYN_SEG))
             push_seg_info(ctx, pid, finfo);
 	}
@@ -647,12 +648,15 @@ void routein_on_event(void *udta, GF_ROUTEEventType evt, u32 evt_param, GF_ROUTE
 
 		if (is_loop) break;
 
+		//cf routein_local_cache_probe
+		gf_filter_lock(ctx->filter, GF_TRUE);
 		nb_obj = gf_route_dmx_get_object_count(ctx->route_dmx, evt_param);
-        while (nb_obj > ctx->nbcached) {
-            if (!gf_route_dmx_remove_first_object(ctx->route_dmx, evt_param))
+		while (nb_obj > ctx->nbcached) {
+			if (!gf_route_dmx_remove_first_object(ctx->route_dmx, evt_param))
 				break;
-            nb_obj = gf_route_dmx_get_object_count(ctx->route_dmx, evt_param);
-        }
+			nb_obj = gf_route_dmx_get_object_count(ctx->route_dmx, evt_param);
+		}
+		gf_filter_lock(ctx->filter, GF_FALSE);
 		break;
 	default:
 		break;
@@ -670,6 +674,8 @@ static Bool routein_local_cache_probe(void *par, char *url, Bool is_destroy)
 	subr[0] = 0;
 	sid = atoi(url+21);
 	subr[0] = '/';
+	//this is not a thread-safe callback (typically called from httpin filter)
+	gf_filter_lock(ctx->filter, GF_TRUE);
 	if (is_destroy) {
 		gf_route_dmx_remove_object_by_name(ctx->route_dmx, sid, subr+1, GF_TRUE);
 	} else if (sid && (sid != ctx->tune_service_id)) {
@@ -680,7 +686,11 @@ static Bool routein_local_cache_probe(void *par, char *url, Bool is_destroy)
 		if (ctx->clock_init_seg) gf_free(ctx->clock_init_seg);
 		ctx->clock_init_seg = NULL;
         gf_route_atsc3_tune_in(ctx->route_dmx, sid, GF_TRUE);
+	} else {
+		//mark object as in-use to prevent it from being discarded
+		gf_route_dmx_force_keep_object_by_name(ctx->route_dmx, sid, subr+1);
 	}
+	gf_filter_lock(ctx->filter, GF_FALSE);
 	return GF_TRUE;
 }
 
@@ -772,7 +782,7 @@ static GF_Err routein_initialize(GF_Filter *filter)
 		ctx->fullseg = GF_TRUE;
 	}
 	if (!ctx->nbcached)
-		ctx->nbcached=1;
+		ctx->nbcached = 1;
 
 	if (is_atsc) {
 		ctx->route_dmx = gf_route_atsc_dmx_new(ctx->ifce, ctx->buffer, routein_on_event, ctx);
@@ -868,7 +878,7 @@ static const GF_FilterArgs ROUTEInArgs[] =
 		"- strict: incomplete mdat boxes will be lost as well as preceding moof box\n"
 		"- full: HTTP-based repair, not yet implemented"
 		, GF_PROP_UINT, "simple", "no|simple|strict|full", GF_FS_ARG_HINT_EXPERT},
-	
+
 	{0}
 };
 

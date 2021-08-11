@@ -770,7 +770,7 @@ GF_Err pssh_box_read(GF_Box *s, GF_BitStream *bs)
 		ISOM_DECREASE_SIZE(ptr, 4);
 		if (ptr->KID_count) {
 			u32 i;
-			if (ptr->size < ptr->KID_count * sizeof(bin128))
+			if (ptr->size / sizeof(bin128) < ptr->KID_count)
 				return GF_ISOM_INVALID_FILE;
 			ptr->KIDs = gf_malloc(ptr->KID_count*sizeof(bin128));
 			if (!ptr->KIDs)
@@ -1183,7 +1183,7 @@ GF_Err piff_pssh_box_read(GF_Box *s, GF_BitStream *bs)
 	gf_bs_read_data(bs, (char *) ptr->SystemID, 16);
 	ptr->private_data_size = gf_bs_read_u32(bs);
 
-	if (ptr->size < sizeof(char)*ptr->private_data_size)
+	if (ptr->size < ptr->private_data_size)
 	    return GF_ISOM_INVALID_FILE;
 	ptr->private_data = gf_malloc(sizeof(char)*ptr->private_data_size);
 	if (!ptr->private_data)
@@ -1243,6 +1243,9 @@ u8 key_info_get_iv_size(const u8 *key_info, u32 key_info_size, u32 idx, u8 *cons
 	u32 i=0, kpos=3;
 	if (const_iv_size) *const_iv_size = 0;
 	if (const_iv) *const_iv = NULL;
+
+	if (!key_info || !key_info_size)
+		return 0;
 
 	while (1) {
 		u8 civ_size=0;
@@ -1342,7 +1345,7 @@ GF_Err senc_Parse(GF_BitStream *bs, GF_TrackBox *trak, void *traf, GF_SampleEncr
 		Bool is_encrypted;
 		GF_CENCSampleAuxInfo *sai;
 		u8 IV_size=0;
-		u32 nb_keys = 0;
+		//u32 nb_keys = 0;
 		u32 nb_bytes_subsample = 6;
 		u32 nb_subs_bits = 16;
 
@@ -1358,9 +1361,9 @@ GF_Err senc_Parse(GF_BitStream *bs, GF_TrackBox *trak, void *traf, GF_SampleEncr
 				use_multikey = GF_FALSE;
 				senc->piff_type = 2;
 			} else if (use_multikey) {
-				nb_keys = key_info[1];
-				nb_keys <<= 8;
-				nb_keys |= key_info[2];
+				//nb_keys = key_info[1];
+				//nb_keys <<= 8;
+				//nb_keys |= key_info[2];
 				nb_bytes_subsample = 8;
 				nb_subs_bits = 32;
 			} else {

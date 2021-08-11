@@ -99,8 +99,14 @@ static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 	Double prog;
 	u32 pos, pc;
 	const char *szT = _title ? (char *)_title : (char *) "";
-	prog = (double) done;
-	prog /= total;
+
+	if (total) {
+		prog = (double) done;
+		prog /= total;
+	} else {
+		prog = 0;
+	}
+
 	pos = MIN((u32) (20 * prog), 20);
 
 	if (pos>prev_pos) {
@@ -658,7 +664,8 @@ int gf_fileio_printf(GF_FileIO *gfio, const char *format, va_list args);
 void default_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist)
 {
 	FILE *logs = gpac_log_file ? gpac_log_file : stderr;
-	do_log_time(logs);
+	if (tool != GF_LOG_APP)
+		do_log_time(logs);
 
 	if (gf_fileio_check(logs)) {
 		gf_fileio_printf((GF_FileIO *)logs, fmt, vlist);
@@ -691,7 +698,8 @@ void default_log_callback_color(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool
 		gf_sys_set_console_code(stderr, GF_CONSOLE_WHITE);
 		break;
 	}
-	do_log_time(stderr);
+	if (tool != GF_LOG_APP)
+		do_log_time(stderr);
 
 	vfprintf(stderr, fmt, vlist);
 	gf_sys_set_console_code(stderr, GF_CONSOLE_RESET);
@@ -1770,11 +1778,11 @@ GF_Err gf_blob_get(const char *blob_url, u8 **out_data, u32 *out_size, u32 *out_
 	if (strncmp(blob_url, "gmem://", 7)) return GF_BAD_PARAM;
 	if (sscanf(blob_url, "gmem://%p", &blob) != 1) return GF_BAD_PARAM;
 	if (!blob) return GF_BAD_PARAM;
+	if (blob->data && blob->mx)
+		gf_mx_p(blob->mx);
 	if (out_data) *out_data = blob->data;
 	if (out_size) *out_size = blob->size;
 	if (out_flags) *out_flags = blob->flags;
-	if (blob->data && blob->mx)
-		gf_mx_p(blob->mx);
 	return GF_OK;
 }
 
@@ -1877,7 +1885,6 @@ Bool gf_parse_lfrac(const char *value, GF_Fraction64 *frac)
 		return GF_TRUE;
 	}
 
-	sep += 1;
 	if (len <= 3) frac->den = 1000;
 	else if (len <= 6) frac->den = 1000000;
 	else frac->den = 1000000000;

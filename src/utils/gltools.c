@@ -733,7 +733,7 @@ static char *gl_shader_vars_externalOES = \
 ";
 
 
-Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source)
+Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source, Bool y_flip)
 {
 	char szCode[4000];
 	const char *shader_vars = NULL;
@@ -859,6 +859,9 @@ Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f
 	gf_dynstrcat(f_source, "\nvec4 ", NULL);
 	gf_dynstrcat(f_source, tx_name, NULL);
 	gf_dynstrcat(f_source, "_sample(vec2 _gpacTexCoord) {\n", NULL);
+	if (y_flip) {
+		gf_dynstrcat(f_source, "_gpacTexCoord.t = 1.0 - _gpacTexCoord.t;\n", NULL);
+	}
 	/*format with max 4 tx_name (for yuva) + matrix for yuv*/
 	sprintf(szCode, shader_fun, tx_name, tx_name, tx_name, tx_name, tx_name);
 
@@ -920,6 +923,7 @@ Bool gf_gl_txw_setup(GF_GLTextureWrapper *tx, u32 pix_fmt, u32 width, u32 height
 		tx->bit_depth = 10;
 	case GF_PIXEL_YUV:
 	case GF_PIXEL_YVU:
+	case GF_PIXEL_YUVA:
 		tx->uv_w = tx->width/2;
 		if (tx->width % 2) tx->uv_w++;
 		tx->uv_h = tx->height/2;
@@ -930,6 +934,10 @@ Bool gf_gl_txw_setup(GF_GLTextureWrapper *tx, u32 pix_fmt, u32 width, u32 height
 		}
 		tx->is_yuv = GF_TRUE;
 		tx->nb_textures = 3;
+		if (tx->pix_fmt==GF_PIXEL_YUVA) {
+			tx->nb_textures = 4;
+			tx->has_alpha = GF_TRUE;
+		}
 		break;
 	case GF_PIXEL_NV12_10:
 	case GF_PIXEL_NV21_10:
@@ -1090,6 +1098,7 @@ Bool gf_gl_txw_setup(GF_GLTextureWrapper *tx, u32 pix_fmt, u32 width, u32 height
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, glmode);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, glmode);
 #endif
+			GL_CHECK_ERR()
 		}
 
 
@@ -1502,7 +1511,7 @@ struct yuv_coefs {
 	{GF_CICP_MX_BT709, 0.2126, 0.0722},
 	{GF_CICP_MX_FCC47, 0.3, 0.11},
 	{GF_CICP_MX_BT601_625, 0.299, 0.114},
-	{GF_CICP_MX_SMPTE240, 0.299, 0.114},
+	{GF_CICP_MX_SMPTE170, 0.299, 0.114},
 	{GF_CICP_MX_SMPTE240, 0.212, 0.087},
 	{GF_CICP_MX_BT2020, 0.2627, 0.0593},
 	{GF_CICP_MX_BT2020_CL, 0.2627, 0.0593}
@@ -1590,14 +1599,18 @@ Bool gf_gl_txw_bind(GF_GLTextureWrapper *tx, const char *tx_name, u32 gl_program
 		texture_unit = GL_TEXTURE0;
 
 #if !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
-	if (!tx->uniform_setup && gl_program) {
+	if ((!tx->uniform_setup || (tx->init_active_texture != texture_unit)) && gl_program) {
 		char szName[100];
 		u32 i;
 		u32 start_idx = texture_unit - GL_TEXTURE0;
 		s32 loc;
+		tx->init_active_texture = texture_unit;
 		for (i=0; i<tx->nb_textures; i++) {
 			sprintf(szName, "_gf_%s_%d", tx_name, i+1);
 			loc = glGetUniformLocation(gl_program, szName);
+			if (!i && (loc == -1))
+				loc = glGetUniformLocation(gl_program, tx_name);
+
 			GL_CHECK_ERR()
 			if (loc == -1) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[GL] Failed to locate texture %s in shader\n", szName));
@@ -1607,7 +1620,10 @@ Bool gf_gl_txw_bind(GF_GLTextureWrapper *tx, const char *tx_name, u32 gl_program
 			GL_CHECK_ERR()
 		}
 		GL_CHECK_ERR()
-
+	}
+	if (!tx->uniform_setup && gl_program) {
+		s32 loc;
+		char szName[100];
 		if (tx->is_yuv) {
 			GF_Matrix mx;
 			get_yuv_color_matrix(tx, &mx);
@@ -1739,7 +1755,7 @@ void gf_opengl_init()
 {
 }
 
-Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source)
+Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source, Bool y_flip)
 {
 	return GF_FALSE;
 }

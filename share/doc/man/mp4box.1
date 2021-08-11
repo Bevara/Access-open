@@ -16,17 +16,23 @@ MP4Box is a multimedia packager, with a vast number of functionalities: conversi
 .br
 MP4Box provides a large set of options, classified by categories (see .I -h). These options do not follow any particular ordering.
 .br
-MP4Box performs in-place rewrite of IsoMedia files (the input file is overwritten). You can change this behavior by using the .I out option.
+  
 .br
-MP4Box stores by default the file with 0.5 second interleaving and meta-data (moov ...) at the beginning, making it suitable for HTTP streaming. This may however takes longer to store the file, use .I flat to change this behavior.
+By default, MP4Box rewrites the input file. You can change this behavior by using the .I out option.
+.br
+MP4Box stores by default the file with 0.5 second interleaving and meta-data (moov ...) at the beginning, making it suitable for HTTP download-and-play. This may however takes longer to store the file, use .I flat to change this behavior.
+.br
+  
 .br
 MP4Box usually generates a temporary file when creating a new IsoMedia file. The location of this temporary file is OS-dependent, and it may happen that the drive/partition the temporary file is created on has not enough space or no write access. In such a case, you can specify a temporary file location with .I tmp.
 .br
-Note: Track operations identify tracks through their ID (usually referred to as tkID in the help), not their order.
+  
 .br
 Option values:
 .br
-Unless specified otherwise, an option of type integer expects a trackID value following it.An option of type boolean expects no following value.  
+Unless specified otherwise, an option of type integer expects a trackID value following it.An option of type boolean expects no following value.Note: Track operations identify tracks through their ID (usually referred to as tkID in the help), not their order.
+.br
+  
 .br
 .TP
 .B \-mem-track
@@ -214,7 +220,7 @@ set language. LAN is the BCP-47 code (eng, en-UK, ...). If no track ID is given,
 .TP
 .B \-delay tkID=TIME
 .br
-set track start delay in ms or in fractional seconds (N/D)
+set track start delay (>0) or initial skip (<0) in ms or in fractional seconds (N/D)
 .br
 .TP
 .B \-par tkID=PAR
@@ -364,23 +370,19 @@ set edit list. The following syntax is used (no separators between entries):
 .br
  * `r`: removes all edits
 .br
- * `eSTART`: add empty edit with given start time (fractional or milliseconds). START can be
+ * `eSTART`: add empty edit with given start time. START can be
 .br
-   - VAL: start time in milliseconds (media duration used as edit duration)
+   - VAL: start time in seconds (int, double, fraction), media duration used as edit duration
 .br
-   - VAL-DUR: start time and duration in milliseconds
+   - VAL-DUR: start time and duration in seconds (int, double, fraction)
 .br
-   - VAL/NUM: start time as fractional seconds (media duration used as edit duration)
-.br
-   - VAL-DUR/NUM: start time and duration as fractional seconds
-.br
- * `eSTART,MEDIA[,RATE]`: add regular edit with given start, media start time (ms or fraction) and rate (fraction or INT/1000)
+ * `eSTART,MEDIA[,RATE]`: add regular edit with given start, media start time in seconds (int, double, fraction) and rate (fraction or INT)
 .br
  * Examples: 
 .br
-   - -edits=re0-5/1e5-3/1,100/25: remove edits, add empty edit at 0s for 5s, then add regular edit at 5s for 3s starting at 4s in media track
+   - re0-5e5-3,4: remove edits, add empty edit at 0s for 5s, then add regular edit at 5s for 3s starting at 4s in media track
 .br
-   - -edits=re0-4/1,0,2/1: remove edits, add single edit at 0s for 4s starting at 0s in media track and playing at speed 2
+   - re0-4,0,0.5: remove edits, add single edit at 0s for 4s starting at 0s in media track and playing at speed 0.5
 .br
 
 .br
@@ -961,26 +963,46 @@ You can add media to a file and split it in the same pass. In this case, the des
 .br
   
 .br
+Time ranges are specified as follows:
+.br
+* `S-E`: S start and E end times, formatted as HH:MM:SS.ms, MM:SS.ms or time in seconds (int, double, fraction)
+.br
+* `S:E`: S start time and E end times in seconds (int, double, fraction)
+.br
+* `S:end` or `S:end-N`: S start time in seconds (int, double), N number of seconds (int, double) before the end
+.br
+  
+.br
 MP4Box splitting runs a filter session using the reframer filter as follows:
 .br
 - splitrange option of the reframer is always set
 .br
+- source is demuxed with alltk option set
+.br
 - start and end ranges are passed to xs and xe options of the reframer
 .br
-- xadjust and xround=after options are enforced for -splitz
+- for -splitz, options xadjust and xround=after are enforced
 .br
-- xadjust and xround=before options are enforced for -splitg
+- for -splitg, options xadjust and xround=before are enforced
 .br
-- xround=seek option is enforced for -splitf
+- for -splitf, option xround=seek is enforced and propbe_refset if not specified at prompt
 .br
-- for other modes, xround defaults to closest if not specified at prompt
+- for -splitx, option xround=closest and propbe_ref are enforced if not specified at prompt
+.br
+  
+.br
+The default output storage mode is to full interleave and will require a temp file for each output. This behaviour can be modified using -flat, -newfs, -inter and -frag
 .br
   
 .br
 .TP
 .B \-split (string)
 .br
-split in files of given max duration
+split in files of given max duration (float number) in seconds. A trailing unit can be specified:
+.br
+* `M`, `m`: duration is in minutes
+.br
+* `H`, `h`: size is in hours
 .br
 .TP
 .B \-split-rap,-splitr (string)
@@ -990,23 +1012,25 @@ split in files at each new RAP
 .TP
 .B \-split-size,-splits (string)
 .br
-split in files of given max size (in kb)
+split in files of given max size (integer number) in kilobytes. A trailing unit can be specified:
+.br
+* `M`, `m`: size is in megabytes
+.br
+* `G`, `g`: size is in gigabytes
 .br
 .TP
 .B \-split-chunk,-splitx (string)
 .br
-extract the specified time range formatted as:
+extract the specified time range as follows:
 .br
-* `S:E` or `S-E`: S start time and E end time in seconds (int, double, fraction)
+- the start time is moved to the RAP sample closest to the specified start time
 .br
-* `S:end` or `S:end-N`: S start time in seconds (int, double), N number of seconds (int, double) before the end
-.br
-* `S-E`: start and end dates, each formatted as HH:MM:SS.ms or MM:SS.ms
+- the end time is kept as requested
 .br
 .TP
 .B \-splitz (string)
 .br
-same as -splitx, but adjust range times so that ranges A:B and B:C share exactly the same boundary B:
+extract the specified time range so that ranges A:B and B:C share exactly the same boundary B:
 .br
 - the start time is moved to the RAP sample at or after the specified start time
 .br
@@ -1015,7 +1039,7 @@ same as -splitx, but adjust range times so that ranges A:B and B:C share exactly
 .TP
 .B \-splitg (string)
 .br
-same as -splitx, but adjust range times so that:
+extract the specified time range as follows:
 .br
 - the start time is moved to the RAP sample at or before the specified start time
 .br
@@ -1024,7 +1048,7 @@ same as -splitx, but adjust range times so that:
 .TP
 .B \-splitf (string)
 .br
-same as -splitx but insert edits such that the extracted output is exactly the specified range
+extract the specified time range and insert edits such that the extracted output is exactly the specified range
 .br
 
 .br
@@ -1057,12 +1081,17 @@ print the number of tracks on stdout
 .TP
 .B \-info (string)
 .br
-print movie info (no parameter) or track info with specified ID
+print movie info (no parameter) or track extended info with specified ID
 .br
 .TP
 .B \-infon (string)
 .br
 print track info for given track number, 1 being the first track in the file
+.br
+.TP
+.B \-infox
+.br
+print movie and track extended info (same as -info N for each track)
 .br
 .TP
 .B \-diso,-dmp4
@@ -1200,6 +1229,11 @@ same as .I dsap but only print presentation time
 dump ISMACryp samples structure to XML output
 .br
 .TP
+.B \-dchunk
+.br
+dump chunk info
+.br
+.TP
 .B \-dump-cover
 .br
 extract cover art
@@ -1240,17 +1274,17 @@ convert input subtitle to GPAC TTXT format if no parameter. Otherwise, dump give
 convert input subtitle to SRT format if no parameter. Otherwise, dump given text track to SRT format
 .br
 .TP
-.B \-stat
+.B \-nstat
 .br
 generate node/field statistics for scene
 .br
 .TP
-.B \-stats
+.B \-nstats
 .br
 generate node/field statistics per Access Unit
 .br
 .TP
-.B \-statx
+.B \-nstatx
 .br
 generate node/field statistics for scene after each AU
 .br
@@ -1418,7 +1452,7 @@ S set imported media language code
 .TP
 .B delay (int)
 .br
-S set imported media initial delay in ms or as fractional seconds (N/D)
+S set imported media initial delay (>0) or initial skip (<0) in ms or as fractional seconds (N/D)
 .br
 .TP
 .B par (string)
@@ -1923,12 +1957,12 @@ S set duration of the last sample. Value is formatted as:
   * N/D: indicate the duration as fractional second
 .br
 .TP
-.B fstat
+.B stats,-fstat
 .br
 C print filter session stats after import
 .br
 .TP
-.B fgraph
+.B graph,-fgraph
 .br
 C print filter session graph after import
 .br
@@ -2348,7 +2382,7 @@ add the given file as HEIF image item, with parameter syntax file_path[:opt1:opt
 .br
 * split_tiles: for an HEVC tiled image, each tile is stored as a separate item
 .br
-* image-size=wxh: force setting the image size and ignoring the bitstream info, used for grid images also
+* image-size=wxh: force setting the image size and ignoring the bitstream info, used for grid, overlay and identity derived images also
 .br
 * rotation=a: set the rotation angle for this image to 90*a degrees anti-clockwise
 .br
@@ -2356,28 +2390,44 @@ add the given file as HEIF image item, with parameter syntax file_path[:opt1:opt
 .br
 * clap=Wn,Wd,Hn,Hd,HOn,HOd,VOn,VOd: see track clap
 .br
+* image-pasp=axb: force the aspect ratio of the image
+.br
+* image-pixi=(a|a,b,c): force the bit depth (1 or 3 channels)
+.br
 * hidden: indicate that this image item should be hidden
 .br
 * icc_path: path to icc data to add as color info
 .br
 * alpha: indicate that the image is an alpha image (should use ref=auxl also)
 .br
+* depth: indicate that the image is a depth image (should use ref=auxl also)
+.br
+* it=ID: indicate the item ID of the source item to import
+.br
+* itp=ID: same as it= but copy over all properties of the source item
+.br
 * tk=tkID: indicate the track ID of the source sample. If 0, uses the first video track in the file
 .br
 * samp=N: indicate the sample number of the source sample
 .br
-* ref: do not copy the data but refer to the final sample location
+* ref: do not copy the data but refer to the final sample/item location, ignored if filepath is set
 .br
 * agrid[=AR]: creates an automatic grid from the image items present in the file, in their declaration order. The grid will try to have AR aspect ratio if specified (float), or the aspect ratio of the source otherwise. The grid will be the primary item and all other images will be hidden
+.br
+* av1_op_index: select the AV1 operating point to use via a1op box
 .br
 - any other options will be passed as options to the media importer, see .I add
 .br
 .TP
-.B \-add-image-grid (string)
+.B \-add-derived-image (string)
 .br
-create an image grid item, with parameter syntax grid[:opt1:optN]
+create an image grid, overlay or identity item, with parameter syntax :type=(grid|iovl|iden)[:opt1:optN]
 .br
 * image-grid-size=rxc: set the number of rows and columns of the grid
+.br
+* image-overlay-offsets=h,v[,h,v]*: set the horizontal and vertical offsets of the images in the overlay
+.br
+* image-overlay-color=r,g,b,a: set the canvas color of the overlay [0-65535]
 .br
 - any other options from .I add-image can be used
 .br
@@ -2739,7 +2789,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev753-g3b246ee75-master
+build: 1.1.0-DEV-rev1160-g501dcf757-master
 .br
 Copyright: (c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

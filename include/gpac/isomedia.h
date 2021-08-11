@@ -566,9 +566,8 @@ typedef struct
 \return the newly allocated ISO sample*/
 GF_ISOSample *gf_isom_sample_new();
 
-/*! delete a sample. NOTE:the buffer content will be destroyed by default.
-if you wish to keep the buffer, set dataLength to 0 in the sample
-before deleting it
+/*! delete a sample.
+\note The buffer content will be destroyed by default. If you wish to keep the buffer, set dataLength to 0 in the sample before deleting it
 the pointer is set to NULL after deletion
 \param samp pointer to the target ISO sample
 */
@@ -650,7 +649,7 @@ void gf_isom_delete(GF_ISOFile *isom_file);
 
 /*! gets the last fatal error that occured in the file
 ANY FUNCTION OF THIS API WON'T BE PROCESSED IF THE FILE HAS AN ERROR
-Note: some function may return an error while the movie has no error
+\note Some function may return an error while the movie has no error
 the last error is a FatalError, and is not always set if a bad
 param is specified...
 \param isom_file the target ISO file
@@ -992,7 +991,7 @@ u64 gf_isom_get_media_data_size(GF_ISOFile *isom_file, u32 trackNumber);
 /*! sets sample padding bytes when reading a sample
 It may be desired to fetch samples with a bigger allocated buffer than their real size, in case the decoder
 reads more data than available. This sets the amount of extra bytes to allocate when reading samples from this track
-NOTE: the dataLength of the sample does NOT include padding
+\note The dataLength of the sample does NOT include padding
 \param isom_file the target ISO file
 \param trackNumber the target track
 \param padding_bytes the amount of bytes to add at the end of a sample data buffer
@@ -1030,7 +1029,7 @@ GF_ISOSample *gf_isom_get_sample_ex(GF_ISOFile *isom_file, u32 trackNumber, u32 
 \param sampleNumber the desired sample number (1-based index)
 \param sampleDescriptionIndex set to the sample description index corresponding to this sample (optional, can be NULL)
 \param data_offset set to the sample start offset in file (optional, can be NULL)
-\note: when both sampleDescriptionIndex and data_offset are NULL, only DTS, CTS_Offset and RAP indications are retrieved (faster)
+\note When both sampleDescriptionIndex and data_offset are NULL, only DTS, CTS_Offset and RAP indications are retrieved (faster)
 \return the ISO sample without data or NULL if not found or end of stream  or incomplete file. Use \ref gf_isom_last_error to check the error code
 */
 GF_ISOSample *gf_isom_get_sample_info(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleNumber, u32 *sampleDescriptionIndex, u64 *data_offset);
@@ -1041,7 +1040,7 @@ GF_ISOSample *gf_isom_get_sample_info(GF_ISOFile *isom_file, u32 trackNumber, u3
 \param sampleNumber the desired sample number (1-based index)
 \param sampleDescriptionIndex set to the sample description index corresponding to this sample (optional, can be NULL)
 \param data_offset set to the sample start offset in file (optional, can be NULL)
-\note: when both sampleDescriptionIndex and data_offset are NULL, only DTS, CTS_Offset and RAP indications are retrieved (faster)
+\note When both sampleDescriptionIndex and data_offset are NULL, only DTS, CTS_Offset and RAP indications are retrieved (faster)
 \param static_sample a caller-allocated ISO sample to use as the returned sample
 \return the ISO sample without data or NULL if not found or end of stream  or incomplete file. Use \ref gf_isom_last_error to check the error code
 \note If the function returns NULL, the static_sample and its associated data if any are NOT destroyed
@@ -1193,7 +1192,7 @@ if no sample is playing, the closest sample in the edit time-line is returned wh
 
 \warning The sample may not be sync even though the sync was requested (depends on the media and the editList)
 
-Note: this function will handle re-timestamping the sample according to the mapping  of the media time-line
+\note This function will handle re-timestamping the sample according to the mapping  of the media time-line
 on the track time-line. The sample TSs (DTS / CTS offset) are expressed in MEDIA TIME SCALE
 (to match the media stream TS resolution as indicated in media header / SLConfig)
 
@@ -1475,6 +1474,23 @@ GF_Err gf_isom_get_pixel_aspect_ratio(GF_ISOFile *isom_file, u32 trackNumber, u3
 \return error if any*/
 GF_Err gf_isom_get_color_info(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, u32 *colour_type, u16 *colour_primaries, u16 *transfer_characteristics, u16 *matrix_coefficients, Bool *full_range_flag);
 
+
+/*! gets clean aperture (crop window, see ISO/IEC 14496-12) for a sample description
+\param isom_file the target ISO file
+\param trackNumber the target track number
+\param sampleDescriptionIndex the target sample description index
+\param cleanApertureWidthN set to nominator of clean aperture horizontal size, may be NULL
+\param cleanApertureWidthD set to denominator of clean aperture horizontal size, may be NULL
+\param cleanApertureHeightN set to nominator of clean aperture vertical size, may be NULL
+\param cleanApertureHeightD set to denominator of clean aperture vertical size, may be NULL
+\param horizOffN set to nominator of horizontal offset of clean aperture center minus (width-1)/2 (eg 0 sets center to center of video), may be NULL
+\param horizOffD set to denominator of horizontal offset of clean aperture center minus (width-1)/2 (eg 0 sets center to center of video), may be NULL
+\param vertOffN set to nominator of vertical offset of clean aperture center minus (height-1)/2 (eg 0 sets center to center of video), may be NULL
+\param vertOffD set to denominator of vertical offset of clean aperture center minus (height-1)/2 (eg 0 sets center to center of video), may be NULL
+\return error if any
+*/
+GF_Err gf_isom_get_clean_aperture(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, u32 *cleanApertureWidthN, u32 *cleanApertureWidthD, u32 *cleanApertureHeightN, u32 *cleanApertureHeightD, u32 *horizOffN, u32 *horizOffD, u32 *vertOffN, u32 *vertOffD);
+
 /*! gets the media language code of a track
 \param isom_file the target ISO file
 \param trackNumber the target track
@@ -1605,6 +1621,40 @@ GF_Err gf_isom_dump(GF_ISOFile *isom_file, FILE *trace, Bool skip_init, Bool ski
 
 #endif /*GPAC_DISABLE_ISOM_DUMP*/
 
+
+/*! gets number of chunks in track
+\param isom_file the target ISO file
+\param trackNumber the desired track to purge
+\return number of chunks in track
+*/
+u32 gf_isom_get_chunk_count(GF_ISOFile *isom_file, u32 trackNumber);
+
+/*! gets info for a given chunk in track
+\param isom_file the target ISO file
+\param trackNumber the desired track to purge
+\param chunkNumber the 1-based index of the desired chunk
+\param chunk_offset set to the chunk offset in bytes from start of file
+\param first_sample_num set to the sample number of the first sample in the chunk
+\param sample_per_chunk set to number of samples per chunk
+\param sample_desc_idx set to sample desc index of samples of this chunk
+\param cache_1 updated by function at each call. May be NULL (slower). Must be set to 0 if not querying consecutive chunks
+\param cache_2 updated by function at each call. May be NULL (slower). Must be set to 0 if not querying consecutive chunks
+\return error if any
+*/
+GF_Err gf_isom_get_chunk_info(GF_ISOFile *isom_file, u32 trackNumber, u32 chunkNumber, u64 *chunk_offset, u32 *first_sample_num, u32 *sample_per_chunk, u32 *sample_desc_idx, u32 *cache_1, u32 *cache_2);
+
+
+/*! gets the file offset of the first usable byte of the first mdat box in the file
+\param isom_file the target ISO file
+\return byte offset
+*/
+u64 gf_isom_get_first_mdat_start(GF_ISOFile *isom_file);
+
+/*! gets the size of all skip, free and wide boxes present in the file and bytes skipped during parsing (assumes a single file was opened)
+\param isom_file the target ISO file
+\return size
+*/
+u64 gf_isom_get_unused_box_bytes(GF_ISOFile *isom_file);
 
 /*! @} */
 
@@ -2105,7 +2155,7 @@ the media normal timing. EditTime and EditDuration are expressed in movie timesc
 \param EditDuration the duration of the edit in movie timecale
 \param MediaTime the corresponding media time of the start of the edit, in media timescale. -1 for empty edits
 \param EditMode the edit mode
-\return error if any
+\return error if any, GF_EOS if empty edit was inserted 
 */
 GF_Err gf_isom_set_edit(GF_ISOFile *isom_file, u32 trackNumber, u64 EditTime, u64 EditDuration, u64 MediaTime, GF_ISOEditType EditMode);
 
@@ -2294,18 +2344,18 @@ GF_Err gf_isom_set_track_matrix(GF_ISOFile *isom_file, u32 trackNumber, s32 matr
 */
 GF_Err gf_isom_set_pixel_aspect_ratio(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, s32 hSpacing, s32 vSpacing, Bool force_par);
 
-/*! sets clean apperture (crop window, see ISO/IEC 14496-12) for a sample description
+/*! sets clean aperture (crop window, see ISO/IEC 14496-12) for a sample description
 \param isom_file the target ISO file
 \param trackNumber the target track number
 \param sampleDescriptionIndex the target sample description index
-\param cleanApertureWidthN nominator of clean apperture horizontal size
-\param cleanApertureWidthD denominator of clean apperture horizontal size
-\param cleanApertureHeightN nominator of clean apperture vertical size
-\param cleanApertureHeightD denominator of clean apperture vertical size
-\param horizOffN nominator of horizontal offset of clean apperture center minus (width-1)/2 (eg 0 sets center to center of video)
-\param horizOffD denominator of horizontal offset of clean apperture center minus (width-1)/2 (eg 0 sets center to center of video)
-\param vertOffN nominator of vertical offset of clean apperture center minus (height-1)/2 (eg 0 sets center to center of video)
-\param vertOffD denominator of vertical offset of clean apperture center minus (height-1)/2 (eg 0 sets center to center of video)
+\param cleanApertureWidthN nominator of clean aperture horizontal size
+\param cleanApertureWidthD denominator of clean aperture horizontal size
+\param cleanApertureHeightN nominator of clean aperture vertical size
+\param cleanApertureHeightD denominator of clean aperture vertical size
+\param horizOffN nominator of horizontal offset of clean aperture center minus (width-1)/2 (eg 0 sets center to center of video)
+\param horizOffD denominator of horizontal offset of clean aperture center minus (width-1)/2 (eg 0 sets center to center of video)
+\param vertOffN nominator of vertical offset of clean aperture center minus (height-1)/2 (eg 0 sets center to center of video)
+\param vertOffD denominator of vertical offset of clean aperture center minus (height-1)/2 (eg 0 sets center to center of video)
 \return error if any
 */
 GF_Err gf_isom_set_clean_aperture(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, u32 cleanApertureWidthN, u32 cleanApertureWidthD, u32 cleanApertureHeightN, u32 cleanApertureHeightD, u32 horizOffN, u32 horizOffD, u32 vertOffN, u32 vertOffD);
@@ -4254,9 +4304,10 @@ GF_Err gf_isom_finalize_for_fragment(GF_ISOFile *isom_file, u32 media_segment_ty
 /*! sets the duration of the movie in case of movie fragments
 \param isom_file the target ISO file
 \param duration the complete duration (movie and all fragments) in movie timescale
+\param remove_mehd force removal of mehd box, only setting mvhd.duration to 0
 \return error if any
 */
-GF_Err gf_isom_set_movie_duration(GF_ISOFile *isom_file, u64 duration);
+GF_Err gf_isom_set_movie_duration(GF_ISOFile *isom_file, u64 duration, Bool remove_mehd);
 
 /*! fragment creatio option*/
 typedef enum
@@ -4606,7 +4657,7 @@ GF_Err gf_isom_end_hint_sample(GF_ISOFile *isom_file, u32 trackNumber, u8 IsRand
 GF_Err gf_isom_hint_blank_data(GF_ISOFile *isom_file, u32 trackNumber, u8 AtBegin);
 
 /*! adds a chunk of data in the packet that is directly copied while streaming
-NOTE: dataLength MUST BE <= 14 bytes, and you should only use this function
+\note DataLength MUST BE <= 14 bytes, and you should only use this function
 to add small blocks of data (encrypted parts, specific headers, ...)
 \param isom_file the target ISO file
 \param trackNumber the target hint track
@@ -4737,7 +4788,7 @@ GF_Err gf_isom_sdp_add_track_line(GF_ISOFile *isom_file, u32 trackNumber, const 
 GF_Err gf_isom_sdp_clean_track(GF_ISOFile *isom_file, u32 trackNumber);
 
 /*! adds an SDP line to the SDP container at the movie level (presentation SDP info)
-NOTE: the CRLF end of line for SDP is automatically inserted
+\note The CRLF end of line for SDP is automatically inserted
 \param isom_file the target ISO file
 \param text the SDP text to add the target hint track
 \return error if any
@@ -5781,6 +5832,25 @@ GF_Err gf_isom_extract_meta_item_get_cenc_info(GF_ISOFile *isom_file, Bool root_
 \return primary item ID, 0 if none found (primary can also be stored through meta XML)*/
 u32 gf_isom_get_meta_primary_item_id(GF_ISOFile *isom_file, Bool root_meta, u32 track_num);
 
+/*! gets number of references of a given type from a given item ID
+\param isom_file the target ISO file
+\param root_meta if GF_TRUE uses meta at the file, otherwise uses meta at the movie level if track number is 0
+\param track_num if GF_TRUE and root_meta is GF_FALSE, uses meta at the track level
+\param from_id item ID to check
+\param type reference type to check
+\return number of referenced items*/
+u32 gf_isom_meta_get_item_ref_count(GF_ISOFile *isom_file, Bool root_meta, u32 track_num, u32 from_id, u32 type);
+
+/*! gets ID  of reference of a given type and index from a given item ID
+\param isom_file the target ISO file
+\param root_meta if GF_TRUE uses meta at the file, otherwise uses meta at the movie level if track number is 0
+\param track_num if GF_TRUE and root_meta is GF_FALSE, uses meta at the track level
+\param from_id item ID to check
+\param type reference type to check
+\param ref_idx 1-based index of reference to check
+\return ID if the refered item*/
+u32 gf_isom_meta_get_item_ref_id(GF_ISOFile *isom_file, Bool root_meta, u32 track_num, u32 from_id, u32 type, u32 ref_idx);
+
 /*! item tile mode*/
 typedef enum {
 	/*! not a tile item*/
@@ -5795,6 +5865,11 @@ typedef enum {
 	TILE_ITEM_SINGLE
 } GF_TileItemMode;
 
+/*! Image overlay offset properties*/
+typedef struct {
+	u32 horizontal;
+	u32 vertical;
+} GF_ImageItemOverlayOffset;
 
 /*! Image protection item properties*/
 typedef struct
@@ -5850,22 +5925,41 @@ typedef struct
 	char iccPath[GF_MAX_PATH];
 	/*! is alpha*/
 	Bool alpha;
+	/*! is depth*/
+	Bool depth;
 	/*! number of channels*/
 	u8 num_channels;
 	/*! bits per channels in bits*/
-	u8 bits_per_channel[3];
+	u32 bits_per_channel[3];
 	/*! number of columns in grid*/
 	u32 num_grid_columns;
 	/*! number of rows in grid*/
 	u32 num_grid_rows;
+	/*! number of overlayed images*/
+	u32 overlay_count;
+	/*! overlay offsets*/
+	GF_ImageItemOverlayOffset *overlay_offsets;
+	/*! canvas overlay color*/
+	u32 overlay_canvas_fill_value_r;
+	u32 overlay_canvas_fill_value_g;
+	u32 overlay_canvas_fill_value_b;
+	u32 overlay_canvas_fill_value_a;
 	/*! protection info, NULL if item is not protected*/
 	GF_ImageItemProtection *cenc_info;
 	/*! If set, reference image from sample sample_num (same file data used for sample and item)*/
 	Bool use_reference;
+	/*ID of item to use as source*/
+	u32 item_ref_id;
+	/*if set, copy all properties of source item*/
+	Bool copy_props;
 	/*only set when importing non-ref from ISOBMF*/
 	GF_ISOFile *src_file;
 	Bool auto_grid;
 	Double auto_grid_ratio;
+	/*AV1 layer sizes except last layer - set during import*/
+	u32 av1_layer_size[3];
+	/*AV1 operation point index*/
+	u8 av1_op_index;
 } GF_ImageItemProperties;
 
 
@@ -5976,7 +6070,7 @@ GF_Err gf_isom_add_meta_item_memory(GF_ISOFile *isom_file, Bool root_meta, u32 t
 */
 GF_Err gf_isom_add_meta_item_sample_ref(GF_ISOFile *isom_file, Bool root_meta, u32 track_num, const char *item_name, u32 *item_id, u32 item_type, const char *mime_type, const char *content_encoding, GF_ImageItemProperties *image_props, GF_ISOTrackID tk_id, u32 sample_num);
 
-/*! creates image item(s) from samples of a media track
+/*! creates an image grid item
 \param isom_file the target ISO file
 \param root_meta if GF_TRUE uses meta at the file, otherwise uses meta at the movie level if meta_track_number is 0
 \param meta_track_number if GF_TRUE and root_meta is GF_FALSE, uses meta at the track level
@@ -5986,6 +6080,28 @@ GF_Err gf_isom_add_meta_item_sample_ref(GF_ISOFile *isom_file, Bool root_meta, u
 \return error if any
 */
 GF_Err gf_isom_iff_create_image_grid_item(GF_ISOFile *isom_file, Bool root_meta, u32 meta_track_number, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props);
+
+/*! creates an image overlay item
+\param isom_file the target ISO file
+\param root_meta if GF_TRUE uses meta at the file, otherwise uses meta at the movie level if meta_track_number is 0
+\param meta_track_number if GF_TRUE and root_meta is GF_FALSE, uses meta at the track level
+\param item_name name of the item
+\param item_id ID of the item, can be 0
+\param image_props image properties information for image items
+\return error if any
+*/
+GF_Err gf_isom_iff_create_image_overlay_item(GF_ISOFile *isom_file, Bool root_meta, u32 meta_track_number, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props);
+
+/*! creates an image identity item
+\param isom_file the target ISO file
+\param root_meta if GF_TRUE uses meta at the file, otherwise uses meta at the movie level if meta_track_number is 0
+\param meta_track_number if GF_TRUE and root_meta is GF_FALSE, uses meta at the track level
+\param item_name name of the item
+\param item_id ID of the item, can be 0
+\param image_props image properties information for image items
+\return error if any
+*/
+GF_Err gf_isom_iff_create_image_identity_item(GF_ISOFile *isom_file, Bool root_meta, u32 meta_track_number, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props);
 
 /*! creates image item(s) from samples of a media track
 \param isom_file the target ISO file
@@ -6044,7 +6160,7 @@ GF_Err gf_isom_meta_add_item_group(GF_ISOFile *isom_file, Bool root_meta, u32 tr
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
-/*!
+/*! gets image item properties
 \param isom_file the target ISO file
 \param root_meta if GF_TRUE uses meta at the file, otherwise uses meta at the movie level if track number is 0
 \param track_num if GF_TRUE and root_meta is GF_FALSE, uses meta at the track level

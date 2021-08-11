@@ -695,6 +695,54 @@ static GF_Err store_meta_item_sample_ref_offsets(GF_ISOFile *movie, GF_List *wri
 	return GF_OK;
 }
 
+static GF_Err store_meta_item_references(GF_ISOFile *movie, GF_List *writers, GF_MetaBox *meta)
+{
+	u32 i, count;
+	GF_Err e = store_meta_item_sample_ref_offsets(movie, writers, meta);
+	if (e) return e;
+
+	if (!meta->use_item_item_sharing) return GF_OK;
+
+	count = gf_list_count(meta->item_locations->location_entries);
+	for (i=0; i<count; i++) {
+		u32 j;
+		GF_ItemExtentEntry *entry;
+		GF_ItemLocationEntry *iloc = (GF_ItemLocationEntry *)gf_list_get(meta->item_locations->location_entries, i);
+		/*get item info*/
+		GF_ItemInfoEntryBox *iinf = NULL;
+		j=0;
+		while ((iinf = (GF_ItemInfoEntryBox *)gf_list_enum(meta->item_infos->item_infos, &j))) {
+			if (iinf->item_ID==iloc->item_ID) break;
+		}
+		if (!iinf) continue;
+		if (iinf->ref_it_id) continue;
+
+		entry = (GF_ItemExtentEntry *)gf_list_get(iloc->extent_entries, 0);
+		if (!entry) continue;
+
+		for (j=i+1; j<count; j++) {
+			u32 k;
+			GF_ItemExtentEntry *entry2;
+			GF_ItemLocationEntry *iloc2 = (GF_ItemLocationEntry *)gf_list_get(meta->item_locations->location_entries, j);
+			/*get item info*/
+			GF_ItemInfoEntryBox *iinf2 = NULL;
+			k=0;
+			while ((iinf2 = (GF_ItemInfoEntryBox *)gf_list_enum(meta->item_infos->item_infos, &k))) {
+				if (iinf2->item_ID==iloc2->item_ID) break;
+			}
+			if (!iinf2) continue;
+			if (!iinf2->ref_it_id) continue;
+			if (iinf2->ref_it_id != iinf->item_ID) continue;
+
+			entry2 = (GF_ItemExtentEntry *)gf_list_get(iloc2->extent_entries, 0);
+			if (!entry2) continue;
+			entry2->extent_length = entry->extent_length;
+			entry2->extent_offset = entry->extent_offset;
+			iloc2->base_offset = iloc->base_offset;
+		}
+	}
+	return GF_OK;
+}
 
 GF_Err DoWriteMeta(GF_ISOFile *file, GF_MetaBox *meta, GF_BitStream *bs, Bool Emulation, u64 baseOffset, u64 *mdatSize)
 {
@@ -726,6 +774,10 @@ GF_Err DoWriteMeta(GF_ISOFile *file, GF_MetaBox *meta, GF_BitStream *bs, Bool Em
 				entry->extent_offset = 0;
 				continue;
 			}
+		}
+
+		if (iinf->ref_it_id) {
+			continue;
 		}
 
 		it_size = 0;
@@ -762,7 +814,7 @@ GF_Err DoWriteMeta(GF_ISOFile *file, GF_MetaBox *meta, GF_BitStream *bs, Bool Em
 					it_size = 0;
 //					maxExtendOffset = 0xFFFFFFFFFFUL;
 					if (Emulation) {
-						meta->use_item_sample_sharing = GF_TRUE;
+						meta->use_item_sample_sharing = 1;
 					}
 				}
 
@@ -1160,7 +1212,7 @@ static GF_Err WriteFlat(MovieWriter *mw, u8 moovFirst, GF_BitStream *bs, Bool no
 		}
 		//get real sample offsets for meta items
 		if (movie->meta) {
-			store_meta_item_sample_ref_offsets(movie, writers, movie->meta);
+			store_meta_item_references(movie, writers, movie->meta);
 		}
 		//OK, write the movie box.
 		e = WriteMoovAndMeta(movie, writers, moov_bs ? moov_bs : bs);
@@ -1352,7 +1404,7 @@ GF_Err DoFullInterleave(MovieWriter *mw, GF_List *writers, GF_BitStream *bs, u8 
 	s64 res;
 	u32 descIndex, sampSize, chunkNumber;
 	u16 curGroupID, curTrackPriority;
-	Bool forceNewChunk, writeGroup;
+	Bool forceNewChunk=0, writeGroup;
 	GF_StscEntry *stsc_ent;
 	//this is used to emulate the write ...
 	u64 offset, totSize, sampOffset;
@@ -1602,9 +1654,9 @@ GF_Err DoInterleave(MovieWriter *mw, GF_List *writers, GF_BitStream *bs, u8 Emul
 					stbl_GetSampleDTS_and_Duration(tmp->stbl->TimeToSample, tmp->sampleNumber, &DTS, &sample_dur);
 
 					//can this sample fit in our chunk ?
-					if ( ( (DTS - tmp->DTSprev) + tmp->chunkDur) * moov_timescale > movie->interleavingTime * tmp->timeScale
+					if (gf_timestamp_greater((DTS - tmp->DTSprev) + tmp->chunkDur, tmp->timeScale, movie->interleavingTime, moov_timescale)
 					        /*drift check: reject sample if outside our check window*/
-					        || (drift_inter && chunkLastDTS && ( ((u64)tmp->DTSprev*chunkLastScale) > ((u64)chunkLastDTS*tmp->timeScale)) )
+					        || (drift_inter && chunkLastDTS && gf_timestamp_greater(tmp->DTSprev, tmp->timeScale, chunkLastDTS, chunkLastScale) )
 					   ) {
 						//in case the sample is longer than InterleaveTime
 						if (!tmp->chunkDur) {
@@ -1838,7 +1890,7 @@ static GF_Err WriteInterleaved(MovieWriter *mw, GF_BitStream *bs, Bool drift_int
 
 	//get real sample offsets for meta items
 	if (movie->meta) {
-		store_meta_item_sample_ref_offsets(movie, writers, movie->meta);
+		store_meta_item_references(movie, writers, movie->meta);
 	}
 
 	//get the size and see if it has changed (eg, we moved to 64 bit offsets)
@@ -1858,7 +1910,7 @@ static GF_Err WriteInterleaved(MovieWriter *mw, GF_BitStream *bs, Bool drift_int
 
 		//readjust real sample offsets for meta items
 		if (movie->meta) {
-			store_meta_item_sample_ref_offsets(movie, writers, movie->meta);
+			store_meta_item_references(movie, writers, movie->meta);
 		}
 	}
 
@@ -2136,7 +2188,7 @@ static GF_Err WriteInplace(MovieWriter *mw, GF_BitStream *bs)
 
 	if (movie->meta) {
 		purge_free_boxes((GF_Box*)movie->meta);
-		store_meta_item_sample_ref_offsets(movie, NULL, movie->meta);
+		store_meta_item_references(movie, NULL, movie->meta);
 	}
 	if (movie->moov)
 		purge_free_boxes((GF_Box*)movie->moov);

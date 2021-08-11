@@ -262,7 +262,7 @@ static void vtbdec_on_frame(void *opaque, void *sourceFrameRefCon, OSStatus stat
 			}
 		} else {
 			diff = (s64) (acts * timescale) - (s64) (cts * atimescale);
-			if ((diff>0) && (ctx->last_timescale_out * cts > timescale * ctx->last_cts_out) ) {
+			if ((diff>0) && gf_timestamp_greater(cts, timescale, ctx->last_cts_out, ctx->last_timescale_out) ) {
 				insert = GF_TRUE;
 			}
 		}
@@ -1046,6 +1046,7 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 
 	ctx->nalu_size_length = 0;
 	ctx->is_annex_b = GF_FALSE;
+	ctx->is_avc = ctx->is_hevc = GF_FALSE;
 
 	//check AVC config
 	if (codecid==GF_CODECID_AVC) {
@@ -1104,7 +1105,7 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			}
 			gf_odf_avc_cfg_del(cfg);
 
-			if (ctx->avc.sps[ctx->active_sps].vui_parameters_present_flag) {
+			if ((ctx->active_sps>=0) && ctx->avc.sps[ctx->active_sps].vui_parameters_present_flag) {
 				Bool full_range = ctx->avc.sps[ctx->active_sps].vui.video_full_range_flag;
 				u32 cmx = ctx->avc.sps[ctx->active_sps].vui.matrix_coefficients;
 				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(full_range));
@@ -1170,7 +1171,7 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			}
 			gf_odf_hevc_cfg_del(cfg);
 
-			if (ctx->hevc.sps[ctx->active_sps].vui_parameters_present_flag) {
+			if ((ctx->active_sps>=0) && ctx->hevc.sps[ctx->active_sps].vui_parameters_present_flag) {
 				Bool full_range = ctx->hevc.sps[ctx->active_sps].video_full_range_flag;
 				u32 cmx = ctx->hevc.sps[ctx->active_sps].matrix_coeffs;
 				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(full_range));
@@ -1450,6 +1451,7 @@ static GF_Err vtbdec_flush_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 		u32 stride = (u32) CVPixelBufferGetBytesPerRowOfPlane(vtbframe->frame, 0);
 
 		GF_FilterPacket *dst_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->out_size, &dst);
+		if (!dst_pck) return GF_OUT_OF_MEM;
 
 		//TOCHECK - for now the 3 planes are consecutive in VideoToolbox
 		if (stride==ctx->width) {
@@ -1486,6 +1488,7 @@ static GF_Err vtbdec_flush_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 
 		gf_filter_pck_merge_properties(vtbframe->pck_src, dst_pck);
 		ctx->last_cts_out = gf_filter_pck_get_cts(vtbframe->pck_src);
+		gf_filter_pck_set_dts(dst_pck, ctx->last_cts_out);
 		ctx->last_timescale_out = gf_filter_pck_get_timescale(vtbframe->pck_src);
 		gf_filter_pck_unref(vtbframe->pck_src);
 		vtbframe->pck_src = NULL;
@@ -1527,9 +1530,7 @@ static GF_Err vtbdec_process(GF_Filter *filter)
 				return GF_OK;
 			}
 		}
-		dts = gf_filter_pck_get_dts(pck);
-		dts *= 1000;
-		dts /= gf_filter_pck_get_timescale(pck);
+		dts = gf_timestamp_rescale(gf_filter_pck_get_dts(pck), gf_filter_pck_get_timescale(pck), 1000);
 		if (!min_dts || (min_dts>dts)) {
 			min_dts = dts;
 			ref_pid = pid;
@@ -1904,10 +1905,12 @@ static GF_Err vtbdec_send_output_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	safe_int_inc(&ctx->decoded_frames_pending);
 
 	dst_pck = gf_filter_pck_new_frame_interface(ctx->opid, &vtb_frame->frame_ifce, vtbframe_release);
+	if (!dst_pck) return GF_OUT_OF_MEM;
 
 	gf_filter_pck_merge_properties(vtb_frame->pck_src, dst_pck);
 
 	ctx->last_cts_out = gf_filter_pck_get_cts(vtb_frame->pck_src);
+	gf_filter_pck_set_dts(dst_pck, ctx->last_cts_out);
 	ctx->last_timescale_out = gf_filter_pck_get_timescale(vtb_frame->pck_src);
 	gf_filter_pck_unref(vtb_frame->pck_src);
 	vtb_frame->pck_src = NULL;

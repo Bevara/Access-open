@@ -2330,7 +2330,7 @@ Bool svg_script_execute(GF_SceneGraph *sg, char *utf8_script, GF_DOM_Event *even
 		gf_js_call_gc(sg->svg_js->js_ctx);
 		sg->svg_js->force_gc = GF_FALSE;
 	}
-	js_do_loop(sg->svg_js->js_ctx);
+	js_std_loop(sg->svg_js->js_ctx);
 	gf_js_lock(sg->svg_js->js_ctx, GF_FALSE);
 
 	return ok;
@@ -2581,7 +2581,7 @@ void JSScript_LoadSVG(GF_Node *node)
 		}
 		JS_FreeValue(svg_js->js_ctx, ret);
 		gf_dom_listener_process_add(node->sgprivate->scenegraph);
-		js_do_loop(svg_js->js_ctx);
+		js_std_loop(svg_js->js_ctx);
 	}
 }
 
@@ -2722,7 +2722,7 @@ static Bool svg_script_execute_handler(GF_Node *node, GF_DOM_Event *event, GF_No
 
 	/*check any pending exception if outer-most event*/
 	if (!prev_event) {
-		js_do_loop(svg_js->js_ctx);
+		js_std_loop(svg_js->js_ctx);
 	}
 
 	gf_js_lock(svg_js->js_ctx, GF_FALSE);
@@ -2747,6 +2747,60 @@ static Bool svg_script_execute_handler(GF_Node *node, GF_DOM_Event *event, GF_No
 		return GF_FALSE;
 	}
 	return GF_TRUE;
+}
+
+void svg_execute_handler(GF_Node *node, GF_DOM_Event *event, GF_Node *observer)
+{
+	JSValue evt;
+	JSValue argv[1];
+	JSValue __this;
+	JSValue ret;
+	Bool success=GF_TRUE;
+	GF_DOMHandler *hdl = (GF_DOMHandler *)node;
+	JSContext *ctx;
+
+	if (!hdl->js_data || !hdl->js_data->ctx || (JS_IsUndefined(hdl->js_data->fun_val) && JS_IsUndefined(hdl->js_data->evt_listen_obj))) {
+		return;
+	}
+	ctx = hdl->js_data->ctx;
+
+	/*if an observer is being specified, use it*/
+	if (hdl && hdl->js_data && !JS_IsUndefined(hdl->js_data->evt_listen_obj))
+		__this = hdl->js_data->evt_listen_obj;
+	else
+		return;
+	/*compile the jsfun if any - 'this' is the associated observer*/
+//	else
+//		__this = observer ? dom_element_construct(ctx, observer) : svg_js->global;
+
+	gf_js_lock(ctx, GF_TRUE);
+
+
+	evt = gf_dom_new_event(ctx);
+	JS_SetOpaque(evt, event);
+	argv[0] = evt;
+
+	if (!JS_IsUndefined(hdl->js_data->fun_val) ) {
+		ret = JS_Call(ctx, hdl->js_data->fun_val, __this, 1, argv);
+	} else {
+		JSValue fun = JS_GetPropertyStr(ctx, hdl->js_data->evt_listen_obj, "hanldeEvent");
+		ret = JS_Call(ctx, fun, hdl->js_data->evt_listen_obj, 1, argv);
+		JS_FreeValue(ctx, fun);
+	}
+
+	if (JS_IsException(ret)) {
+		js_dump_error(ctx);
+		success = GF_FALSE;
+	}
+	JS_FreeValue(ctx, ret);
+	JS_FreeValue(ctx, evt);
+
+	gf_js_lock(ctx, GF_FALSE);
+
+	if (!success) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("SVG: Invalid event handler script\n" ));
+		return;
+	}
 }
 
 #endif

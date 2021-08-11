@@ -138,6 +138,17 @@ GF_Err gf_media_remove_non_rap(GF_ISOFile *isom_file, u32 trackNumber, Bool non_
  */
 void gf_media_update_bitrate(GF_ISOFile *isom_file, u32 trackNumber);
 
+
+/*! gets AV1 scalable layer byte offsets of a sample for a1lx box
+\param isom_file the target ISO file
+\param trackNumber the target track
+\param sample_number the target sample to query
+\param op_index AV1 operating point index to retrieve sizes for
+\param layer_size returned 3 layer sizes (4th is implied, see a1lx spec)
+\return error if any
+*/
+GF_Err gf_media_av1_layer_size_get(GF_ISOFile *isom_file, u32 trackNumber, u32 sample_number, u8 op_index, u32 layer_size[3]);
+
 #endif
 
 /*! @} */
@@ -166,7 +177,7 @@ Default import FPS for video when no VUI/timing information is found
 	otherwise it is added with the requested ESID if non-0, otherwise the new trackID is stored in ESID
 	if use_data_ref is set, data is only referenced in the file
 	if duration is not 0, only the first duration seconds are imported
-	NOTE: if an ESD is specified, its decoderSpecificInfo is also updated
+	\note If an ESD is specified, its decoderSpecificInfo is also updated
 
 */
 

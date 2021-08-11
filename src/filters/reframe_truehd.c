@@ -308,8 +308,7 @@ static void truehd_check_pid(GF_Filter *filter, GF_TrueHDDmxCtx *ctx, TrueHDHdr 
 	if (!ctx->timescale) {
 		//we change sample rate, change cts
 		if (ctx->cts && (ctx->sample_rate != hdr->sample_rate)) {
-			ctx->cts *= hdr->sample_rate;
-			ctx->cts /= ctx->sample_rate;
+			ctx->cts = gf_timestamp_rescale(ctx->cts, ctx->sample_rate, hdr->sample_rate);
 		}
 	}
 	ctx->sample_rate = hdr->sample_rate;
@@ -544,6 +543,7 @@ GF_Err truehd_process(GF_Filter *filter)
 
 		if (!ctx->in_seek) {
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, hdr.frame_size, &output);
+			if (!dst_pck) return GF_OUT_OF_MEM;
 			if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
 
 			memcpy(output, frame, hdr.frame_size);

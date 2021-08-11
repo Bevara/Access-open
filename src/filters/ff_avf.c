@@ -285,6 +285,7 @@ static GF_Err ffavf_initialize(GF_Filter *filter)
 	ctx->opids = gf_list_new();
 	ctx->frame = av_frame_alloc();
 
+	ffmpeg_setup_logs(GF_LOG_AUTHOR);
 
 	ctx->filter_graph = avfilter_graph_alloc();
 	ret = avfilter_graph_parse2(ctx->filter_graph, ctx->filter_desc, &inputs, &outputs);
@@ -654,7 +655,7 @@ static GF_Err ffavf_process(GF_Filter *filter)
 			if (!pck) return GF_OUT_OF_MEM;
 
 			for (j=0; j<opid->height; j++) {
-				memcpy(buffer + j*opid->stride, frame->data[0] + j*frame->linesize[0], opid->stride);
+				memcpy(buffer + j*opid->stride, frame->data[0] + j*frame->linesize[0], opid->width);
 			}
 			if (frame->linesize[1]) {
 				buffer += opid->height*opid->stride;
@@ -666,6 +667,12 @@ static GF_Err ffavf_process(GF_Filter *filter)
 				buffer += opid->uv_height*opid->stride_uv;
 				for (j=0; j<opid->uv_height; j++) {
 					memcpy(buffer + j*opid->stride_uv, frame->data[2] + j*frame->linesize[2], opid->uv_width);
+				}
+			}
+			if (frame->linesize[3]) {
+				buffer += opid->uv_height*opid->stride_uv;
+				for (j=0; j<opid->height; j++) {
+					memcpy(buffer + j*opid->stride, frame->data[3] + j*frame->linesize[3], opid->width);
 				}
 			}
 			if (frame->interlaced_frame)
@@ -1006,7 +1013,7 @@ GF_FilterRegister FFAVFilterRegister = {
 		"- name#com_name=value: sends command `com_name` with value `value` to filter named `name`\n"
 		"\n"
 	)
-	.flags =  GF_FS_REG_META | GF_FS_REG_EXPLICIT_ONLY,
+	.flags =  GF_FS_REG_META | GF_FS_REG_EXPLICIT_ONLY | GF_FS_REG_ALLOW_CYCLIC,
 	.private_size = sizeof(GF_FFAVFilterCtx),
 	SETCAPS(FFAVFilterCaps),
 	.initialize = ffavf_initialize,

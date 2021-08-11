@@ -77,6 +77,8 @@ typedef struct
 
 	Bool ttml_agg;
 	GF_XMLNode *ttml_root;
+
+	GF_FilterPacket *ttml_dash_pck;
 } GF_GenDumpCtx;
 
 
@@ -243,7 +245,10 @@ GF_Err writegen_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		if (!gf_filter_pid_get_property(pid, GF_PROP_PID_MIME))
 			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_MIME, &PROP_STRING(mimetype) );
 
-		if (!ctx->frame) {
+		if (ctx->dash_mode) {
+			ctx->ttml_agg = GF_TRUE;
+		}
+		else if (!ctx->frame) {
 			ctx->ttml_agg = GF_TRUE;
 		} else {
 			ctx->split = GF_TRUE;
@@ -434,6 +439,7 @@ static GF_FilterPacket *writegen_write_j2k(GF_GenDumpCtx *ctx, char *data, u32 d
 	size = data_size + 8*4 /*jP%20%20 + ftyp*/ + ctx->dcfg_size + 8;
 
 	dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+	if (!dst_pck) return NULL;
 
 
 	if (!ctx->bs) ctx->bs = gf_bs_new(output, size, GF_BITSTREAM_WRITE);
@@ -500,6 +506,7 @@ static GF_FilterPacket *writegen_write_bmp(GF_GenDumpCtx *ctx, char *data, u32 d
 
 	size = ctx->w*ctx->h*3 + 54; //14 + 40 = size of BMP file header and BMP file info;
 	dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+	if (!dst_pck) return NULL;
 
 	memset(&fh, 0, sizeof(fh));
 	fh.bfType = 19778;
@@ -563,6 +570,7 @@ static void writegen_write_wav_header(GF_GenDumpCtx *ctx)
 
 	size = 44;
 	dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+	if (!dst_pck) return;
 
 	if (!ctx->bs) ctx->bs = gf_bs_new(output, size, GF_BITSTREAM_WRITE);
 	else gf_bs_reassign_buffer(ctx->bs, output, size);
@@ -939,8 +947,18 @@ static GF_Err writegen_flush_ttml(GF_GenDumpCtx *ctx)
 	if (!data) return GF_OK;
 	size = (u32) strlen(data);
 	pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+	if (!pck) return GF_OUT_OF_MEM;
+
 	memcpy(output, data, size);
 	gf_free(data);
+
+	if (ctx->ttml_dash_pck) {
+		gf_filter_pck_merge_properties(ctx->ttml_dash_pck, pck);
+		gf_filter_pck_set_byte_offset(pck, GF_FILTER_NO_BO);
+		gf_filter_pck_set_dependency_flags(pck, 0);
+		gf_filter_pck_unref(ctx->ttml_dash_pck);
+		ctx->ttml_dash_pck = NULL;
+	}
 	gf_filter_pck_set_framing(pck, GF_TRUE, GF_TRUE);
 	gf_xml_dom_node_del(ctx->ttml_root);
 	ctx->ttml_root = NULL;
@@ -969,6 +987,19 @@ GF_Err writegen_process(GF_Filter *filter)
 	}
 	ctx->sample_num++;
 
+	if (ctx->dash_mode && ctx->ttml_agg && gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENUM)) {
+		if (ctx->ttml_dash_pck)
+			writegen_flush_ttml(ctx);
+
+		if (ctx->ttml_dash_pck) {
+			gf_filter_pck_unref(ctx->ttml_dash_pck);
+			ctx->ttml_dash_pck = NULL;
+		}
+
+		ctx->ttml_dash_pck = pck;
+		gf_filter_pck_ref_props(&ctx->ttml_dash_pck);
+	}
+
 	if (ctx->sstart) {
 		if (ctx->sstart > ctx->sample_num) {
 			gf_filter_pid_drop_packet(ctx->ipid);
@@ -985,7 +1016,7 @@ GF_Err writegen_process(GF_Filter *filter)
 		if (!ctx->first_dts_plus_one) {
 			ctx->first_dts_plus_one = dts+1;
 		} else {
-			if (ctx->dur.den * (dts + 1 - ctx->first_dts_plus_one) > ctx->dur.num * gf_filter_pck_get_timescale(pck)) {
+			if (gf_timestamp_greater(dts + 1 - ctx->first_dts_plus_one, gf_filter_pck_get_timescale(pck), ctx->dur.num, ctx->dur.den)) {
 				do_abort = GF_TRUE;
 			}
 		}
@@ -1008,6 +1039,8 @@ GF_Err writegen_process(GF_Filter *filter)
 		split = GF_TRUE;
 	} else if (ctx->dcfg_size && gf_filter_pck_get_sap(pck) && !ctx->is_mj2k && (ctx->decinfo!=DECINFO_NO) && !ctx->cfg_sent) {
 		dst_pck = gf_filter_pck_new_shared(ctx->opid, ctx->dcfg, ctx->dcfg_size, NULL);
+		if (!dst_pck) return GF_OUT_OF_MEM;
+
 		gf_filter_pck_merge_properties(pck, dst_pck);
 		gf_filter_pck_set_framing(dst_pck, ctx->first, GF_FALSE);
 		ctx->first = GF_FALSE;
@@ -1030,6 +1063,8 @@ GF_Err writegen_process(GF_Filter *filter)
 	} else if (ctx->is_wav && ctx->first) {
 		u8 * output;
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, 44, &output);
+		if (!dst_pck) return GF_OUT_OF_MEM;
+
 		gf_filter_pck_merge_properties(pck, dst_pck);
 		gf_filter_pck_set_byte_offset(dst_pck, GF_FILTER_NO_BO);
 		gf_filter_pck_set_framing(dst_pck, GF_TRUE, GF_FALSE);
@@ -1056,7 +1091,7 @@ GF_Err writegen_process(GF_Filter *filter)
 		} else {
 			u32 timescale = gf_filter_pck_get_timescale(pck);
 			u32 dur = gf_filter_pck_get_duration(pck);
-			if (ctx->dur.den * (dts + dur + 1 - ctx->first_dts_plus_one) > ctx->dur.num * timescale) {
+			if (gf_timestamp_greater(dts + dur + 1 - ctx->first_dts_plus_one, timescale, ctx->dur.num, ctx->dur.den)) {
 				u32 bpp;
 				u8 *odata;
 				const GF_PropertyValue *p;
@@ -1077,7 +1112,8 @@ GF_Err writegen_process(GF_Filter *filter)
 				pck_size = bpp * dur;
 
 				dst_pck = gf_filter_pck_new_alloc(ctx->opid, pck_size, &odata);
-				memcpy(odata, data, pck_size);
+				if (dst_pck)
+					memcpy(odata, data, pck_size);
 			}
 		}
 
@@ -1088,6 +1124,8 @@ GF_Err writegen_process(GF_Filter *filter)
 	} else {
 		dst_pck = gf_filter_pck_new_ref(ctx->opid, 0, 0, pck);
 	}
+	if (!dst_pck) return GF_OUT_OF_MEM;
+	
 	gf_filter_pck_merge_properties(pck, dst_pck);
 	//don't keep byte offset
 	gf_filter_pck_set_byte_offset(dst_pck, GF_FILTER_NO_BO);
@@ -1112,8 +1150,7 @@ no_output:
 			ts = gf_filter_pck_get_cts(pck);
 		if (ts!=GF_FILTER_NO_TS) {
 			ts += gf_filter_pck_get_duration(pck);
-			ts *= ctx->duration.den;
-			ts /= timescale;
+			ts = gf_timestamp_rescale(ts, timescale, ctx->duration.den);
 			gf_set_progress("Exporting", ts, ctx->duration.num);
 		}
 	}
@@ -1476,6 +1513,11 @@ void writegen_finalize(GF_Filter *filter)
 	if (ctx->bs) gf_bs_del(ctx->bs);
 	if (ctx->ttml_root)
 		gf_xml_dom_node_del(ctx->ttml_root);
+
+	if (ctx->ttml_dash_pck) {
+		gf_filter_pck_unref(ctx->ttml_dash_pck);
+		ctx->ttml_dash_pck = NULL;
+	}
 }
 
 GF_FilterRegister GenDumpRegister = {

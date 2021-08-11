@@ -127,7 +127,7 @@ Note: when dumping in interleaved mode, there is no guarantee that the packets w
 .SH Options (expert):
 .LP
 .br
-log (str, default: stderr, minmax: fileName, stderr, stdout or null): set inspect log filename
+log (str, default: stdout, minmax: fileName, stderr, stdout or null): set inspect log filename
 .br
 mode (enum, default: pck):     dump mode
 .br
@@ -441,9 +441,9 @@ apan (uint, default: 50, updatable): audio pan in percent, 50 is no pan
 .br
 async (bool, default: true, updatable): audio resynchronization; if disabled, audio data is never dropped but may get out of sync
 .br
-max_aspeed (dbl, default: 2.0, updatable): silence audio if playback speed is greater than sepcified value
+max_aspeed (dbl, default: 2.0, updatable): silence audio if playback speed is greater than specified value
 .br
-max_vspeed (dbl, default: 4.0, updatable): move to i-frame only decoding if playback speed is greater than sepcified value
+max_vspeed (dbl, default: 4.0, updatable): move to i-frame only decoding if playback speed is greater than specified value
 .br
 buffer (uint, default: 3000, updatable): playout buffer in ms. overridden by BufferLenth property of input pid
 .br
@@ -602,6 +602,8 @@ camlay (enum, default: offaxis, updatable): camera layout in multiview modes
 iod (flt, default: 6.4, updatable): inter-occular distance (eye separation) in cm (distance between the cameras). 
 .br
 rview (bool, default: false, updatable): reverse view order
+.br
+dbgpack (bool, default: false, updatable): view packed stereo video as single image (show all)
 .br
 tvtn (uint, default: 30, updatable): number of point sampling for tile visibility algo
 .br
@@ -790,6 +792,8 @@ xps_check (enum, default: auto): parameter sets extraction mode from AVC/HEVC/VV
 * auto: resolves to keep for smode=splix (dasher mode), rem otherwise
 .br
 
+.br
+nodata (bool, default: false): do not load sample data
 .br
 
 .br
@@ -1210,6 +1214,8 @@ This filter demultiplexes OGG files/data into a set of media PIDs and frames.
 .br
 index (dbl, default: 1.0):     indexing window length (unimplemented, only 0 disables stream probing for duration), 
 .br
+expart (bool, default: false): expose pictures as a dedicated video pid
+.br
 
 .br
 .SH vorbisdec
@@ -1308,9 +1314,7 @@ On OSX with VM packet replay you will need to force multicast routing, eg: route
 .br
 src (cstr):                    address of source content - see filter help
 .br
-block_size (uint, default: 10000): block size used to read socket
-.br
-sockbuf (uint, default: 65536): socket max buffer size
+block_size (uint, default: 0x60000): block size used to read socket
 .br
 port (uint, default: 1234):    default port if not specified
 .br
@@ -1656,8 +1660,6 @@ start_with (enum, default: max_bw): initial selection criteria
 .br
 max_res (bool, default: true): use max media resolution to configure display
 .br
-immediate (bool, default: false): when interactive switching is requested and immediate is set, the buffer segments are trashed
-.br
 abort (bool, default: false):  allow abort during a segment download
 .br
 use_bmin (bool, default: false): use the indicated min buffer time of the MPD if true, otherwise uses default player settings
@@ -1747,6 +1749,16 @@ skip_lqt (bool, default: no):  disable decoding of tiles with highest degradatio
 llhls_merge (bool, default: yes): merge LL-HLS byte range parts into a single open byte range request
 .br
 groupsel (bool, default: no):  select groups based on language (by default all playable groups are exposed)
+.br
+chain_mode (enum, default: on): MPD chaining mode
+.br
+* off: do not use MPD chaining
+.br
+* on: use MPD chaining once over, fallback if MPD load failure
+.br
+* error: use MPD chaining once over or if error (MPD or segment download)
+.br
+
 .br
 
 .br
@@ -1923,6 +1935,31 @@ Other tag class may be specified using tag_NAME property names, and will be adde
 .br
   
 .br
+.SH User data
+.LP
+.br
+The muxer will look for the following PID properties to create user data entries:
+.br
+* `udtab`: set the track user-data box to the property value which must be a serialized box array blob
+.br
+* `mudtab`: set the movie user-data box to the property value which must be a serialized box array blob
+.br
+* `udta_U4CC`: set track user-data box entry of type U4CC to property value
+.br
+* `mudta_U4CC`: set movie user-data box entry of type U4CC to property value
+.br
+  
+.br
+Example
+.br
+-i src.mp4:#udta_tagc='My Awsome Tag'
+.br
+-i src.mp4:#mudtab=data@box.bin
+.br
+
+.br
+  
+.br
 .SH Notes
 .LP
 .br
@@ -1959,13 +1996,15 @@ pack_nal (bool, default: false): repack NALU size length to minimum possible siz
 .br
 xps_inband (enum, default: no): use inband (in sample data) parameter set for NALU-based video (AVC/HEVC/...)
 .br
-* no: paramater sets are not inband, several sample descriptions might be created
+* no: parameter sets are not inband, several sample descriptions might be created
 .br
-* all: paramater sets are inband, no parameter sets in sample description
+* all: parameter sets are inband, no parameter sets in sample description
 .br
-* both: paramater sets are inband, signaled as inband, and also first set is kept in sample description
+* both: parameter sets are inband, signaled as inband, and also first set is kept in sample description
 .br
 * mix: creates non-standard files using single sample entry with first PSs found, and moves other PS inband
+.br
+* auto: keep source config, or defaults to no if qource is not isobmff
 .br
 
 .br
@@ -2161,13 +2200,13 @@ pps_inband (bool, default: no): when xps_inband is set, inject PPS in each non S
 .br
 moovpad (uint, default: 0):    insert free box of given size after moov for future in-place editing
 .br
-cmaf (enum, default: no):      use cmaf guidelines
+cmaf (enum, default: no):      use cmaf guidelines (turns on mvex, truns_first, strun, straf, tfdt_traf, chain_sidx and restricts subs_sidx to -1 or 0)
 .br
 * no: CMAF not enforced
 .br
 * cmfc: use CMAF cmfc guidelines
 .br
-* cmf2: use CMAF cmf2 guidelines
+* cmf2: use CMAF cmf2 guidelines (turns on nofragdef)
 .br
 
 .br
@@ -2838,7 +2877,7 @@ This filter provides various compressed domain tools on inputs:
 .br
 This filter forces input pids to be properly framed (1 packet = 1 Access Unit).
 .br
-It is typcially needed to force remultiplexing in file to file operations when source and destination files use the same format.
+It is typically needed to force remultiplexing in file to file operations when source and destination files use the same format.
 .br
   
 .br
@@ -2969,9 +3008,11 @@ Note: The : and / characters are replaced by . in FileSuffix property.
 .br
 It is possible to modify PID properties per range using .I props. Each set of property must be specified using the active separator set.
 .br
+Warning: The option must be escaped using double separators in order to be parsed properly.
+.br
 Example
 .br
-gpac src=m.mp4 reframer:xs=0,30:props=#Period=P1,#Period=P2:#foo=bar
+gpac src=m.mp4 reframer:xs=0,30::props=#Period=P1,#Period=P2:#foo=bar
 .br
 
 .br
@@ -3003,7 +3044,7 @@ This mode is typically used to extract a range in a frame/sample accurate way, r
 .br
 
 .br
-When .I xround is not set to seek, compressed audio streams using priming will still use seek mode.
+When .I xround is not set to seek, compressed audio streams will still use seek mode.
 .br
 Consequently, these streams will have modified edit lists in ISOBMFF which might not be properly handled by players.
 .br
@@ -3100,6 +3141,8 @@ tcmdrw (bool, default: true):  rewrite TCMD samples when splitting
 props (strl):                  extra output PID properties per extraction range
 .br
 no_audio_seek (bool, default: false): disable seek mode on audio streams (no change of priming duration) - see filter help
+.br
+probe_ref (bool, default: false): allow extracted range to be longer in case of B-frames with reference frames presented outside of range
 .br
 
 .br
@@ -3422,6 +3465,8 @@ och (uint, default: 0):        desired number of output audio channels - 0 for a
 osr (uint, default: 0):        desired sample rate of output audio - 0 for auto
 .br
 ofmt (afmt, default: none):    desired format of output audio - none for auto
+.br
+olayout (str, minmax: mono,stereo,3/0.0,3/1.0,3/2.0,3/2.1,5/2.1,1+1,2/1.0,2/2.0,3/3.1,3/4.1,11/11.2,5/2.1,5/5.2,5/4.1,6/5.1,6/7.1,5/6.1,7/6.1): desired CICP layout of output audio - null for auto
 .br
 
 .br
@@ -3781,7 +3826,7 @@ Playlist refreshing will abort:
 .br
 - if the input playlist has a line not ending with a LF (\n) character, in order to avoid asynchronous issues when reading the playlist.
 .br
-- if the input playlist has not been modified for 60 times the refresh rate (based on file system modification time info).
+- if the input playlist has not been modified for the .I timeout option value (infinite by default).
 .br
 .P
 .B
@@ -3805,7 +3850,7 @@ Note: When sources are ISOBMFF files or segments on local storage or GF_FileIO o
 .br
 * props=STR: assigns properties described in STR to all pids coming from the listed sources on next line. STR is formatted according to gpac -h doc using the default parameter set.
 .br
-* del: specifies that the source file(s) must be deleted once processed, true by default is .I fdel is set.
+* del: specifies that the source file(s) must be deleted once processed, true by default if .I fdel is set.
 .br
 * out=V: specifies splicing start time (cf below).
 .br
@@ -3844,6 +3889,8 @@ Source syntax
 The source lines follow the usual source syntax, see gpac -h.
 .br
 Additional pid properties can be added per source (see gpac -h doc), but are valid only for the current source, and reset at next source.
+.br
+The loaded sources do not inherit arguments from the parent playlist filter.
 .br
 
 .br
@@ -4034,7 +4081,9 @@ revert (bool, default: false): revert list of files (not playlist)
 .br
 timescale (uint, default: 0):  force output timescale on all pids. 0 uses the timescale of the first pid found
 .br
-ka (uint, default: 0):         keep playlist alive (disable loop), waiting the for a new input to be added or #end to end playlist. The value specify the refresh rate in ms
+ka (uint, default: 0):         keep playlist alive (disable loop), waiting the for a new input to be added or #end to end playlist. The value specifies the refresh rate in ms
+.br
+timeout (luint, default: -1):  timeout in ms after which the playlist is considered dead. -1 means indefinitely
 .br
 fsort (enum, default: no):     sort list of files
 .br
@@ -4849,6 +4898,8 @@ muxtype (enum, default: auto): muxtype to use for the segments
 .br
 
 .br
+rawsub (bool, default: no):    use raw subtitle format instead of encapsulating in container
+.br
 asto (dbl, default: 0):        availabilityStartTimeOffset to use in seconds. A negative value simply increases the AST, a positive value sets the ASToffset to representations
 .br
 profile (enum, default: auto): target DASH profile. This will set default option values to ensure conformance to the desired profile. For MPEG-2 TS, only main and live are used, others default to main
@@ -4902,6 +4953,8 @@ pssh (enum, default: v):       storage mode for PSSH box
 
 .br
 buf (sint, default: -100):     min buffer duration in ms. negative value means percent of segment duration (eg -150 = 1.5*seg_dur)
+.br
+spd (sint, default: 0):        suggested presentation delay in ms
 .br
 timescale (sint, default: 0):  set timescale for timeline and segment list/template. A value of 0 picks up the first timescale of the first stream in an adaptation set. A negative value forces using stream timescales for each timed element (multiplication of segment list/template/timelines). A positive value enforces the MPD timescale
 .br
@@ -5025,6 +5078,10 @@ cmaf (enum, default: no):      use cmaf guidelines
 .br
 
 .br
+chain (str):                   URL of next MPD for regular chaining
+.br
+chain_fbk (str):               URL of fallback MPD
+.br
 
 .br
 .SH tileagg
@@ -5146,7 +5203,13 @@ On non windows hosts, the created pipe will delete the pipe file upon filter des
 .br
 
 .br
-Input pipes can be setup to run forever using .I ka. In this case, any potential pipe close on the writing side and end of stream will only be triggered upon session close.
+Input pipes can be setup to run forever using .I ka. In this case:
+.br
+- any potential pipe close on the writing side will be ignored
+.br
+- end of stream will be triggered upon pipe close if .I sigeos is set
+.br
+- final end of stream will be triggered upon session close.
 .br
 This can be useful to pipe raw streams from different process into gpac:
 .br
@@ -5176,6 +5239,8 @@ blk (bool, default: false):    open pipe in block mode - see filter help
 ka (bool, default: false):     keep-alive pipe when end of input is detected - see filter help
 .br
 mkp (bool, default: false):    create pipe if not found - see filter help
+.br
+sigeos (bool, default: false): signal end of stream whenever a pipe breaks in keep-alive mode - see filter help
 .br
 
 .br
@@ -6217,6 +6282,31 @@ Both certificate and key must be in PEM format.
 .br
 The server currently only operates in either HTTPS or HTTP mode and cannot run both modes at the same time. You will need to use two httpout filters for this, one operating in HTTPS and one operating in HTTP.
 .br
+  
+.br
+.SH Multiple destinations on single server
+.LP
+.br
+When running in server mode, multiple HTTP outputs with same URL/port may be used:
+.br
+- the first loaded HTTP output filter with same URL/port will be reused
+.br
+- all httpout options of subsequent httpout filters, except .I dst will be ignored, other options will be inherited as usual
+.br
+
+.br
+Example
+.br
+-i dash.mpd dashin:forward=file:SID=D1 dashin:forward=segb:SID=D2 -o http://localhost:80/live.mpd:SID=D1:rdirs=dash -o http://localhost:80/live_rw.mpd:SID=D2:sigfrag
+.br
+
+.br
+This will:
+.br
+- load the HTTP server and forward (through D1) the dash session to this server using live.mpd as manifest name
+.br
+- reuse the HTTP server and regenerate the manifest (through D2 and sigfrag option), using live_rw.mpd as manifest name
+.br
 
 .br
 
@@ -6612,7 +6702,7 @@ gpcflags (sint, default: -1, updatable): general compatibility flags for HEVC
 .br
 rmsei (bool, default: false, updatable): remove SEI messages from bitstream for AVC|H264 and HEVC
 .br
-vidfmt (enum, default: -1, updatable): video format for AVC|H264 and HEVC
+vidfmt (enum, default: -1, updatable): video format for AVC|H264 and HEVC (component|pal|ntsc|secam|mac|undef)
 .br
 
 .br
@@ -6623,7 +6713,7 @@ vidfmt (enum, default: -1, updatable): video format for AVC|H264 and HEVC
 .br
 Description: FFMPEG demuxer
 .br
-Version: Lavf58.77.100
+Version: Lavf59.4.101
 .br
 
 .br
@@ -6657,7 +6747,7 @@ src (cstr):                    URL of source content
 .br
 Description: FFMPEG decoder
 .br
-Version: Lavc58.135.100
+Version: Lavc59.3.102
 .br
 
 .br
@@ -6689,7 +6779,7 @@ The default threading mode is to let libavcodec decide how many threads to use. 
 .br
 Description: FFMPEG AV Capture
 .br
-Version: Lavd58.14.100
+Version: Lavd59.0.100
 .br
 
 .br
@@ -6778,7 +6868,7 @@ block_size (uint, default: 4096): block size used to read file when using avio c
 .br
 Description: FFMPEG video rescaler
 .br
-Version: SwS5.10.100
+Version: SwS6.0.100
 .br
 
 .br
@@ -6799,7 +6889,7 @@ osize (v2di):                  osize of output video. When not set, input osize 
 .br
 ofmt (pfmt, default: none, minmax: none,yuv420,yvu420,yuv420_10,yuv422,yuv422_10,yuv444,yuv444_10,uyvy,vyuy,yuyv,yvyu,uyvl,vyul,yuyl,yvyl,nv12,nv21,nv1l,nv2l,yuva,yuvd,yuv444a,yuv444p,yuv444ap,yuv444p_10,grey,algr,gral,rgb4,rgb5,rgb6,rgba,argb,bgra,abgr,rgb,bgr,xrgb,rgbx,xbgr,bgrx,rgbd,rgbds,rgbs,rgbas): pixel format for output video. When not set, input format is used
 .br
-scale (enum, default: bicubic): scaling mode - see filter info
+scale (enum, default: bicubic): scaling mode - see filter info (fastbilinear|bilinear|bicubic|X|point|area|bicublin|gauss|sinc|lanzcos|spline)
 .br
 
 .br
@@ -6826,7 +6916,7 @@ itable (sintl):                the yuv2rgb coefficients describing the input yuv
 .br
 Description: FFMPEG encoder
 .br
-Version: Lavc58.135.100
+Version: Lavc59.3.102
 .br
 
 .br
@@ -6873,7 +6963,7 @@ c (str):                       codec identifier. Can be any supported GPAC codec
 .br
 pfmt (pfmt, default: none):    pixel format for input video. When not set, input format is used
 .br
-fintra (frac, default: -1/1):  force intra / IDR frames at the given period in sec, eg fintra=60000/1001 will force an intra every 2 seconds on 29.97 fps video; ignored for audio
+fintra (frac, default: -1/1):  force intra / IDR frames at the given period in sec, e.g. fintra=2 will force an intra every 2 seconds and fintra=1001/1000 will force an intra every 30 frames on 30000/1001=29.97 fps video; ignored for audio
 .br
 all_intra (bool, default: false, updatable): only produce intra frames
 .br
@@ -6890,7 +6980,7 @@ rc (bool, default: false):     reset encoder when forcing intra frame (some enco
 .br
 Description: FFMPEG muxer
 .br
-Version: Lavf58.77.100
+Version: Lavf59.4.101
 .br
 
 .br
@@ -6950,7 +7040,7 @@ block_size (uint, default: 4096): block size used to read file when using avio c
 .br
 Description: FFMPEG AVFilter
 .br
-Version: Lavf58.77.100
+Version: Lavf59.4.101
 .br
 
 .br
@@ -7494,7 +7584,7 @@ pack_hfr (bool, default: false): pack 4 consecutive frames in a single output
 .br
 seek_reset (bool, default: false): reset decoder when seeking
 .br
-force_stereo (bool, default: false): force stereo output for multiview (top-bottom only)
+force_stereo (bool, default: true): use stereo output for multiview (top-bottom only)
 .br
 reset_switch (bool, default: false): reset decoder at config change
 .br
@@ -7613,6 +7703,8 @@ fps (frac, default: 25):       video frame rate
 .br
 sizes (v2il, default: 1280x720): video size in pixels
 .br
+pfmt (pfmt, default: yuv):     output pixel format
+.br
 lock (bool, default: false):   lock timing to video generation
 .br
 dyn (bool, default: true):     move bottom banner
@@ -7652,7 +7744,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev753-g3b246ee75-master
+build: 1.1.0-DEV-rev1160-g501dcf757-master
 .br
 Copyright: (c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

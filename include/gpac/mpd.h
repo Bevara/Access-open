@@ -768,10 +768,18 @@ typedef struct
 	/*! xlink evaluation on load if set, otherwise on use*/
 	Bool xlink_actuate_on_load;
 
-	/*! original xlink URL before resolution, used to identify already resolved xlinks in MPD updates - GPAC internal*/
+	/*! original xlink URL before resolution - GPAC internal. Used to
+		- identify already resolved xlinks in MPD updates
+		- resolve URLs in remote period if no baseURL is explictly listed
+	*/
 	char *origin_base_url;
+	/*! broken/ignored xlink, used to identify ignored xlinks in MPD updates  - GPAC internal*/
+	char *broken_xlink;
 	/*! type of the period - GPAC internal*/
 	GF_MPD_Type type;
+
+	/*! period is preroll - test only, GPAC internal*/
+	Bool is_preroll;
 } GF_MPD_Period;
 
 /*! Program info*/
@@ -840,6 +848,10 @@ typedef struct {
 
 	/*! UTC timing desc if any */
 	GF_List *utc_timings;
+	/*! Essential properties */
+	GF_List *essential_properties;
+	/*! Supplemental properties */
+	GF_List *supplemental_properties;
 
 	/* internal variables for dasher*/
 	Bool inject_service_desc;
@@ -1193,6 +1205,12 @@ typedef struct
 */
 GF_Err gf_mpd_load_cues(const char *cues_file, u32 stream_id, u32 *cues_timescale, Bool *use_edit_list, s32 *ts_offset, GF_DASHCueInfo **out_cues, u32 *nb_cues);
 
+/*! gets first MPD descriptor from descriptor list for a given scheme_id
+\param desclist list of MPD Descriptors
+\param scheme_id scheme ID to look for
+\return descriptor if found, NUL otherwise
+*/
+GF_MPD_Descriptor *gf_mpd_get_descriptor(GF_List *desclist, char *scheme_id);
 
 /*! @} */
 #endif /*GPAC_DISABLE_CORE_TOOLS*/

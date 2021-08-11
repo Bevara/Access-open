@@ -343,12 +343,19 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 		gf_isom_get_visual_info(import->orig, track_in, 1, &w, &h);
 #ifndef GPAC_DISABLE_AV_PARSERS
 		/*for MPEG-4 visual, always check size (don't trust input file)*/
-		if (origin_esd && (origin_esd->decoderConfig->objectTypeIndication==GF_CODECID_MPEG4_PART2)) {
-			GF_M4VDecSpecInfo dsi;
-			gf_m4v_get_config(origin_esd->decoderConfig->decoderSpecificInfo->data, origin_esd->decoderConfig->decoderSpecificInfo->dataLength, &dsi);
-			w = dsi.width;
-			h = dsi.height;
-			PL = dsi.VideoPL;
+		if (origin_esd
+			&& origin_esd->decoderConfig
+			&& (origin_esd->decoderConfig->objectTypeIndication==GF_CODECID_MPEG4_PART2)
+		) {
+			if (origin_esd->decoderConfig->decoderSpecificInfo) {
+				GF_M4VDecSpecInfo dsi;
+				gf_m4v_get_config(origin_esd->decoderConfig->decoderSpecificInfo->data, origin_esd->decoderConfig->decoderSpecificInfo->dataLength, &dsi);
+				w = dsi.width;
+				h = dsi.height;
+				PL = dsi.VideoPL;
+			} else {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("Missing DecoderSpecificInfo in MPEG-4 Visual (Part2) stream\n"));
+			}
 		}
 #endif
 		gf_isom_set_pl_indication(import->dest, GF_ISOM_PL_VISUAL, PL);
@@ -382,7 +389,7 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 		w = h = 0;
 		trans_x = trans_y = 0;
 		layer = 0;
-		if (origin_esd && origin_esd->decoderConfig->objectTypeIndication == GF_CODECID_SUBPIC) {
+		if (origin_esd && origin_esd->decoderConfig && (origin_esd->decoderConfig->objectTypeIndication == GF_CODECID_SUBPIC)) {
 			gf_isom_get_track_layout_info(import->orig, track_in, &w, &h, &trans_x, &trans_y, &layer);
 		}
 	}
@@ -562,7 +569,7 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 			}
 
 			samp->DTS -= dts_offset;
-			if (duration && !gf_sys_old_arch_compat() && ((u64) samp->DTS * import->duration.den >= mtimescale * import->duration.num)) {
+			if (duration && !gf_sys_old_arch_compat() && gf_timestamp_greater_or_equal(samp->DTS, mtimescale, import->duration.num, import->duration.den)) {
 				gf_isom_sample_del(&samp);
 				break;
 			}
@@ -596,7 +603,7 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 				samp->DTS = sampDTS + 1;
 			}
 
-			if (duration && !gf_sys_old_arch_compat() && ((u64) samp->DTS * import->duration.den >= mtimescale * import->duration.num)) {
+			if (duration && !gf_sys_old_arch_compat() && gf_timestamp_greater_or_equal(samp->DTS, mtimescale, import->duration.num, import->duration.den)) {
 				gf_isom_sample_del(&samp);
 				break;
 			}
@@ -886,9 +893,7 @@ GF_Err gf_media_import_chapters_file(GF_MediaImporter *import)
 		if (!strnicmp(sL, "AddChapter(", 11)) {
 			u32 nb_fr;
 			sscanf(sL, "AddChapter(%u,%1023s)", &nb_fr, szTitle);
-			ts = nb_fr;
-			ts *= 1000;
-			ts = (u64) (((s64) ts )  *import->video_fps.den / import->video_fps.num);
+			ts = gf_timestamp_rescale(nb_fr, 1000 * import->video_fps.den, import->video_fps.num);
 			sL = strchr(sL, ',');
 			strcpy(szTitle, sL+1);
 			sL = strrchr(szTitle, ')');
@@ -1139,8 +1144,8 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 	/* chapter */
 	else if (!strnicmp(ext, ".txt", 4) || !strnicmp(ext, ".chap", 5) || (fmt && !stricmp(fmt, "CHAP")) ) {
 		e =  gf_media_import_chapters_file(importer);
-		if (!strnicmp(ext, ".txt", 4) && (e==GF_NOT_FOUND)) {
-
+		if (e==GF_NOT_FOUND) {
+			fmt = NULL;
 		} else {
 			return e;
 		}
@@ -1304,7 +1309,14 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 	else if (importer->asemode==GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_MPEG) { e |= gf_dynstrcat(&args, "ase=v1", ":"); }
 	else if (importer->asemode==GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF) { e |= gf_dynstrcat(&args, "ase=v1qt", ":"); }
 
-	if (source_is_isom && gf_isom_has_keep_utc_times(importer->dest) ) { e |= gf_dynstrcat(&args, "keep_utc", ":"); }
+	if (source_is_isom) {
+		if (!gf_sys_find_global_arg("xps_inband")
+			&& (!importer->filter_dst_opts || !strstr(importer->filter_dst_opts, "xps_inband"))
+		) {
+			e |= gf_dynstrcat(&args, "xps_inband=auto", ":");
+		}
+		if (gf_isom_has_keep_utc_times(importer->dest) ) { e |= gf_dynstrcat(&args, "keep_utc", ":"); }
+	}
 
 	if (importer->start_time) {
 		sprintf(szSubArg, "start=%f", importer->start_time);
@@ -1507,7 +1519,7 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 		}
 	}
 
-	if (!e) gf_fs_print_unused_args(fsess, "index,fps");
+	if (!e) gf_fs_print_unused_args(fsess, "index,fps,mpeg4");
 	gf_fs_print_non_connected(fsess);
 	if (importer->print_stats_graph & 1) gf_fs_print_stats(fsess);
 	if (importer->print_stats_graph & 2) gf_fs_print_connections(fsess);

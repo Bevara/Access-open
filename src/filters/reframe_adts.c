@@ -336,8 +336,7 @@ static void adts_dmx_check_pid(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 	if (!ctx->timescale) {
 		//we change sample rate, change cts
 		if (ctx->cts && (ctx->sr_idx != ctx->hdr.sr_idx)) {
-			ctx->cts *= sr;
-			ctx->cts /= GF_M4ASampleRates[ctx->sr_idx];
+			ctx->cts = gf_timestamp_rescale(ctx->cts, GF_M4ASampleRates[ctx->sr_idx], sr);
 		}
 	}
 	ctx->sr_idx = ctx->hdr.sr_idx;
@@ -746,8 +745,9 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 			ctx->hdr.nb_ch = 8;
 
 
-		//ready to send packet
-		if (ctx->hdr.frame_size + 1 < remain) {
+		//ready to send packet, check what we have in frame_size is a sync word
+		//if not enough bytes, store and wait
+		if (ctx->hdr.frame_size + sync_pos + 1 < remain) {
 			u32 next_frame = ctx->hdr.frame_size;
 			//make sure we are sync!
 			if ((sync[next_frame] !=0xFF) || ((sync[next_frame+1] & 0xF0) !=0xF0) ) {
@@ -800,6 +800,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 
 		if (!ctx->in_seek) {
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+			if (!dst_pck) return GF_OUT_OF_MEM;
 			if (ctx->src_pck) gf_filter_pck_merge_properties(ctx->src_pck, dst_pck);
 
 			memcpy(output, sync + offset, size);
@@ -821,7 +822,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 
 		//truncated last frame
 		if (bytes_to_drop>remain) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] truncated ADTS frame!\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] truncated ADTS frame %d bytes but only %d left!\n", bytes_to_drop, remain));
 			bytes_to_drop=remain;
 		}
 
@@ -927,7 +928,7 @@ static const char *adts_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 	}
 	gf_bs_del(bs);
 	if (max_consecutive_frames>=4) {
-		*score = has_broken_data ? GF_FPROBE_MAYBE_SUPPORTED : GF_FPROBE_SUPPORTED;
+		*score = has_broken_data ? GF_FPROBE_MAYBE_NOT_SUPPORTED : GF_FPROBE_SUPPORTED;
 		return "audio/aac";
 	}
 	if (has_id3 && max_consecutive_frames) {

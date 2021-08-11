@@ -119,6 +119,8 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 				pssh->private_data = (u8 *)gf_malloc(pssh->private_data_size*sizeof(char));
 				if (!pssh->private_data) return GF_OUT_OF_MEM;
 				memmove(pssh->private_data, ((GF_ProtectionSystemHeaderBox *)a)->private_data, pssh->private_data_size);
+				pssh->moof_defined = 1;
+				mov->has_pssh_moof = GF_TRUE;
 			}
 		}
 	}
@@ -411,9 +413,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				return e;
 			}
 			totSize += a->size;
-            if (mov->moov) {
-				gf_isom_meta_restore_items_ref(mov, mov->meta);
-			}
+			gf_isom_meta_restore_items_ref(mov, mov->meta);
 			break;
 
 		/*we only keep the MDAT in READ for dump purposes*/
@@ -497,6 +497,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 					if (pos<0) pos=0;
 					gf_list_insert(mov->TopBoxes, brand, pos);
 				}
+				gf_isom_box_del(a);
 			}
 			break;
 
@@ -761,6 +762,8 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 	return GF_OK;
 }
 
+extern u64 unused_bytes;
+
 GF_Err gf_isom_parse_movie_boxes(GF_ISOFile *mov, u32 *boxType, u64 *bytesMissing, Bool progressive_mode)
 {
 	GF_Err e;
@@ -774,6 +777,7 @@ GF_Err gf_isom_parse_movie_boxes(GF_ISOFile *mov, u32 *boxType, u64 *bytesMissin
 	if (blob)
 		gf_mx_p(blob->mx);
 
+	unused_bytes = 0;
 	e = gf_isom_parse_movie_boxes_internal(mov, boxType, bytesMissing, progressive_mode);
 
 	if (blob)
@@ -1191,7 +1195,7 @@ GF_Err GetNextMediaTime(GF_TrackBox *trak, u64 movieTime, u64 *OutMovieTime)
 	ent = NULL;
 	i=0;
 	while ((ent = (GF_EdtsEntry *)gf_list_enum(trak->editBox->editList->entryList, &i))) {
-		if (time * trak->Media->mediaHeader->timeScale >= movieTime * trak->moov->mvhd->timeScale) {
+		if (gf_timestamp_greater_or_equal(time, trak->moov->mvhd->timeScale, movieTime, trak->Media->mediaHeader->timeScale)) {
 			/*skip empty edits*/
 			if (ent->mediaTime >= 0) {
 				*OutMovieTime = time * trak->Media->mediaHeader->timeScale / trak->moov->mvhd->timeScale;
@@ -1220,15 +1224,15 @@ GF_Err GetPrevMediaTime(GF_TrackBox *trak, u64 movieTime, u64 *OutMovieTime)
 	i=0;
 	while ((ent = (GF_EdtsEntry *)gf_list_enum(trak->editBox->editList->entryList, &i))) {
 		if (ent->mediaTime == -1) {
-			if ( (time + ent->segmentDuration) * trak->Media->mediaHeader->timeScale >= movieTime * trak->moov->mvhd->timeScale) {
-				*OutMovieTime = time * trak->Media->mediaHeader->timeScale / trak->moov->mvhd->timeScale;
+			if ( gf_timestamp_greater_or_equal(time + ent->segmentDuration, trak->moov->mvhd->timeScale, movieTime, trak->Media->mediaHeader->timeScale)) {
+				*OutMovieTime = gf_timestamp_rescale(time, trak->moov->mvhd->timeScale, trak->Media->mediaHeader->timeScale);
 				return GF_OK;
 			}
 			continue;
 		}
 		/*get the first entry whose end is greater than or equal to the desired time*/
 		time += ent->segmentDuration;
-		if ( time * trak->Media->mediaHeader->timeScale >= movieTime * trak->moov->mvhd->timeScale) {
+		if (gf_timestamp_greater_or_equal(time, trak->moov->mvhd->timeScale, movieTime, trak->Media->mediaHeader->timeScale)) {
 			*OutMovieTime = time * trak->Media->mediaHeader->timeScale / trak->moov->mvhd->timeScale;
 			return GF_OK;
 		}

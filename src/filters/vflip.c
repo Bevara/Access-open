@@ -271,16 +271,12 @@ static GF_Err vflip_process(GF_Filter *filter)
 
 	if (frame_ifce){
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->out_size, &output);
-		gf_filter_pck_merge_properties(pck, dst_pck);
+		if (dst_pck)
+			gf_filter_pck_merge_properties(pck, dst_pck);
 	} else {
 		dst_pck = gf_filter_pck_new_clone(ctx->opid, pck, &output);
 	}
-
-	if (!dst_pck) {
-		gf_filter_pid_drop_packet(ctx->ipid);
-		return GF_OUT_OF_MEM;
-	}
-
+	if (!dst_pck) return GF_OUT_OF_MEM;
 
 	dst_planes[0] = output;
 	if (ctx->nb_planes==1) {
@@ -496,7 +492,7 @@ GF_FilterRegister VFlipRegister = {
 		GF_FS_SET_DESCRIPTION("Video flip")
 		GF_FS_SET_HELP("Filter used to flip video frames vertically, horizontally, in both directions or no flip")
 		.private_size = sizeof(GF_VFlipCtx),
-		.flags = GF_FS_REG_EXPLICIT_ONLY,
+		.flags = GF_FS_REG_EXPLICIT_ONLY|GF_FS_REG_ALLOW_CYCLIC,
 		.args = VFlipArgs,
 		.configure_pid = vflip_configure_pid,
 		SETCAPS(VFlipCaps),

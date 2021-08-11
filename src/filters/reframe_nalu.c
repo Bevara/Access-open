@@ -1166,7 +1166,6 @@ static void naludmx_create_vvc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 
 
 		if (first || (is_lvvc && first_lvvc) ) {
 			VVC_VPS *vps = &ctx->vvc_state->vps[sps->vps_id];
-			cfg->configurationVersion = 1;
 			cfg->avgFrameRate = 0;
 			cfg->constantFrameRate = 1;
 			cfg->numTemporalLayers = sps->max_sublayers;
@@ -1190,8 +1189,10 @@ static void naludmx_create_vvc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 
 				cfg->num_sub_profiles = 0;
 				cfg->ols_idx = 0;
 			}
-			cfg->chromaformat_plus_one = 1 + sps->chroma_format_idc;
-			cfg->bit_depth_plus_one = 1 + sps->bitdepth;
+			cfg->chroma_format = sps->chroma_format_idc;
+			cfg->bit_depth = sps->bitdepth;
+			cfg->maxPictureWidth = sps->width;
+			cfg->maxPictureHeight = sps->height;
 
 			if (sps->aspect_ratio_info_present_flag && sps->sar_width && sps->sar_height) {
 				sar->num = sps->sar_width;
@@ -1925,6 +1926,7 @@ GF_Err naludmx_realloc_last_pck(GF_NALUDmxCtx *ctx, u32 nb_bytes_to_add, u8 **da
 GF_FilterPacket *naludmx_start_nalu(GF_NALUDmxCtx *ctx, u32 nal_size, Bool skip_nal_field, Bool *au_start, u8 **pck_data)
 {
 	GF_FilterPacket *dst_pck = gf_filter_pck_new_alloc(ctx->opid, nal_size + (skip_nal_field ? 0 : ctx->nal_length), pck_data);
+	if (!dst_pck) return NULL;
 
 	if (!skip_nal_field) {
 		if (!ctx->bs_w) ctx->bs_w = gf_bs_new(*pck_data, ctx->nal_length, GF_BITSTREAM_WRITE);
@@ -2520,22 +2522,27 @@ static void naldmx_switch_timestamps(GF_NALUDmxCtx *ctx, GF_FilterPacket *pck)
 		}
 		ts = gf_filter_pck_get_dts(pck);
 		if (ts != GF_FILTER_NO_TS) {
-			GF_FilterClockType ck_type = gf_filter_pid_get_clock_info(ctx->ipid, NULL, NULL);
-			if (ck_type==GF_FILTER_CLOCK_PCR_DISC)
+			if (ctx->full_au_source) {
+				ctx->prev_dts = ctx->dts;
 				ctx->dts = ts;
-			else if (ctx->dts<ts)
-				ctx->dts=ts;
+			} else {
+				GF_FilterClockType ck_type = gf_filter_pid_get_clock_info(ctx->ipid, NULL, NULL);
+				if (ck_type==GF_FILTER_CLOCK_PCR_DISC)
+					ctx->dts = ts;
+				else if (ctx->dts<ts)
+					ctx->dts=ts;
 
-			if (!ctx->prev_dts) ctx->prev_dts = ts;
-			else if (ctx->prev_dts != ts) {
-				u64 diff = ts;
-				diff -= ctx->prev_dts;
-				if (!ctx->cur_fps.den)
-					ctx->cur_fps.den = (u32) diff;
-				else if (ctx->cur_fps.den > diff)
-					ctx->cur_fps.den = (u32) diff;
+				if (!ctx->prev_dts) ctx->prev_dts = ts;
+				else if (ctx->prev_dts != ts) {
+					u64 diff = ts;
+					diff -= ctx->prev_dts;
+					if (!ctx->cur_fps.den)
+						ctx->cur_fps.den = (u32) diff;
+					else if (ctx->cur_fps.den > diff)
+						ctx->cur_fps.den = (u32) diff;
 
-				ctx->prev_dts = ts;
+					ctx->prev_dts = ts;
+				}
 			}
 		}
 		ctx->pck_duration = gf_filter_pck_get_duration(pck);
@@ -2629,7 +2636,7 @@ GF_Err naludmx_process(GF_Filter *filter)
 			if (ctx->codecid==GF_CODECID_HEVC) {
 				naludmx_set_hevc_oinf(ctx, ctx->max_temporal_id);
 				naludmx_set_hevc_linf(ctx);
-				gf_filter_pid_set_property_str(ctx->opid, "hevc:min_lid", &PROP_UINT(ctx->min_layer_id) );
+				gf_filter_pid_set_info_str(ctx->opid, "hevc:min_lid", &PROP_UINT(ctx->min_layer_id) );
 			}
 			if (ctx->opid)
 				gf_filter_pid_set_eos(ctx->opid);
@@ -3190,9 +3197,12 @@ naldmx_flush:
 			/*ref slice, reset poc*/
 			if (slice_is_ref) {
 				if (first_in_au) {
+					Bool temp_poc_diff = GF_FALSE;
 					//two consecutive IDRs, force poc_diff to 1 if 0 (when we have intra-only) to force frame dispatch
-					if (ctx->last_frame_is_idr && !ctx->poc_diff)
-						ctx->poc_diff=1;
+					if (ctx->last_frame_is_idr && !ctx->poc_diff) {
+						temp_poc_diff = GF_TRUE;
+						ctx->poc_diff = 1;
+					}
 					//new ref frame, dispatch all pending packets
 					naludmx_enqueue_or_dispatch(ctx, NULL, GF_TRUE);
 
@@ -3201,6 +3211,8 @@ naldmx_flush:
 					//force probing of POC diff, this will prevent dispatching frames with wrong CTS until we have a clue of min poc_diff used
 					ctx->poc_probe_done = 0;
 					ctx->last_frame_is_idr = GF_TRUE;
+					if (temp_poc_diff)
+						ctx->poc_diff = 0;
 				}
 			}
 			/*forced ref slice*/

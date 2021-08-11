@@ -367,6 +367,7 @@ static void gf_mpd_parse_segment_base_generic(GF_MPD *mpd, GF_MPD_SegmentBase *s
 static GF_MPD_SegmentTimeline *gf_mpd_parse_segment_timeline(GF_MPD *mpd, GF_XMLNode *root)
 {
 	u32 i, j;
+	u64 curr_start_time = 0;
 	GF_XMLAttribute *att;
 	GF_XMLNode *child;
 	GF_MPD_SegmentTimeline *seg;
@@ -381,6 +382,7 @@ static GF_MPD_SegmentTimeline *gf_mpd_parse_segment_timeline(GF_MPD *mpd, GF_XML
 			GF_MPD_SegmentTimelineEntry *seg_tl_ent;
 			GF_SAFEALLOC(seg_tl_ent, GF_MPD_SegmentTimelineEntry);
 			if (!seg_tl_ent) continue;
+			seg_tl_ent->start_time = curr_start_time;
 			gf_list_add(seg->entries, seg_tl_ent);
 
 			j = 0;
@@ -395,6 +397,8 @@ static GF_MPD_SegmentTimeline *gf_mpd_parse_segment_timeline(GF_MPD *mpd, GF_XML
 						seg_tl_ent->repeat_count--;
 				}
 			}
+
+			curr_start_time = curr_start_time + seg_tl_ent->duration * (seg_tl_ent->repeat_count+1);
 		}
 	}
 	return seg;
@@ -987,8 +991,20 @@ GF_Err gf_mpd_parse_period(GF_MPD *mpd, GF_XMLNode *root)
 	GF_XMLNode *child;
 	GF_Err e;
 
+	Bool is_preperiod = !strcmp(root->name, "PrePeriod") ? GF_TRUE : GF_FALSE;
+
+	if (is_preperiod) {
+		period = gf_list_get(mpd->periods, 0);
+		if (period) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[MPD] At most one PrePeriod allowed, and it shall be the first period\n"));
+			return GF_NON_COMPLIANT_BITSTREAM;
+		}
+	}
+
 	period = gf_mpd_period_new();
 	if (!period) return GF_OUT_OF_MEM;
+	period->is_preroll = is_preperiod;
+
 	e = gf_list_add(mpd->periods, period);
 	if (e) return e;
 
@@ -997,7 +1013,13 @@ GF_Err gf_mpd_parse_period(GF_MPD *mpd, GF_XMLNode *root)
 		if (strstr(att->name, "href")) period->xlink_href = gf_mpd_parse_string(att->value);
 		else if (strstr(att->name, "actuate")) period->xlink_actuate_on_load = !strcmp(att->value, "onLoad") ? 1 : 0;
 		else if (!strcmp(att->name, "id")) period->ID = gf_mpd_parse_string(att->value);
-		else if (!strcmp(att->name, "start")) period->start = gf_mpd_parse_duration(att->value);
+		else if (!strcmp(att->name, "start")) {
+			if (is_preperiod) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[MPD] PrePeriod with @start not allowed, ignoring attribute\n"));
+			} else {
+				period->start = gf_mpd_parse_duration(att->value);
+			}
+		}
 		else if (!strcmp(att->name, "duration")) period->duration = gf_mpd_parse_duration(att->value);
 		else if (!strcmp(att->name, "bitstreamSwitching")) period->bitstream_switching = gf_mpd_parse_bool(att->value);
 		else {
@@ -1291,6 +1313,7 @@ void gf_mpd_period_free(void *_item)
 	GF_MPD_Period *ptr = (GF_MPD_Period *)_item;
 	if (ptr->ID) gf_free(ptr->ID);
 	if (ptr->origin_base_url) gf_free(ptr->origin_base_url);
+	if (ptr->broken_xlink) gf_free(ptr->broken_xlink);
 	if (ptr->xlink_href) gf_free(ptr->xlink_href);
 	if (ptr->segment_base) gf_mpd_segment_base_free(ptr->segment_base);
 	if (ptr->segment_list) gf_mpd_segment_list_free(ptr->segment_list);
@@ -1321,6 +1344,8 @@ void gf_mpd_del(GF_MPD *mpd)
 	if (mpd->profiles) gf_free(mpd->profiles);
 	if (mpd->ID) gf_free(mpd->ID);
 	gf_mpd_del_list(mpd->utc_timings, gf_mpd_descriptor_free, 0);
+	gf_mpd_del_list(mpd->essential_properties, gf_mpd_descriptor_free, 0);
+	gf_mpd_del_list(mpd->supplemental_properties, gf_mpd_descriptor_free, 0);
 	MPD_FREE_EXTENSION_NODE(mpd);
 	gf_free(mpd);
 }
@@ -1357,7 +1382,7 @@ GF_Err gf_mpd_complete_from_dom(GF_XMLNode *root, GF_MPD *mpd, const char *defau
 		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[MPD] Wrong namespace found for DASH MPD - cannot parse\n"));
 	}
 
-	if (!strcmp(root->name, "Period")) {
+	if (!strcmp(root->name, "PrePeriod") || !strcmp(root->name, "Period")) {
 		return gf_mpd_parse_period(mpd, root);
 	}
 
@@ -1417,7 +1442,7 @@ GF_Err gf_mpd_complete_from_dom(GF_XMLNode *root, GF_MPD *mpd, const char *defau
 		} else if (!strcmp(child->name, "Location")) {
 			char *str = gf_mpd_parse_text_content(child);
 			if (str) gf_list_add(mpd->locations, str);
-		} else if (!strcmp(child->name, "Period")) {
+		} else if (!strcmp(child->name, "PrePeriod") || !strcmp(child->name, "Period")) {
 			e = gf_mpd_parse_period(mpd, child);
 			if (e) return e;
 		} else if (!strcmp(child->name, "Metrics")) {
@@ -1427,6 +1452,11 @@ GF_Err gf_mpd_complete_from_dom(GF_XMLNode *root, GF_MPD *mpd, const char *defau
 			if (e) return e;
 		} else if (!strcmp(child->name, "UTCTiming")) {
 			gf_mpd_parse_descriptor(mpd->utc_timings, child);
+		} else if (!strcmp(child->name, "EssentialProperty")) {
+			gf_mpd_parse_descriptor(mpd->essential_properties, child);
+		}
+		else if (!strcmp(child->name, "SupplementalProperty")) {
+			gf_mpd_parse_descriptor(mpd->supplemental_properties, child);
 		} else {
 			MPD_STORE_EXTENSION_NODE(mpd)
 		}
@@ -1445,6 +1475,8 @@ static void gf_mpd_init_struct(GF_MPD *mpd)
 	mpd->locations = gf_list_new();
 	mpd->metrics = gf_list_new();
 	mpd->utc_timings = gf_list_new();
+	mpd->essential_properties = gf_list_new();
+	mpd->supplemental_properties = gf_list_new();
 }
 
 GF_EXPORT
@@ -3975,6 +4007,14 @@ GF_Err gf_mpd_write(GF_MPD const * const mpd, FILE *out, Bool compact)
 		gf_mpd_extensible_print_nodes(out, mpd->x_children, indent, &child_idx, GF_FALSE);
 		gf_mpd_print_descriptors(out, mpd->utc_timings, "UTCTiming", indent+1, mpd->x_children, &child_idx);
 	}
+	if (gf_list_count(mpd->essential_properties)) {
+		gf_mpd_extensible_print_nodes(out, mpd->x_children, indent, &child_idx, GF_FALSE);
+		gf_mpd_print_descriptors(out, mpd->essential_properties, "EssentialProperty", indent+1, mpd->x_children, &child_idx);
+	}
+	if (gf_list_count(mpd->supplemental_properties)) {
+		gf_mpd_extensible_print_nodes(out, mpd->x_children, indent, &child_idx, GF_FALSE);
+		gf_mpd_print_descriptors(out, mpd->supplemental_properties, "SupplementalProperty", indent+1, mpd->x_children, &child_idx);
+	}
 	gf_mpd_extensible_print_nodes(out, mpd->x_children, indent, &child_idx, GF_TRUE);
 
 	gf_fprintf(out, "</MPD>");
@@ -5391,7 +5431,7 @@ GF_Err gf_mpd_load_cues(const char *cues_file, u32 stream_id, u32 *cues_timescal
 
 GF_Err gf_mpd_split_adaptation_sets(GF_MPD *mpd)
 {
-	u32 i, nb_periods, next_as_id=0;;
+	u32 i, nb_periods, next_as_id=0;
 	if (!mpd) return GF_BAD_PARAM;
 
 	nb_periods = gf_list_count(mpd->periods);
@@ -5417,6 +5457,7 @@ GF_Err gf_mpd_split_adaptation_sets(GF_MPD *mpd)
 			GF_MPD_AdaptationSet *set = gf_list_get(period->adaptation_sets, j);
 			GF_List *reps = set->representations;
 			u32 nb_reps = gf_list_count(set->representations);
+			set->group = -1;
 
 			gf_list_add(new_as, set);
 			if (nb_reps<=1) {
@@ -5474,6 +5515,16 @@ GF_Err gf_mpd_split_adaptation_sets(GF_MPD *mpd)
 		period->adaptation_sets = new_as;
 	}
 	return GF_OK;
+}
+
+GF_MPD_Descriptor *gf_mpd_get_descriptor(GF_List *desclist, char *scheme_id)
+{
+	u32 i, count = gf_list_count(desclist);
+	for (i=0; i<count; i++) {
+		GF_MPD_Descriptor *desc = gf_list_get(desclist, i);
+		if (desc->scheme_id_uri && !strcmp(desc->scheme_id_uri, scheme_id)) return desc;
+	}
+	return NULL;
 }
 
 

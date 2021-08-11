@@ -70,7 +70,7 @@ typedef struct
 	u32 xps_check;
 	char *catseg;
 	Bool sigfrag;
-	Bool nocrypt, strtxt;
+	Bool nocrypt, strtxt, nodata;
 	u32 mstore_purge, mstore_samples, mstore_size;
 
 	//internal
@@ -83,7 +83,7 @@ typedef struct
 	/*input file*/
 	GF_ISOFile *mov;
 	Bool extern_mov;
-	u32 time_scale;
+	u32 timescale;
 	u32 nb_playing;
 	//source data is completely available
 	Bool input_loaded;
@@ -139,6 +139,7 @@ typedef struct
 	GF_FilterPid *pid;
 	ISOMReader *owner;
 	u64 duration;
+	Bool last_has_tfrf;
 
 	/*current sample*/
 	GF_ISOSample *static_sample;
@@ -148,7 +149,8 @@ typedef struct
 	Bool sap_3;
 	GF_ISOSampleRollType sap_4_type;
 	s32 roll;
-
+	u32 xps_mask;
+	
 	Bool has_edit_list;
 	u32 sample_num;
 	s64 ts_offset;
@@ -162,7 +164,7 @@ typedef struct
 	u64 sample_time, last_rap_sample_time, start, end;
 	Double speed;
 
-	u32 time_scale;
+	u32 timescale;
 	Bool to_init, has_rap;
 	//0: not playing, 1: playing 2: playing but end of range reached
 	u32 playing;
@@ -191,7 +193,8 @@ typedef struct
 	Bool pck_encrypted;
 
 	u32 key_info_crc;
-
+	const GF_PropertyValue *cenc_ki;
+	
 	u8 *sai_buffer;
 	u32 sai_alloc_size, sai_buffer_size;
 

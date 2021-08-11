@@ -535,6 +535,10 @@ static int h2_frame_recv_callback(nghttp2_session *session, const nghttp2_frame 
 				GF_LOG(GF_LOG_DEBUG, GF_LOG_HTTP, ("[HTTP/2] All headers received for stream ID %d\n", sess->h2_stream_id));
 			}
 		}
+		if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_HTTP, ("[HTTP/2] stream_id %d (%s) data done\n", frame->hd.stream_id, sess->remote_path ? sess->remote_path : sess->orig_url));
+			sess->h2_data_done = 1;
+		}
 		break;
 	case NGHTTP2_DATA:
 		if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
@@ -580,7 +584,7 @@ static int h2_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 	}
 	memcpy(sess->h2_buf.data + sess->h2_buf.size, data, len);
 	sess->h2_buf.size += (u32) len;
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_HTTP, ("[HTTP/2] stream_id %d received %d bytes - flags %d\n", sess->h2_stream_id, len, flags));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_HTTP, ("[HTTP/2] stream_id %d received %d bytes (%d/%d total) - flags %d\n", sess->h2_stream_id, len, sess->bytes_done, sess->total_size, flags));
 	return 0;
 }
 
@@ -1553,7 +1557,8 @@ void gf_dm_delete_cached_file_entry(const GF_DownloadManager * dm,  const char *
 }
 
 GF_EXPORT
-void gf_dm_delete_cached_file_entry_session(const GF_DownloadSession * sess,  const char * url) {
+void gf_dm_delete_cached_file_entry_session(const GF_DownloadSession * sess,  const char * url)
+{
 	if (sess && sess->dm && url) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[CACHE] Requesting deletion for %s\n", url));
 		gf_dm_delete_cached_file_entry(sess->dm, url);
@@ -3180,7 +3185,7 @@ GF_Err gf_dm_sess_process(GF_DownloadSession *sess)
 			GF_LOG(GF_LOG_WARNING, GF_LOG_HTTP, ("[HTTP] Session already started - ignoring start\n"));
 			return GF_OK;
 		}
-		sess->th = gf_th_new(sess->orig_url);
+		sess->th = gf_th_new( gf_file_basename(sess->orig_url) );
 		if (!sess->th) return GF_OUT_OF_MEM;
 		gf_th_run(sess->th, gf_dm_session_thread, sess);
 		return GF_OK;
@@ -3758,7 +3763,7 @@ static void gf_dm_data_received(GF_DownloadSession *sess, u8 *payload, u32 paylo
 			gf_icy_skip_data(sess, (char *) data, nbBytes);
 		else {
 			if (sess->use_cache_file)
-				gf_cache_write_to_cache( sess->cache_entry, sess, (char *) data, nbBytes, sess->dm->cache_mx);
+				gf_cache_write_to_cache( sess->cache_entry, sess, (char *) data, nbBytes, sess->dm ? sess->dm->cache_mx : NULL);
 
 			par.msg_type = GF_NETIO_DATA_EXCHANGE;
 			par.error = GF_OK;
@@ -6017,7 +6022,8 @@ void gf_dm_set_data_rate(GF_DownloadManager *dm, u32 rate_in_bits_per_sec)
 		dm->limit_data_rate = rate_in_bits_per_sec/8;
 
 		sprintf(opt, "%d", rate_in_bits_per_sec);
-		gf_opts_set_key("core", "maxrate", opt);
+		//temporary store of maxrate
+		gf_opts_set_key("temp", "maxrate", opt);
 
 		dm->read_buf_size = GF_DOWNLOAD_BUFFER_SIZE;
 		//when rate is limited, use smaller smaller read size

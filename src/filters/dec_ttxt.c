@@ -255,6 +255,9 @@ static GF_Err ttd_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_re
 			ctx->cfg = NULL;
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
+		if (!sd->default_style.text_color)
+			sd->default_style.text_color = 0xFFFFFFFF;
+
 		gf_list_add(ctx->cfg->sample_descriptions, sd);
 		ctx->is_tx3g = GF_TRUE;
 	}
@@ -514,6 +517,16 @@ static void ttd_new_text_chunk(GF_TTXTDec *ctx, GF_TextSampleDescriptor *tsd, M_
 		fontSize = tsd->default_style.font_size;
 		styleFlags = tsd->default_style.style_flags;
 		color = tsd->default_style.text_color;
+		if (!color && !tsd->back_color)
+			color = 0xFFFFFFFF;
+		if (!fontSize) {
+			if (ctx->cfg->text_height > 2000)
+				fontSize = 80;
+			else if (ctx->cfg->text_height > 700)
+				fontSize = 40;
+			else
+				fontSize = 20;
+		}
 	} else {
 		fontName = ttd_find_font(tsd, tc->srec->fontID);
 		fontSize = tc->srec->font_size;
@@ -1234,7 +1247,7 @@ static GF_Err ttd_process(GF_Filter *filter)
 
 	//we still process any frame before our clock time even when buffering
 	obj_time = gf_clock_time(ctx->odm->ck);
-	if (cts * 1000 > obj_time * timescale) {
+	if (gf_timestamp_greater(cts, timescale, obj_time, 1000)) {
 		Double ts_offset = (Double) cts;
 		ts_offset /= timescale;
 

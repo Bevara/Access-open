@@ -42,6 +42,7 @@ static Bool enable_prompt = GF_FALSE;
 static u32 enable_reports = 0;
 static char *report_filter = NULL;
 static Bool do_unit_tests = GF_FALSE;
+static Bool use_step_mode = GF_FALSE;
 static int alias_argc = 0;
 static char **alias_argv = NULL;
 static GF_List *args_used = NULL;
@@ -74,6 +75,7 @@ static char separator_set[7] = GF_FS_DEFAULT_SEPS;
 static Bool print_filters(int argc, char **argv, GF_FilterSession *session, GF_SysArgMode argmode);
 static void dump_all_props(void);
 static void dump_all_colors(void);
+static void dump_all_audio_cicp(void);
 static void dump_all_codec(GF_FilterSession *session);
 static void write_filters_options(GF_FilterSession *fsess);
 static void write_core_options();
@@ -113,14 +115,15 @@ const char *gpac_doc =
 "- unsigned 32 bit integer: formatted as number or hexadecimal using the format `0xAABBCCDD`.\n"
 "- N-dimension (vectors): formatted as `DIM1xDIM2[xDIM3[xDIM4]]` values, without unit multiplier.\n"
 "- string: formatted as:\n"
-" - `value`: copies value to string.\n"
-" - `file@FILE`: load string from local `FILE` (opened in binary mode).\n"
-" - `bxml@FILE`: binarize XML from local `FILE` and set property type to data - see https://wiki.gpac.io/NHML-Format.\n"
+"  - `value`: copies value to string.\n"
+"  - `file@FILE`: load string from local `FILE` (opened in binary mode).\n"
+"  - `bxml@FILE`: binarize XML from local `FILE` and set property type to data - see https://wiki.gpac.io/NHML-Format.\n"
 "- data: formatted as:\n"
-" - `size@address`: constant data block, not internally copied; `size` gives the size of the block, `address` the data pointer.\n"
-" - `0xBYTESTRING`: data block specified in hexadecimal, internally copied.\n"
-" - `file@FILE`: load data from local `FILE` (opened in binary mode).\n"
-" - `bxml@FILE`: binarize XML from local `FILE` - see https://wiki.gpac.io/NHML-Format.\n"
+"  - `size@address`: constant data block, not internally copied; `size` gives the size of the block, `address` the data pointer.\n"
+"  - `0xBYTESTRING`: data block specified in hexadecimal, internally copied.\n"
+"  - `file@FILE`: load data from local `FILE` (opened in binary mode).\n"
+"  - `bxml@FILE`: binarize XML from local `FILE` - see https://wiki.gpac.io/NHML-Format.\n"
+"  - `b64@DATA`: load data from base-64 encoded `DATA`.\n"
 "- pointer: are formatted as `address` giving the pointer address (32 or 64 bit depending on platforms).\n"
 "- string lists: formatted as `val1,val2[,...]`. Each value can also use `file@FILE` syntax.\n"
 "- integer lists: formatted as `val1,val2[,...]`\n"
@@ -591,6 +594,7 @@ static GF_GPACArg gpac_args[] =
 	GF_DEF_ARG("o", "dst", "specify an output file - see [filters help (-h doc)](filters_general)", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("ib", NULL, "specify an input file to wrap as GF_FileIO object (testing of GF_FileIO)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("ob", NULL, "specify an output file to wrap as GF_FileIO object (testing of GF_FileIO)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
+	GF_DEF_ARG("step", NULL, "test step mode in non-blocking session", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("h", "help,-ha,-hx,-hh", "print help. Use `-help` or `-h` for basic options, `-ha` for advanced options, `-hx` for expert options and `-hh` for all.  \nNote: The `@` character can be used in place of the `*` character. String parameter can be:\n"\
 			"- empty: print command line options help\n"\
 			"- doc: print the general filter info\n"\
@@ -605,6 +609,7 @@ static GF_GPACArg gpac_args[] =
 			"- codecs: print the supported builtin codecs\n"\
 			"- props: print the supported builtin PID and packet properties\n"\
 			"- colors: print the builtin color names and their values\n"\
+			"- layouts: print the builtin CICP audio channel layout names and their values\n"\
 			"- links: print possible connections between each supported filters\n"\
 			"- links FNAME: print sources and sinks for filter `FNAME` (either builtin or JS filter)\n"\
 			"- FNAME: print filter `FNAME` info (multiple FNAME can be given)\n"
@@ -932,7 +937,7 @@ static Bool gpac_event_proc(void *opaque, GF_Event *event)
 		}
 	}
 	else if (event->type==GF_EVENT_QUIT) {
-		gf_fs_abort(fsess, GF_TRUE);
+		gf_fs_abort(fsess, GF_FS_FLUSH_ALL);
 	}
 	return GF_FALSE;
 }
@@ -1007,11 +1012,11 @@ static Bool gpac_fsess_task(GF_FilterSession *fsess, void *callback, u32 *resche
 		GPAC_Command c = get_cmd(gf_prompt_get_char());
 		switch (c) {
 		case GPAC_QUIT:
-			gf_fs_abort(fsess, GF_TRUE);
+			gf_fs_abort(fsess, GF_FS_FLUSH_ALL);
 			nb_loops = 0;
 			return GF_FALSE;
 		case GPAC_EXIT:
-			gf_fs_abort(fsess, GF_FALSE);
+			gf_fs_abort(fsess, GF_FS_FLUSH_NONE);
 			nb_loops = 0;
 			return GF_FALSE;
 		case GPAC_PRINT_STATS:
@@ -1146,12 +1151,12 @@ static Bool gpac_fsess_task(GF_FilterSession *fsess, void *callback, u32 *resche
 		if (!run_start_time) run_start_time = now;
 		else if (now - run_start_time > runfor) {
 			if (nb_loops || loops_done) {
-				gf_fs_abort(fsess, runfor_exit ? GF_FALSE : GF_TRUE);
+				gf_fs_abort(fsess, runfor_exit ? GF_FS_FLUSH_NONE : GF_FS_FLUSH_ALL);
 				run_start_time = 0;
 			} else {
 				if (runfor_exit)
 					exit(0);
-				gf_fs_abort(fsess, GF_TRUE);
+				gf_fs_abort(fsess, GF_FS_FLUSH_ALL);
 			}
 			return GF_FALSE;
 		}
@@ -1164,46 +1169,58 @@ static Bool gpac_fsess_task(GF_FilterSession *fsess, void *callback, u32 *resche
 	return GF_TRUE;
 }
 
-static Bool sigint_catched=GF_FALSE;
-static Bool sigint_processed=GF_FALSE;
+static Bool signal_catched=GF_FALSE;
+static Bool signal_processed=GF_FALSE;
 #ifdef WIN32
 #include <windows.h>
 static BOOL WINAPI gpac_sig_handler(DWORD sig)
 {
 	if (sig == CTRL_C_EVENT) {
+		Bool is_inter = GF_TRUE;
 #else
 #include <signal.h>
 static void gpac_sig_handler(int sig)
 {
-	if (sig == SIGINT) {
+	if (sig == SIGINT || sig == SIGTERM) {
+		Bool is_inter = (sig == SIGINT) ? GF_TRUE : GF_FALSE;
 #endif
 		nb_loops = 0;
 		if (session) {
 			char input=0;
 			int res;
-			if (sigint_catched) {
-				if (sigint_processed) {
-					fprintf(stderr, "catched SIGINT twice and session not responding, forcing exit.\n");
+			if (signal_catched) {
+				if (signal_processed) {
+					fprintf(stderr, "catched SIGINT|SIGTERM twice and session not responding, forcing exit.\n");
 				}
 				exit(1);
 			}
-			sigint_catched = GF_TRUE;
-			fprintf(stderr, "catched SIGINT - flush session before exit ? (Y/n):\n");
-			res = scanf("%c", &input);
-			if (res!=1) input=0;
-			switch (input) {
-			case 'Y':
-			case 'y':
-			case '\n':
-				sigint_processed = GF_TRUE;
-				gf_fs_abort(session, GF_TRUE);
-				break;
-			case 0:
-				break;
-			default:
-				sigint_processed = GF_TRUE;
-				gf_fs_abort(session, GF_FALSE);
-				break;
+			signal_catched = GF_TRUE;
+			if (is_inter) {
+				fprintf(stderr, "catched SIGINT - flush session before exit ? (Y/f/n):\n");
+				res = scanf("%c", &input);
+				if (res!=1) input=0;
+				switch (input) {
+				case 'Y':
+				case 'y':
+				case '\n':
+					signal_processed = GF_TRUE;
+					gf_fs_abort(session, GF_FS_FLUSH_FAST);
+					break;
+				case 'F':
+				case 'f':
+					signal_processed = GF_TRUE;
+					gf_fs_abort(session, GF_FS_FLUSH_ALL);
+					break;
+				case 0:
+					break;
+				default:
+					signal_processed = GF_TRUE;
+					gf_fs_abort(session, GF_FS_FLUSH_NONE);
+					break;
+				}
+			} else {
+				signal_processed = GF_TRUE;
+				gf_fs_abort(session, GF_FS_FLUSH_NONE);
 			}
 		}
 	}
@@ -1230,12 +1247,16 @@ static void parse_sep_set(const char *arg, Bool *override_seps)
 static int gpac_exit_fun(int code, char **alias_argv, int alias_argc)
 {
 	u32 i;
-	for (i=1; i<gf_sys_get_argc(); i++) {
-		if (!gf_sys_is_arg_used(i)) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Warning: argument %s set but not used\n", gf_sys_get_arg(i) ));
+	if (code>=0) {
+		for (i=1; i<gf_sys_get_argc(); i++) {
+			if (!gf_sys_is_arg_used(i)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Warning: argument %s set but not used\n", gf_sys_get_arg(i) ));
+			}
 		}
+	} else {
+		//negative code is unrecognized option, don't print unused arguments
+		code = 1;
 	}
-
 
 	if (alias_argv) {
 		while (gf_list_count(args_alloc)) {
@@ -1382,6 +1403,19 @@ static void gpac_suggest_arg(char *aname)
 			}
 		}
 	}
+	//look in alias
+	u32 nb_alias = gf_opts_get_key_count("gpac.alias");
+	for (k=0; k<nb_alias; k++) {
+		const char *key = gf_opts_get_key_name("gpac.alias", k);
+		if (gf_sys_word_match(aname, key)) {
+			if (!found) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Unrecognized option \"%s\", did you mean:\n", aname));
+				found = GF_TRUE;
+			}
+			GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("\t%s (see gpac -h)\n", key));
+		}
+	}
+
 	if (!found) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Unrecognized option \"%s\", check usage \"gpac -h\"\n", aname));
 	}
@@ -1406,7 +1440,7 @@ static void gpac_suggest_filter(char *fname, Bool is_help, Bool filter_only)
 	}
 	if (!found && is_help) {
 		const char *doc_helps[] = {
-			"log", "core", "modules", "doc", "alias", "props", "colors", "cfg", "prompt", "codecs", "links", "bin", "filters", "filters:*", "filters:@", NULL
+			"log", "core", "modules", "doc", "alias", "props", "colors", "layouts", "cfg", "prompt", "codecs", "links", "bin", "filters", "filters:*", "filters:@", NULL
 		};
 		i=0;
 		while (doc_helps[i]) {
@@ -1654,6 +1688,8 @@ static int gpac_main(int argc, char **argv)
 			else if (!strcmp(arg, "-hx")) argmode = GF_ARGMODE_EXPERT;
 			else if (!strcmp(arg, "-hh")) argmode = GF_ARGMODE_ALL;
 
+			gf_opts_set_key("temp", "gpac-help", "yes");
+
 			if (i+1<argc)
 				gf_sys_mark_arg_used(i+1, GF_TRUE);
 
@@ -1680,6 +1716,9 @@ static int gpac_main(int argc, char **argv)
 				gpac_exit(0);
 			} else if (!strcmp(argv[i+1], "colors")) {
 				dump_all_colors();
+				gpac_exit(0);
+			} else if (!strcmp(argv[i+1], "layouts")) {
+				dump_all_audio_cicp();
 				gpac_exit(0);
 			} else if (!strcmp(argv[i+1], "cfg")) {
 				gpac_config_help();
@@ -1905,6 +1944,9 @@ static int gpac_main(int argc, char **argv)
 			}
 		} else if (!strcmp(arg, "-unit-tests")) {
 			do_unit_tests = GF_TRUE;
+		} else if (!strcmp(arg, "-step")) {
+			use_step_mode = GF_TRUE;
+			sflags |= GF_FS_FLAG_NO_MAIN_THREAD;
 		} else if (!strcmp(arg, "-xopt")) {
 			has_xopt = GF_TRUE;
 		} else if (arg[0]=='-') {
@@ -1916,7 +1958,7 @@ static int gpac_main(int argc, char **argv)
 			} else if (!gf_sys_is_gpac_arg(arg) ) {
 				if (!has_xopt) {
 					gpac_suggest_arg(arg);
-					gpac_exit(1);
+					gpac_exit(-1);
 				} else {
 					gf_sys_mark_arg_used(i, GF_FALSE);
 				}
@@ -2151,6 +2193,14 @@ restart:
 
 		gf_fs_enable_reporting(session, GF_TRUE);
 	}
+	if (gf_list_count(links_directive)) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("Link separators specified but no following filter, ignoring links "));
+		while (gf_list_count(links_directive)) {
+			const char *ld = gf_list_pop_front(links_directive);
+			GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("\"%s\"", ld));
+		}
+		GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("\n"));
+	}
 
 	if (enable_prompt || (runfor>0)) {
 		if (enable_prompt && !loops_done) {
@@ -2163,6 +2213,7 @@ restart:
 		SetConsoleCtrlHandler((PHANDLER_ROUTINE)gpac_sig_handler, TRUE);
 #else
 		signal(SIGINT, gpac_sig_handler);
+		signal(SIGTERM, gpac_sig_handler);
 #endif
 	}
 
@@ -2194,10 +2245,15 @@ restart:
 		}
 	}
 
+	if (use_step_mode) {
+		do {
+			gf_fs_run_step(session);
+		} while (!gf_fs_is_last_task(session));
 
-
-	e = gf_fs_run(session);
-	if (e>0) e = GF_OK;
+	} else {
+		e = gf_fs_run(session);
+		if (e>0) e = GF_OK;
+	}
 
 	if (e) {
 		fprintf(stderr, "session error %s\n", gf_error_to_string(e) );
@@ -2335,7 +2391,12 @@ static void print_filter_arg(const GF_FilterArgs *a, u32 gen_doc)
 	}
 	if (a->flags & GF_FS_ARG_UPDATE) gf_sys_format_help(helpout, help_flags, ", updatable");
 //		if (a->flags & GF_FS_ARG_META) gf_sys_format_help(helpout, help_flags, ", meta");
-	gf_sys_format_help(helpout, help_flags | GF_PRINTARG_OPT_DESC, "): %s\n", a->arg_desc);
+
+	if (is_enum && a->arg_desc && !strchr(a->arg_desc, '\n')) {
+		gf_sys_format_help(helpout, help_flags | GF_PRINTARG_OPT_DESC, "): %s (%s)\n", a->arg_desc, a->min_max_enum);
+	} else {
+		gf_sys_format_help(helpout, help_flags | GF_PRINTARG_OPT_DESC, "): %s\n", a->arg_desc);
+	}
 
 	//check syntax
 	if (gen_doc) {
@@ -2488,6 +2549,9 @@ static void print_filter(const GF_FilterRegister *reg, GF_SysArgMode argmode, GF
 			if (reg->flags & GF_FS_REG_REQUIRES_RESOLVER) {
 				gf_sys_format_help(helpout, help_flags, "This filter requires the graph resolver to be activated.\n");
 			}
+			if (reg->flags & GF_FS_REG_ALLOW_CYCLIC) {
+				gf_sys_format_help(helpout, help_flags, "Filters of this class can connect to each-other.\n");
+			}
 		}
 	} else {
 		gf_sys_format_help(helpout, help_flags, "# %s\n", reg_name);
@@ -2512,14 +2576,21 @@ static void print_filter(const GF_FilterRegister *reg, GF_SysArgMode argmode, GF
 	if (filter_inst) {
 		const char *str = gf_filter_get_author(filter_inst);
 		if (str)
-			gf_sys_format_help(helpout, help_flags, "Author: %s\n", str );
+			gf_sys_format_help(helpout, help_flags, "%s: %s\n", (str[0]=='-') ? "Configuration" : "Author", str );
 		str = gf_filter_get_help(filter_inst);
 		if (str)
 			gf_sys_format_help(helpout, help_flags, "\n%s\n\n", str);
 	} else {
 #ifndef GPAC_DISABLE_DOC
-		if (reg->author)
-			gf_sys_format_help(helpout, help_flags, "Author: %s\n", reg->author);
+		if (reg->author) {
+			if (reg->author[0]=='-') {
+				if (! (help_flags & (GF_PRINTARG_MD|GF_PRINTARG_MAN))) {
+					gf_sys_format_help(helpout, help_flags, "Configuration: %s\n", reg->author);
+				}
+			} else {
+				gf_sys_format_help(helpout, help_flags, "Author: %s\n", reg->author);
+			}
+		}
 		if (reg->help) {
 			u32 hf = help_flags;
 			if (gen_doc==1) hf |= GF_PRINTARG_ESCAPE_XML;
@@ -2540,7 +2611,7 @@ static void print_filter(const GF_FilterRegister *reg, GF_SysArgMode argmode, GF
 		if (reg->flags & GF_FS_REG_CONFIGURE_MAIN_THREAD) gf_sys_format_help(helpout, help_flags, " ConfigureMainThread");
 		if (reg->flags & GF_FS_REG_HIDE_WEIGHT) gf_sys_format_help(helpout, help_flags, " HideWeight");
 		if (reg->flags & GF_FS_REG_REQUIRES_RESOLVER) gf_sys_format_help(helpout, help_flags, " RequireResolver");
-		if (reg->flags & GF_FS_REG_DYNLIB) gf_sys_format_help(helpout, help_flags, " DynamicLib");
+		if (reg->flags & GF_FS_REG_ALLOW_CYCLIC) gf_sys_format_help(helpout, help_flags, " CyclicAllowed");
 		if (reg->probe_url) gf_sys_format_help(helpout, help_flags, " URLMimeProber");
 		if (reg->probe_data) gf_sys_format_help(helpout, help_flags, " DataProber");
 		if (reg->reconfigure_output) gf_sys_format_help(helpout, help_flags, " ReconfigurableOutput");
@@ -3058,6 +3129,8 @@ static void dump_all_props(void)
 	}
 	if (gen_doc==1) {
 		u32 idx=0;
+		u32 cicp;
+		u64 layout;
 		GF_PixelFormat pfmt;
 		const char *name, *fileext, *desc;
 		gf_sys_format_help(helpout, help_flags, "# Pixel formats\n");
@@ -3099,8 +3172,19 @@ static void dump_all_props(void)
 			idx++;
 		}
 
+
+		idx=0;
+		gf_sys_format_help(helpout, help_flags, "# CICP code points for audio channel layout\n");
+		gf_sys_format_help(helpout, help_flags, " Name | Integer value | ChannelMask  \n");
+		gf_sys_format_help(helpout, help_flags, " --- | ---  | ---  \n");
+		while ( (cicp = gf_audio_fmt_cicp_enum(idx, &name, &layout)) ) {
+			gf_sys_format_help(helpout, help_flags | GF_PRINTARG_NL_TO_BR, "%s | %d | 0x%016"LLX_SUF"  \n", name, cicp, layout);
+			idx++;
+		}
+
 	} else if (gen_doc==2) {
-		u32 idx=0;
+		u32 idx=0, cicp;
+		u64 layout;
 		const char *name, *fileext, *desc;
 		gf_sys_format_help(helpout, help_flags, "# Pixel formats\n");
 		while ( gf_pixel_fmt_enum(&idx, &name, &fileext, &desc)) {
@@ -3125,6 +3209,13 @@ static void dump_all_props(void)
 			gf_sys_format_help(helpout, help_flags | GF_PRINTARG_NL_TO_BR, ".TP\n.B %s\n%s\n", name, desc);
 			idx++;
 		}
+
+		idx=0;
+		gf_sys_format_help(helpout, help_flags, "# Stream types\n");
+		while ( (cicp = gf_audio_fmt_cicp_enum(idx, &name, &layout)) ) {
+			gf_sys_format_help(helpout, help_flags | GF_PRINTARG_NL_TO_BR, ".TP\n.B %s (int %d)\nLayout 0x%016"LLX_SUF"\n", name, cicp, layout);
+			idx++;
+		}
 	}
 }
 #include <gpac/color.h>
@@ -3135,6 +3226,18 @@ static void dump_all_colors(void)
 	const char *name;
 	while (gf_color_enum(&i, &color, &name)) {
 		gf_sys_format_help(helpout, help_flags|GF_PRINTARG_HIGHLIGHT_FIRST, "%s: 0x%08X\n", name, color);
+	}
+}
+
+static void dump_all_audio_cicp(void)
+{
+	u32 i=0, cicp;
+	const char *name;
+	u64 layout;
+
+	while ((cicp = gf_audio_fmt_cicp_enum(i, &name, &layout)) ) {
+		gf_sys_format_help(helpout, help_flags|GF_PRINTARG_HIGHLIGHT_FIRST, "%s (%d): 0x%016"LLX_SUF"\n", name, cicp, layout);
+		i++;
 	}
 }
 
@@ -3175,7 +3278,7 @@ static void dump_all_codec(GF_FilterSession *session)
 		cp.value.uint = gf_codecid_enum(cidx, &sname, &lname);
 		cidx++;
 		if (cp.value.uint == GF_CODECID_NONE) break;
-		if (cp.value.uint == GF_CODECID_RAW) continue;
+//		if (cp.value.uint == GF_CODECID_RAW) continue;
 		if (!sname) break;
 
 		stp.value.uint = gf_codecid_type(cp.value.uint);
@@ -3789,12 +3892,13 @@ static u32 gpac_unit_tests(GF_MemTrackerType mem_track)
 	gf_sys_is_quiet();
 	gf_sys_get_argv();
 	gf_mx_get_num_locks(NULL);
-	sigint_catched = GF_TRUE;
+	signal_catched = GF_TRUE;
 
 #ifdef WIN32
 	gpac_sig_handler(CTRL_C_EVENT);
 #else
 	gpac_sig_handler(SIGINT);
+	gpac_sig_handler(SIGTERM);
 #endif
 
 	gf_mkdir("testdir");

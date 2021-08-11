@@ -88,10 +88,12 @@ u32 gf_isom_solve_uuid_box(u8 *UUID)
 
 static GF_Err gf_isom_full_box_read(GF_Box *ptr, GF_BitStream *bs);
 
+u64 unused_bytes = 0;
+
 GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, Bool is_root_box)
 {
 	u32 type, uuid_type, hdr_size, restore_type;
-	u64 size, start, comp_start, payload_start, end;
+	u64 size, start, comp_start, end;
 	char uuid[16];
 	GF_Err e;
 	GF_BitStream *uncomp_bs = NULL;
@@ -248,10 +250,6 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 	if (restore_type)
 		newBox->type = restore_type;
 
-	payload_start = gf_bs_get_position(bs);
-
-retry_unknown_box:
-
 	end = gf_bs_available(bs);
 	if (size - hdr_size > end ) {
 		newBox->size = size - hdr_size - end;
@@ -305,14 +303,6 @@ retry_unknown_box:
 		gf_isom_box_del(newBox);
 		*outBox = NULL;
 
-		if (parent_type==GF_ISOM_BOX_TYPE_STSD) {
-			newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_UNKNOWN);
-			if (!newBox) return GF_OUT_OF_MEM;
-			((GF_UnknownBox *)newBox)->original_4cc = type;
-			newBox->size = size;
-			gf_bs_seek(bs, payload_start);
-			goto retry_unknown_box;
-		}
 		if (!skip_logs) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box \"%s\" (start "LLU") failed (%s) - skipping\n", gf_4cc_to_str(type), start, gf_error_to_string(e)));
 		}
@@ -331,6 +321,7 @@ retry_unknown_box:
 		if (!skip_logs) {
 			if ((to_skip!=4) || gf_bs_peek_bits(bs, 32, 0)) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Box \"%s\" (start "LLU") has %u extra bytes\n", gf_4cc_to_str(type), start, to_skip));
+				unused_bytes += to_skip;
 			}
 		}
 		gf_bs_skip_bytes(bs, to_skip);
@@ -792,6 +783,7 @@ ISOM_BOX_IMPL_DECL(av1c)
 ISOM_BOX_IMPL_DECL(dOps)
 ISOM_BOX_IMPL_DECL(prft)
 ISOM_BOX_IMPL_DECL(vvcc)
+ISOM_BOX_IMPL_DECL(vvnc)
 
 //VPx
 ISOM_BOX_IMPL_DECL(vpcc)
@@ -841,6 +833,10 @@ ISOM_BOX_IMPL_DECL(iaux)
 /* MIAF declarations */
 ISOM_BOX_IMPL_DECL(clli)
 ISOM_BOX_IMPL_DECL(mdcv)
+
+/* AVIF declarations */
+ISOM_BOX_IMPL_DECL(a1lx)
+ISOM_BOX_IMPL_DECL(a1op)
 
 ISOM_BOX_IMPL_DECL(grpl)
 
@@ -1214,7 +1210,8 @@ static struct box_registry_entry {
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_MVCC, avcc, "avc1 avc2 avc3 avc4 mvc1 mvc2 encv resv", "p15"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_HVCC, hvcc, "hvc1 hev1 hvc2 hev2 encv resv ipco dvhe", "p15"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_LHVC, hvcc, "hvc1 hev1 hvc2 hev2 lhv1 lhe1 encv resv ipco", "p15"),
-	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_VVCC, vvcc, "vvc1 vvi1 encv resv ipco dvhe", "p15"),
+	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_VVCC, vvcc, "vvc1 vvi1 encv resv ipco dvhe", 0, "p15"),
+	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_VVNC, vvnc, "vvs1 encv resv ipco dvhe", 0, "p15"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_AVC1, video_sample_entry, "stsd", "p15"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_AVC2, video_sample_entry, "stsd", "p15"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_AVC3, video_sample_entry, "stsd", "p15"),
@@ -1230,6 +1227,7 @@ static struct box_registry_entry {
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_HVT1, video_sample_entry, "stsd", "p15"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_VVC1, video_sample_entry, "stsd", "p15"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_VVI1, video_sample_entry, "stsd", "p15"),
+	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_VVS1, video_sample_entry, "stsd", "p15"),
 	FBOX_DEFINE_S(GF_ISOM_BOX_TYPE_MVCI, def_parent_full, "minf", 0, "p15"),
 	FBOX_DEFINE_S(GF_ISOM_BOX_TYPE_MVCG, mvcg, "mvci", 0, "p15"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_VWID, vwid, "video_sample_entry", 0, "p15"),
@@ -1314,6 +1312,10 @@ static struct box_registry_entry {
 	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_CLLI, clli, "mp4v jpeg avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 vvc1 vvi1 encv resv", "miaf"),
 	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_MDCV, mdcv, "mp4v jpeg avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 vvc1 vvi1 encv resv", "miaf"),
 
+	//AVIF
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_A1LX, a1lx, "ipco", "avif"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_A1OP, a1op, "ipco", "avif"),
+
 	//other MPEG boxes
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_RVCC, rvcc, "avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 encv resv", "rvc"),
 
@@ -1345,7 +1347,7 @@ static struct box_registry_entry {
 	//3GPP dims
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_DIMS, dims, "stsd", "3gpp"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DIMC, dimC, "dims encs", "3gpp"),
-	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DIST, diST, "stsd", "3gpp"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DIST, diST, "dims", "3gpp"),
 
 
 	//CENC boxes
@@ -1487,12 +1489,12 @@ static struct box_registry_entry {
 	//dolby boxes
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_AC3, audio_sample_entry, "stsd", "dolby"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_EC3, audio_sample_entry, "stsd", "dolby"),
-	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DAC3, dac3, "ac-3 wave", "dolby"),
-	{GF_ISOM_BOX_TYPE_DEC3, dec3_box_new, dac3_box_del, dac3_box_read, dac3_box_write, dac3_box_size, dac3_box_dump, 0, 0, 0, "ec-3 enca", "dolby" },
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DAC3, dac3, "ac-3 wave enca", "dolby"),
+	{GF_ISOM_BOX_TYPE_DEC3, dec3_box_new, dac3_box_del, dac3_box_read, dac3_box_write, dac3_box_size, dac3_box_dump, 0, 0, 0, "ec-3 wave enca", "dolby" },
 	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_DVCC, dvcC, "dvhe dvav dva1 dvh1 avc1 avc2 avc3 avc4 hev1 encv resv", "DolbyVision"),
 	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_DVHE, video_sample_entry, "stsd", "DolbyVision"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_MLPA, audio_sample_entry, "stsd", "dolby"),
-	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DMLP, dmlp, "mlpa", "dolby"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DMLP, dmlp, "mlpa enca", "dolby"),
 
 	//Adobe boxes
 #ifndef GPAC_DISABLE_ISOM_ADOBE
@@ -1537,7 +1539,7 @@ static struct box_registry_entry {
 	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_PNG, video_sample_entry, "stsd", "apple"),
 
 
-	//Opus in ISOBMFF boxes
+	//flac in ISOBMFF boxes
 	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_FLAC, audio_sample_entry, "stsd", "Flac"),
 	FBOX_DEFINE_S(GF_ISOM_BOX_TYPE_DFLA, dfla, "fLaC enca", 0, "Flac"),
 
@@ -1791,7 +1793,7 @@ void gf_isom_box_del(GF_Box *a)
 	} else {
 		a_box_registry->del_fn(a);
 	}
-	//delet the other boxes after deleting the box for dumper case where all child boxes are stored in otherbox
+	//delete the other boxes after deleting the box for dumper case where all child boxes are stored in otherbox
 	if (child_boxes) {
 		gf_isom_box_array_del(child_boxes);
 	}

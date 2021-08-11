@@ -95,7 +95,7 @@ static GF_Err ffsws_process(GF_Filter *filter)
 
 	data = gf_filter_pck_get_data(pck, &osize);
 	frame_ifce = gf_filter_pck_get_frame_interface(pck);
-	//we may have biffer input (padding) but shall not have smaller
+	//we may have buffer input (padding) but shall not have smaller
 	if (osize && (ctx->out_src_size > osize) ) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[FFSWS] Mismatched in source osize, expected %d got %d - stride issue ?\n", ctx->out_src_size, osize));
 		gf_filter_pid_drop_packet(ctx->ipid);
@@ -105,10 +105,8 @@ static GF_Err ffsws_process(GF_Filter *filter)
 	memset(src_planes, 0, sizeof(src_planes));
 	memset(dst_planes, 0, sizeof(dst_planes));
 	dst_pck = gf_filter_pck_new_alloc(ctx->opid, ctx->out_size, &output);
-	if (!dst_pck) {
-		gf_filter_pid_drop_packet(ctx->ipid);
-		return GF_OUT_OF_MEM;
-	}
+	if (!dst_pck) return GF_OUT_OF_MEM;
+
 	gf_filter_pck_merge_properties(pck, dst_pck);
 
 	if (data) {
@@ -223,9 +221,24 @@ static GF_Err ffsws_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		ctx->ipid = pid;
 	}
 
-	//if nothing is set we, consider we run as an adaptation filter, wait for caps to be set to declare output
-	if (!ctx->ofmt && !ctx->osize.x && !ctx->osize.y)
+	//if nothing is set we, consider we run as an adaptation filter, wait for reconfiguration to be called to declare output format
+	if (!ctx->ofmt && !ctx->osize.x && !ctx->osize.y) {
+		//we were explicitly loaded, act as a passthrough filter until we get a reconfig
+		//we must do so for cases where the declared properties match the consuming format (so reconfiguration will never be called)
+		if (!gf_filter_is_dynamic(filter)) {
+			gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
+			//make sure we init at some default values as filters down the chain will check for w/h/pfmt
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_WIDTH);
+			if (!p) gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_WIDTH, &PROP_UINT(128));
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_HEIGHT);
+			if (!p) gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_HEIGHT, &PROP_UINT(128));
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_PIXFMT);
+			if (!p) gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PIXFMT, &PROP_UINT(GF_PIXEL_RGB));
+
+			ctx->passthrough = GF_TRUE;
+		}
 		return GF_OK;
+	}
 
 
 
@@ -263,7 +276,7 @@ static GF_Err ffsws_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		//nothing to reconfigure
 	}
 	//passthrough mode
-	else if ((ctx->ow == w) && (ctx->oh == h) && (ctx->s_pfmt == ofmt) && (ofmt==ctx->ofmt) && (ctx->ofr == fullrange)
+	else if ((ctx->ow == w) && (ctx->oh == h) && (ofmt==ctx->ofmt) && (ctx->ofr == fullrange)
 		&& !ctx->brightness && !ctx->saturation && !ctx->contrast && (ctx->otable.nb_items!=4) && (ctx->itable.nb_items!=4)
 	) {
 		memset(ctx->dst_stride, 0, sizeof(ctx->dst_stride));
@@ -373,6 +386,11 @@ static GF_Err ffsws_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	return GF_OK;
 }
 
+static GF_Err ffsws_initialize(GF_Filter *filter)
+{
+	ffmpeg_setup_logs(GF_LOG_AUTHOR);
+	return GF_OK;
+}
 static void ffsws_finalize(GF_Filter *filter)
 {
 	GF_FFSWScaleCtx *ctx = gf_filter_get_udta(filter);
@@ -437,6 +455,7 @@ GF_FilterRegister FFSWSRegister = {
 	.args = FFSWSArgs,
 	.configure_pid = ffsws_configure_pid,
 	SETCAPS(FFSWSCaps),
+	.initialize = ffsws_initialize,
 	.finalize = ffsws_finalize,
 	.process = ffsws_process,
 	.reconfigure_output = ffsws_reconfigure_output,

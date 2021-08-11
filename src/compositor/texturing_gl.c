@@ -739,16 +739,7 @@ Bool gf_sc_texture_push_image(GF_TextureHandler *txh, Bool generate_mipmaps, Boo
 #ifndef GPAC_DISABLE_3D
 	char *data;
 	u32 pixel_format;
-	int nb_views = 1, nb_layers = 1;
 	u32 push_time;
-
-	if (txh->stream) {
-		gf_mo_get_nb_views(txh->stream, &nb_views);
-		gf_mo_get_nb_layers(txh->stream, &nb_layers);
-	}
-//	if (txh->frame_ifce || nb_views == 1) nb_frames = 1;
-//	else if (nb_layers) nb_frames = nb_layers;
-
 #endif
 
 	if (for2d) {
@@ -1045,13 +1036,29 @@ void gf_get_tinygl_depth(GF_TextureHandler *txh)
 Bool gf_sc_texture_get_transform(GF_TextureHandler *txh, GF_Node *tx_transform, GF_Matrix *mx, Bool for_picking)
 {
 #ifndef GPAC_DISABLE_3D
-	int nb_views=1;
+	u32 nb_views=1;
 #endif
 	Bool ret = 0;
 	gf_mx_init(*mx);
 
 #ifndef GPAC_DISABLE_3D
-	gf_mo_get_nb_views(txh->stream, &nb_views);
+
+	if (txh->stream && txh->stream->c_w && txh->stream->c_h) {
+		Float c_x, c_y;
+		//clean aperture center in pixel coords
+		c_x = txh->width / 2 + txh->stream->c_x;
+		c_y = txh->height / 2 + txh->stream->c_y;
+		//left/top of clean aperture zone, in pixel coordinates
+		c_x -= txh->stream->c_w / 2;
+		c_y -= txh->stream->c_h / 2;
+
+		gf_mx_add_translation(mx, c_x / txh->width, c_y / txh->height, 0);
+		gf_mx_add_scale(mx, txh->stream->c_w / txh->width, txh->stream->c_h / txh->height, 1);
+		ret = 1;
+	}
+
+	if (!txh->compositor->dbgpack)
+		gf_mo_get_nb_views(txh->stream, &nb_views);
 
 #ifdef GPAC_CONFIG_ANDROID
 	if (txh->stream && txh->tx_io->gl_type == GL_TEXTURE_EXTERNAL_OES) {

@@ -29,6 +29,7 @@
 
 #include "ff_common.h"
 #include <gpac/network.h>
+#include <gpac/bitstream.h>
 
 #if (LIBAVFORMAT_VERSION_MAJOR <= 56)
 #undef GPAC_HAS_FFMPEG
@@ -47,6 +48,7 @@ typedef struct
 	u32 cts_shift;
 
 	Bool suspended;
+	Bool reconfig_stream;
 } GF_FFMuxStream;
 
 enum{
@@ -56,6 +58,13 @@ enum{
 	FFMX_STATE_TRAILER_DONE,
 	FFMX_STATE_EOS,
 	FFMX_STATE_ERROR
+};
+
+enum
+{
+	FFMX_INJECT_DSI = 1,
+	FFMX_INJECT_VID_INFO = 1<<1,
+	FFMX_INJECT_AUD_INFO = 1<<2
 };
 
 typedef struct
@@ -85,6 +94,12 @@ typedef struct
 	FILE *gfio;
 
 	u32 cur_file_idx_plus_one;
+
+#if (LIBAVCODEC_VERSION_MAJOR < 59)
+	AVPacket pkt;
+#else
+	AVPacket *pkt;
+#endif
 } GF_FFMuxCtx;
 
 static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove);
@@ -97,11 +112,16 @@ static GF_Err ffmx_init_mux(GF_Filter *filter, GF_FFMuxCtx *ctx)
 	assert(ctx->status==FFMX_STATE_AVIO_OPEN);
 
 	ctx->status = FFMX_STATE_HDR_DONE;
-	res = avformat_init_output(ctx->muxer, &ctx->options);
+
+	AVDictionary *options = NULL;
+	av_dict_copy(&options, ctx->options, 0);
+
+	res = avformat_init_output(ctx->muxer, &options);
 
 	if (res<0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to open %s - error %s\n", ctx->dst, av_err2str(res) ));
 		ctx->status = FFMX_STATE_ERROR;
+		if (options) av_dict_free(&options);
 		return GF_NOT_SUPPORTED;
 	}
 
@@ -118,14 +138,15 @@ static GF_Err ffmx_init_mux(GF_Filter *filter, GF_FFMuxCtx *ctx)
 		}
 	}
 
-	res = avformat_write_header(ctx->muxer, &ctx->options);
+	res = avformat_write_header(ctx->muxer, &options);
 	if (res<0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to write header for %s - error %s\n", ctx->dst, av_err2str(res) ));
 		ctx->status = FFMX_STATE_ERROR;
+		if (options) av_dict_free(&options);
 		return GF_SERVICE_ERROR;
 	}
 
-	ffmpeg_report_unused_options(filter, ctx->options);
+	ffmpeg_report_options(filter, options, ctx->options);
 
 	return GF_OK;
 }
@@ -153,7 +174,7 @@ static GF_Err ffmx_open_url(GF_FFMuxCtx *ctx, char *final_name)
 {
 	const char *dst;
 	Bool use_gfio=GF_FALSE;
-	AVOutputFormat *ofmt = ctx->muxer->oformat;
+	const AVOutputFormat *ofmt = ctx->muxer->oformat;
 
 	dst = final_name ? final_name : ctx->dst;
 	if (!strncmp(dst, "gfio://", 7)) {
@@ -195,10 +216,15 @@ static GF_Err ffmx_open_url(GF_FFMuxCtx *ctx, char *final_name)
 static GF_Err ffmx_initialize_ex(GF_Filter *filter, Bool use_templates)
 {
 	const char *url, *sep;
-	AVOutputFormat *ofmt;
+	const AVOutputFormat *ofmt;
 	GF_FFMuxCtx *ctx = (GF_FFMuxCtx *) gf_filter_get_udta(filter);
 
 	ffmpeg_setup_logs(GF_LOG_CONTAINER);
+
+#if (LIBAVCODEC_VERSION_MAJOR >= 59)
+	if (!ctx->pkt)
+		ctx->pkt = av_packet_alloc();
+#endif
 
 	ctx->muxer = avformat_alloc_context();
 	if (!ctx->muxer) return GF_OUT_OF_MEM;
@@ -237,7 +263,7 @@ static GF_Err ffmx_initialize_ex(GF_Filter *filter, Bool use_templates)
 		}
 		return GF_SERVICE_ERROR;
 	}
-	ctx->muxer->oformat = ofmt;
+	ctx->muxer->oformat = FF_OFMT_CAST ofmt;
 
 	ctx->status = FFMX_STATE_ALLOC;
 	//templates are used, we need to postpone opening the url until we have a PID and a first packet
@@ -293,8 +319,10 @@ static GF_Err ffmx_start_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, const char *se
 			st->time_base = ctx->muxer->streams[i]->time_base;
 			st->avg_frame_rate = ctx->muxer->streams[i]->avg_frame_rate;
 
+#if (LIBAVFORMAT_VERSION_MAJOR < 59)
 			if (ctx->muxer->streams[i]->codecpar->codec_tag == MKTAG('t','m','c','d'))
 				st->codec->time_base = ctx->muxer->streams[i]->codec->time_base;
+#endif
 
 			av_dict_copy(&st->metadata, ctx->muxer->streams[i]->metadata, 0);
 
@@ -315,10 +343,13 @@ static GF_Err ffmx_start_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, const char *se
 		ctx->muxer->pb = NULL;
 	}
 
-//	av_freep(&ctx->muxer->url);
-//	ctx->muxer->url = av_strdup(seg_name);
+#if (LIBAVFORMAT_VERSION_MAJOR < 59)
 	strncpy(ctx->muxer->filename, seg_name, 1023);
 	ctx->muxer->filename[1023]=0;
+#else
+	av_freep(&ctx->muxer->url);
+	ctx->muxer->url = av_strdup(seg_name);
+#endif
 	ctx->offset_at_seg_start = 0;
 
 	if (!(ctx->muxer->oformat->flags & AVFMT_NOFILE)) {
@@ -344,7 +375,7 @@ static GF_Err ffmx_start_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, const char *se
         av_dict_copy(&options, ctx->options, 0);
         av_dict_set(&options, "fflags", "-autobsf", 0);
         res = avformat_write_header(ctx->muxer, &options);
-        av_dict_free(&options);
+		if (options) av_dict_free(&options);
         if (res < 0) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to configure segment %s - error %s\n", seg_name, av_err2str(res) ));
 			return GF_IO_ERR;
@@ -369,13 +400,13 @@ static GF_Err ffmx_close_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, Bool send_evt_
 			if (ctx->status==FFMX_STATE_HDR_DONE) {
 				res = av_write_trailer(ctx->muxer);
 			} else {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Invalid state %d for segment %s close\n", ctx->status, /*ctx->muxer->url*/ctx->muxer->filename));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Invalid state %d for segment %s close\n", ctx->status, AVFMT_URL(ctx->muxer) ));
 				return GF_SERVICE_ERROR;
 			}
 		}
 
 		if (res<0) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to flush segment %s - error %s\n", /*ctx->muxer->url*/ctx->muxer->filename, av_err2str(res) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to flush segment %s - error %s\n", AVFMT_URL(ctx->muxer), av_err2str(res) ));
 			return GF_SERVICE_ERROR;
 		}
 		ctx->status = FFMX_STATE_TRAILER_DONE;
@@ -388,10 +419,10 @@ static GF_Err ffmx_close_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, Bool send_evt_
 
 	//init seg
 	if (!ctx->init_done) {
-		evt.seg_size.is_init = GF_TRUE;
+		evt.seg_size.is_init = 1;
 		ctx->init_done = GF_TRUE;
 	} else {
-		evt.seg_size.is_init = GF_FALSE;
+		evt.seg_size.is_init = 0;
 	}
 	evt.seg_size.media_range_start = ctx->offset_at_seg_start;
 	evt.seg_size.media_range_end = ctx->muxer->pb ? ctx->muxer->pb->written-1 : 0;
@@ -399,6 +430,66 @@ static GF_Err ffmx_close_seg(GF_Filter *filter, GF_FFMuxCtx *ctx, Bool send_evt_
 
 	gf_filter_pid_send_event(pid, &evt);
 	return GF_OK;
+}
+
+void ffmx_inject_config(GF_FilterPid *pid, GF_FFMuxStream *st, AVPacket *pkt)
+{
+	const GF_PropertyValue *p;
+	u8 *data;
+	if (st->reconfig_stream & FFMX_INJECT_DSI) {
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_DECODER_CONFIG);
+		if (p && (p->type==GF_PROP_DATA) && p->value.data.ptr) {
+			data = av_packet_new_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, p->value.data.size);
+			if (data)
+				memcpy(data, p->value.data.ptr, p->value.data.size);
+		}
+	}
+	if (st->reconfig_stream & FFMX_INJECT_VID_INFO) {
+		u32 w, h;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_WIDTH);
+		w = p ? p->value.uint : st->stream->codecpar->width;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_WIDTH);
+		h = p ? p->value.uint : st->stream->codecpar->height;
+
+		data = av_packet_new_side_data(pkt, AV_PKT_DATA_PARAM_CHANGE, 12);
+		if (data) {
+			GF_BitStream *bs = gf_bs_new(data, 12, GF_BITSTREAM_WRITE);
+			gf_bs_write_u32_le(bs, AV_SIDE_DATA_PARAM_CHANGE_DIMENSIONS);
+			gf_bs_write_u32_le(bs, w);
+			gf_bs_write_u32_le(bs, h);
+			gf_bs_del(bs);
+		}
+	}
+	if (st->reconfig_stream & FFMX_INJECT_AUD_INFO) {
+		u32 sr, ch, size=12;
+		u64 ch_layout;
+		u32 flags = AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_COUNT | AV_SIDE_DATA_PARAM_CHANGE_SAMPLE_RATE;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLE_RATE);
+		sr = p ? p->value.uint : st->stream->codecpar->sample_rate;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_NUM_CHANNELS);
+		ch = p ? p->value.uint : st->stream->codecpar->channels;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_CHANNEL_LAYOUT);
+		if (p) {
+			ch_layout = ffmpeg_channel_layout_from_gpac(p->value.uint);
+		} else {
+			ch_layout = st->stream->codecpar->channel_layout;
+		}
+		if (ch_layout) {
+			size += 8;
+			flags |= AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT;
+		}
+
+		data = av_packet_new_side_data(pkt, AV_PKT_DATA_PARAM_CHANGE, size);
+		if (data) {
+			GF_BitStream *bs = gf_bs_new(data, 12, GF_BITSTREAM_WRITE);
+			gf_bs_write_u32_le(bs, flags);
+			gf_bs_write_u32_le(bs, ch);
+			if (flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT)
+				gf_bs_write_u64_le(bs, ch_layout);
+			gf_bs_write_u32_le(bs, sr);
+			gf_bs_del(bs);
+		}
+	}
 }
 
 static GF_Err ffmx_process(GF_Filter *filter)
@@ -464,7 +555,7 @@ static GF_Err ffmx_process(GF_Filter *filter)
 			int res;
 			const GF_PropertyValue *p;
 			u32 sap;
-			AVPacket ffpck;
+			AVPacket *pkt;
 			GF_FilterPacket *ipck = gf_filter_pid_get_packet(ipid);
 			if (!ipck) {
 				if (gf_filter_pid_is_eos(ipid)) {
@@ -517,38 +608,48 @@ static GF_Err ffmx_process(GF_Filter *filter)
 				}
 			}
 
-			av_init_packet(&ffpck);
-			ffpck.stream_index = st->stream->index;
-			ffpck.dts = gf_filter_pck_get_dts(ipck);
-			ffpck.pts = gf_filter_pck_get_cts(ipck);
-			if (st->cts_shift) ffpck.pts += st->cts_shift;
+			FF_INIT_PCK(ctx, pkt)
 
-			if (ffpck.dts > ffpck.pts) {
-				st->cts_shift = (u32) (ffpck.dts - ffpck.pts);
+			pkt->stream_index = st->stream->index;
+			pkt->dts = gf_filter_pck_get_dts(ipck);
+			pkt->pts = gf_filter_pck_get_cts(ipck);
+			if (st->cts_shift) pkt->pts += st->cts_shift;
+
+			if (pkt->dts > pkt->pts) {
+				st->cts_shift += (u32) (pkt->dts - pkt->pts);
 				GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[FFMux] Negative CTS offset -%d found, adjusting offset\n", st->cts_shift));
-				ffpck.pts = ffpck.dts;
+				pkt->pts = pkt->dts;
 			}
-			ffpck.duration = gf_filter_pck_get_duration(ipck);
+			pkt->duration = gf_filter_pck_get_duration(ipck);
 			sap = gf_filter_pck_get_sap(ipck);
-			if (sap==GF_FILTER_SAP_1) ffpck.flags = AV_PKT_FLAG_KEY;
-			ffpck.data = (u8 *) gf_filter_pck_get_data(ipck, &ffpck.size);
+			if (sap==GF_FILTER_SAP_1) pkt->flags = AV_PKT_FLAG_KEY;
+			pkt->data = (u8 *) gf_filter_pck_get_data(ipck, &pkt->size);
 
 			if (st->ts_rescale) {
-				av_packet_rescale_ts(&ffpck, st->in_scale, st->stream->time_base);
+				av_packet_rescale_ts(pkt, st->in_scale, st->stream->time_base);
+			}
+
+			if (st->reconfig_stream) {
+				ffmx_inject_config(ipid, st, pkt);
 			}
 
 			if (ctx->interleave) {
-				res = av_interleaved_write_frame(ctx->muxer, &ffpck);
+				res = av_interleaved_write_frame(ctx->muxer, pkt);
 			} else {
-				res = av_write_frame(ctx->muxer, &ffpck);
+				res = av_write_frame(ctx->muxer, pkt);
 			}
 			if (res<0) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to write packet to %s - error %s\n", /*ctx->muxer->url*/ctx->muxer->filename, av_err2str(res) ));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Fail to write packet %sto %s - error %s\n", st->reconfig_stream ? "with reconfig side data " : "", AVFMT_URL(ctx->muxer), av_err2str(res) ));
 				e = GF_IO_ERR;
+			}
+			if (st->reconfig_stream) {
+				av_packet_free_side_data(pkt);
+				st->reconfig_stream = 0;
 			}
 
 			gf_filter_pid_drop_packet(ipid);
 			ctx->nb_pck_in_seg++;
+			FF_RELEASE_PCK(pkt)
 		}
 	}
 
@@ -615,7 +716,7 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	}
 	st = gf_filter_pid_get_udta(pid);
 	if (st) {
-		if (ctx->status>FFMX_STATE_HDR_DONE)
+		if (ctx->status >= FFMX_STATE_HDR_DONE)
 			check_disc = GF_TRUE;
 	} else {
 		if (ctx->status>FFMX_STATE_HDR_DONE) {
@@ -735,19 +836,47 @@ static GF_Err ffmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 	if (check_disc) {
 		u32 dsi_crc, old_dsi_crc;
-		Bool is_ok = GF_TRUE;
-		if (avst->codecpar->codec_id != ff_codec_id) is_ok = GF_FALSE;
-		else if (avst->codecpar->codec_type != ff_st) is_ok = GF_FALSE;
+		if ((avst->codecpar->codec_id != ff_codec_id) || (avst->codecpar->codec_type != ff_st)) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Dynamic stream update in mux %s not supported\n", ctx->dst));
+			return GF_NOT_SUPPORTED;
+		}
 
 		dsi_crc = old_dsi_crc = 0;
 		if (avst->codecpar->extradata) old_dsi_crc = gf_crc_32(avst->codecpar->extradata, avst->codecpar->extradata_size);
 		if (dsi) dsi_crc = gf_crc_32(dsi->value.data.ptr, dsi->value.data.size);
 
-		if (dsi_crc != old_dsi_crc) is_ok = GF_FALSE;
-		if (!is_ok) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Dynamic stream update in mux %s not supported\n", ctx->dst));
-			return GF_NOT_SUPPORTED;
+		st->reconfig_stream = 0;
+		if (dsi_crc != old_dsi_crc)
+			st->reconfig_stream |= FFMX_INJECT_DSI;
+		if (streamtype==GF_STREAM_VISUAL) {
+			u32 w, h;
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_WIDTH);
+			w = p ? p->value.uint : 0;
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_HEIGHT);
+			h = p ? p->value.uint : 0;
+			if ((w != avst->codecpar->width) || (h != avst->codecpar->height))
+				st->reconfig_stream |= FFMX_INJECT_VID_INFO;
+		} else if (streamtype==GF_STREAM_AUDIO) {
+			u32 sr, ch;
+			u64 ch_layout;
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLE_RATE);
+			sr = p ? p->value.uint : 0;
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_NUM_CHANNELS);
+			ch = p ? p->value.uint : 0;
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_CHANNEL_LAYOUT);
+			ch_layout = p ? p->value.uint : 0;
+			if (ch_layout)
+				ch_layout = ffmpeg_channel_layout_from_gpac(ch_layout);
+			if ((sr != avst->codecpar->sample_rate) || (ch != avst->codecpar->channels) || (ch_layout!=avst->codecpar->channel_layout))
+				st->reconfig_stream |= FFMX_INJECT_AUD_INFO;
 		}
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
+		if (p) {
+			st->in_scale.den = p->value.uint;
+			st->in_scale.num = 1;
+		}
+		return GF_OK;
 	}
 
 	avst->codecpar->codec_id = ff_codec_id;
@@ -903,6 +1032,10 @@ static void ffmx_finalize(GF_Filter *filter)
 		ctx->muxer->io_close(ctx->muxer, ctx->muxer->pb);
 	}
 
+#if (LIBAVCODEC_VERSION_MAJOR >= 59)
+	av_packet_free(&ctx->pkt);
+#endif
+
 	if (ctx->options) av_dict_free(&ctx->options);
 	if (ctx->muxer)	avformat_free_context(ctx->muxer);
 	while (gf_list_count(ctx->streams)) {
@@ -952,7 +1085,7 @@ static GF_FilterProbeScore ffmx_probe_url(const char *url, const char *mime)
 		return GF_FPROBE_NOT_SUPPORTED;
 
 
-	AVOutputFormat *ofmt = av_guess_format(NULL, url, mime);
+	const AVOutputFormat *ofmt = av_guess_format(NULL, url, mime);
 	if (!ofmt && mime) ofmt = av_guess_format(NULL, NULL, mime);
 	if (!ofmt && url) ofmt = av_guess_format(NULL, url, NULL);
 

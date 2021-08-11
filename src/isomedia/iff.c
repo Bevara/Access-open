@@ -83,6 +83,113 @@ GF_Err ispe_box_size(GF_Box *s)
 	}
 }
 
+GF_Box *a1lx_box_new()
+{
+	ISOM_DECL_BOX_ALLOC(GF_AV1LayeredImageIndexingPropertyBox, GF_ISOM_BOX_TYPE_A1LX);
+	return (GF_Box *)tmp;
+}
+
+void a1lx_box_del(GF_Box *a)
+{
+	GF_AV1LayeredImageIndexingPropertyBox *p = (GF_AV1LayeredImageIndexingPropertyBox *)a;
+	gf_free(p);
+}
+
+GF_Err a1lx_box_read(GF_Box *s, GF_BitStream *bs)
+{
+	u32 i;
+	GF_AV1LayeredImageIndexingPropertyBox *p = (GF_AV1LayeredImageIndexingPropertyBox *)s;
+	
+	ISOM_DECREASE_SIZE(p, 1);
+	gf_bs_read_int(bs, 7);
+	p->large_size = gf_bs_read_int(bs, 1);
+	for (i=0; i<3; i++) {
+		if (p->large_size) {
+			ISOM_DECREASE_SIZE(p, 4);
+			p->layer_size[i] = gf_bs_read_u32(bs);
+		} else {
+			ISOM_DECREASE_SIZE(p, 2);
+			p->layer_size[i] = gf_bs_read_u16(bs);
+		}
+	}
+	return GF_OK;
+}
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+GF_Err a1lx_box_write(GF_Box *s, GF_BitStream *bs)
+{
+	u32 i;
+	GF_Err e = gf_isom_box_write_header(s, bs);
+	if (e) return e;
+	GF_AV1LayeredImageIndexingPropertyBox *p = (GF_AV1LayeredImageIndexingPropertyBox*)s;
+
+	gf_bs_write_int(bs, 0, 7);
+	gf_bs_write_int(bs, p->large_size ? 1 : 0, 1);
+	for (i=0; i<3; i++) {
+		if (p->large_size) {
+			gf_bs_write_u32(bs, p->layer_size[i]);
+		} else {
+			gf_bs_write_u16(bs, p->layer_size[i]);
+		}
+	}
+	return GF_OK;
+}
+
+GF_Err a1lx_box_size(GF_Box *s)
+{
+	GF_AV1LayeredImageIndexingPropertyBox *p = (GF_AV1LayeredImageIndexingPropertyBox*)s;
+
+	//if large was set, do not override
+	if (! p->large_size) {
+		if (p->layer_size[0]>0xFFFF) p->large_size = 1;
+		else if (p->layer_size[1]>0xFFFF) p->large_size = 1;
+		else if (p->layer_size[2]>0xFFFF) p->large_size = 1;
+	}
+
+	p->size += (p->large_size ? 4 : 2) * 3 + 1;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
+
+GF_Box *a1op_box_new()
+{
+	ISOM_DECL_BOX_ALLOC(GF_AV1OperatingPointSelectorPropertyBox, GF_ISOM_BOX_TYPE_A1OP);
+	return (GF_Box *)tmp;
+}
+
+void a1op_box_del(GF_Box *a)
+{
+	GF_AV1OperatingPointSelectorPropertyBox *p = (GF_AV1OperatingPointSelectorPropertyBox *)a;
+	gf_free(p);
+}
+
+GF_Err a1op_box_read(GF_Box *s, GF_BitStream *bs)
+{
+	GF_AV1OperatingPointSelectorPropertyBox *p = (GF_AV1OperatingPointSelectorPropertyBox *)s;
+	p->op_index = gf_bs_read_u8(bs);
+	return GF_OK;
+}
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+GF_Err a1op_box_write(GF_Box *s, GF_BitStream *bs)
+{
+	GF_Err e = gf_isom_box_write_header(s, bs);
+	if (e) return e;
+	GF_AV1OperatingPointSelectorPropertyBox *p = (GF_AV1OperatingPointSelectorPropertyBox*)s;
+	gf_bs_write_u8(bs, p->op_index);
+	return GF_OK;
+}
+
+GF_Err a1op_box_size(GF_Box *s)
+{
+	GF_AV1OperatingPointSelectorPropertyBox *p = (GF_AV1OperatingPointSelectorPropertyBox*)s;
+	p->size += 1;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
+
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
 GF_Box *colr_box_new()
@@ -654,7 +761,7 @@ GF_Err grptype_box_read(GF_Box *s, GF_BitStream *bs)
 	ptr->group_id = gf_bs_read_u32(bs);
 	ptr->entity_id_count = gf_bs_read_u32(bs);
 
-	if (ptr->entity_id_count*4 > ptr->size) return GF_ISOM_INVALID_FILE;
+	if (ptr->entity_id_count > ptr->size / 4) return GF_ISOM_INVALID_FILE;
 
 	ptr->entity_ids = (u32 *) gf_malloc(ptr->entity_id_count * sizeof(u32));
 	if (!ptr->entity_ids) return GF_OUT_OF_MEM;
@@ -1210,6 +1317,79 @@ static GF_Err gf_isom_iff_create_image_item_from_track_internal(GF_ISOFile *movi
 		image_props->cenc_info = NULL;
 	}
 
+	if (!imported_track) {
+		GF_ImageItemProperties src_props;
+		u32 item_idx, ref_id;
+		u32 scheme_type=0, scheme_version=0;
+		const char *orig_item_name, *orig_item_mime_type, *orig_item_encoding;
+		if (!image_props->item_ref_id) return GF_BAD_PARAM;
+
+		if (gf_isom_meta_get_item_ref_count(fsrc, GF_TRUE, 0, image_props->item_ref_id, GF_4CC('d','i','m','g')) > 0) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error: Cannnot import derived image, only native image import is supported\n"));
+			return GF_NOT_SUPPORTED;
+		}
+
+		item_idx = gf_isom_get_meta_item_by_id(fsrc, GF_TRUE, 0, image_props->item_ref_id);
+		if (!item_idx) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error: No item with ID %d, cannnot import\n", image_props->item_ref_id));
+			return GF_BAD_PARAM;
+		}
+		orig_item_name = orig_item_mime_type = orig_item_encoding = NULL;
+		gf_isom_get_meta_item_info(fsrc, GF_TRUE, 0, item_idx, &ref_id, &item_type, &scheme_type, &scheme_version, NULL, NULL, NULL, &orig_item_name, &orig_item_mime_type, &orig_item_encoding);
+
+		if (!ref_id) return GF_BAD_PARAM;
+		if (ref_id != image_props->item_ref_id) return GF_ISOM_INVALID_FILE;
+
+		gf_isom_get_meta_image_props(fsrc, GF_TRUE, 0, ref_id, &src_props);
+
+		image_props->config = src_props.config;
+		image_props->width = src_props.width;
+		image_props->height = src_props.height;
+		image_props->num_channels = src_props.num_channels;
+		memcpy(image_props->av1_layer_size, src_props.av1_layer_size, sizeof(u32)*3);
+		memcpy(image_props->bits_per_channel, src_props.bits_per_channel, sizeof(u32)*3);
+		if (!image_props->hSpacing && !image_props->vSpacing) {
+			image_props->hSpacing = src_props.hSpacing;
+			image_props->vSpacing = src_props.vSpacing;
+		}
+		if (image_props->copy_props) {
+			if (!image_props->hOffset && !image_props->vOffset) {
+				image_props->hOffset = src_props.hOffset;
+				image_props->vOffset = src_props.vOffset;
+			}
+			if (!image_props->clap_wden) {
+				image_props->clap_wnum = src_props.clap_wnum;
+				image_props->clap_wden = src_props.clap_wden;
+				image_props->clap_hnum = src_props.clap_hnum;
+				image_props->clap_hden = src_props.clap_hden;
+				image_props->clap_honum = src_props.clap_honum;
+				image_props->clap_hoden = src_props.clap_hoden;
+				image_props->clap_vonum = src_props.clap_vonum;
+				image_props->clap_voden = src_props.clap_voden;
+			}
+			if (!image_props->alpha) image_props->alpha = src_props.alpha;
+			if (!image_props->depth) image_props->depth = src_props.depth;
+			if (!image_props->hidden) image_props->hidden = src_props.hidden;
+			if (!image_props->angle) image_props->angle = src_props.angle;
+			if (!image_props->mirror) image_props->mirror = src_props.mirror;
+			if (!image_props->av1_op_index) image_props->av1_op_index = src_props.av1_op_index;
+		}
+		if (!item_name) item_name = orig_item_name;
+
+		if (!image_props->use_reference || (fsrc == image_props->src_file)) {
+			u8 *data = NULL;
+			u32 size=0;
+			e = gf_isom_extract_meta_item_mem(fsrc, GF_TRUE, 0, ref_id, &data, &size, &size, NULL, GF_FALSE);
+			if (e) return GF_BAD_PARAM;
+
+			e = gf_isom_add_meta_item_memory(movie, root_meta, meta_track_number, (!item_name || !strlen(item_name) ? "Image" : item_name), &item_id, item_type, NULL, NULL, image_props, data, size, NULL);
+			if (data) gf_free(data);
+		} else {
+			e = gf_isom_add_meta_item_sample_ref(movie, root_meta, meta_track_number, (!item_name || !strlen(item_name)) ? "Image" : item_name, &item_id, item_type, NULL, NULL, image_props, 0, ref_id);
+		}
+		return e;
+	}
+
 import_next_sample:
 
 	timescale = gf_isom_get_media_timescale(fsrc, imported_track);
@@ -1360,6 +1540,21 @@ import_next_sample:
 				bits_per_channel[1] = depth;
 				bits_per_channel[2] = depth;
 			}
+			// presence of OBU SH in config is not recommended and properties should be used instead of metadata OBUs
+			while (gf_list_count(((GF_AV1ConfigurationBox *)config_box)->config->obu_array)) {
+				GF_AV1_OBUArrayEntry *obu = gf_list_pop_back(((GF_AV1ConfigurationBox *)config_box)->config->obu_array);
+				if (obu) {
+					if (obu->obu) gf_free(obu->obu);
+					gf_free(obu);
+				}
+			}
+			gf_list_del(((GF_AV1ConfigurationBox *)config_box)->config->obu_array);
+			((GF_AV1ConfigurationBox *)config_box)->config->obu_array = NULL;
+			e = gf_media_av1_layer_size_get(fsrc, imported_track, sample_number, image_props->av1_op_index, image_props->av1_layer_size);
+      if (e) {
+        GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("AV1 operating point index out of range for stream\n"));
+        goto exit;
+      }
 			//media_brand = GF_ISOM_BRAND_AVIF;
 		}
 		break;
@@ -1373,7 +1568,7 @@ import_next_sample:
 
 		config_needed = 1;
 		num_channels = 3;
-		bits_per_channel[0] = ((GF_VVCConfigurationBox *)config_box)->config->bit_depth_plus_one - 1;
+		bits_per_channel[0] = ((GF_VVCConfigurationBox *)config_box)->config->bit_depth;
 		bits_per_channel[1] = bits_per_channel[2] = bits_per_channel[0];
 		//media_brand = GF_ISOM_BRAND_HEIC;
 		break;
@@ -1537,13 +1732,18 @@ GF_Err gf_isom_iff_create_image_grid_item_internal(GF_ISOFile *movie, Bool root_
 	GF_Err e = GF_OK;
 	u32 grid4cc = GF_4CC('g', 'r', 'i', 'd');
 	GF_BitStream *grid_bs;
-	if (image_props->num_grid_rows < 1 || image_props->num_grid_columns < 1 || image_props->width == 0 || image_props->height == 0) {
+	if (image_props->num_grid_rows < 1 || image_props->num_grid_columns < 1 || image_props->num_grid_rows > 256 || image_props->num_grid_columns > 256) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Wrong grid parameters: %d, %d\n", image_props->num_grid_rows, image_props->num_grid_columns));
+		return GF_BAD_PARAM;
+	}
+	if (image_props->width == 0 || image_props->height == 0) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("At least one grid dimension set to 0: %d, %d\n", image_props->width, image_props->height));
 		return GF_BAD_PARAM;
 	}
 	grid_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 	if (!grid_bs) return GF_OUT_OF_MEM;
-	gf_bs_write_u8(grid_bs, 0);
-	gf_bs_write_u8(grid_bs, 0);
+	gf_bs_write_u8(grid_bs, 0); //version
+	gf_bs_write_u8(grid_bs, (image_props->width > 1<<16 || image_props->width > 1<<16) ? 1 : 0); // flags
 	gf_bs_write_u8(grid_bs, image_props->num_grid_rows-1);
 	gf_bs_write_u8(grid_bs, image_props->num_grid_columns-1);
 	gf_bs_write_u16(grid_bs, image_props->width);
@@ -1692,6 +1892,61 @@ exit:
 }
 
 GF_EXPORT
+GF_Err gf_isom_iff_create_image_overlay_item(GF_ISOFile *movie, Bool root_meta, u32 meta_track_number, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props) {
+	u32 i;
+	Bool use32bitFields = GF_FALSE;
+	GF_Err e = GF_OK;
+	u32 overlay4cc = GF_4CC('i', 'o', 'v', 'l');
+	GF_BitStream *overlay_bs;
+	if (image_props->overlay_count == 0 || image_props->width == 0 || image_props->height == 0) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("Unusual overlay parameters: %d, %d, %d\n", image_props->overlay_count, image_props->width, image_props->height));
+	}
+	if (image_props->width <= 1<<16 || image_props->height <= 1<<16) {
+		for (i=0; i< image_props->overlay_count; i++) {
+			if ( image_props->overlay_offsets[i].horizontal > 1<<16 ||
+				image_props->overlay_offsets[i].vertical > 1<<16) {
+				use32bitFields = GF_TRUE;
+				break;
+			}
+		}
+	} else {
+		use32bitFields = GF_TRUE;
+	}
+	overlay_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+	if (!overlay_bs) return GF_OUT_OF_MEM;
+	gf_bs_write_u8(overlay_bs, 0); // version
+	gf_bs_write_u8(overlay_bs, use32bitFields ? 1 : 0); // flags
+	gf_bs_write_u16(overlay_bs, image_props->overlay_canvas_fill_value_r);
+	gf_bs_write_u16(overlay_bs, image_props->overlay_canvas_fill_value_g);
+	gf_bs_write_u16(overlay_bs, image_props->overlay_canvas_fill_value_b);
+	gf_bs_write_u16(overlay_bs, image_props->overlay_canvas_fill_value_a);
+	gf_bs_write_u16(overlay_bs, image_props->width);
+	gf_bs_write_u16(overlay_bs, image_props->height);
+	for (i = 0; i <image_props->overlay_count; i++) {
+		gf_bs_write_u16(overlay_bs, image_props->overlay_offsets[i].horizontal);
+		gf_bs_write_u16(overlay_bs, image_props->overlay_offsets[i].vertical);
+	}
+	u8 *overlay_data;
+	u32 overlay_data_size;
+	gf_bs_get_content(overlay_bs, &overlay_data, &overlay_data_size);
+	e = gf_isom_add_meta_item_memory(movie, root_meta, meta_track_number, item_name, &item_id, overlay4cc, NULL, NULL, image_props, overlay_data, overlay_data_size, NULL);
+	gf_free(overlay_data);
+	gf_bs_del(overlay_bs);
+	return e;
+}
+
+GF_EXPORT
+GF_Err gf_isom_iff_create_image_identity_item(GF_ISOFile *movie, Bool root_meta, u32 meta_track_number, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props) {
+	GF_Err e = GF_OK;
+	u32 identity4cc = GF_4CC('i', 'd', 'e', 'n');
+	if (image_props->width == 0 || image_props->height == 0) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("At least one identity dimension set to 0: %d, %d\n", image_props->width, image_props->height));
+	}
+	e = gf_isom_add_meta_item_memory(movie, root_meta, meta_track_number, item_name, &item_id, identity4cc, NULL, NULL, image_props, NULL, 0, NULL);
+	return e;
+}
+
+GF_EXPORT
 GF_Err gf_isom_iff_create_image_item_from_track(GF_ISOFile *movie, Bool root_meta, u32 meta_track_number, u32 imported_track, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props, GF_List *item_extent_refs)
 {
 
@@ -1700,6 +1955,5 @@ GF_Err gf_isom_iff_create_image_item_from_track(GF_ISOFile *movie, Bool root_met
 
  	return gf_isom_iff_create_image_item_from_track_internal(movie, root_meta, meta_track_number, imported_track, item_name, item_id, image_props, item_extent_refs, 1);
 }
-
 
 #endif /*GPAC_DISABLE_ISOM*/

@@ -304,6 +304,12 @@ Bool gf_pixel_get_size_info(GF_PixelFormat pixfmt, u32 width, u32 height, u32 *o
 */
 u32 gf_pixel_get_bytes_per_pixel(GF_PixelFormat pixfmt);
 
+/*! Gets the number of bits per component
+\param pixfmt  pixel format code
+\return number of bits per component
+*/
+u32 gf_pixel_is_wide_depth(GF_PixelFormat pixfmt);
+
 /*! Gets the number of component per pixel
 \param pixfmt  pixel format code
 \return number of bytes per pixel
@@ -845,9 +851,15 @@ Bool gf_audio_fmt_is_planar(GF_AudioFormat afmt);
 
 /*! Returns audio format for raw audio ISOBMFF sample description type
 \param msubtype ISOBMFF sample description type
-\return the associated audio format of 0 if not known
+\return the associated audio format or 0 if not known
  */
 GF_AudioFormat gf_audio_fmt_from_isobmf(u32 msubtype);
+
+/*! Returns QTFF/ISOBMFF sample description 4CC of an audio format
+\param afmt audio format to query
+\return the associated 4CC or 0 if not known
+ */
+u32 gf_audio_fmt_to_isobmf(GF_AudioFormat afmt);
 
 /*! enumerates audio formats
 \param idx index of the audio format, 0-based
@@ -908,6 +920,25 @@ u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout);
 \return dolby chanmap
 */
 u16 gf_audio_fmt_get_dolby_chanmap(u32 cicp_layout);
+
+/*! get channel CICP code  from name
+\param name channel layout name
+\return channel CICP code
+*/
+u32 gf_audio_fmt_get_cicp_from_name(const char *name);
+
+/*! get channel CICP code  from name
+\param cicp_code channel cicp code
+\return channel CICP name
+*/
+const char *gf_audio_fmt_get_cicp_name(u32 cicp_code);
+
+/*! enumerates CICP channel layout
+\param idx index of cicp layout value to query
+\param short_name set t o CICP name as used in GPAC - may be NULL
+\param ch_mask set t o audio channel mask, as used in GPAC - may be NULL
+\return CICP code point, or 0 if no more to enumerate*/
+u32 gf_audio_fmt_cicp_enum(u32 idx, const char **short_name, u64 *ch_mask);
 
 /*! Color primaries as defined by ISO/IEC 23001-8 / 23091-2
   */

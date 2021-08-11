@@ -237,7 +237,7 @@ except OSError:
 
 #change this to reflect API we encapsulate. An incomatibility in either of these will throw a warning
 GF_ABI_MAJOR=10
-GF_ABI_MINOR=7
+GF_ABI_MINOR=8
 
 gpac_abi_major=_libgpac.gf_gpac_abi_major()
 gpac_abi_minor=_libgpac.gf_gpac_abi_minor()
@@ -301,6 +301,9 @@ _libgpac.gf_4cc_to_str.res = c_char_p
 
 _libgpac.gf_4cc_parse.argtypes = [c_char_p]
 _libgpac.gf_4cc_parse.res = c_uint
+
+_libgpac.gf_sleep.argtypes = [c_uint]
+_libgpac.gf_sleep.res = c_uint
 
 #\endcond
 
@@ -380,7 +383,7 @@ _libgpac._args=None
 ##\endcond private
 
 ## set libgpac arguments - see \ref gf_sys_set_args
-# \param args list of strings
+# \param args list of strings, the first string is ignored (considered to be the executable name)
 # \return
 def set_args(args):
     nb_args = len(args)
@@ -432,6 +435,13 @@ def rmt_on():
 def rmt_enable(value):
     _libgpac.gf_sys_profiler_enable_sampling(value)
     
+
+## sleep for given time in milliseconds
+# \param value time to sleep
+# \return
+def sleep(value):
+    _libgpac.gf_sleep(value)
+
 
 ## @}
 
@@ -727,7 +737,8 @@ class FEVT_AttachScene(Structure):
     _fields_ =  [
         ("type", c_uint),
         ("on_pid", _gf_filter_pid),
-        ("odm", c_void_p)
+        ("odm", c_void_p),
+        ("node", c_void_p)
     ]
     ## \endcond
 
@@ -1249,6 +1260,14 @@ GF_NOTIF_ERROR=1
 ##notification is an error and disconnect the filter chain
 GF_NOTIF_ERROR_AND_DISCONNECT=2
 
+
+##Do not flush session: everything is discarded, potentially breaking output files
+GF_FS_FLUSH_NONE=0,
+##Flush all pending data before closing sessions:  sources will be forced into end of stream and all emitted packets will be processed
+GF_FS_FLUSH_ALL=1
+##Stop session (reseting buffers) and flush pipeline
+GF_FS_FLUSH_FAST=2
+
 ## @}
 
 ##\cond private
@@ -1293,7 +1312,7 @@ _libgpac.gf_fs_get_filters_count.argtypes = [_gf_filter_session]
 _libgpac.gf_fs_get_filter.argtypes = [_gf_filter_session, c_int]
 _libgpac.gf_fs_get_filter.restype = _gf_filter
 
-_libgpac.gf_fs_abort.argtypes = [_gf_filter_session, gf_bool]
+_libgpac.gf_fs_abort.argtypes = [_gf_filter_session, c_int]
 
 _libgpac.gf_fs_get_http_max_rate.argtypes = [_gf_filter_session]
 _libgpac.gf_fs_get_http_rate.argtypes = [_gf_filter_session]
@@ -1316,6 +1335,9 @@ _libgpac.gf_fs_is_supported_mime.restype = gf_bool
 
 _libgpac.gf_fs_is_supported_source.argtypes = [_gf_filter_session, c_char_p]
 _libgpac.gf_fs_is_supported_source.restype = gf_bool
+
+_libgpac.gf_pixel_fmt_sname.argtypes = [c_uint]
+_libgpac.gf_pixel_fmt_sname.restype = c_char_p
 
 
 @CFUNCTYPE(c_int, _gf_filter_session, c_void_p, POINTER(c_uint))
@@ -1506,7 +1528,7 @@ class FilterSession:
     ##abort the session - see \ref gf_fs_abort
     #\param flush flush pipeline before abort
     #\return
-    def abort(self, flush=False):
+    def abort(self, flush=0):
         _libgpac.gf_fs_abort(self._sess, flush)
         
     ##get a filter by index - see \ref gf_fs_get_filter
@@ -1637,6 +1659,9 @@ _libgpac.gf_filter_release_property.argtypes = [POINTER(_gf_property_entry)]
 _libgpac.gf_props_type_is_enum.argtypes = [c_uint]
 _libgpac.gf_props_type_is_enum.restype = c_int
 
+_libgpac.gf_props_parse_enum.argtypes = [c_uint, c_char_p]
+_libgpac.gf_props_parse_enum.restype = c_uint
+
 _libgpac.gf_pixel_fmt_name.argtypes = [c_uint]
 _libgpac.gf_pixel_fmt_name.restype = c_char_p
 
@@ -1669,6 +1694,7 @@ _libgpac.gf_filter_get_info.restype = POINTER(PropertyValue)
 _libgpac.gf_filter_get_info_str.argtypes = [_gf_filter, c_char_p, POINTER(POINTER(_gf_property_entry))]
 _libgpac.gf_filter_get_info_str.restype = POINTER(PropertyValue)
 
+_libgpac.gf_filter_require_source_id.argtypes = [_gf_filter]
 
 _libgpac.gf_filter_bind_dash_algo_callbacks.argtypes = [_gf_filter, py_object, c_void_p, c_void_p, c_void_p, c_void_p]
 @CFUNCTYPE(c_int, c_void_p, c_uint)
@@ -2021,19 +2047,26 @@ def dash_download_monitor(cbk, groupidx, stats):
  return obj.on_download_monitor(group, stats.contents)
 
 
-
 def _prop_to_python(pname, prop):
     type = prop.type
+
     if type==GF_PROP_SINT:
         return prop.value.sint
     if type==GF_PROP_UINT:
         if pname=="StreamType":
             return _libgpac.gf_stream_type_name(prop.value.uint).decode('utf-8')
+        if pname=="PixelFormat":
+            return _libgpac.gf_pixel_fmt_sname(prop.value.uint).decode('utf-8')
         if pname=="CodecID":
             cid = _libgpac.gf_codecid_file_ext(prop.value.uint).decode('utf-8')
             names=cid.split('|')
             return names[0]
         return prop.value.uint
+
+    if _libgpac.gf_props_type_is_enum(type):
+        pname = _libgpac.gf_props_enum_name(type, prop.value.uint)
+        return pname.decode('utf-8')
+
     if type==GF_PROP_4CC:
         return _libgpac.gf_4cc_to_str(prop.value.uint).decode('utf-8')
     if type==GF_PROP_LSINT:
@@ -2094,10 +2127,6 @@ def _prop_to_python(pname, prop):
             val = prop.value.v2i_list.vals[i]
             res.append(val)
         return res
-
-    if _libgpac.gf_props_type_is_enum(type):
-        pname = _libgpac.gf_props_enum_name(type, prop.value.uint)
-        return pname.decode('utf-8')
 
     raise Exception('Unknown property type ' + str(type))
 
@@ -2333,6 +2362,14 @@ class Filter:
             raise Exception('Failed to fetch filter stats: ' + e2s(err))
         return stats
 
+    ##enforces sourceID to be present for output pids of this filter - see \ref gf_filter_require_source_id
+    #\return
+    def require_source_id(self):
+        err = _libgpac.gf_filter_require_source_id(self._filter)
+        if err<0:
+            raise Exception('Failed to require sourceID for filter: ' + e2s(err))
+        return
+
     ##\cond private
     def _bind_dash_algo(self, object):
         if not hasattr(object, 'on_rate_adaptation'):
@@ -2544,8 +2581,8 @@ def _make_prop(prop4cc, propname, prop, custom_type=0):
             prop_val.value.v2i_list.vals[i].x = prop[i].x
             prop_val.value.v2i_list.vals[i].y = prop[i].y
 
-    elif _lingpac.gf_props_type_is_enum(type):
-        prop_val.value.uint = _libgpac.gf_props_parse_enum(prop.encode('utf-8'))
+    elif _libgpac.gf_props_type_is_enum(type):
+        prop_val.value.uint = _libgpac.gf_props_parse_enum(type, prop.encode('utf-8'))
         return prop_val
     else:
         raise Exception('Unsupported property type ' + str(type) )
@@ -2625,7 +2662,7 @@ def filter_cbk_probe_data(_data, _size, _probe):
     if res==None:
         _probe.contents=0
         return None
-    _probe.contents=1; #GF_FPROBE_MAYBE_SUPPORTED
+    _probe.contents=2; #GF_FPROBE_MAYBE_SUPPORTED
     return res.encode('utf-8')
 
 
@@ -2958,7 +2995,10 @@ _libgpac.gf_filter_pid_is_playing.argtypes = [_gf_filter_pid]
 _libgpac.gf_filter_pid_is_playing.restype = gf_bool
 
 _libgpac.gf_filter_pid_get_filter_name.argtypes = [_gf_filter_pid]
-_libgpac.gf_filter_pid_is_playing.restype = c_char_p
+_libgpac.gf_filter_pid_get_filter_name.restype = c_char_p
+
+_libgpac.gf_filter_pid_get_next_ts.argtypes = [_gf_filter_pid]
+_libgpac.gf_filter_pid_get_next_ts.restype = c_longlong
 
 
 _libgpac.gf_filter_pid_caps_query.argtypes = [_gf_filter_pid, c_uint]
@@ -3070,7 +3110,9 @@ class FilterPid:
             ##True if PID is playing, readonly  - see \ref gf_filter_pid_is_playing
             #\hideinitializer
             self.playing=0
-
+            ##Next estimated timestamp on pid, readonly  - see \ref gf_filter_pid_get_next_ts
+            #\hideinitializer
+            self.next_ts=0
 
 
     ##send an event on the pid - see \ref gf_filter_pid_send_event
@@ -3276,7 +3318,7 @@ class FilterPid:
     ##sets loose connect mode - see \ref gf_filter_pid_set_loose_connect
     #\return
     def loose_connect(self):
-        _libgpac.gf_filter_pid_set_loose_connect(slef._pid)
+        _libgpac.gf_filter_pid_set_loose_connect(self._pid)
 
     ##sets framing mode - see \ref gf_filter_pid_set_framing_mode
     #\param framed if True, complete frames only will be delivered on the pid
@@ -3296,10 +3338,13 @@ class FilterPid:
     def set_discard(self, do_discard):
         _libgpac.gf_filter_pid_set_discard(self._pid, do_discard)
 
-    ##checks if sourceID is required - see \ref require_source_id
-    #\return True if required
+    ##enforces sourceID to be present for output pids of this filter - see \ref gf_filter_pid_require_source_id
+    #\return
     def require_source_id(self):
-        return _libgpac.gf_filter_pid_require_source_id(self._pid)
+        err = _libgpac.gf_filter_pid_require_source_id(self._pid)
+        if err<0:
+            raise Exception('Failed to require sourceID for pid: ' + e2s(err))
+        return
 
     ##sets DTS recomputing mode - see \ref gf_filter_pid_recompute_dts
     #\param do_compute if True, DTS are recomputed
@@ -3563,6 +3608,11 @@ class FilterPid:
     def playing(self):
         return _libgpac.gf_filter_pid_is_playing(self._pid)
 
+    #\return
+    @property
+    def next_ts(self):
+        return _libgpac.gf_filter_pid_get_next_ts(self._pid)
+
     ##\endcond
 
     #vars:
@@ -3671,6 +3721,8 @@ _libgpac.gf_filter_pck_set_property.argtypes = [_gf_filter_packet, c_uint, POINT
 _libgpac.gf_filter_pck_set_property_str.argtypes = [_gf_filter_packet, c_char_p, POINTER(PropertyValue)]
 _libgpac.gf_filter_pck_truncate.argtypes = [_gf_filter_packet, c_uint]
 
+_libgpac.gf_filter_pck_dangling_copy.argtypes = [_gf_filter_packet, _gf_filter_packet]
+_libgpac.gf_filter_pck_dangling_copy.restype = _gf_filter_packet
 
 ##\endcond private
 
@@ -3743,7 +3795,9 @@ class FilterPacket:
             ##Dependency flags - see \ref gf_filter_pck_get_dependency_flags and \ref gf_filter_pck_set_dependency_flags
             #\hideinitializer
             self.deps=0
-
+            ##true if packet holds a GF_FrameInterface object and not a data packet
+            #\hideinitializer
+            frame_ifce=0
 
     ##enumerate an packet properties
     #\param callback_obj callback object to use, must have a 'on_prop_enum' method defined taking two parameters, prop_name(string) and propval
@@ -3805,6 +3859,25 @@ class FilterPacket:
         _libgpac.gf_filter_pck_discard(self._pck)
         self._pck = None
         ##\endcond private
+
+    ##creates a new packet cloning a source packet - see \ref gf_filter_pck_dangling_copy.
+    #The resulting packet is read/write mode and may have its own memory allocated.
+    #This is typically used by sink filters wishing to access underling GPU data of a packet using frame interface.
+    #the resulting packet can be explicitly discarded using \ref discard, otherwise will be garrbage collected.
+    #\param cached_pck if set, will be reuse for creation of new packet. This can greatly reduce memory allocations
+    #\return the new FilterPacket or None if failure or None if failure ( if grabbing the frame into a local copy failed)
+    def clone(self, cached_pck=False):
+        if cached_pck:
+            _pck = _libgpac.gf_filter_pck_dangling_copy(self._pck, cached_pck._pck)
+        else:
+            _pck = _libgpac.gf_filter_pck_dangling_copy(self._pck, None)
+
+        if _pck:
+            pck = FilterPacket(_pck, False)
+            pck._readonly = False
+            return pck
+        return None
+
 
     ##mark an output packet as readonly - see \ref gf_filter_pck_set_readonly
     #\return
@@ -3868,14 +3941,6 @@ class FilterPacket:
         if self._is_src:
             raise Exception('Cannot truncate on source packet')
         _libgpac.gf_filter_pck_truncate(self._pck, size)
-
-    ##true if packet holds a GF_FrameInterface object and not a data packet
-    #\return True if packet is a frame interface object
-    def is_frame_ifce(self):
-        p = _libgpac.gf_filter_pck_get_frame_interface(self._pck)
-        if p:
-            return True
-        return False
 
     ##Check if packet is a blocking reference - see \ref gf_filter_pck_is_blocking_ref
     #\return true if packet is a blocking reference
@@ -4078,6 +4143,13 @@ class FilterPacket:
         if self._is_src:
             raise Exception('Cannot set deps on source packet')
         return _libgpac.gf_filter_pck_set_dependency_flags(self._pck, value)
+
+    @property
+    def frame_ifce(self):
+        p = _libgpac.gf_filter_pck_get_frame_interface(self._pck)
+        if p:
+            return True
+        return False
 
     ##\endcond private
 
