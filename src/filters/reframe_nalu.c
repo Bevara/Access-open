@@ -2475,7 +2475,8 @@ static s32 naludmx_parse_nal_avc(GF_NALUDmxCtx *ctx, char *data, u32 size, u32 n
 					/* This PPS is used by an SVC NAL unit, it should be moved to the SVC Config Record) */
 					gf_list_rem(ctx->pps, i);
 					i--;
-					if (!ctx->pps_svc) ctx->pps_svc = gf_list_new(ctx->pps_svc);
+					//if (!ctx->pps_svc) ctx->pps_svc = gf_list_new(ctx->pps_svc); FIXME:error
+					if (!ctx->pps_svc) ctx->pps_svc = gf_list_new();
 					gf_list_add(ctx->pps_svc, slc);
 					ctx->ps_modified = GF_TRUE;
 				}
