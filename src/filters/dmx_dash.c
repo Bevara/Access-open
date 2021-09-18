@@ -44,6 +44,14 @@ enum
 	DFWD_SBOUND_MANIFEST,
 };
 
+
+enum
+{
+	BMIN_NO = 0,
+	BMIN_AUTO,
+	BMIN_MPD,
+};
+
 typedef struct
 {
 	//opts
@@ -56,7 +64,8 @@ typedef struct
 	GF_DASHInitialSelectionMode start_with;
 	GF_DASHTileAdaptationMode tile_mode;
 	char *algo;
-	Bool max_res, abort, use_bmin;
+	Bool max_res, abort;
+	u32 use_bmin;
 	char *query;
 	Bool noxlink, split_as, noseek, groupsel;
 	u32 lowlat;
@@ -150,6 +159,9 @@ typedef struct
 	u32 nb_pending;
 
 	char *template;
+
+	const char *hls_key_uri;
+	bin128 hls_key_IV;
 } GF_DASHGroup;
 
 static void dashdmx_notify_group_quality(GF_DASHDmxCtx *ctx, GF_DASHGroup *group);
@@ -442,6 +454,13 @@ static void dashdmx_on_filter_setup_error(GF_Filter *failed_filter, void *udta, 
 			group->eos_detected = GF_TRUE;
 		} else {
 			group->in_error = GF_TRUE;
+
+			if (group->nb_group_deps) {
+				if (group->current_group_dep) group->current_group_dep--;
+			} else if (group->next_dependent_rep_idx) {
+				group->next_dependent_rep_idx--;
+			}
+
 			//failure at init, abort group
 			if (!group->init_ok)
 				group->seg_filter_src = NULL;
@@ -539,13 +558,27 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 
 	gf_filter_set_setup_failure_callback(ctx->filter, group->seg_filter_src, dashdmx_on_filter_setup_error, group);
 
+	if (gf_dash_group_init_segment_is_media(ctx->dash, group_index))
+		group->prev_is_init_segment = GF_FALSE;
+	else {
+		group->prev_is_init_segment = GF_TRUE;
+		//consider init is always in clear if AES-128, might need further checks
+		if (crypto_type==1) {
+			key_uri = NULL;
+		}
+	}
+
 	//if HLS AES-CBC, set key BEFORE discarding segment URL (if TS, discarding the segment will discard the key uri)
-	if (key_uri && (crypto_type==1)) {
-		gf_cryptfin_set_kms(group->seg_filter_src, key_uri, key_IV);
+	if (key_uri) {
+		if (crypto_type==1) {
+			gf_cryptfin_set_kms(group->seg_filter_src, key_uri, key_IV);
+		} else {
+			group->hls_key_uri = key_uri;
+			memcpy(group->hls_key_IV, key_IV, sizeof(bin128));
+		}
 	}
 
 	gf_dash_group_discard_segment(ctx->dash, group->idx);
-	group->prev_is_init_segment = GF_TRUE;
 	group->nb_group_deps = gf_dash_group_get_num_groups_depending_on(ctx->dash, group_index);
 	group->current_group_dep = 0;
 	gf_free(sURL);
@@ -1116,7 +1149,7 @@ static void dashdmx_setup_buffer(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
 	play_buf_ms /= 1000;
 
 	//use min buffer from MPD
-	if (ctx->use_bmin) {
+	if (ctx->use_bmin==BMIN_MPD) {
 		u64 mpd_buffer_ms = gf_dash_get_min_buffer_time(ctx->dash);
 		if (mpd_buffer_ms > buffer_ms)
 			buffer_ms = (u32) mpd_buffer_ms;
@@ -1354,9 +1387,33 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 		gf_filter_pid_set_property(opid, GF_PROP_PID_TIMESHIFT_DEPTH, &PROP_FRAC_INT(dur, 1000) );
 
 
-	if (ctx->use_bmin) {
+	if (ctx->use_bmin==BMIN_MPD) {
 		u32 max = gf_dash_get_min_buffer_time(ctx->dash);
 		gf_filter_pid_set_property(opid, GF_PROP_PID_PLAY_BUFFER, &PROP_UINT(max));
+	}
+	//check if low latency is on, if not notify max segment duration as target min buffer
+	//we don't do this in test mode, it breaks all inspect hashes
+	else if ((ctx->use_bmin==BMIN_AUTO) && !gf_sys_is_test_mode()) {
+		Bool do_set = GF_FALSE;
+		u32 min_buf = gf_dash_get_max_segment_duration(ctx->dash);
+		//low latency not enabled or not active
+		if (!ctx->lowlat || !gf_dash_is_low_latency(ctx->dash, group_idx)) {
+			do_set = GF_TRUE;
+		}
+		//or we have dependent groups, no low latency possible for now
+		else if (group->nb_group_deps) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[DASHDmx] Low-Latency dependent group (tiling & co) not supported, using regular download\n"));
+			do_set = GF_TRUE;
+			ctx->lowlat = 0;
+			gf_dash_set_low_latency_mode(ctx->dash, ctx->lowlat);
+		}
+		//set play buffer for all output pids
+		if (do_set && min_buf) {
+			for (i=0; i<gf_filter_get_opid_count(ctx->filter); i++) {
+				GF_FilterPid *a_opid = gf_filter_get_opid(ctx->filter, i);
+				gf_filter_pid_set_property(a_opid, GF_PROP_PID_PLAY_BUFFER, &PROP_UINT(min_buf));
+			}
+		}
 	}
 
 	memset(&qualities, 0, sizeof(GF_PropertyValue));
@@ -1521,6 +1578,12 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 		}
 		gf_filter_pid_set_property(opid, GF_PROP_PID_NO_PRIMING, is_cont ? &PROP_BOOL(GF_TRUE) : NULL);
 	}
+
+	if (group->hls_key_uri) {
+		gf_filter_pid_set_property(opid, GF_PROP_PID_HLS_KMS, &PROP_STRING(group->hls_key_uri));
+		gf_filter_pid_set_property(opid, GF_PROP_PID_HLS_IV, &PROP_DATA(group->hls_key_IV, sizeof(bin128) ));
+	}
+
 	if (ctx->forward > DFWD_FILE) {
 		u64 pstart;
 		u32 timescale;
@@ -2822,13 +2885,13 @@ GF_Err dashdmx_process(GF_Filter *filter)
 							}
 						}
 						if (nb_block == group->nb_pids) {
-							GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASHDmx] End of segment for group %d but %d output pid(s) would block, postponing\n", group->idx, nb_block));
+							GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] End of segment for group %d but %d output pid(s) would block, postponing\n", group->idx, nb_block));
 							switch_pending = GF_TRUE;
 							break;
 						}
 
 						//good to switch, cancel all end of stream signals on pids from this group and switch
-						GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] End of segment for group %d, updating stats and switching segment\n", group->idx));
+						GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASHDmx] End of segment for group %d, updating stats and switching segment\n", group->idx));
 						for (j=0; j<count; j++) {
 							const GF_PropertyValue *p;
 							GF_PropertyEntry *pe=NULL;
@@ -2860,12 +2923,26 @@ GF_Err dashdmx_process(GF_Filter *filter)
 					}
 				}
 				else {
+					//still waiting for input packets, do not reschedule (let filter session do it)
+					next_time_ms = 0;
 					if (ctx->abort)
 						dashdmx_update_group_stats(ctx, group);
 					//GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] No source packet group %d and not in end of stream\n", group->idx));
-
 				}
 				if (group->in_error || group->seg_was_not_ready) {
+					//reset EOS state on all input if we were in error
+					u32 j;
+					for (j=0; j<count && group->in_error; j++) {
+						GF_FilterPid *an_ipid = gf_filter_get_ipid(filter, j);
+						GF_FilterPid *an_opid = gf_filter_pid_get_udta(an_ipid);
+						GF_DASHGroup *agroup;
+						if (an_ipid == ctx->mpd_pid) continue;
+						agroup = gf_filter_pid_get_udta(an_opid);
+						if (!agroup || (agroup != group)) continue;
+
+						gf_filter_pid_clear_eos(an_ipid, GF_TRUE);
+						GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] Clearing EOS on pids from group %d\n", group->idx));
+					}
 					dashdmx_switch_segment(ctx, group);
 					gf_filter_prevent_blocking(filter, GF_FALSE);
 					if (group->eos_detected && !has_pck) check_eos = GF_TRUE;
@@ -3043,7 +3120,10 @@ static const GF_FilterArgs DASHDmxArgs[] =
 
 	{ OFFS(max_res), "use max media resolution to configure display", GF_PROP_BOOL, "true", NULL, 0},
 	{ OFFS(abort), "allow abort during a segment download", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(use_bmin), "use the indicated min buffer time of the MPD if true, otherwise uses default player settings", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(use_bmin), "playout buffer handling\n"
+		"- no: use default player settings\n"
+		"- auto: notify player of segment duration if not low latency\n"
+		"- mpd: use the indicated min buffer time of the MPD", GF_PROP_UINT, "auto", "no|auto|mpd", 0},
 
 	{ OFFS(shift_utc), "shift DASH UTC clock in ms", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(route_shift), "shift ROUTE requests time by given ms", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},

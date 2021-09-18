@@ -698,6 +698,11 @@ set HTTP head request timeout in milliseconds
 set HTTP/RTSP request timeout in milliseconds
 .br
 .TP
+.B \-no-timeout
+.br
+ignore HTTP 1.1 timeout in keep-alive
+.br
+.TP
 .B \-broken-cert
 .br
 enable accepting broken SSL certificates
@@ -3021,7 +3026,12 @@ Value of active period start time in forward mode
 .TP
 .B HLSKey (HLSK,str,  )
 .br
-URI, KEYFORMAT and KEYFORMATVERSIONS for HLS
+URI, KEYFORMAT and KEYFORMATVERSIONS for HLS creation, Key URI for decoding
+.br
+.TP
+.B HLSIV (HLSI,mem,  )
+.br
+Init Vector for HLS decode
 .br
 .TP
 .B ColorPrimaries (CPRM,cprm,D )
@@ -4263,7 +4273,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev1160-g501dcf757-master
+build: 1.1.0-DEV-rev1237-g1ae1922f5-master
 .br
 Copyright: (c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

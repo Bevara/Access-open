@@ -271,7 +271,9 @@ static GF_Err ffdec_process_video(GF_Filter *filter, struct _gf_ffdec_ctx *ctx)
 			gf_filter_pck_unref(pck_src);
 		}
 		FF_RELEASE_PCK(pkt);
-		return GF_OK;
+		//input full but output available, go on but don't discard input
+		pck = NULL;
+		break;
 	case 0:
 	case AVERROR_EOF:
 		break;
@@ -402,6 +404,7 @@ static GF_Err ffdec_process_video(GF_Filter *filter, struct _gf_ffdec_ctx *ctx)
 
 	if (pck_src) {
 		gf_filter_pck_merge_properties(pck_src, dst_pck);
+		gf_filter_pck_set_dependency_flags(dst_pck, 0);
 		gf_list_del_item(ctx->src_packets, pck_src);
 		gf_filter_pck_unref(pck_src);
 	} else {
@@ -719,6 +722,7 @@ dispatch_next:
 
 	if (src_pck) {
 		gf_filter_pck_merge_properties(src_pck, dst_pck);
+		gf_filter_pck_set_dependency_flags(dst_pck, 0);
 		gf_list_rem(ctx->src_packets, 0);
 		gf_filter_pck_unref(src_pck);
 	}

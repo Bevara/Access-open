@@ -93,6 +93,11 @@ static GF_Err cryptfile_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FILE_CACHED, NULL);
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FILEPATH, NULL);
 
+	//if no mime assume M2TS
+	if (gf_filter_pid_get_property(pid, GF_PROP_PID_MIME) == NULL) {
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_MIME, &PROP_NAME("video/mpeg-2"));
+	}
+
 	if (ctx->fullfile)
 		gf_filter_pid_set_framing_mode(pid, GF_TRUE);
 	return GF_OK;
@@ -104,8 +109,9 @@ static void cryptfile_on_filter_setup_error(GF_Filter *failed_filter, void *udta
 {
 	GF_Filter *f = (GF_Filter *)udta;
 	if (!udta) return;
-	//forward setup failure
-	gf_filter_setup_failure(f, err);
+	//forward failure, but do not send a setup failure (gf_filter_setup_failure) which would remove this filter
+	//we let the final user (dashdmx) decide what to do
+	gf_filter_notification_failure(f, err, GF_FALSE);
 }
 
 static GF_Err cryptfin_initialize(GF_Filter *filter)
@@ -289,6 +295,10 @@ static GF_Err cryptfin_process(GF_Filter *filter)
 		}
 		osize -= pad;
 		gf_filter_pck_truncate(pck_out, osize);
+
+		gf_filter_pid_set_info(ctx->opid, GF_PROP_PID_FILE_CACHED, &PROP_BOOL(GF_TRUE) );
+	} else if (start) {
+		gf_filter_pid_set_info(ctx->opid, GF_PROP_PID_FILE_CACHED, &PROP_BOOL(GF_FALSE) );
 	}
 	gf_filter_pck_send(pck_out);
 	gf_filter_pid_drop_packet(ctx->ipid);

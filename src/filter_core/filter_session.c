@@ -1076,21 +1076,39 @@ Bool gf_fs_filter_exists(GF_FilterSession *fsess, const char *name)
 static Bool locate_js_script(char *path, const char *file_name, const char *file_ext)
 {
 	u32 len = (u32) strlen(path);
-	strcat(path, file_name);
-	if (gf_file_exists(path))
+	u32 flen = 20 + (u32) strlen(file_name);
+
+	char *apath = gf_malloc(sizeof(char) * (len+flen) );
+	if (!apath) return GF_FALSE;
+	strcpy(apath, path);
+
+	strcat(apath, file_name);
+	if (gf_file_exists(apath)) {
+		gf_free(apath);
+		strncpy(path, apath, GF_MAX_PATH-1);
+		path[GF_MAX_PATH-1] = 0;
 		return GF_TRUE;
+	}
 
 	if (!file_ext) {
-		strcat(path, ".js");
-		if (gf_file_exists(path))
+		strcat(apath, ".js");
+		if (gf_file_exists(apath)) {
+			gf_free(apath);
+			strncpy(path, apath, GF_MAX_PATH-1);
+			path[GF_MAX_PATH-1] = 0;
 			return GF_TRUE;
+		}
 	}
-	path[len] = 0;
-	strcat(path, file_name);
-	strcat(path, "/init.js");
-	if (gf_file_exists(path))
+	apath[len] = 0;
+	strcat(apath, file_name);
+	strcat(apath, "/init.js");
+	if (gf_file_exists(apath)) {
+		gf_free(apath);
+		strncpy(path, apath, GF_MAX_PATH-1);
+		path[GF_MAX_PATH-1] = 0;
 		return GF_TRUE;
-
+	}
+	gf_free(apath);
 	return GF_FALSE;
 }
 
@@ -1176,9 +1194,21 @@ GF_Filter *gf_fs_load_filter(GF_FilterSession *fsess, const char *name, GF_Err *
 			filter = gf_filter_new(fsess, f_reg, args, NULL, argtype, err_code, NULL, GF_FALSE);
 			if (!filter) return NULL;
 			if (!filter->num_output_pids) {
+				//check we have a src specified for the filter
 				const char *src_url = strstr(name, "src");
-				if (src_url && (src_url[3]==fsess->sep_name))
-					gf_filter_post_process_task(filter);
+				if (src_url && (src_url[3]==fsess->sep_name)) {
+					const GF_FilterArgs *args = filter->instance_args ? filter->instance_args : f_reg->args;
+					//check the filter has an src argument
+					//we don't want to call process on a filter not acting as source until at least one input is connected
+					i=0;
+					while (args && args[i].arg_name) {
+						if (!strcmp(args[i].arg_name, "src")) {
+							gf_filter_post_process_task(filter);
+							break;
+						}
+						i++;
+					}
+				}
 			}
 			return filter;
 		}
@@ -3293,7 +3323,7 @@ typedef struct
 #endif
 } GF_UserTask;
 
-static void gf_fs_user_task(GF_FSTask *task)
+static void do_fs_user_task(GF_FSTask *task, Bool free_log_name)
 {
 	u32 reschedule_ms=0;
 	GF_UserTask *utask = (GF_UserTask *)task->udta;
@@ -3315,12 +3345,22 @@ static void gf_fs_user_task(GF_FSTask *task)
 		gf_free(utask);
 		task->udta = NULL;
 		//we duplicated the name for user tasks
-		gf_free((char *) task->log_name);
+		if (free_log_name)
+			gf_free((char *) task->log_name);
 		task->requeue_request = GF_FALSE;
 	} else {
 		task->schedule_next_time = gf_sys_clock_high_res() + 1000*reschedule_ms;
 	}
 }
+static void gf_fs_user_task(GF_FSTask *task)
+{
+	do_fs_user_task(task, GF_FALSE);
+}
+static void gf_fs_user_task_free_log(GF_FSTask *task)
+{
+	do_fs_user_task(task, GF_TRUE);
+}
+
 
 GF_EXPORT
 GF_Err gf_fs_post_user_task(GF_FilterSession *fsess, Bool (*task_execute) (GF_FilterSession *fsess, void *callback, u32 *reschedule_ms), void *udta_callback, const char *log_name)
@@ -3335,7 +3375,7 @@ GF_Err gf_fs_post_user_task(GF_FilterSession *fsess, Bool (*task_execute) (GF_Fi
 	utask->task_execute = task_execute;
 	//dup mem for user task
 	_log_name = gf_strdup(log_name ? log_name : "user_task");
-	gf_fs_post_task(fsess, gf_fs_user_task, NULL, NULL, _log_name, utask);
+	gf_fs_post_task(fsess, gf_fs_user_task_free_log, NULL, NULL, _log_name, utask);
 	return GF_OK;
 }
 

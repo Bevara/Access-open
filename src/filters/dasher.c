@@ -240,6 +240,8 @@ typedef struct
 	Bool dyn_rate;
 
 	u64 min_segment_start_time, last_min_segment_start_time;
+
+	u32 def_max_seg_dur;
 } GF_DasherCtx;
 
 typedef enum
@@ -685,6 +687,17 @@ static GF_Err dasher_stream_period_changed(GF_Filter *filter, GF_DasherCtx *ctx,
 		ds->rep_init = GF_FALSE;
 		ds->presentation_time_offset = 0;
 		gf_list_rem(ctx->current_period->streams, res);
+	} else {
+		//stream is not in current period, and this is not an explicit new period request
+		//if the period was not ready (not yet setup), add to current streams
+		//this is needed for cases such as HEVC tiling where secondary pids are added after the main pid is configured
+		//see issue 1849
+		if (!is_new_period_request && ctx->period_not_ready && !ds->rep) {
+			gf_list_add(ctx->current_period->streams, ds);
+			ds->period = ctx->current_period;
+			ds->request_period_switch = 0;
+			return GF_OK;
+		}
 	}
 	ds->request_period_switch = 0;
 
@@ -994,20 +1007,36 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			CHECK_PROP_FRAC(GF_PROP_PID_FPS, ds->fps, GF_EOS)
 
 
-			p = gf_filter_pid_get_property(pid, GF_PROP_PID_CROP_POS);
-			if (p && ((p->value.vec2i.x != ds->srd.x) || (p->value.vec2i.y != ds->srd.y) ) ) period_switch = GF_TRUE;
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_TILE_BASE);
 			if (p) {
-				ds->srd.x = p->value.vec2i.x;
-				ds->srd.y = p->value.vec2i.y;
+				ds->srd.x = ds->srd.y = 0;
 				ds->srd.z = ds->width;
 				ds->srd.w = ds->height;
+				ds->tile_base = GF_TRUE;
 			} else {
-				p = gf_filter_pid_get_property(pid, GF_PROP_PID_TILE_BASE);
+				p = gf_filter_pid_get_property(pid, GF_PROP_PID_CROP_POS);
+				if (p && ((p->value.vec2i.x != ds->srd.x) || (p->value.vec2i.y != ds->srd.y) ) ) period_switch = GF_TRUE;
 				if (p) {
-					ds->srd.x = ds->srd.y = 0;
+					ds->srd.x = p->value.vec2i.x;
+					ds->srd.y = p->value.vec2i.y;
 					ds->srd.z = ds->width;
 					ds->srd.w = ds->height;
-					ds->tile_base = GF_TRUE;
+				} else {
+					p = gf_filter_pid_get_property(pid, GF_PROP_PID_SRD);
+					if (p && (
+						(p->value.vec4i.x != ds->srd.x)
+						|| (p->value.vec4i.y != ds->srd.y)
+						|| (p->value.vec4i.z != ds->srd.z)
+						|| (p->value.vec4i.w != ds->srd.w)
+					) )
+						period_switch = GF_TRUE;
+
+					if (p) {
+						ds->srd.x = p->value.vec4i.x;
+						ds->srd.y = p->value.vec4i.y;
+						ds->srd.z = p->value.vec4i.z;
+						ds->srd.w = p->value.vec4i.w;
+					}
 				}
 			}
 		} else if (ds->stream_type==GF_STREAM_AUDIO) {
@@ -2520,7 +2549,16 @@ static void dasher_setup_set_defaults(GF_DasherCtx *ctx, GF_MPD_AdaptationSet *s
 				desc = gf_mpd_descriptor_new(NULL, "urn:mpeg:dash:srd:2014", value);
 				gf_list_add(set->supplemental_properties, desc);
 			} else {
-				sprintf(value, "1,0,0,0,0,%d,%d", ds->srd.z, ds->srd.w);
+				if (ds->tile_base) {
+					sprintf(value, "1,0,0,0,0,%d,%d", ds->srd.z, ds->srd.w);
+				} else {
+					const GF_PropertyValue *p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_SRD_REF);
+					if (p) {
+						sprintf(value, "1,%d,%d,%d,%d,%d,%d", ds->srd.x, ds->srd.y, ds->srd.z, ds->srd.w, p->value.vec2i.x, p->value.vec2i.y);
+					} else {
+						sprintf(value, "1,%d,%d,%d,%d", ds->srd.x, ds->srd.y, ds->srd.z, ds->srd.w);
+					}
+				}
 				desc = gf_mpd_descriptor_new(NULL, "urn:mpeg:dash:srd:2014", value);
 				gf_list_add(set->essential_properties, desc);
 			}
@@ -3421,6 +3459,9 @@ static void dasher_setup_sources(GF_Filter *filter, GF_DasherCtx *ctx, GF_MPD_Ad
 			strcpy(szDASHSuffix, szSetFileSuffix);
 			use_dash_suffix = GF_TRUE;
 		}
+		//we need dash suffix in template, but the template may be user-provided without dash suffix. If so add it
+		if (use_dash_suffix && !strstr(szTemplate, "$FS$"))
+			strcat(szTemplate, "$FS$");
 
 		//resolve segment template
 		e = gf_filter_pid_resolve_file_template(ds->ipid, szTemplate, szDASHTemplate, 0, use_dash_suffix ? szDASHSuffix : NULL);
@@ -4451,6 +4492,8 @@ GF_Err dasher_send_manifest(GF_Filter *filter, GF_DasherCtx *ctx, Bool for_mpd_o
 		ctx->mpd->max_segment_duration = (u32) max_seg_dur;
 		ctx->mpd->max_subsegment_duration = 0;
 	}
+	if (ctx->def_max_seg_dur)
+		ctx->mpd->max_segment_duration = (u32) ctx->def_max_seg_dur;
 
 	if (ctx->do_m3u8) {
 		Bool m3u8_second_pass = GF_FALSE;
@@ -4538,8 +4581,10 @@ resend:
 		if (e) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[Dasher] failed to write MPD file: %s\n", gf_error_to_string(e) ));
 		}
-		return e;
 	}
+
+	if (ctx->def_max_seg_dur)
+		ctx->mpd->max_segment_duration = 0;
 	return GF_OK;
 }
 
@@ -5734,6 +5779,9 @@ static GF_Err dasher_setup_period(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashS
 				}
 			}
 		}
+
+		if (ds->dash_dur.num * 1000 > ctx->def_max_seg_dur * ds->dash_dur.den )
+			ctx->def_max_seg_dur = (u32) ((ds->dash_dur.num * 1000) / ds->dash_dur.den);
 	}
 
 
@@ -6259,6 +6307,7 @@ static void dasher_flush_segment(GF_DasherCtx *ctx, GF_DashStream *ds, Bool is_l
 		first_cts_in_cur_seg = ds->first_cts_in_seg;
 		if (ctx->mpd->max_segment_duration < seg_dur_ms)
 			ctx->mpd->max_segment_duration = seg_dur_ms;
+		ctx->def_max_seg_dur = 0;
 
 		seg_duration = (Double) base_ds->first_cts_in_next_seg - ds->first_cts_in_seg;
 		seg_duration /= base_ds->timescale;
@@ -6705,7 +6754,18 @@ static void dasher_mark_segment_start(GF_DasherCtx *ctx, GF_DashStream *ds, GF_F
 						}
 					}
 					ds->rep->segment_base->initialization_segment = url;
+
+					//first seg, remove sidx if present
+					//our frag_range includes sidx
+					const GF_PropertyValue *sidx_range = gf_filter_pck_get_property(in_pck, GF_PROP_PCK_SIDX_RANGE);
+					if (sidx_range) {
+						u64 sidx_size = (u64)sidx_range->value.lfrac.den;
+						sidx_size -= (u64) sidx_range->value.lfrac.num;
+						seg_state->file_offset += sidx_size;
+						seg_state->file_size -= sidx_size;
+					}
 				}
+
 			} else {
 				gf_list_del_item(ds->rep->state_seg_list, seg_state);
 				gf_free(seg_state);
@@ -6743,7 +6803,7 @@ static void dasher_mark_segment_start(GF_DasherCtx *ctx, GF_DashStream *ds, GF_F
 					GF_SAFEALLOC(ds->rep->segment_base->index_range, GF_MPD_ByteRange);
 					if (ds->rep->segment_base->index_range) {
 						ds->rep->segment_base->index_range->start_range = p->value.lfrac.num;
-						ds->rep->segment_base->index_range->end_range = p->value.lfrac.den;
+						ds->rep->segment_base->index_range->end_range = p->value.lfrac.den-1;
 						ds->rep->segment_base->index_range_exact = GF_TRUE;
 					}
 
@@ -7231,7 +7291,12 @@ static GF_Err dasher_process(GF_Filter *filter)
 
 	//streams in period are not all ready, wait for them
 	if (ctx->period_not_ready) {
-		Bool is_eos = gf_filter_end_of_session(filter);
+		Bool is_eos;
+		//potpone until no pending connections, otherwise we may add input streams in the wrong period
+		if (gf_filter_connections_pending(filter))
+			return GF_OK;
+
+		is_eos = gf_filter_end_of_session(filter);
 		if (! dasher_check_period_ready(ctx, is_eos)) {
 			return is_eos ? GF_SERVICE_ERROR : GF_OK;
 		}
@@ -9019,6 +9084,9 @@ GF_FilterRegister DasherRegister = {
 "- DashDur: overrides segmenter segment duration for this PID\n"
 "- StartNumber: sets the start number for the first segment in the PID, default is 1\n"
 "- IntraOnly: indicates input pid follows HLS EXT-X-I-FRAMES-ONLY guidelines\n"
+"- CropOrigin: indicates x and y coordinates of video for SRD (size is video size)\n"
+"- SRD: indicates SRD position and size of video for SRD, ignored if `CropOrigin` is set\n"
+"- SRDRef: indicates global width and height of SRD, ignored if `CropOrigin` is set\n"
 "- Non-dash properties: Bitrate, SAR, Language, Width, Height, SampleRate, NumChannels, Language, ID, DependencyID, FPS, Interlaced, Codec. These properties are used to setup each representation and can be overridden on input PIDs using the general PID property settings (cf global help).\n"
 "  \n"
 "EX src=test.mp4:#Bitrate=1M dst=test.mpd\n"
@@ -9043,6 +9111,8 @@ GF_FilterRegister DasherRegister = {
 "This will insert an create an MPD with first a remote period then a regular one.\n"
 "EX src=null:#xlink=http://foo/bar.xml:#PStart=6 src=m.mp4\n"
 "This will create an MPD with first a regular period, dashing ony 6s of content, then a remote one.\n"
+"EX src=v1:#SRD=0x0x1280x360:#SRDRef=1280x720 src=vid2:#SRD=0x360x1280x360\n"
+"This will layout the v2 below v1 using a global SRD size of 1280x720.\n"
 "\n"
 "The segmenter will create muxing filter chains for each representation and will reassign PID IDs so that each media component (video, audio, ...) in an adaptation set has the same ID.\n"
 "\n"

@@ -949,9 +949,14 @@ GF_Err gf_hinter_track_finalize(GF_RTPHinter *tkHint, Bool AddSystemInfo)
 		strcat(sdpLine, "; tx3g=");
 		for (i=0; i<gf_isom_get_sample_description_count(tkHint->file, tkHint->TrackNum); i++) {
 			u8 *tx3g;
+			GF_Err e;
 			char buffer[2000];
 			u32 tx3g_len, len;
-			gf_isom_text_get_encoded_tx3g(tkHint->file, tkHint->TrackNum, i+1, GF_RTP_TX3G_SIDX_OFFSET, &tx3g, &tx3g_len);
+			e = gf_isom_text_get_encoded_tx3g(tkHint->file, tkHint->TrackNum, i+1, GF_RTP_TX3G_SIDX_OFFSET, &tx3g, &tx3g_len);
+			if (e) {
+				if (i) continue;
+				return GF_ISOM_INVALID_FILE;
+			}
 			len = gf_base64_encode(tx3g, tx3g_len, buffer, 2000);
 			gf_free(tx3g);
 			buffer[len] = 0;
@@ -1236,7 +1241,7 @@ GF_Err gf_hinter_finalize(GF_ISOFile *file, GF_SDP_IODProfile IOD_Profile, u32 b
 		if (gf_isom_get_sample_count(file, sceneT)==1) {
 			samp = gf_isom_get_sample(file, sceneT, 1, &descIndex);
 			if (samp && gf_hinter_can_embbed_data(samp->data, samp->dataLength, GF_STREAM_SCENE)) {
-
+				InitSL_NULL(&slc);
 				slc.timeScale = slc.timestampResolution = gf_isom_get_media_timescale(file, sceneT);
 				slc.OCRResolution = 1000;
 				slc.startCTS = samp->DTS+samp->CTS_Offset;

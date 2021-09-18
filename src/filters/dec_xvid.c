@@ -181,7 +181,7 @@ static GF_Err xviddec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	/*decode DSI*/
 	e = gf_m4v_get_config(p->value.data.ptr, p->value.data.size, &dsi);
 	if (e) return e;
-	if (!dsi.width || !dsi.height) return GF_NON_COMPLIANT_BITSTREAM;
+	if (!dsi.width || (dsi.width%2) || !dsi.height) return GF_NON_COMPLIANT_BITSTREAM;
 
 	memset(&par, 0, sizeof(par));
 	par.width = dsi.width;
@@ -381,6 +381,7 @@ packed_frame :
 
 	if (src_pck) {
 		gf_filter_pck_merge_properties(src_pck, dst_pck);
+		gf_filter_pck_set_dependency_flags(dst_pck, 0);
 		is_seek = gf_filter_pck_get_seek_flag(src_pck);
 		ctx->next_cts = gf_filter_pck_get_cts(src_pck);
 		gf_filter_pck_set_dts(dst_pck, ctx->next_cts);

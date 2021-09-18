@@ -1225,6 +1225,8 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 				        metapd->format_identifier == GF_M2TS_META_ID3 &&
 				        metapd->carriage_flag == METADATA_CARRIAGE_SAME_TS) {
 					/*HLS ID3 Metadata */
+					if (pmt->program->metadata_pointer_descriptor)
+						gf_m2ts_metadata_pointer_descriptor_del(pmt->program->metadata_pointer_descriptor);
 					pmt->program->metadata_pointer_descriptor = metapd;
 				} else {
 					/* don't know what to do with it for now, delete */
@@ -1350,6 +1352,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		case GF_M2TS_VIDEO_VVC:
 		case GF_M2TS_VIDEO_VVC_TEMPORAL:
 		case GF_M2TS_VIDEO_VC1:
+		case GF_M2TS_HLS_AVC_CRYPT:
 			inherit_pcr = 1;
 		case GF_M2TS_AUDIO_MPEG1:
 		case GF_M2TS_AUDIO_MPEG2:
@@ -1363,6 +1366,9 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		case GF_M2TS_MHAS_AUX:
 		case GF_M2TS_SUBTITLE_DVB:
 		case GF_M2TS_METADATA_PES:
+		case GF_M2TS_HLS_AAC_CRYPT:
+		case GF_M2TS_HLS_AC3_CRYPT:
+		case GF_M2TS_HLS_EC3_CRYPT:
 		case 0xA1:
 			GF_SAFEALLOC(pes, GF_M2TS_PES);
 			if (!pes) {
@@ -1452,7 +1458,6 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 
 		default:
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] Stream type (0x%x) for PID %d not supported\n", stream_type, pid ) );
-			//GF_LOG(/*GF_LOG_WARNING*/GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Stream type (0x%x) for PID %d not supported\n", stream_type, pid ) );
 			break;
 		}
 
@@ -1595,6 +1600,8 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 					        metad->format_identifier == GF_M2TS_META_ID3) {
 						/*HLS ID3 Metadata */
 						if (pes) {
+							if (pes->metadata_descriptor)
+								gf_m2ts_metadata_descriptor_del(pes->metadata_descriptor);
 							pes->metadata_descriptor = metad;
 							pes->stream_type = GF_M2TS_METADATA_ID3_HLS;
 						}

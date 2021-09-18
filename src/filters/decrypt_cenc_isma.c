@@ -29,6 +29,8 @@
 #include <gpac/crypt.h>
 #include <gpac/base_coding.h>
 #include <gpac/download.h>
+#include <gpac/network.h>
+#include <gpac/internal/media_dev.h>
 
 #ifndef GPAC_DISABLE_CRYPTO
 
@@ -36,7 +38,7 @@
 
 enum
 {
-	DECRYPT_STATE_ERROR,
+	DECRYPT_STATE_ERROR=1,
 	DECRYPT_STATE_SETUP,
 	DECRYPT_STATE_PLAY,
 };
@@ -92,7 +94,13 @@ typedef struct
 	/*adobe and CENC*/
 	Bool crypt_init;
 
+	Bool is_hls;
+	bin128 hls_IV;
+	char *hls_key_url;
+	Bool is_hls_saes;
+	u32 codec_id;
 
+	Bool force_hls_iv;
 } GF_CENCDecStream;
 
 typedef struct
@@ -103,7 +111,9 @@ typedef struct
 	GF_PropStringList kids;
 	GF_PropStringList keys;
 	GF_CryptInfo *cinfo;
-	
+	Bool hls_cenc_patch_iv;
+
+	GF_Filter *filter;
 	GF_List *streams;
 	GF_BitStream *bs_r;
 
@@ -576,7 +586,15 @@ static GF_Err cenc_dec_load_keys(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr)
 		if (found) continue;
 
 		for (j=0; j<cstr->KID_count; j++) {
-			if (!memcmp(KID, cstr->KIDs[j], 16) || !memcmp(blank_KID, cstr->KIDs[j], 16) ) {
+			Bool match = GF_FALSE;
+			if (cstr->is_hls) {
+				match = GF_TRUE;
+			} else if (cstr->KIDs[j]) {
+				if (!memcmp(KID, cstr->KIDs[j], 16) || !memcmp(blank_KID, cstr->KIDs[j], 16) ) {
+					match = GF_TRUE;
+				}
+			}
+			if (match) {
 				memcpy(cstr->crypts[i].key, cstr->keys[j], 16);
 				found = GF_TRUE;
 				if (ctx->decrypt==DECRYPT_SKIP) {
@@ -606,6 +624,117 @@ static GF_Err cenc_dec_load_keys(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr)
 
 	cstr->key_error = GF_OK;
 	cstr->crypt_init = GF_FALSE;
+	return GF_OK;
+}
+
+static GF_Err cenc_dec_set_hls_key(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, char *key_url, u8 *key_IV)
+{
+	GF_Err e;
+
+	cstr->is_hls = GF_TRUE;
+
+	//copy IV
+	memcpy(cstr->hls_IV, key_IV, sizeof(bin128));
+	//switch key if needed IV
+	if (cstr->hls_key_url && key_url && !strcmp(cstr->hls_key_url, key_url)) {
+		if (cstr->crypt_init)
+			gf_crypt_set_IV(cstr->crypts[0].crypt, cstr->hls_IV, 16);
+		return GF_OK;
+	}
+
+	if (cstr->hls_key_url) gf_free(cstr->hls_key_url);
+
+	if (!key_url) {
+		cstr->hls_key_url = NULL;
+		return GF_OK;
+	}
+	cstr->hls_key_url = gf_strdup(key_url);
+	if (!cstr->hls_key_url) {
+		return GF_OUT_OF_MEM;
+	}
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[CENC/HLS] Switching key to %s\n", key_url))
+
+	if (ctx->hls_cenc_patch_iv)
+		cstr->force_hls_iv = GF_TRUE;
+
+	cstr->KID_count = 1;
+	cstr->keys = (bin128 *)gf_realloc(cstr->keys, cstr->KID_count*sizeof(bin128));
+
+	if (!strncmp(key_url, "urn:gpac:keys:value:", 20)) {
+		u32 i;
+		u8 *key_data = (u8 *) cstr->keys[0];
+		key_url += 20;
+		if (!strncmp(key_url, "0x", 2)) key_url += 2;
+		i = (u32) strlen(key_url);
+		if (i != 32) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CENC/HLS] key %s not found\n", key_url))
+			return GF_BAD_PARAM;
+		}
+		for (i=0; i<16; i++) {
+			char szV[3];
+			u32 v;
+			szV[0] = key_url[2*i];
+			szV[1] = key_url[2*i + 1];
+			szV[2] = 0;
+			sscanf(szV, "%X", &v);
+			key_data[i] = v;
+		}
+	}
+	//key is local, activate right away
+	else if (gf_url_is_local(key_url)) {
+		FILE *fkey = gf_fopen(key_url, "r");
+		if (!fkey) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CENC/HLS] key %s not found\n", key_url))
+			return GF_URL_ERROR;
+		} else {
+			u32 read = (u32) gf_fread(cstr->keys[0], 16, fkey);
+			if (read != 16) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CENC/HLS] key %s too short, expecting 16 bytes got %d\n", key_url, read))
+				return GF_BAD_PARAM;
+			}
+			gf_fclose(fkey);
+		}
+	}
+	//load key
+	else {
+		u32 nb_read=0;
+		u8 key_data[100];
+		GF_DownloadManager *dm = gf_filter_get_download_manager(ctx->filter);
+		GF_DownloadSession *sess = gf_dm_sess_new(dm, key_url, GF_NETIO_SESSION_NOT_THREADED | GF_NETIO_SESSION_NOT_CACHED, NULL, NULL, &e);
+		if (e) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CENC/HLS] Failed to setup download session for key %s: %s\n", key_url, gf_error_to_string(e)))
+			return e;
+		}
+		while (1) {
+			u32 nread=0;
+			e = gf_dm_sess_fetch_data(sess, key_data + nb_read, 100-nb_read, &nread);
+			nb_read += nread;
+			if (nb_read > 16) break;
+
+			if ((e<0) && (e != GF_IP_NETWORK_EMPTY)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CENC/HLS] Failed to download key %s: %s\n", key_url, gf_error_to_string(e)))
+				return e;
+			}
+			if (e == GF_EOS) {
+				break;
+			}
+		}
+		//first 16 bytes is the key, in some case we have IV repeated after the key (to do ?)
+		if (nb_read <= 32) {
+			memcpy(cstr->keys[0], key_data, sizeof(bin128));
+		} else {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CENC/HLS] Invalid key size, greater than 16 bytes\n"))
+			return GF_SERVICE_ERROR;
+		}
+	}
+
+	if (!cstr->crypts) {
+		cstr->crypts = gf_malloc(sizeof(CENCDecKey));
+		memset(cstr->crypts, 0, sizeof(CENCDecKey));
+	}
+	memcpy(cstr->crypts[0].key, cstr->keys[0], sizeof(bin128));
+	cstr->crypts[0].key_valid = 1;
+
 	return GF_OK;
 }
 
@@ -667,6 +796,8 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 		cstr->cenc_ki = NULL;
 	}
 
+	cstr->state = is_playing ? DECRYPT_STATE_PLAY : DECRYPT_STATE_SETUP;
+
 	if ((cstr->scheme_type==scheme_type) && (cstr->scheme_version==scheme_version) && (cstr->pssh_crc==pssh_crc) )
 		return GF_OK;
 
@@ -678,9 +809,6 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 		cstr->is_cenc = GF_TRUE;
 	else
 		cstr->is_cbc = GF_TRUE;
-
-	cstr->state = is_playing ? DECRYPT_STATE_PLAY : DECRYPT_STATE_SETUP;
-	//ctx->nb_allow_play = 1;
 
 	cinfo_prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_DECRYPT_INFO);
 	if (!cinfo_prop) cinfo_prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_CRYPT_INFO);
@@ -814,6 +942,14 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 		return GF_OK;
 	}
 
+	cinfo_prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_HLS_KMS);
+	prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_HLS_IV);
+
+	if (cinfo_prop && prop) {
+		e = cenc_dec_set_hls_key(ctx, cstr, cinfo_prop->value.string, prop->value.data.ptr);
+		if (!e) return GF_OK;
+	}
+
 	if (ctx->decrypt!=DECRYPT_FULL) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC/ISMA] No keys found but playback forced\n"));
 		return GF_OK;
@@ -821,6 +957,43 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 	GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC/ISMA] No key found, aborting!\n\tUse '--decrypt=nokey' to force decrypting\n"));
 	return GF_FILTER_NOT_SUPPORTED;
 }
+
+static GF_Err cenc_dec_hls_saes(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u32 scheme_type, u32 scheme_version, const char *scheme_uri, const char *kms_uri)
+{
+	GF_Err e;
+	const GF_PropertyValue *prop, *cinfo_prop;
+	GF_FilterPid *pid = cstr->ipid;
+	Bool is_playing = (cstr->state == DECRYPT_STATE_PLAY) ? GF_TRUE : GF_FALSE;
+
+	cstr->state = DECRYPT_STATE_ERROR;
+
+	cstr->cenc_pattern = gf_filter_pid_get_property(pid, GF_PROP_PID_CENC_PATTERN);
+	if (cstr->cenc_pattern && (!cstr->cenc_pattern->value.frac.num || !cstr->cenc_pattern->value.frac.den))
+		cstr->cenc_pattern = NULL;
+
+	cstr->state = is_playing ? DECRYPT_STATE_PLAY : DECRYPT_STATE_SETUP;
+	cstr->is_cbc = GF_TRUE;
+	cstr->is_hls_saes = GF_TRUE;
+	prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_CODECID);
+	if (!prop) return GF_NON_COMPLIANT_BITSTREAM;
+	cstr->codec_id = prop->value.uint;
+
+	cinfo_prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_HLS_KMS);
+	prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_HLS_IV);
+
+	if (cinfo_prop && prop) {
+		e = cenc_dec_set_hls_key(ctx, cstr, cinfo_prop->value.string, prop->value.data.ptr);
+		if (!e) return GF_OK;
+	}
+
+	if (ctx->decrypt!=DECRYPT_FULL) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC/ISMA] No keys found but playback forced\n"));
+		return GF_OK;
+	}
+	GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[CENC/ISMA] No key found, aborting!\n\tUse '--decrypt=nokey' to force decrypting\n"));
+	return GF_FILTER_NOT_SUPPORTED;
+}
+
 
 static GF_Err cenc_dec_setup_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u32 scheme_type, u32 scheme_version, const char *scheme_uri, const char *kms_uri)
 {
@@ -946,7 +1119,7 @@ static GF_Err cenc_dec_access_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 	return GF_BAD_PARAM;
 }
 
-static GF_Err denc_dec_push_iv(GF_CENCDecStream *cstr, u32 key_idx, u8 *IV, u32 iv_size, u32 const_iv_size, const u8 *const_iv)
+static GF_Err cenc_dec_push_iv(GF_CENCDecStream *cstr, u32 key_idx, u8 *IV, u32 iv_size, u32 const_iv_size, const u8 *const_iv)
 {
 	GF_Err e;
 
@@ -970,7 +1143,11 @@ static GF_Err denc_dec_push_iv(GF_CENCDecStream *cstr, u32 key_idx, u8 *IV, u32 
 			e = gf_crypt_set_IV(cstr->crypts[key_idx].crypt, IV, 17);
 		} else {
 			if (const_iv) {
-				memcpy(IV, const_iv, const_iv_size);
+				if (cstr->force_hls_iv) {
+					memcpy(IV, cstr->hls_IV, sizeof(bin128));
+				} else {
+					memcpy(IV, const_iv, const_iv_size);
+				}
 			}
 			e = gf_crypt_set_IV(cstr->crypts[key_idx].crypt, IV, 16);
 		}
@@ -1065,7 +1242,7 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 			memset(IV, 0, sizeof(u8)*17);
 			gf_bs_read_data(ctx->bs_r, IV, IV_size);
 
-			e = denc_dec_push_iv(cstr, kidx-1, IV, IV_size, 0, NULL);
+			e = cenc_dec_push_iv(cstr, kidx-1, IV, IV_size, 0, NULL);
 			if (e) goto exit;
 		}
 		if (nb_iv_init < cstr->multikey) {
@@ -1076,7 +1253,7 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 				u8 IV_size = key_info_get_iv_size(cstr->cenc_ki->value.data.ptr, cstr->cenc_ki->value.data.size, k+1, &const_iv_size, &const_iv);
 				if (IV_size) continue;
 				memset(IV, 0, sizeof(char)*17);
-				e = denc_dec_push_iv(cstr, k, IV, 0, const_iv_size, const_iv);
+				e = cenc_dec_push_iv(cstr, k, IV, 0, const_iv_size, const_iv);
 				if (e) goto exit;
 			}
 		}
@@ -1116,7 +1293,7 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 		if (skey_const_iv_size)
 			skey_const_iv = cstr->cenc_ki->value.data.ptr+21;
 
-		e = denc_dec_push_iv(cstr, 0, IV, iv_size, skey_const_iv_size, skey_const_iv);
+		e = cenc_dec_push_iv(cstr, 0, IV, iv_size, skey_const_iv_size, skey_const_iv);
 		if (e) goto exit;
 	}
 	cstr->crypt_init = GF_TRUE;
@@ -1195,6 +1372,10 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 				memcpy(IV, const_iv, const_iv_size);
 				if (const_iv_size == 8)
 					memset(IV+8, 0, sizeof(char)*8);
+
+				if (cstr->force_hls_iv)
+					memcpy(IV, cstr->hls_IV, sizeof(bin128));
+
 				gf_crypt_set_IV(cstr->crypts[kidx].crypt, IV, 16);
 			}
 			if (cur_pos + bytes_clear_data + bytes_encrypted_data > data_size) {
@@ -1266,6 +1447,169 @@ exit:
 	return e;
 }
 
+static GF_Err cenc_dec_process_hls_saes(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, GF_FilterPacket *in_pck)
+{
+	GF_Err e = GF_OK;
+	u32 data_size;
+	u8 *out_data;
+	GF_FilterPacket *out_pck;
+
+	gf_filter_pck_get_data(in_pck, &data_size);
+
+	if (!data_size) {
+		out_pck = gf_filter_pck_new_ref(cstr->opid, 0, 0, in_pck);
+		if (!out_pck) return GF_OUT_OF_MEM;
+		gf_filter_pck_merge_properties(in_pck, out_pck);
+		gf_filter_pck_set_property(out_pck, GF_PROP_PCK_CENC_SAI, NULL);
+		gf_filter_pck_set_crypt_flags(out_pck, 0);
+		gf_filter_pck_send(out_pck);
+		return GF_OK;
+	}
+
+	//we can use inplace processing for decryption
+	out_pck = gf_filter_pck_new_clone(cstr->opid, in_pck, &out_data);
+	if (!out_pck) return GF_OUT_OF_MEM;
+
+	//packet has been fetched, we now MUST have a key info
+	if (!cstr->hls_key_url) {
+		if (ctx->decrypt == DECRYPT_SKIP) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[CENC] Packet encrypted but no SAI info nor constant IV\n" ) );
+			e = GF_OK;
+			goto send_packet;
+		}
+		GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[HLS_SAES] Packet encrypted but no KEY info\n" ) );
+		return GF_SERVICE_ERROR;
+	}
+
+	e = cenc_dec_push_iv(cstr, 0, cstr->hls_IV, 16, 0, NULL);
+	if (e) goto exit;
+
+	cstr->crypt_init = GF_TRUE;
+
+	if (cstr->key_error) {
+		e = cstr->key_error;
+		goto exit;
+	}
+
+	if (cstr->codec_id==GF_CODECID_AVC) {
+		u32 cur_pos = 0;
+		u32 o_data_size = data_size;
+		u8 *data = out_data;
+
+		while (cur_pos + 4 < data_size) {
+			u32 i;
+			u32 nal_size=0;
+			u32 bk_idx = 0;
+			u8 *nal_start, *nal_hdr_ptr;
+			u32 nal_size_o;
+			for (i=0; i<4; i++) {
+				nal_size <<= 8;
+				nal_size |= data[i];
+			}
+			if (cur_pos+4+nal_size > data_size) {
+				break;
+			}
+			nal_hdr_ptr = data;
+			cur_pos += 4;
+			data += 4;
+
+			u8 nal_hdr = data[0];
+			u8 nal_type = nal_hdr & 0x1F;
+
+			if ((nal_size<=48) || ((nal_type != 1) && (nal_type != 5))) {
+				data += nal_size;
+				cur_pos += nal_size;
+				continue;
+			}
+			nal_start = data;
+			nal_size_o = nal_size;
+			//remove EPB
+			u32 nb_epb = gf_media_nalu_emulation_bytes_remove_count(data, nal_size);
+			if (nb_epb) {
+				nal_size = gf_media_nalu_remove_emulation_bytes(data, data, nal_size);
+			}
+
+			//unencrypted header
+			data += 32;
+			cur_pos += 32;
+			nal_size -= 32;
+
+			//const IV is applied at each subsample
+			gf_crypt_set_IV(cstr->crypts[0].crypt, cstr->hls_IV, 16);
+
+			while (nal_size) {
+				Bool is_crypted = GF_FALSE;
+				if (! (bk_idx % 10)) is_crypted = GF_TRUE;
+
+				if (is_crypted && cstr->crypts[0].key_valid) {
+					//decrypt
+					gf_crypt_decrypt(cstr->crypts[0].crypt, data, 16);
+				}
+
+				bk_idx++;
+				nal_size -= 16;
+				data += 16;
+				cur_pos += 16;
+				if (nal_size < 16) break;
+			}
+			//unencrypted trailer
+			data += nal_size;
+			cur_pos += nal_size;
+
+			if (nb_epb) {
+				u32 remain = data_size - (cur_pos+nb_epb);
+				//move all remainging bytes
+				memmove(nal_start + nal_size_o - nb_epb, nal_start + nal_size_o, remain);
+				//rewrite NALU length field
+				nal_size_o -= nb_epb;
+				nal_hdr_ptr[0] = ((nal_size_o>>24) & 0xFF);
+				nal_hdr_ptr[1] = ((nal_size_o>>16) & 0xFF);
+				nal_hdr_ptr[2] = ((nal_size_o>>8) & 0xFF);
+				nal_hdr_ptr[3] = ((nal_size_o) & 0xFF);
+
+				data_size -= nb_epb;
+			}
+		}
+		if (o_data_size > data_size)
+			gf_filter_pck_truncate(out_pck, data_size);
+	}
+	//otherwise audio, same scheme for all
+	else {
+		u8 *data = out_data;
+		//clear 16 bytes header
+		data += 16;
+		if (data_size>16) {
+			data_size-=16;
+
+			//const IV is applied at each sample
+			gf_crypt_set_IV(cstr->crypts[0].crypt, cstr->hls_IV, 16);
+		} else {
+			data_size=0;
+		}
+
+		while (data_size>0) {
+			gf_crypt_decrypt(cstr->crypts[0].crypt, data, 16);
+			data += 16;
+			data_size -= 16;
+			if (data_size<16)
+				break;
+		}
+	}
+
+
+send_packet:
+	gf_filter_pck_merge_properties(in_pck, out_pck);
+	gf_filter_pck_set_property(out_pck, GF_PROP_PCK_CENC_SAI, NULL);
+	gf_filter_pck_set_crypt_flags(out_pck, 0);
+
+	gf_filter_pck_send(out_pck);
+
+exit:
+	if (e && out_pck) {
+		gf_filter_pck_discard(out_pck);
+	}
+	return e;
+}
 
 static GF_Err cenc_dec_process_adobe(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, GF_FilterPacket *in_pck)
 {
@@ -1340,6 +1684,7 @@ static void cenc_dec_stream_del(GF_CENCDecStream *cstr)
 	}
 	if (cstr->KIDs) gf_free(cstr->KIDs);
 	if (cstr->keys) gf_free(cstr->keys);
+	if (cstr->hls_key_url) gf_free(cstr->hls_key_url);
 
 
 	gf_free(cstr);
@@ -1463,6 +1808,9 @@ static GF_Err cenc_dec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	case GF_ISOM_ADOBE_SCHEME:
 		e = cenc_dec_setup_adobe(ctx, cstr, scheme_type, scheme_version, scheme_uri, kms_uri);
 		break;
+	case GF_HLS_SAMPLE_AES_SCHEME:
+		e = cenc_dec_hls_saes(ctx, cstr, scheme_type, scheme_version, scheme_uri, kms_uri);
+		break;
 	default:
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[CENC/ISMA] Protection scheme type %s not supported\n", gf_4cc_to_str(scheme_type) ) );
 		return GF_SERVICE_ERROR;
@@ -1563,7 +1911,14 @@ static GF_Err cenc_dec_process(GF_Filter *filter)
 			continue;
 		}
 
-		if (cstr->is_cenc || cstr->is_cbc) {
+		if (cstr->state != DECRYPT_STATE_PLAY) {
+			gf_filter_pid_drop_packet(cstr->ipid);
+			continue;
+		}
+
+		if (cstr->is_hls_saes) {
+			e = cenc_dec_process_hls_saes(ctx, cstr, pck);
+		} else if (cstr->is_cenc || cstr->is_cbc) {
 			e = cenc_dec_process_cenc(ctx, cstr, pck);
 		} else if (cstr->is_oma) {
 			e = GF_NOT_SUPPORTED;
@@ -1582,6 +1937,7 @@ static GF_Err cenc_dec_process(GF_Filter *filter)
 static GF_Err cenc_dec_initialize(GF_Filter *filter)
 {
 	GF_CENCDecCtx *ctx = (GF_CENCDecCtx *)gf_filter_get_udta(filter);
+	ctx->filter = filter;
 
 	if (ctx->keys.nb_items) {
 		if (ctx->keys.nb_items != ctx->kids.nb_items) {
@@ -1631,6 +1987,7 @@ static const GF_FilterCapability CENCDecCaps[] =
 	CAP_4CC(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_ISOM_CBCS_SCHEME),
 	CAP_4CC(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_ISOM_ADOBE_SCHEME),
 	CAP_4CC(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_ISOM_PIFF_SCHEME),
+	CAP_4CC(GF_CAPS_INPUT,GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_HLS_SAMPLE_AES_SCHEME),
 
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_ENCRYPTED),
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
@@ -1652,13 +2009,17 @@ static const GF_FilterArgs GF_CENCDecArgs[] =
 	{ OFFS(drop_keys), "consider keys with given 1-based indexes as not available (multi-key debug)", GF_PROP_UINT_LIST, NULL, NULL, GF_ARG_HINT_EXPERT},
 	{ OFFS(kids), "define KIDs. If `keys` is empty, consider keys with given KID (as hex string) as not available (debug)", GF_PROP_STRING_LIST, NULL, NULL, GF_ARG_HINT_EXPERT},
 	{ OFFS(keys), "define key values for each of the specified KID", GF_PROP_STRING_LIST, NULL, NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(hls_cenc_patch_iv), "ignore IV updates in some broken HLS+CENC streams", GF_PROP_BOOL, "false", NULL, GF_ARG_HINT_EXPERT},
 	{0}
 };
 
 GF_FilterRegister CENCDecRegister = {
 	.name = "cdcrypt",
 	GF_FS_SET_DESCRIPTION("CENC decryptor")
-	GF_FS_SET_HELP("The CENC decryptor supports decrypting CENC, ISMA and Adobe streams. It uses a configuration file for retrieving keys.\n"
+	GF_FS_SET_HELP("The CENC decryptor supports decrypting CENC, ISMA, HLS Sample-AES (MPEG2 ts) and Adobe streams.\n"
+	"\n"
+	"For HLS, key is retrieved according to the key URI in the manifest.\n"
+	"Otherwise, the filter uses a configuration file.\n"
 	"The syntax is available at https://wiki.gpac.io/Common-Encryption\n"
 	"The file can be set per PID using the property `DecryptInfo` (highest priority), `CryptInfo` (lower priority) "
 	"or set at the filter level using [-cfile]() (lowest priority).\n"

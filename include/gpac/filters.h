@@ -1190,6 +1190,7 @@ enum
 	GF_PROP_PID_DASH_PERIOD_START = GF_4CC('D','P','S','T'),
 	GF_PROP_PCK_HLS_VARIANT_NAME = GF_4CC('D','H','L','N'),
 	GF_PROP_PID_HLS_KMS = GF_4CC('H','L','S','K'),
+	GF_PROP_PID_HLS_IV = GF_4CC('H','L','S','I'),
 	//internal property indicating pointer to associated GF_DownloadSession
 	GF_PROP_PID_DOWNLOAD_SESSION = GF_4CC('G','H','T','T'),
 
@@ -2709,7 +2710,7 @@ GF_Err gf_filter_remove_event_listener(GF_Filter *filter, GF_FSEventListener *el
 /*! Forwards an event to the filter session
 \param filter filter object
 \param evt the event forwarded
-\param consumed if set, indicates the event was already consummed/processed before forwarding
+\param consumed if set, indicates the event was already consumed/processed before forwarding
 \param skip_user if set, indicates the event should only be dispatched to event listeners.
 Otherwise, if a user is assigned to the session, the event is forwarded to the user
 \return the error code if any
@@ -2982,10 +2983,10 @@ GF_Err gf_filter_get_stats(GF_Filter *filter, GF_FilterStats *stats);
 const GF_FilterArgs *gf_filter_enumerate_args(GF_Filter *filter, u32 idx);
 
 
-/*! Enumerates default arguments of a filter
-\param filter filter session
-\param service_url
-\param parent_url
+/*! Reslves URL against locales settings
+\param filter filter
+\param service_url URL of service to relocate
+\param parent_url parent URL of service
 \param out_relocated_url - must be GF_MAX_PATH size
 \param out_localized_url - must be GF_MAX_PATH size
 \return GF_TRUE if success

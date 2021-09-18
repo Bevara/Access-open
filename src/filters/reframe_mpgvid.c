@@ -784,8 +784,14 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 			mpgviddmx_enqueue_or_dispatch(ctx, dst_pck, GF_FALSE, GF_FALSE);
 		}
 
-		//parse headers
+		//not enough bytes to parse start code
+		if (remain<5) {
+			memcpy(ctx->hdr_store, start, remain);
+			ctx->bytes_in_header = remain;
+			break;
+		}
 
+		//parse headers
 		//we have a start code loaded, eg the data packet does not have a full start code at the beginning
 		if (sc_type_forced) {
 			gf_bs_reassign_buffer(ctx->bs, start + hdr_offset, remain - hdr_offset);
@@ -805,12 +811,17 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 				//not enough data, accumulate until we can parse the full header
 				if (e==GF_EOS) {
 					if (vosh_start<0) vosh_start = 0;
-					if (ctx->hdr_store_alloc < ctx->hdr_store_size + pck_size - vosh_start) {
-						ctx->hdr_store_alloc = (u32) (ctx->hdr_store_size + pck_size - vosh_start);
-						ctx->hdr_store = gf_realloc(ctx->hdr_store, sizeof(char)*ctx->hdr_store_alloc);
+					if (data == ctx->hdr_store) {
+						memmove(ctx->hdr_store, start, remain);
+						ctx->hdr_store_size = remain;
+					} else {
+						if (ctx->hdr_store_alloc < ctx->hdr_store_size + pck_size - vosh_start) {
+							ctx->hdr_store_alloc = (u32) (ctx->hdr_store_size + pck_size - vosh_start);
+							ctx->hdr_store = gf_realloc(ctx->hdr_store, sizeof(char)*ctx->hdr_store_alloc);
+						}
+						memcpy(ctx->hdr_store + ctx->hdr_store_size, data + vosh_start, (size_t) (pck_size - vosh_start) );
+						ctx->hdr_store_size += pck_size - (u32) vosh_start;
 					}
-					memcpy(ctx->hdr_store + ctx->hdr_store_size, data + vosh_start, (size_t) (pck_size - vosh_start) );
-					ctx->hdr_store_size += pck_size - (u32) vosh_start;
 					gf_filter_pid_drop_packet(ctx->ipid);
 					return GF_OK;
 				} else if (e != GF_OK) {
@@ -844,12 +855,17 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 				//not enough data, accumulate until we can parse the full header
 				if (e==GF_EOS) {
 					if (vosh_start<0) vosh_start = 0;
-					if (ctx->hdr_store_alloc < ctx->hdr_store_size + pck_size - vosh_start) {
-						ctx->hdr_store_alloc = (u32) (ctx->hdr_store_size + pck_size - (u32) vosh_start);
-						ctx->hdr_store = gf_realloc(ctx->hdr_store, sizeof(char)*ctx->hdr_store_alloc);
+					if (data == ctx->hdr_store) {
+						memmove(ctx->hdr_store, start, remain);
+						ctx->hdr_store_size = remain;
+					} else {
+						if (ctx->hdr_store_alloc < ctx->hdr_store_size + pck_size - vosh_start) {
+							ctx->hdr_store_alloc = (u32) (ctx->hdr_store_size + pck_size - (u32) vosh_start);
+							ctx->hdr_store = gf_realloc(ctx->hdr_store, sizeof(char)*ctx->hdr_store_alloc);
+						}
+						memcpy(ctx->hdr_store + ctx->hdr_store_size, data + vosh_start, (size_t) (pck_size - vosh_start) );
+						ctx->hdr_store_size += pck_size - (u32) vosh_start;
 					}
-					memcpy(ctx->hdr_store + ctx->hdr_store_size, data + vosh_start, (size_t) (pck_size - vosh_start) );
-					ctx->hdr_store_size += pck_size - (u32) vosh_start;
 					gf_filter_pid_drop_packet(ctx->ipid);
 					return GF_OK;
 				} else if (e != GF_OK) {

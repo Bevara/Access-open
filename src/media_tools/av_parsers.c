@@ -3980,9 +3980,18 @@ void gf_av1_reset_state(AV1State *state, Bool is_destroy)
 		gf_list_del(l1);
 		gf_list_del(l2);
 		if (state->bs) {
-			if (gf_bs_get_position(state->bs)) {
-				u32 size;
-				gf_bs_get_content_no_truncate(state->bs, &state->frame_obus, &size, &state->frame_obus_alloc);
+			u32 size, asize=0;
+			u8 *ptr=NULL;
+			//detach BS internal buffer
+			gf_bs_get_content_no_truncate(state->bs, &ptr, &size, &asize);
+			//avoid double free, cf issue 1893
+			if (ptr != state->frame_obus) {
+				gf_free(ptr);
+			}
+			if (state->frame_obus) {
+				gf_free(state->frame_obus);
+				state->frame_obus = NULL;
+				state->frame_obus_alloc = 0;
 			}
 			gf_bs_del(state->bs);
 		}
@@ -4180,7 +4189,7 @@ GF_Err gf_av1_parse_obu(GF_BitStream *bs, ObuType *obu_type, u64 *obu_size, u32 
 		else if (metadata_type == METADATA_TYPE_TIMECODE) {
 		}
 #endif
-		GF_LOG(GF_LOG_INFO, GF_LOG_CODING, ("[AV1] parsing for metadata is not implemented. Forwarding.\n"));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CODING, ("[AV1] parsing for metadata is not implemented. Forwarding.\n"));
 
 		if (gf_bs_get_position(bs) > pos + *obu_size) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[AV1] Metadata parsing consumed too many bytes !\n"));
@@ -4692,23 +4701,30 @@ u32 gf_bs_read_ue_log_idx3(GF_BitStream *bs, const char *fname, s32 idx1, s32 id
 	u32 bits = 0;
 	for (code=0; !code; nb_lead++) {
 		if (nb_lead>=32) {
-			//gf_bs_read_int keeps returning 0 on EOS, so if no more bits available, rbsp was truncated otherwise code is broken in rbsp)
-			//we only test once nb_lead>=32 to avoid testing at each bit read
-			if (!gf_bs_available(bs)) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[Core] exp-golomb read failed, not enough bits in bitstream !\n"));
-			} else {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[Core] corrupted exp-golomb code, %d leading zeros, max 31 allowed !\n", nb_lead));
-			}
-			return 0;
+			break;
 		}
-
 		code = gf_bs_read_int(bs, 1);
 		bits++;
 	}
 
+	if (nb_lead>=32) {
+		//gf_bs_read_int keeps returning 0 on EOS, so if no more bits available, rbsp was truncated otherwise code is broken in rbsp)
+		//we only test once nb_lead>=32 to avoid testing at each bit read
+		if (!gf_bs_available(bs)) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[Core] exp-golomb read failed, not enough bits in bitstream !\n"));
+		} else {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[Core] corrupted exp-golomb code, %d leading zeros, max 31 allowed !\n", nb_lead));
+		}
+		return 0;
+	}
+
 	if (nb_lead) {
+		u32 leads=1;
 		val = gf_bs_read_int(bs, nb_lead);
-		val += (1 << nb_lead) - 1;
+		leads <<= nb_lead;
+		leads -= 1;
+		val += leads;
+//		val += (1 << nb_lead) - 1;
 		bits += nb_lead;
 	}
 
@@ -5196,6 +5212,7 @@ static s32 gf_avc_read_sps_bs_internal(GF_BitStream *bs, AVCState *avc, u32 subs
 		sps->offset_for_top_to_bottom_field = gf_bs_read_se_log(bs, "offset_for_top_to_bottom_field");
 		sps->poc_cycle_length = gf_bs_read_ue_log(bs, "poc_cycle_length");
 		if (sps->poc_cycle_length > GF_ARRAY_LENGTH(sps->offset_for_ref_frame)) {
+			sps->poc_cycle_length = 255;
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[avc-h264] offset_for_ref_frame overflow from poc_cycle_length\n"));
 			return -1;
 		}
@@ -5673,7 +5690,7 @@ static s32 avc_parse_slice(GF_BitStream *bs, AVCState *avc, Bool svc_idr_flag, A
 	if (si->slice_type > 9) return -1;
 
 	pps_id = gf_bs_read_ue_log(bs, "pps_id");
-	if (pps_id > 255) return -1;
+	if ((pps_id<0) || (pps_id > 255)) return -1;
 	si->pps = &avc->pps[pps_id];
 	if (!si->pps->slice_group_count) return -2;
 	si->sps = &avc->sps[si->pps->sps_id];
@@ -5782,7 +5799,7 @@ static s32 svc_parse_slice(GF_BitStream *bs, AVCState *avc, AVCSliceInfo *si)
 	if (si->slice_type > 9) return -1;
 
 	pps_id = gf_bs_read_ue_log(bs, "pps_id");
-	if (pps_id > 255)
+	if ((pps_id<0) || (pps_id > 255))
 		return -1;
 	si->pps = &avc->pps[pps_id];
 	si->pps->id = pps_id;
@@ -6107,7 +6124,8 @@ s32 gf_avc_parse_nalu(GF_BitStream *bs, AVCState *avc)
 			ret = 1;
 			break;
 		}
-		assert(avc->s_info.sps);
+		if (!avc->s_info.sps)
+			return -1;
 
 		if (avc->s_info.sps->poc_type == n_state.sps->poc_type) {
 			if (!avc->s_info.sps->poc_type) {
@@ -6239,6 +6257,7 @@ u32 gf_media_avc_reformat_sei(u8 *buffer, u32 nal_size, Bool isobmf_rewrite, AVC
 		if (start + psize >= nal_size) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[avc-h264] SEI user message type %d size error (%d but %d remain), keeping full SEI untouched\n", ptype, psize, nal_size - start));
 			if (bs_dest) gf_bs_del(bs_dest);
+			gf_bs_del(bs);
 			return nal_size;
 		}
 		switch (ptype) {
@@ -6329,7 +6348,15 @@ u32 gf_media_avc_reformat_sei(u8 *buffer, u32 nal_size, Bool isobmf_rewrite, AVC
 		u8 *dst_no_epb = NULL;
 		u32 dst_no_epb_size = 0;
 		gf_bs_get_content(bs_dest, &dst_no_epb, &dst_no_epb_size);
-		nal_size = gf_media_nalu_add_emulation_bytes(buffer, dst_no_epb, dst_no_epb_size);
+		if (dst_no_epb) {
+			u32 nb_bytes_add = gf_media_nalu_emulation_bytes_add_count(dst_no_epb, dst_no_epb_size);
+			//if result fits into source buffer, reformat
+			//otherwise ignore and return source (happens in some fuzzing cases, cf issue 1903)
+			if (dst_no_epb_size + nb_bytes_add <= nal_size)
+				nal_size = gf_media_nalu_add_emulation_bytes(buffer, dst_no_epb, dst_no_epb_size);
+
+			gf_free(dst_no_epb);
+		}
 	}
 	if (bs_dest) gf_bs_del(bs_dest);
 	return nal_size;

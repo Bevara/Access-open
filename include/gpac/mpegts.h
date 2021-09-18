@@ -268,6 +268,11 @@ typedef enum
 	GF_M2TS_VIDEO_VVC						= 0x33,
 	GF_M2TS_VIDEO_VVC_TEMPORAL				= 0x34,
 
+	GF_M2TS_HLS_AC3_CRYPT		= 0xc1,
+	GF_M2TS_HLS_EC3_CRYPT		= 0xc2,
+	GF_M2TS_HLS_AAC_CRYPT		= 0xcf,
+	GF_M2TS_HLS_AVC_CRYPT		= 0xdb,
+
 	/*the rest is internal use*/
 
 	GF_M2TS_VIDEO_VC1				= 0xEA,
@@ -284,6 +289,7 @@ typedef enum
 	GF_M2TS_DVB_VBI					= 0x153,
 	GF_M2TS_DVB_SUBTITLE			= 0x154,
 	GF_M2TS_METADATA_ID3_HLS		= 0x155,
+
 } GF_M2TSStreamType;
 
 
@@ -1522,8 +1528,6 @@ typedef struct __m2ts_mux_stream {
 	Bool pcr_only_mode;
 	/*! tables for section PIDs*/
 	GF_M2TS_Mux_Table *tables;
-	/*! init verision of table*/
-	u8 initial_version_number;
 	/*! total table sizes for bitrate estimation (PMT/PAT/...)*/
 	u32 total_table_size;
 	/*! current table - used for on-the-fly packetization of sections */
@@ -1534,6 +1538,10 @@ typedef struct __m2ts_mux_stream {
 	u32 current_section_offset;
 	/*! carousel rate in ms*/
 	u32 refresh_rate_ms;
+	/*! init verision of table*/
+	u8 initial_version_number;
+	/*! PES version of transport for this codec type is forced*/
+	u8 force_pes;
 	/*! table needs updating*/
 	Bool table_needs_update;
 	/*! table needs send*/

@@ -1334,7 +1334,7 @@ mime (str):                    indicate mime type of udp data
 .br
 block (bool, default: false):  set blocking mode for socket(s)
 .br
-timeout (uint, default: 5000): set timeout in ms for UDP socket(s)
+timeout (uint, default: 10000): set timeout in ms for UDP socket(s)
 .br
 reorder_pck (uint, default: 100): number of packets delay for RTP reordering (M2TS over RTP) 
 .br
@@ -1662,7 +1662,15 @@ max_res (bool, default: true): use max media resolution to configure display
 .br
 abort (bool, default: false):  allow abort during a segment download
 .br
-use_bmin (bool, default: false): use the indicated min buffer time of the MPD if true, otherwise uses default player settings
+use_bmin (enum, default: auto): playout buffer handling
+.br
+* no: use default player settings
+.br
+* auto: notify player of segment duration if not low latency
+.br
+* mpd: use the indicated min buffer time of the MPD
+.br
+
 .br
 shift_utc (sint, default: 0):  shift DASH UTC clock in ms
 .br
@@ -1769,7 +1777,13 @@ Description: CENC decryptor
 .br
 
 .br
-The CENC decryptor supports decrypting CENC, ISMA and Adobe streams. It uses a configuration file for retrieving keys.
+The CENC decryptor supports decrypting CENC, ISMA, HLS Sample-AES (MPEG2 ts) and Adobe streams.
+.br
+
+.br
+For HLS, key is retrieved according to the key URI in the manifest.
+.br
+Otherwise, the filter uses a configuration file.
 .br
 The syntax is available at https://wiki.gpac.io/Common-Encryption
 .br
@@ -1799,6 +1813,8 @@ drop_keys (uintl):             consider keys with given 1-based indexes as not a
 kids (strl):                   define KIDs. If keys is empty, consider keys with given KID (as hex string) as not available (debug)
 .br
 keys (strl):                   define key values for each of the specified KID
+.br
+hls_cenc_patch_iv (bool, default: false): ignore IV updates in some broken HLS+CENC streams
 .br
 
 .br
@@ -4453,6 +4469,12 @@ Note: If multiple streams in source, only the first stream will have an AS ID as
 .br
 * IntraOnly: indicates input pid follows HLS EXT-X-I-FRAMES-ONLY guidelines
 .br
+* CropOrigin: indicates x and y coordinates of video for SRD (size is video size)
+.br
+* SRD: indicates SRD position and size of video for SRD, ignored if CropOrigin is set
+.br
+* SRDRef: indicates global width and height of SRD, ignored if CropOrigin is set
+.br
 * Non-dash properties: Bitrate, SAR, Language, Width, Height, SampleRate, NumChannels, Language, ID, DependencyID, FPS, Interlaced, Codec. These properties are used to setup each representation and can be overridden on input PIDs using the general PID property settings (cf global help).
 .br
   
@@ -4540,6 +4562,14 @@ src=null:#xlink=http://foo/bar.xml:#PStart=6 src=m.mp4
 
 .br
 This will create an MPD with first a regular period, dashing ony 6s of content, then a remote one.
+.br
+Example
+.br
+src=v1:#SRD=0x0x1280x360:#SRDRef=1280x720 src=vid2:#SRD=0x360x1280x360
+.br
+
+.br
+This will layout the v2 below v1 using a global SRD size of 1280x720.
 .br
 
 .br
@@ -6096,7 +6126,7 @@ The HTTP output filter can act as:
 .br
   
 .br
-The server currently handles GET, HEAD, PUT, POST, DELETE methods.
+The server currently handles GET, HEAD, PUT, POST, DELETE methods, and basic OPTIONS support.
 .br
 Single or multiple byte ranges are supported for both GET and PUT/POST methods, in all server modes.
 .br
@@ -6713,7 +6743,7 @@ vidfmt (enum, default: -1, updatable): video format for AVC|H264 and HEVC (compo
 .br
 Description: FFMPEG demuxer
 .br
-Version: Lavf59.4.101
+Version: Lavf59.5.100
 .br
 
 .br
@@ -6747,7 +6777,7 @@ src (cstr):                    URL of source content
 .br
 Description: FFMPEG decoder
 .br
-Version: Lavc59.3.102
+Version: Lavc59.7.103
 .br
 
 .br
@@ -6779,7 +6809,7 @@ The default threading mode is to let libavcodec decide how many threads to use. 
 .br
 Description: FFMPEG AV Capture
 .br
-Version: Lavd59.0.100
+Version: Lavd59.0.101
 .br
 
 .br
@@ -6868,7 +6898,7 @@ block_size (uint, default: 4096): block size used to read file when using avio c
 .br
 Description: FFMPEG video rescaler
 .br
-Version: SwS6.0.100
+Version: SwS6.1.100
 .br
 
 .br
@@ -6916,7 +6946,7 @@ itable (sintl):                the yuv2rgb coefficients describing the input yuv
 .br
 Description: FFMPEG encoder
 .br
-Version: Lavc59.3.102
+Version: Lavc59.7.103
 .br
 
 .br
@@ -6980,7 +7010,7 @@ rc (bool, default: false):     reset encoder when forcing intra frame (some enco
 .br
 Description: FFMPEG muxer
 .br
-Version: Lavf59.4.101
+Version: Lavf59.5.100
 .br
 
 .br
@@ -7040,7 +7070,7 @@ block_size (uint, default: 4096): block size used to read file when using avio c
 .br
 Description: FFMPEG AVFilter
 .br
-Version: Lavf59.4.101
+Version: Lavf59.5.100
 .br
 
 .br
@@ -7744,7 +7774,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev1160-g501dcf757-master
+build: 1.1.0-DEV-rev1237-g1ae1922f5-master
 .br
 Copyright: (c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

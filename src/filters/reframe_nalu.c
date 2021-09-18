@@ -221,11 +221,13 @@ typedef struct
 
 static void naludmx_enqueue_or_dispatch(GF_NALUDmxCtx *ctx, GF_FilterPacket *n_pck, Bool flush_ref);
 static void naludmx_finalize_au_flags(GF_NALUDmxCtx *ctx);
+static void naludmx_reset_param_sets(GF_NALUDmxCtx *ctx, Bool do_free);
 
 
 GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 {
 	const GF_PropertyValue *p;
+	u32 old_codecid;
 	GF_NALUDmxCtx *ctx = gf_filter_get_udta(filter);
 
 	if (is_remove) {
@@ -253,6 +255,7 @@ GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 		}
 	}
 
+	old_codecid = ctx->codecid;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CODECID);
 	if (p) {
 		switch (p->value.uint) {
@@ -309,25 +312,30 @@ GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 				ctx->codecid = GF_CODECID_AVC;
 		}
 	}
+
+	if (old_codecid && (old_codecid != ctx->codecid)) {
+		naludmx_reset_param_sets(ctx, GF_FALSE);
+	}
+
 	if (ctx->codecid==GF_CODECID_HEVC) {
 #ifdef GPAC_DISABLE_HEVC
 		return GF_NOT_SUPPORTED;
 #else
 		ctx->log_name = "HEVC";
-		if (ctx->avc_state) gf_free(ctx->avc_state);
-		if (ctx->vvc_state) gf_free(ctx->vvc_state);
+		if (ctx->avc_state) { gf_free(ctx->avc_state); ctx->avc_state = NULL; }
+		if (ctx->vvc_state) { gf_free(ctx->vvc_state); ctx->vvc_state = NULL; }
 		if (!ctx->hevc_state) GF_SAFEALLOC(ctx->hevc_state, HEVCState);
 		ctx->min_layer_id = 0xFF;
 #endif
 	} else if (ctx->codecid==GF_CODECID_VVC) {
 		ctx->log_name = "VVC";
-		if (ctx->hevc_state) gf_free(ctx->hevc_state);
-		if (ctx->avc_state) gf_free(ctx->avc_state);
+		if (ctx->hevc_state) { gf_free(ctx->hevc_state); ctx->hevc_state = NULL; }
+		if (ctx->avc_state) { gf_free(ctx->avc_state); ctx->avc_state = NULL; }
 		if (!ctx->vvc_state) GF_SAFEALLOC(ctx->vvc_state, VVCState);
 	} else {
 		ctx->log_name = "AVC|H264";
-		if (ctx->hevc_state) gf_free(ctx->hevc_state);
-		if (ctx->vvc_state) gf_free(ctx->vvc_state);
+		if (ctx->hevc_state) { gf_free(ctx->hevc_state); ctx->hevc_state = NULL; }
+		if (ctx->vvc_state) { gf_free(ctx->vvc_state); ctx->vvc_state = NULL; }
 		if (!ctx->avc_state) GF_SAFEALLOC(ctx->avc_state, AVCState);
 	}
 	if (ctx->timescale && !ctx->opid) {
@@ -357,8 +365,11 @@ GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 
 			naludmx_enqueue_or_dispatch(ctx, NULL, GF_TRUE);
 		}
+		ctx->nal_store_size = 0;
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
-		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT(GF_STREAM_VISUAL));
+		//don't change codec type if reframing an ES (for HLS SAES)
+		if (!ctx->timescale)
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT(GF_STREAM_VISUAL));
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(ctx->codecid));
 
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
@@ -369,7 +380,7 @@ GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 		ctx->ps_modified = GF_TRUE;
 		ctx->crc_cfg = ctx->crc_cfg_enh = 0;
 	}
-	
+
 	return GF_OK;
 }
 
@@ -769,7 +780,7 @@ GF_Err naludmx_set_hevc_oinf(GF_NALUDmxCtx *ctx, u8 *max_temporal_id)
 	if (!vps_sl) return GF_SERVICE_ERROR;
 
 	vps = &ctx->hevc_state->vps[vps_sl->id];
-	
+
 	if (!vps->vps_extension_found) return GF_OK;
 	if (vps->max_layers<2) return GF_OK;
 
@@ -911,7 +922,7 @@ static void naludmx_set_hevc_linf(GF_NALUDmxCtx *ctx)
 		return;
 
 	bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-	
+
 	gf_bs_write_int(bs, 0, 2);
 	gf_bs_write_int(bs, nb_layers, 6);
 	for (i=0; i<nb_layers; i++) {
@@ -1352,9 +1363,9 @@ void naludmx_create_avc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 *dsi_si
 					else
 						DeltaTfiDivisorIdx = (ctx->avc_state->sei.pic_timing.pic_struct+1) / 2;
 				}
-				if (!ctx->timescale) {
+				if (!ctx->timescale && sps->vui.time_scale && sps->vui.num_units_in_tick) {
 					ctx->cur_fps.num = 2 * sps->vui.time_scale;
-					ctx->cur_fps.den =  2 * sps->vui.num_units_in_tick * DeltaTfiDivisorIdx;
+					ctx->cur_fps.den = 2 * sps->vui.num_units_in_tick * DeltaTfiDivisorIdx;
 
 					if (!ctx->fps.num && ctx->dts==ctx->fps.den)
 						ctx->dts = ctx->cur_fps.den;
@@ -1441,6 +1452,8 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx)
 		if (ctx->opid && !ctx->ps_modified) return;
 	} else {
 		if (!ctx->ps_modified) return;
+		if (ctx->opid && (!gf_list_count(ctx->sps) || !gf_list_count(ctx->pps)))
+			return;
 	}
 	ctx->ps_modified = GF_FALSE;
 
@@ -1488,7 +1501,10 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx)
 
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT(GF_STREAM_VISUAL));
+
+	//don't change codec type if reframing an ES (for HLS SAES)
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT(GF_STREAM_VISUAL));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	if (!gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_ID))
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_ID, &PROP_UINT(1));
@@ -1680,8 +1696,10 @@ static void naludmx_queue_param_set(GF_NALUDmxCtx *ctx, char *data, u32 size, u3
 {
 	GF_List *list = NULL, *alt_list = NULL;
 	GF_NALUFFParam *sl;
-	u32 i, count;
-	u32 crc = gf_crc_32(data, size);
+	u32 i, count, crc;
+
+	if (!size) return;
+	crc = gf_crc_32(data, size);
 
 	if (ctx->codecid==GF_CODECID_HEVC) {
 		switch (ps_type) {
@@ -2353,7 +2371,7 @@ static s32 naludmx_parse_nal_avc(GF_NALUDmxCtx *ctx, char *data, u32 size, u32 n
 		*skip_nal = GF_TRUE;
 	}
 	ctx->nb_nalus++;
-	
+
 	switch (nal_type) {
 	case GF_AVC_NALU_SVC_SUBSEQ_PARAM:
 	case GF_AVC_NALU_SEQ_PARAM:
@@ -2471,7 +2489,7 @@ static s32 naludmx_parse_nal_avc(GF_NALUDmxCtx *ctx, char *data, u32 size, u32 n
 			u32 i;
 			for (i = 0; i < gf_list_count(ctx->pps); i ++) {
 				GF_NALUFFParam *slc = (GF_NALUFFParam*)gf_list_get(ctx->pps, i);
-				if (ctx->avc_state->s_info.pps->id == slc->id) {
+				if (ctx->avc_state->s_info.pps && ctx->avc_state->s_info.pps->id == slc->id) {
 					/* This PPS is used by an SVC NAL unit, it should be moved to the SVC Config Record) */
 					gf_list_rem(ctx->pps, i);
 					i--;
@@ -2714,7 +2732,7 @@ naldmx_flush:
 		s32 next=0;
 		u32 next_sc_size=0;
 		s32 nal_parse_result;
-		Bool slice_is_ref, slice_force_ref;
+		Bool slice_is_idr, slice_force_ref;
 		Bool is_slice = GF_FALSE;
 		Bool is_islice = GF_FALSE;
 		Bool bottom_field_flag = GF_FALSE;
@@ -2757,7 +2775,7 @@ naldmx_flush:
 		if (!ctx->opid && current) {
 			assert(remain>=current);
             assert((s32) current >= 0);
-            
+
 			start += current;
 			remain -= current;
 			current = 0;
@@ -2962,7 +2980,7 @@ naldmx_flush:
 		//store all variables needed to compute POC/CTS and sample SAP and recovery info
 		if (ctx->codecid==GF_CODECID_HEVC) {
 #ifndef GPAC_DISABLE_HEVC
-			slice_is_ref = gf_hevc_slice_is_IDR(ctx->hevc_state);
+			slice_is_idr = gf_hevc_slice_is_IDR(ctx->hevc_state);
 
 			recovery_point_valid = ctx->hevc_state->sei.recovery_point.valid;
 			recovery_point_frame_cnt = ctx->hevc_state->sei.recovery_point.frame_cnt;
@@ -2998,7 +3016,7 @@ naldmx_flush:
 			}
 #endif // GPAC_DISABLE_HEVC
 		} else if (ctx->codecid==GF_CODECID_VVC) {
-			slice_is_ref = gf_media_vvc_slice_is_ref(ctx->vvc_state);
+			slice_is_idr = gf_media_vvc_slice_is_ref(ctx->vvc_state);
 			recovery_point_valid = ctx->vvc_state->s_info.recovery_point_valid;
 			recovery_point_frame_cnt = ctx->vvc_state->s_info.gdr_recovery_count;
 
@@ -3008,14 +3026,23 @@ naldmx_flush:
 
 			au_sap_type = GF_FILTER_SAP_NONE;
 			if (ctx->vvc_state->s_info.irap_or_gdr_pic && !ctx->vvc_state->s_info.gdr_pic) {
-				au_sap_type = GF_FILTER_SAP_1;
 				bIntraSlice = GF_TRUE;
-				slice_is_ref = 1;
+
+				switch (ctx->vvc_state->s_info.nal_unit_type) {
+				case GF_VVC_NALU_SLICE_CRA:
+					au_sap_type = GF_FILTER_SAP_3;
+					slice_is_idr = 0;
+					break;
+				case GF_VVC_NALU_SLICE_IDR_N_LP:
+				case GF_VVC_NALU_SLICE_IDR_W_RADL:
+					au_sap_type = GF_FILTER_SAP_1;
+					break;
+				}
 			} else {
 				switch (ctx->vvc_state->s_info.nal_unit_type) {
 				case GF_VVC_NALU_SLICE_IDR_N_LP:
 					au_sap_type = GF_FILTER_SAP_1;
-					slice_is_ref = 1;
+					slice_is_idr = 1;
 					bIntraSlice = GF_TRUE;
 					break;
 				case GF_VVC_NALU_SLICE_CRA:
@@ -3028,7 +3055,7 @@ naldmx_flush:
 						au_sap_type = GF_FILTER_SAP_3;
 					} else {
 						au_sap_type = GF_FILTER_SAP_1;
-						slice_is_ref = 1;
+						slice_is_idr = 1;
 					}
 					break;
 				}
@@ -3102,7 +3129,7 @@ naldmx_flush:
 				bottom_field_flag = ctx->avc_state->s_info.bottom_field_flag;
 			}
 
-			slice_is_ref = (ctx->avc_state->s_info.nal_unit_type==GF_AVC_NALU_IDR_SLICE) ? GF_TRUE : GF_FALSE;
+			slice_is_idr = (ctx->avc_state->s_info.nal_unit_type==GF_AVC_NALU_IDR_SLICE) ? GF_TRUE : GF_FALSE;
 
 			recovery_point_valid = ctx->avc_state->sei.recovery_point.valid;
 			recovery_point_frame_cnt = ctx->avc_state->sei.recovery_point.frame_cnt;
@@ -3125,7 +3152,7 @@ naldmx_flush:
 		if (is_slice) {
 			Bool first_in_au = ctx->first_slice_in_au;
 
-			if (slice_is_ref)
+			if (slice_is_idr)
 				ctx->nb_idr++;
 			slice_force_ref = GF_FALSE;
 
@@ -3192,10 +3219,10 @@ naldmx_flush:
 				}
 				ctx->last_poc = slice_poc;
 			}
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[%s] POC is %d - min poc diff %d - slice is ref %d\n", ctx->log_name, slice_poc, ctx->poc_diff, slice_is_ref));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[%s] POC is %d - min poc diff %d - slice is IDR %d\n", ctx->log_name, slice_poc, ctx->poc_diff, slice_is_idr));
 
 			/*ref slice, reset poc*/
-			if (slice_is_ref) {
+			if (slice_is_idr) {
 				if (first_in_au) {
 					Bool temp_poc_diff = GF_FALSE;
 					//two consecutive IDRs, force poc_diff to 1 if 0 (when we have intra-only) to force frame dispatch
@@ -3383,7 +3410,7 @@ static GF_Err naludmx_initialize(GF_Filter *filter)
 	return GF_OK;
 }
 
-static void naludmx_del_param_list(GF_List *ps)
+static void naludmx_del_param_list(GF_List *ps, Bool do_free)
 {
 	if (!ps) return;
 	while (gf_list_count(ps)) {
@@ -3391,7 +3418,9 @@ static void naludmx_del_param_list(GF_List *ps)
 		if (sl->data) gf_free(sl->data);
 		gf_free(sl);
 	}
-	gf_list_del(ps);
+
+	if (do_free)
+		gf_list_del(ps);
 }
 
 static void naludmx_log_stats(GF_NALUDmxCtx *ctx)
@@ -3446,6 +3475,17 @@ static void naludmx_log_stats(GF_NALUDmxCtx *ctx)
 	}
 }
 
+static void naludmx_reset_param_sets(GF_NALUDmxCtx *ctx, Bool do_free)
+{
+	naludmx_del_param_list(ctx->sps, do_free);
+	naludmx_del_param_list(ctx->pps, do_free);
+	naludmx_del_param_list(ctx->vps, do_free);
+	naludmx_del_param_list(ctx->sps_ext, do_free);
+	naludmx_del_param_list(ctx->pps_svc, do_free);
+	naludmx_del_param_list(ctx->vvc_aps_pre, do_free);
+	naludmx_del_param_list(ctx->vvc_dci, do_free);
+
+}
 static void naludmx_finalize(GF_Filter *filter)
 {
 	GF_NALUDmxCtx *ctx = gf_filter_get_udta(filter);
@@ -3470,13 +3510,7 @@ static void naludmx_finalize(GF_Filter *filter)
 	if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 	ctx->src_pck = NULL;
 
-	naludmx_del_param_list(ctx->sps);
-	naludmx_del_param_list(ctx->pps);
-	naludmx_del_param_list(ctx->vps);
-	naludmx_del_param_list(ctx->sps_ext);
-	naludmx_del_param_list(ctx->pps_svc);
-	naludmx_del_param_list(ctx->vvc_aps_pre);
-	naludmx_del_param_list(ctx->vvc_dci);
+	naludmx_reset_param_sets(ctx, GF_TRUE);
 
 	if (ctx->avc_state) gf_free(ctx->avc_state);
 	if (ctx->hevc_state) gf_free(ctx->hevc_state);
@@ -3634,6 +3668,13 @@ static const GF_FilterCapability NALUDmxCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_HEVC),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_LHVC),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_VVC),
+	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_TILE_BASE, GF_TRUE),
+	{0},
+	//for HLS
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_ENCRYPTED),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_ORIG_STREAM_TYPE, GF_STREAM_VISUAL),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AVC),
 	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_TILE_BASE, GF_TRUE),
 };
