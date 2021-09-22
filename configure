@@ -660,7 +660,7 @@ EOF
 		fi
 		;;
     emscripten)
-        LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_PTHREADS=1"
+        LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_ZLIB=1 -s USE_PTHREADS=1"
         linux="yes"
         case "$cpu" in
             sh4)
