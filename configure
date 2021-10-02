@@ -660,6 +660,7 @@ EOF
 		;;
     emscripten)
         CFLAGS="$CFLAGS -s USE_PTHREADS=1 -fPIC"
+        CXXFLAGS="$CXXFLAGS -fPIC"
         LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_ZLIB=1 -s USE_PTHREADS=1"
         linux="yes"
         ar="emar"
