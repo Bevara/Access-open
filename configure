@@ -661,6 +661,8 @@ EOF
     emscripten)
         LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_ZLIB=1 -s USE_PTHREADS=1"
         linux="yes"
+        ar="emar"
+        ranlib="emranlib"
         case "$cpu" in
             sh4)
                 CFLAGS="$CFLAGS -isystem \"$prefix/include\""
