@@ -667,7 +667,7 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	if (!cfg) return NULL;
 
 
-#ifndef GPAC_CONFIG_IOS
+#ifndef GPAC_CONFIG_IOS && !defined(__EMSCRIPTEN__)
 	moddir_found = get_default_install_path(szPath, GF_PATH_MODULES);
 #else
 	moddir_found = get_default_install_path(szPath, GF_PATH_APP);
