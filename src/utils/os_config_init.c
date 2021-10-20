@@ -395,7 +395,15 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 			if (sep) sep[0] = 0;
 			return 1;
 		}
-
+#elif defined(__EMSCRIPTEN__)
+		file_path = gf_strdup("/");
+		size = GF_MAX_PATH-1;
+		if (size>0) {
+			file_path[size] = 0;
+			sep = strrchr(file_path, '/');
+			if (sep) sep[0] = 0;
+			return 1;
+		}
 #elif defined(GPAC_CONFIG_WIN32)
 		GetModuleFileNameA(NULL, file_path, GF_MAX_PATH);
 		if (strstr(file_path, ".exe")) {
@@ -667,7 +675,7 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	if (!cfg) return NULL;
 
 
-#ifndef GPAC_CONFIG_IOS && !defined(__EMSCRIPTEN__)
+#ifndef GPAC_CONFIG_IOS
 	moddir_found = get_default_install_path(szPath, GF_PATH_MODULES);
 #else
 	moddir_found = get_default_install_path(szPath, GF_PATH_APP);
