@@ -663,6 +663,7 @@ EOF
         CXXFLAGS="$CXXFLAGS -fPIC"
         LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_ZLIB=1 -s USE_PTHREADS=1"
         linux="yes"
+        static_modules="yes"
         ar="emar"
         ranlib="emranlib"
         case "$cpu" in
