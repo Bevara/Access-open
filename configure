@@ -659,7 +659,7 @@ EOF
 		fi
 		;;
     emscripten)
-        CFLAGS="$CFLAGS -s USE_PTHREADS=1 -s USE_SDL=2 -fPIC"
+        CFLAGS="$CFLAGS -s USE_PTHREADS=1 -fPIC"
         CXXFLAGS="$CXXFLAGS -fPIC"
         LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_ZLIB=1 -s USE_PTHREADS=1"
         linux="yes"
