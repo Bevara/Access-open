@@ -262,7 +262,7 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, sockout_register(a_sess) );
 	gf_fs_add_filter_register(fsess, av1dmx_register(a_sess) );
 	gf_fs_add_filter_register(fsess, obumx_register(a_sess) );
-#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID)
+#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(__EMSCRIPTEN__)
 	gf_fs_add_filter_register(fsess, nvdec_register(a_sess));
 #endif
 	gf_fs_add_filter_register(fsess, routein_register(a_sess));
