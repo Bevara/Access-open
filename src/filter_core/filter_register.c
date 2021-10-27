@@ -130,7 +130,7 @@ const GF_FilterRegister *gsfdmx_register(GF_FilterSession *session);
 const GF_FilterRegister *sockout_register(GF_FilterSession *session);
 const GF_FilterRegister *av1dmx_register(GF_FilterSession *session);
 const GF_FilterRegister *obumx_register(GF_FilterSession *session);
-#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID)
+#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(__EMSCRIPTEN__)
 const GF_FilterRegister *nvdec_register(GF_FilterSession *session);
 #endif
 const GF_FilterRegister *routein_register(GF_FilterSession *session);
