@@ -659,11 +659,11 @@ EOF
 		fi
 		;;
     emscripten)
-        CFLAGS="$CFLAGS -s USE_PTHREADS=1 -fPIC"
+        CFLAGS="$CFLAGS -s USE_PTHREADS=1 -fPIC -s USE_LIBJPEG=1 -s USE_LIBPNG=1"
         CXXFLAGS="$CXXFLAGS -fPIC"
         LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_ZLIB=1 -s USE_PTHREADS=1"
         linux="yes"
-        static_modules="yes"
+        static_modules="no"
         ar="emar"
         ranlib="emranlib"
         case "$cpu" in
