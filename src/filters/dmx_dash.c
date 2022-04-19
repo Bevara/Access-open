@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / DASH/HLS demux filter
@@ -35,6 +35,10 @@
 #include "../scenegraph/qjs_common.h"
 #endif
 
+#define DASHIN_MIMES "application/dash+xml|video/vnd.3gpp.mpd|audio/vnd.3gpp.mpd|video/vnd.mpeg.dash.mpd|audio/vnd.mpeg.dash.mpd|audio/mpegurl|video/mpegurl|application/vnd.ms-sstr+xml|application/x-mpegURL|application/vnd.apple.mpegURL"
+
+#define DASHIN_FILE_EXT "mpd|m3u8|3gm|ism"
+
 enum
 {
 	DFWD_OFF = 0,
@@ -52,13 +56,20 @@ enum
 	BMIN_MPD,
 };
 
+enum {
+	FLAG_PERIOD_SWITCH = 1,
+	FLAG_TIME_OVERFLOW = 1<<1,
+	FLAG_FIRST_IN_SEG = 1<<2,
+};
+
 typedef struct
 {
 	//opts
 	s32 shift_utc, route_shift;
-	u32 max_buffer, auto_switch, tiles_rate, segstore, delay40X, exp_threshold, switch_count, bwcheck;
+	u32 max_buffer, tiles_rate, segstore, delay40X, exp_threshold, switch_count, bwcheck;
+	s32 auto_switch;
 	s32 init_timeshift;
-	Bool server_utc, screen_res, aggressive, speedadapt, fmodefwd, skip_lqt, llhls_merge, filemode, chain_mode;
+	Bool server_utc, screen_res, aggressive, speedadapt, fmodefwd, skip_lqt, llhls_merge, filemode, chain_mode, asloop;
 	u32 forward;
 	GF_PropUIntList debug_as;
 	GF_DASHInitialSelectionMode start_with;
@@ -134,7 +145,8 @@ typedef struct
 	Bool wait_for_pck;
 	Bool eos_detected;
 	u32 next_dependent_rep_idx, current_dependent_rep_idx;
-
+	u64 utc_map;
+	
 	GF_DownloadSession *sess;
 	Bool is_timestamp_based, pto_setup;
 	Bool prev_is_init_segment;
@@ -162,6 +174,9 @@ typedef struct
 
 	const char *hls_key_uri;
 	bin128 hls_key_IV;
+
+	char *current_url;
+	Bool url_changed;
 } GF_DASHGroup;
 
 static void dashdmx_notify_group_quality(GF_DASHDmxCtx *ctx, GF_DASHGroup *group);
@@ -246,6 +261,11 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 				if (seg_name) {
 					gf_filter_pck_set_property(ref, GF_PROP_PCK_FILENAME, &PROP_STRING(seg_name) );
 					gf_filter_pck_set_property(ref, GF_PROP_PCK_FILENUM, &PROP_UINT(seg_number) );
+					if (group->url_changed && group->current_url) {
+						gf_filter_pck_set_property(ref, GF_PROP_PCK_FRAG_RANGE, NULL);
+						gf_filter_pck_set_property(ref, GF_PROP_PID_URL, &PROP_STRING(group->current_url));
+						group->url_changed = GF_FALSE;
+					}
 
 					if (is_filemode) {
 						u64 ts;
@@ -269,19 +289,36 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 			dashdmx_set_string_list_prop(ref, GF_PROP_PCK_HLS_VARIANT, &ctx->hls_variants);
 			dashdmx_set_string_list_prop(ref, GF_PROP_PCK_HLS_VARIANT_NAME, &ctx->hls_variants_names);
 		}
+
+		u32 flags = gf_filter_pid_get_udta_flags(out_pid);
+		if (flags & FLAG_PERIOD_SWITCH) {
+			gf_filter_pid_set_udta_flags(out_pid, flags & ~FLAG_PERIOD_SWITCH);
+			gf_filter_pck_set_property(ref, GF_PROP_PID_DASH_PERIOD_START, &PROP_LONGUINT(0) );
+		}
 		gf_filter_pck_send(ref);
 		return;
 	}
 
 	if (!ctx->is_dash) {
-		gf_filter_pck_forward(in_pck, out_pid);
+		GF_FilterPacket *dst_pck = gf_filter_pck_new_ref(out_pid, 0, 0, in_pck);
+		if (!dst_pck) return;
+		gf_filter_pck_merge_properties(in_pck, dst_pck);
 
-		if (!group->pto_setup) {
-			cts = gf_filter_pck_get_cts(in_pck);
-			gf_filter_pid_set_property_str(out_pid, "time:timestamp", &PROP_LONGUINT(cts) );
-			gf_filter_pid_set_property_str(out_pid, "time:media", &PROP_DOUBLE(ctx->media_start_range) );
-			group->pto_setup = GF_TRUE;
+		u32 flags = gf_filter_pid_get_udta_flags(out_pid);
+		if (! (flags & FLAG_FIRST_IN_SEG) ) {
+			if (!group->pto_setup) {
+				gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_MEDIA_TIME, &PROP_DOUBLE(ctx->media_start_range) );
+				group->pto_setup = GF_TRUE;
+			}
+
+			if (group->utc_map) {
+				gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_UTC_TIME, & PROP_LONGUINT(group->utc_map) );
+			}
+			flags |= FLAG_FIRST_IN_SEG;
+			gf_filter_pid_set_udta_flags(out_pid, flags);
+
 		}
+		gf_filter_pck_send(dst_pck);
 
 		gf_filter_pid_drop_packet(in_pid);
 		return;
@@ -305,14 +342,23 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 			u32 mpd_timescale;
 			gf_dash_group_get_presentation_time_offset(ctx->dash, group->idx, &pto, &mpd_timescale);
 			group->pto_setup = 1;
+			do_map_time = GF_TRUE;
 
-			if (mpd_timescale && (mpd_timescale != ts)) {
-				pto = gf_timestamp_rescale(pto, mpd_timescale, ts);
+			//we are forwarding segment boundaries and potentially rebuilding manifest based on the source time
+			//do not adjust timestamps
+			if (ctx->forward) {
+				pto = 0;
+			} else {
+				if (mpd_timescale && (mpd_timescale != ts)) {
+					pto = gf_timestamp_rescale(pto, mpd_timescale, ts);
+				}
 			}
+
 			group->pto = (s64) pto;
 			group->timescale = ts;
 			scale = ts;
 			scale /= 1000;
+
 
 			dur = (u64) (scale * gf_dash_get_period_duration(ctx->dash));
 			if (dur) {
@@ -321,7 +367,8 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 				group->max_cts_in_period = 0;
 			}
 
-			if (gf_dash_is_m3u8(ctx->dash)) {
+			//no max cts in HLS, and don't filter in forward modes
+			if (gf_dash_is_m3u8(ctx->dash) || ctx->forward) {
 				group->max_cts_in_period = 0;
 			} else if (!group->pto && group->max_cts_in_period && !gf_dash_is_dynamic_mpd(ctx->dash) ) {
 				u32 seg_number=0;
@@ -379,9 +426,9 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 				//if DTS larger than max TS, drop packet
 				if ( (s64) _dts > (s64) scale_max_cts) {
 					flags = gf_filter_pid_get_udta_flags(out_pid);
-					if (!flags) {
+					if (!(flags & FLAG_TIME_OVERFLOW)) {
 						GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[DASHDmx] Packet decode timestamp "LLU" larger than max CTS in period "LLU" - dropping all further packets\n", adj_cts, scale_max_cts));
-						gf_filter_pid_set_udta_flags(out_pid, 1);
+						gf_filter_pid_set_udta_flags(out_pid, flags | FLAG_TIME_OVERFLOW);
 					}
 					gf_filter_pid_drop_packet(in_pid);
 					return;
@@ -415,8 +462,8 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 		dts += scale_timesdisc_offset;
 		cts += scale_timesdisc_offset;
 	} else if (!group->pto_setup) {
-		do_map_time = 1;
-		group->pto_setup = 1;
+		do_map_time = GF_TRUE;
+		group->pto_setup = GF_TRUE;
 	}
 
 	dst_pck = gf_filter_pck_new_ref(out_pid, 0, 0, in_pck);
@@ -427,20 +474,28 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 	gf_filter_pck_set_dts(dst_pck, dts);
 	gf_filter_pck_set_cts(dst_pck, cts);
 	gf_filter_pck_set_seek_flag(dst_pck, seek_flag);
+
+
+	u32 flags = gf_filter_pid_get_udta_flags(out_pid);
+	if (! (flags & FLAG_FIRST_IN_SEG) ) {
+		flags |= FLAG_FIRST_IN_SEG;
+		gf_filter_pid_set_udta_flags(out_pid, flags);
+		if (do_map_time)
+			gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_MEDIA_TIME, &PROP_DOUBLE(ctx->media_start_range) );
+
+		if (group->utc_map)
+			gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_UTC_TIME, & PROP_LONGUINT(group->utc_map) );
+	}
+
 	gf_filter_pck_send(dst_pck);
 	gf_filter_pid_drop_packet(in_pid);
-
-	if (do_map_time) {
-		gf_filter_pid_set_property_str(out_pid, "time:timestamp", &PROP_LONGUINT(cts) );
-		gf_filter_pid_set_property_str(out_pid, "time:media", &PROP_DOUBLE(ctx->media_start_range) );
-	}
 }
 
 
-static void dashdmx_on_filter_setup_error(GF_Filter *failed_filter, void *udta, GF_Err err)
+static Bool dashdmx_on_filter_setup_error(GF_Filter *failed_filter, void *udta, GF_Err err)
 {
 	GF_DASHGroup *group = (GF_DASHGroup *)udta;
-	if (!udta) return;
+	if (!udta) return GF_FALSE;
 
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] group %d download setup error %s\n", group->idx, gf_error_to_string(err) ));
 
@@ -466,6 +521,7 @@ static void dashdmx_on_filter_setup_error(GF_Filter *failed_filter, void *udta, 
 				group->seg_filter_src = NULL;
 		}
 	}
+	return GF_FALSE;
 }
 
 void gf_cryptfin_set_kms(GF_Filter *f, const char *key_url, bin128 key_IV);
@@ -555,6 +611,7 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 	}
 	GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASHDmx] setting up group %d from %s\n", group->idx, init_segment_name));
 	group->signal_seg_name = (ctx->forward==DFWD_FILE) ? GF_TRUE : GF_FALSE;
+	gf_filter_set_source(ctx->filter, group->seg_filter_src, NULL);
 
 	gf_filter_set_setup_failure_callback(ctx->filter, group->seg_filter_src, dashdmx_on_filter_setup_error, group);
 
@@ -868,6 +925,8 @@ void dashdmx_io_manifest_updated(GF_DASHFileIO *dashio, const char *manifest_nam
 	}
 }
 
+static GF_Err dashin_abort(GF_DASHDmxCtx *ctx);
+
 GF_Err dashdmx_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_evt, s32 group_idx, GF_Err error_code)
 {
 	GF_Err e;
@@ -886,8 +945,10 @@ GF_Err dashdmx_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_evt
 #ifdef GPAC_ENABLE_COVERAGE
 		if (gf_sys_is_cov_mode()) {
 			gf_dash_groups_set_language(ctx->dash, gf_opts_get_key("core", "lang"));
-			//these are not used in the test suite (require JS)
+			//not used in the test suite (require JS)
 			gf_dash_switch_quality(ctx->dash, GF_TRUE);
+			//not used relyably in the test suite (require fatal error in session)
+			dashin_abort(NULL);
 		}
 #endif
 		if (ctx->groupsel)
@@ -961,6 +1022,7 @@ GF_Err dashdmx_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_evt
 					break;
 				j++;
 				if (!strcmp(desc_scheme, "urn:mpeg:dash:srd:2014")) {
+				} else if (!strcmp(desc_scheme, "http://dashif.org/guidelines/trickmode")) {
 				} else {
 					playable = GF_FALSE;
 					break;
@@ -1021,6 +1083,7 @@ GF_Err dashdmx_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_evt
 				group->seg_filter_src = NULL;
 			}
 			if (group->template) gf_free(group->template);
+			if (group->current_url) gf_free(group->current_url);
 			gf_free(group);
 			gf_dash_set_group_udta(ctx->dash, i, NULL);
 		}
@@ -1115,14 +1178,18 @@ GF_Err dashdmx_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_evt
 	}
 
 	//discontinuity at next period, recompute timeline anchor at end of pres
-	//in foraward mode, we don't touch timestamps for now
-	if ((dash_evt==GF_DASH_EVENT_END_OF_PERIOD) && group_idx && !ctx->forward) {
+	if ((dash_evt==GF_DASH_EVENT_END_OF_PERIOD) && group_idx) {
 		ctx->time_discontinuity.num = 0;
 		ctx->time_discontinuity.den = 0;
 
 		for (i=0; i<gf_filter_get_opid_count(ctx->filter); i++) {
 			GF_FilterPid *opid = gf_filter_get_opid(ctx->filter, i);
 
+			//in forward mode, signal period switch at packet level but don't touch timestamps for now
+			if (ctx->forward) {
+				gf_filter_pid_set_udta_flags(opid, FLAG_PERIOD_SWITCH);
+				continue;
+			}
 			u32 timescale = gf_filter_pid_get_timescale(opid);
 			u64 ts = gf_filter_pid_get_next_ts(opid);
 			if (ts==GF_FILTER_NO_TS) continue;
@@ -1382,9 +1449,9 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 	else
 		gf_filter_pid_set_property(opid, GF_PROP_PID_DURATION, NULL);
 
-	dur = (1000*gf_dash_group_get_time_shift_buffer_depth(ctx->dash, group_idx) );
-	if (dur>0)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_TIMESHIFT_DEPTH, &PROP_FRAC_INT(dur, 1000) );
+	dur = gf_dash_group_get_time_shift_buffer_depth(ctx->dash, group_idx);
+	if ((s32) dur > 0)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_TIMESHIFT_DEPTH, &PROP_FRAC_INT(1000*dur, 1000) );
 
 
 	if (ctx->use_bmin==BMIN_MPD) {
@@ -1503,6 +1570,29 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 		gf_filter_pid_set_property(opid, GF_PROP_PID_ORIG_STREAM_TYPE, &PROP_UINT(stream_type) );
 
 		gf_filter_pid_set_property(opid, GF_PROP_PCK_HLS_REF, &PROP_LONGUINT( (u64) 1+group->idx) );
+
+		if (!gf_dash_group_has_init_segment(ctx->dash, group_idx)) {
+			gf_filter_pid_set_property(opid, GF_PROP_PID_NO_INIT, &PROP_BOOL(GF_TRUE) );
+		}
+	}
+
+	if (ctx->forward == DFWD_FILE) {
+		if (gf_dash_is_dynamic_mpd(ctx->dash)) {
+			u32 segdur, timescale;
+			u64 tsb = (u64) gf_dash_group_get_time_shift_buffer_depth(ctx->dash, group_idx);
+			gf_dash_group_get_segment_duration(ctx->dash, group_idx, &segdur, &timescale);
+			if (segdur) {
+				tsb *= timescale;
+				tsb /= segdur;
+				tsb /= 1000; //tsb given in ms
+			} else {
+				tsb = 0;
+			}
+			tsb++;
+			gf_filter_pid_set_property(opid, GF_PROP_PID_TIMESHIFT_SEGS, &PROP_UINT((u32) tsb) );
+		} else {
+			gf_filter_pid_set_property(opid, GF_PROP_PID_TIMESHIFT_SEGS, NULL );
+		}
 	}
 
 	const char *title, *source;
@@ -1673,6 +1763,7 @@ static GF_Err dashdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 			GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASHDmx] Creating manifest output PID\n"));
 			//for route
 			gf_filter_pid_set_property(ctx->output_mpd_pid, GF_PROP_PID_ORIG_STREAM_TYPE, &PROP_UINT(GF_STREAM_FILE));
+			gf_filter_pid_set_property(ctx->output_mpd_pid, GF_PROP_PID_IS_MANIFEST, &PROP_BOOL(GF_TRUE));
 		}
 
 		e = gf_dash_open(ctx->dash, p->value.string);
@@ -1708,6 +1799,12 @@ static GF_Err dashdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	//figure out group for this pid
 	group_idx = dashdmx_group_idx_from_pid(ctx, pid);
 	if (group_idx<0) {
+		const GF_PropertyValue *p = gf_filter_pid_get_property(pid, GF_PROP_PID_MIME);
+		if (p && strstr(DASHIN_MIMES, p->value.string)) return GF_REQUIRES_NEW_INSTANCE;
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_FILE_EXT);
+		if (p && strstr(DASHIN_FILE_EXT, p->value.string)) return GF_REQUIRES_NEW_INSTANCE;
+
 		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[DASHDmx] Failed to locate adaptation set for input pid\n"));
 		return GF_SERVICE_ERROR;
 	}
@@ -1723,6 +1820,7 @@ static GF_Err dashdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 		opid = dashdmx_create_output_pid(ctx, pid, &run_status, group);
 		gf_filter_pid_set_udta(opid, group);
 		gf_filter_pid_set_udta(pid, opid);
+		//reste all flags
 		gf_filter_pid_set_udta_flags(opid, 0);
 		group->nb_pids ++;
 
@@ -1771,8 +1869,8 @@ static s32 dashdmx_algo_js(void *udta, u32 group, u32 base_group, Bool force_low
 	JS_SetPropertyStr(ctx->js_ctx, args[3], "filesize", JS_NewInt32(ctx->js_ctx, stats->file_size) );
 	JS_SetPropertyStr(ctx->js_ctx, args[3], "speed", JS_NewFloat64(ctx->js_ctx, stats->speed) );
 	JS_SetPropertyStr(ctx->js_ctx, args[3], "max_speed", JS_NewFloat64(ctx->js_ctx, stats->max_available_speed) );
-	JS_SetPropertyStr(ctx->js_ctx, args[3], "display_width", JS_NewInt32(ctx->js_ctx, stats->disp_width) );
-	JS_SetPropertyStr(ctx->js_ctx, args[3], "display_height", JS_NewInt32(ctx->js_ctx, stats->disp_height) );
+	JS_SetPropertyStr(ctx->js_ctx, args[3], "display_width", JS_NewInt32(ctx->js_ctx, stats->display_width) );
+	JS_SetPropertyStr(ctx->js_ctx, args[3], "display_height", JS_NewInt32(ctx->js_ctx, stats->display_height) );
 	JS_SetPropertyStr(ctx->js_ctx, args[3], "active_quality", JS_NewInt32(ctx->js_ctx, stats->active_quality_idx) );
 	JS_SetPropertyStr(ctx->js_ctx, args[3], "buffer_min", JS_NewInt32(ctx->js_ctx, stats->buffer_min_ms) );
 	JS_SetPropertyStr(ctx->js_ctx, args[3], "buffer_max", JS_NewInt32(ctx->js_ctx, stats->buffer_max_ms) );
@@ -1949,7 +2047,7 @@ static const GF_FilterCapability DASHDmxFileModeCaps[] =
 {
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "mpd|m3u8|3gm|ism"),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "application/dash+xml|video/vnd.3gpp.mpd|audio/vnd.3gpp.mpd|video/vnd.mpeg.dash.mpd|audio/vnd.mpeg.dash.mpd|audio/mpegurl|video/mpegurl|application/vnd.ms-sstr+xml"),
+	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "application/dash+xml|video/vnd.3gpp.mpd|audio/vnd.3gpp.mpd|video/vnd.mpeg.dash.mpd|audio/vnd.mpeg.dash.mpd|audio/mpegurl|video/mpegurl|application/vnd.ms-sstr+xml|application/x-mpegURL|application/vnd.apple.mpegURL"),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_RAW),
@@ -2071,7 +2169,7 @@ static GF_Err dashdmx_initialize(GF_Filter *filter)
 	}
 
 
-	ctx->dash = gf_dash_new(&ctx->dash_io, 0, ctx->auto_switch, (ctx->segstore==2) ? GF_TRUE : GF_FALSE, (algo==GF_DASH_ALGO_NONE) ? GF_TRUE : GF_FALSE, ctx->start_with, timeshift);
+	ctx->dash = gf_dash_new(&ctx->dash_io, 0, 0, (ctx->segstore==2) ? GF_TRUE : GF_FALSE, (algo==GF_DASH_ALGO_NONE) ? GF_TRUE : GF_FALSE, ctx->start_with, timeshift);
 
 	if (!ctx->dash) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASHDmx] Error - cannot create DASH Client\n"));
@@ -2104,6 +2202,7 @@ static GF_Err dashdmx_initialize(GF_Filter *filter)
 		gf_dash_split_adaptation_sets(ctx->dash);
 	gf_dash_disable_low_quality_tiles(ctx->dash, ctx->skip_lqt);
 	gf_dash_set_chaining_mode(ctx->dash, ctx->chain_mode);
+	gf_dash_set_auto_switch(ctx->dash, ctx->auto_switch, ctx->asloop);
 
 	//in test mode, we disable seeking inside the segment: this initial seek range is dependent from tune-in time and would lead to different start range
 	//at each run, possibly breaking all tests
@@ -2309,7 +2408,8 @@ static Bool dashdmx_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 			gf_dash_set_speed(ctx->dash, fevt->play.speed);
 
 		initial_play = ctx->initial_play;
-		if (fevt->play.initial_broadcast_play) initial_play = GF_TRUE;
+		if (fevt->play.initial_broadcast_play==1)
+			initial_play = GF_TRUE;
 
 		/*don't seek if this command is the first PLAY request of objects declared by the subservice, unless start range is not default one (0) */
 		if (!ctx->nb_playing) {
@@ -2379,6 +2479,13 @@ static Bool dashdmx_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 
 		gf_dash_set_group_done(ctx->dash, (u32) group->idx, 1);
 		gf_dash_group_select(ctx->dash, (u32) group->idx, GF_FALSE);
+		//group was playing, force stop on source filter (to discard any non-processed data)
+		//we need this because SOURCE_SWITCH event is sent directly on source filter
+		if (group->is_playing) {
+			src_evt = *fevt;
+			src_evt.base.on_pid = NULL;
+			gf_filter_send_event(group->seg_filter_src, &src_evt, GF_FALSE);
+		}
 		group->is_playing = GF_FALSE;
 		group->prev_is_init_segment = GF_FALSE;
 		if (ctx->nb_playing) {
@@ -2390,6 +2497,8 @@ static Bool dashdmx_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 		//forward new event to source pid
 		src_evt = *fevt;
 		src_evt.base.on_pid = ipid;
+		//send a stop but indicate source should not receive it
+		src_evt.play.forced_dash_segment_switch = GF_TRUE;
 		gf_filter_pid_send_event(ipid, &src_evt);
 
 		//cancel the event
@@ -2458,6 +2567,10 @@ static void dashdmx_notify_group_quality(GF_DASHDmxCtx *ctx, GF_DASHGroup *group
 		//setup some info for consuming filters
 		if (ctx->forward) {
 			GF_DASHQualityInfo q;
+			const char *init_seg = NULL;
+			const char *hls_variant = NULL;
+			const char *dash_url = gf_dash_get_url(ctx->dash);
+			u32 segment_timeline_timescale = 0;
 
 			//we dispatch timing in milliseconds
 			if (ctx->forward==DFWD_FILE) {
@@ -2471,18 +2584,26 @@ static void dashdmx_notify_group_quality(GF_DASHDmxCtx *ctx, GF_DASHGroup *group
 					gf_filter_pid_set_property(opid, GF_PROP_PID_CODEC, &PROP_STRING(q.codec));
 			}
 			if (group->template) gf_free(group->template);
-			group->template = gf_dash_group_get_template(ctx->dash, group->idx);
+			group->template = gf_dash_group_get_template(ctx->dash, group->idx, &segment_timeline_timescale, &init_seg, &hls_variant);
 			if (!group->template) {
-				GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASHDmx] Cannot extract template string for %s\n", gf_dash_get_url(ctx->dash) ));
+				GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASHDmx] Cannot extract template string for %s\n", dash_url ));
 				gf_filter_pid_set_property(opid, GF_PROP_PID_TEMPLATE, NULL);
 			} else {
 				gf_filter_pid_set_property(opid, GF_PROP_PID_TEMPLATE, &PROP_STRING(group->template) );
 				char *sep = strchr(group->template, '$');
 				if (sep) sep[0] = 0;
+				gf_filter_pid_set_property_str(opid, "source_template", &PROP_BOOL(GF_TRUE) );
+				gf_filter_pid_set_property_str(opid, "stl_timescale", segment_timeline_timescale ? &PROP_UINT(segment_timeline_timescale) : NULL);
+				gf_filter_pid_set_property_str(opid, "init_url", init_seg ? &PROP_STRING(init_seg) : NULL);
+				gf_filter_pid_set_property_str(opid, "manifest_url", dash_url ? &PROP_STRING(dash_url) : NULL);
+				gf_filter_pid_set_property_str(opid, "hls_variant_name", hls_variant ? &PROP_STRING(hls_variant) : NULL);
 			}
+			gf_filter_pid_set_property(opid, GF_PROP_PID_REP_ID, &PROP_STRING(q.ID) );
+
+			//file forward mode, we may need a dash duration later in the chain (route mux for ex), signal what we know
+			//from manifest
 			if (ctx->forward==DFWD_FILE) {
 				u32 dur, timescale;
-				gf_filter_pid_set_property(opid, GF_PROP_PID_REP_ID, &PROP_STRING(q.ID) );
 
 				gf_dash_group_get_segment_duration(ctx->dash, group->idx, &dur, &timescale);
 				gf_filter_pid_set_property(opid, GF_PROP_PID_DASH_DUR, &PROP_FRAC_INT(dur, timescale) );
@@ -2571,8 +2692,12 @@ static void dashdmx_switch_segment(GF_DASHDmxCtx *ctx, GF_DASHGroup *group)
 	bin128 key_IV;
 	u32 group_idx;
 
-	group->init_ok = GF_TRUE;
+	//for smooth if prev is init segment itis not connected to the real httpin yet...
+	if (group->prev_is_init_segment && gf_dash_is_smooth_streaming(ctx->dash)) {
 
+	} else {
+		group->init_ok = GF_TRUE;
+	}
 	dashdmx_notify_group_quality(ctx, group);
 
 fetch_next:
@@ -2648,7 +2773,7 @@ fetch_next:
 
 	e = gf_dash_group_get_next_segment_location(ctx->dash, group_idx, dependent_representation_index, &next_url, &start_range, &end_range,
 		        NULL, &next_url_init_or_switch_segment, &switch_start_range , &switch_end_range,
-		        &src_url, &has_scalable_next, &key_url, &key_IV);
+		        &src_url, &has_scalable_next, &key_url, &key_IV, &group->utc_map);
 
 	if (e == GF_EOS) {
 		group->eos_detected = GF_TRUE;
@@ -2699,6 +2824,10 @@ fetch_next:
 		evt.seek.source_switch = next_url_init_or_switch_segment;
 		evt.seek.is_init_segment = GF_TRUE;
 		evt.seek.skip_cache_expiration = GF_TRUE;
+		if (ctx->forward) {
+			if (group->current_url) gf_free(group->current_url);
+			group->current_url = gf_strdup(next_url_init_or_switch_segment);
+		}
 
 		group->prev_is_init_segment = GF_TRUE;
 
@@ -2734,6 +2863,17 @@ fetch_next:
 		gf_cryptfin_set_kms(group->seg_filter_src, key_url, key_IV);
 	}
 
+	if (ctx->forward) {
+		if (group->current_url && strcmp(group->current_url, next_url)) {
+			gf_free(group->current_url);
+			group->current_url = NULL;
+		}
+		if (!group->current_url) {
+			group->current_url = gf_strdup(next_url);
+			group->url_changed = GF_TRUE;
+		}
+	}
+
 	GF_FEVT_INIT(evt, GF_FEVT_SOURCE_SWITCH, NULL);
 	evt.seek.source_switch = next_url;
 	evt.seek.start_offset = start_range;
@@ -2742,10 +2882,10 @@ fetch_next:
 	gf_filter_send_event(group->seg_filter_src, &evt, GF_FALSE);
 }
 
-GF_Err dashin_abort(GF_DASHDmxCtx *ctx)
+static GF_Err dashin_abort(GF_DASHDmxCtx *ctx)
 {
 	u32 i;
-	if (ctx->in_error) return GF_EOS;
+	if (!ctx || ctx->in_error) return GF_EOS;
 	
 	for (i=0; i<gf_filter_get_ipid_count(ctx->filter); i++) {
 		GF_FilterEvent evt;
@@ -2902,7 +3042,7 @@ GF_Err dashdmx_process(GF_Filter *filter)
 							agroup = gf_filter_pid_get_udta(an_opid);
 							if (!agroup || (agroup != group)) continue;
 
-							if (gf_filter_pid_is_eos(an_ipid)) {
+							if (gf_filter_pid_is_eos(an_ipid) || group->force_seg_switch) {
 								gf_filter_pid_clear_eos(an_ipid, GF_TRUE);
 								GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] Clearing EOS on pids from group %d\n", group->idx));
 							}
@@ -2912,6 +3052,9 @@ GF_Err dashdmx_process(GF_Filter *filter)
 								gf_dash_group_push_tfrf(ctx->dash, group->idx, p->value.ptr, gf_filter_pid_get_timescale(an_ipid));
 							}
 							gf_filter_release_property(pe);
+
+							u32 flags = gf_filter_pid_get_udta_flags(an_opid);
+							gf_filter_pid_set_udta_flags(an_opid, flags & ~FLAG_FIRST_IN_SEG);
 						}
 						dashdmx_update_group_stats(ctx, group);
 						group->stats_uploaded = GF_TRUE;
@@ -2942,6 +3085,9 @@ GF_Err dashdmx_process(GF_Filter *filter)
 
 						gf_filter_pid_clear_eos(an_ipid, GF_TRUE);
 						GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASHDmx] Clearing EOS on pids from group %d\n", group->idx));
+
+						u32 flags = gf_filter_pid_get_udta_flags(an_opid);
+						gf_filter_pid_set_udta_flags(an_opid, flags & ~FLAG_FIRST_IN_SEG);
 					}
 					dashdmx_switch_segment(ctx, group);
 					gf_filter_prevent_blocking(filter, GF_FALSE);
@@ -2982,7 +3128,11 @@ GF_Err dashdmx_process(GF_Filter *filter)
 		gf_filter_ask_rt_reschedule(filter, 1000);
 		return GF_OK;
 	}
-	if (has_pck) check_eos = GF_FALSE;
+	if (has_pck)
+		check_eos = GF_FALSE;
+	//only check for eos if no pending events, otherwise we may miss a PLAY pending (due to seek)
+	else if (check_eos && gf_filter_get_num_events_queued(filter))
+		check_eos = GF_FALSE;
 
 	if (check_eos) {
 		Bool all_groups_done = GF_TRUE;
@@ -3081,7 +3231,8 @@ static const char *dashdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 	}
 	if (res_m3u) {
 		*score = GF_FPROBE_SUPPORTED;
-		return "video/mpegurl";
+		//we don't use x-mpegURL to avoid complaints from HLS mediastreamvalidator
+		return "application/vnd.apple.mpegURL";
 	}
 	if (res_smooth) {
 		*score = GF_FPROBE_SUPPORTED;
@@ -3093,7 +3244,10 @@ static const char *dashdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 #define OFFS(_n)	#_n, offsetof(GF_DASHDmxCtx, _n)
 static const GF_FilterArgs DASHDmxArgs[] =
 {
-	{ OFFS(auto_switch), "switch quality every N segments, disabled if 0", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(auto_switch), "switch quality every N segments\n"
+		"- positive: go to higher quality or loop to lowest\n"
+		"- negative: go to lower quality or loop to highest\n"
+		"- 0: disabled", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(segstore), "enable file caching\n"
 		"- mem: all files are stored in memory, no disk IO\n"
 		"- disk: files are stored to disk but discarded once played\n"
@@ -3114,8 +3268,8 @@ static const GF_FilterArgs DASHDmxArgs[] =
 		"- min_q: start with lowest quality\n"
 		"- max_q: start with highest quality\n"
 		"- min_bw: start with lowest bitrate\n"
-		"- max_bw: start with highest bitrate; for tiles are used, all low priority tiles will have the lower (below max) bandwidth selected\n"
-		"- max_bw_tiles: start with highest bitrate; for tiles all low priority tiles will have their lowest bandwidth selected"
+		"- max_bw: start with highest bitrate; if tiles are used, all low priority tiles will have the lower (below max) bandwidth selected\n"
+		"- max_bw_tiles: start with highest bitrate; if tiles are used, all low priority tiles will have their lowest bandwidth selected"
 		, GF_PROP_UINT, "max_bw", "min_q|max_q|min_bw|max_bw|max_bw_tiles", 0},
 
 	{ OFFS(max_res), "use max media resolution to configure display", GF_PROP_BOOL, "true", NULL, 0},
@@ -3127,7 +3281,7 @@ static const GF_FilterArgs DASHDmxArgs[] =
 
 	{ OFFS(shift_utc), "shift DASH UTC clock in ms", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(route_shift), "shift ROUTE requests time by given ms", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(server_utc), "use ServerUTC: or Date: http headers instead of local UTC", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(server_utc), "use `ServerUTC` or `Date` HTTP headers instead of local UTC", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(screen_res), "use screen resolution in selection phase", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(init_timeshift), "set initial timeshift in ms (if >0) or in per-cent of timeshift buffer (if <0)", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(tile_mode), "tile adaptation mode\n"
@@ -3145,7 +3299,7 @@ static const GF_FilterArgs DASHDmxArgs[] =
 	{ OFFS(delay40X), "delay in milliseconds to wait between two 40X on the same segment", GF_PROP_UINT, "500", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(exp_threshold), "delay in milliseconds to wait after the segment AvailabilityEndDate before considering the segment lost", GF_PROP_UINT, "100", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(switch_count), "indicate how many segments the client shall wait before switching up bandwidth. If 0, switch will happen as soon as the bandwidth is enough, but this is more prone to network variations", GF_PROP_UINT, "1", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(aggressive), "if enabled, switching algo targets the closest bandwidth fitting the available download rate. If no, switching algo targets the lowest bitrate representation that is above the currently played (eg does not try to switch to max bandwidth)", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(aggressive), "if enabled, switching algo targets the closest bandwidth fitting the available download rate. If no, switching algo targets the lowest bitrate representation that is above the currently played (e.g. does not try to switch to max bandwidth)", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(debug_as), "play only the adaptation sets indicated by their indices (0-based) in the MPD", GF_PROP_UINT_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(speedadapt), "enable adaptation based on playback speed", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(noxlink), "disable xlink if period has both xlink and adaptation sets", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -3156,11 +3310,11 @@ static const GF_FilterArgs DASHDmxArgs[] =
 	{ OFFS(lowlat), "segment scheduling policy in low latency mode\n"
 		"- no: disable low latency\n"
 		"- strict: strict respect of AST offset in low latency\n"
-		"- early: allow fetching segments earlier than their AST in low latency when input demux is empty", GF_PROP_UINT, "early", "no|strict|early", GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(forward), "segment forwarding mode  -see filter help\n"
+		"- early: allow fetching segments earlier than their AST in low latency when input PID is empty", GF_PROP_UINT, "early", "no|strict|early", GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(forward), "segment forwarding mode\n"
 		"- none: regular DASH read\n"
-		"- file: do not demux files and forward them as file pids (imply `segstore=mem`)\n"
-		"- segb: turn on [-split_as](), segment and fragment bounds signaling and DASH cue insertion\n"
+		"- file: do not demultiplex files and forward them as file PIDs (imply `segstore=mem`)\n"
+		"- segb: turn on [-split_as](), segment and fragment bounds signaling (`sigfrag`) in sources and DASH cue insertion\n"
 		"- mani: same as `segb` and also forward manifests"
 	, GF_PROP_UINT, "none", "none|file|segb|mani", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(fmodefwd), "forward packet rather than copy them in `file` forward mode. Packet copy might improve performances in low latency mode", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_EXPERT},
@@ -3173,6 +3327,7 @@ static const GF_FilterArgs DASHDmxArgs[] =
 	"- off: do not use MPD chaining\n"
 	"- on: use MPD chaining once over, fallback if MPD load failure\n"
 	"- error: use MPD chaining once over or if error (MPD or segment download)", GF_PROP_UINT, "on", "off|on|error", GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(asloop), "when auto switch is enabled, iterates back and forth from highest to lowest qualities", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -3181,8 +3336,8 @@ static const GF_FilterArgs DASHDmxArgs[] =
 static const GF_FilterCapability DASHDmxCaps[] =
 {
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "mpd|m3u8|3gm|ism"),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "application/dash+xml|video/vnd.3gpp.mpd|audio/vnd.3gpp.mpd|video/vnd.mpeg.dash.mpd|audio/vnd.mpeg.dash.mpd|audio/mpegurl|video/mpegurl|application/vnd.ms-sstr+xml"),
+	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, DASHIN_FILE_EXT),
+	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, DASHIN_MIMES),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_RAW),
@@ -3197,7 +3352,7 @@ static const GF_FilterCapability DASHDmxCaps[] =
 GF_FilterRegister DASHDmxRegister = {
 	.name = "dashin",
 	GF_FS_SET_DESCRIPTION("MPEG-DASH and HLS client")
-	GF_FS_SET_HELP("This filter reads MPEG-DASH, HLS and MS Smooth manifests and produce media output according to its mode.\n"
+	GF_FS_SET_HELP("This filter reads MPEG-DASH, HLS and MS Smooth manifests.\n"
 	"\n"
 	"# Regular mode\n"
 	"This is the default mode, in which the filter produces media PIDs and frames from sources indicated in the manifest.\n"
@@ -3205,7 +3360,7 @@ GF_FilterRegister DASHDmxRegister = {
 	"- run with no adaptation, to grab maximum quality.\n"
 	"EX gpac -i MANIFEST_URL:algo=none:start_with=max_bw -o dest.mp4\n"
 	"- run with no adaptation, fetching all qualities.\n"
-	"EX gpac -i MANIFEST_URL:split_as fout:dst=$File$.mp4:clone\n"
+	"EX gpac -i MANIFEST_URL:split_as -o dst=$File$.mp4:clone\n"
 	"\n"
 	"# File mode\n"
 	"When [-forward]() is set to `file`, the client forwards media files without demultiplexing them.\n"
@@ -3214,34 +3369,35 @@ GF_FilterRegister DASHDmxRegister = {
 	"Warning: This mode cannot be set through inheritance as it changes the link capabilities of the filter. The filter MUST be explicitly declared.\n"
 	"\n"
 	"To expose a live DASH session to route:\n"
-	"EX gpac -i MANIFEST_URL dashin:forward=file @ -o route://225.0.0.1:8000/\n"
+	"EX gpac -i MANIFEST_URL dashin:forward=file -o route://225.0.0.1:8000/\n"
 	"\n"
 	"Note: This mode used to be trigger by [-filemode]() option, still recognized.\n"
 	"\n"
 	"If the source has dependent media streams (scalability) and all qualities and initialization segments need to be forwarded, add [-split_as]().\n"
 	"\n"
 	"# Segment bound modes\n"
-	"When [-forward]() is set to `segs` or `mani`, the client forwards media frames (after demux) together with segment and fragment boundaries of source files.\n"
+	"When [-forward]() is set to `segb` or `mani`, the client forwards media frames (after demultiplexing) together with segment and fragment boundaries of source files.\n"
 	"\n"
-	"This mode can be used to process media data and regenerating the same manifest/segmentation.\n"
+	"This mode can be used to process media data and regenerate the same manifest/segmentation.\n"
 	"\n"
-	"EX gpac -i MANIFEST_URL:forward=mani cecrypt:cfile=DRM.xml @ -o encrypted/live.mpd:pssh=mv\n"
+	"EX gpac -i MANIFEST_URL:forward=mani cecrypt:cfile=DRM.xml -o encrypted/live.mpd:pssh=mv\n"
 	"This will encrypt an existing DASH session, inject PSSH in manifest and segments.\n"
 	"\n"
-	"EX gpac -i MANIFEST_URL:forward=segb cecrypt:cfile=DRM.xml @ -o encrypted/live.m3u8\n"
+	"EX gpac -i MANIFEST_URL:forward=segb cecrypt:cfile=DRM.xml -o encrypted/live.m3u8\n"
 	"This will encrypt an existing DASH session and republish it as HLS, using same segment names and boundaries.\n"
 	"\n"
-	"This mode will force [-noseek]() to `true` to ensure the first segment fetched is complete, and [-split_as]() to `true` to fetch all qualities.\n"
+	"This mode will force [-noseek]()=`true` to ensure the first segment fetched is complete, and [-split_as]()=`true` to fetch all qualities.\n"
 	"\n"
 	"Each first packet of a segment will have the following properties attached:\n"
-	"- `CueStart`: to indicate this is a segment start (set by demuxer if it offers `sigfrag` option)\n"
+	"- `CueStart`: indicate this is a segment start\n"
 	"- `FileNumber`: current segment number\n"
-	"- `FileName`: current segment file name without manifest base url\n"
+	"- `FileName`: current segment file name without manifest (MPD or master HLS) base url\n"
+	"- `DFPStart`: set with value `0` if this is the first packet in the period, absent otherwise\n"
 	"\n"
 	"If [-forward]() is set to `mani`, the first packet of a segment dispatched after a manifest update will also carry the manifest payload as a property:\n"
 	"- `DFManifest`: contains main manifest (MPD, M3U8 master)\n"
 	"- `DFVariant`: contains list of HLS child playlists as strings for the given quality\n"
-	"- `DFVariantName`: contains list of associated HLS child playlists name\n"
+	"- `DFVariantName`: contains list of associated HLS child playlists name, in same order as manifests in `DFVariant`\n"
 	"\n"
 	"Each output PID will have the following properties assigned:\n"
 	"- `DFMode`: set to 1 for `segb` or 2 for `mani`\n"
@@ -3250,16 +3406,21 @@ GF_FilterRegister DASHDmxRegister = {
 	"- `FileName`: set to associated init segment if any\n"
 	"- `Representation`: set to the associated representation ID in the manifest\n"
 	"- `DashDur`: set to the average segment duration as indicated in the manifest\n"
+	"- `source_template`: set to true to indicate the source template is known\n"
+	"- `stl_timescale`: timescale used by SegmentTimeline, or 0 if no SegmentTimeline\n"
+	"- `init_url`: unresolved intialization URL (as it appears in the MPD or in the variant playlist)\n"
+	"- `manifest_url`: manifest URL\n"
+	"- `hls_variant_name`: HLS variant playlist name (as it appears in the HLS master playlist)\n"
 	"\n"
-	"When the [dasher](dasher) is used together with this mode, this will force all generated segments to have the same name, duration and fragmentation properties as the input ones.\n"
-	"It is therefore not recommended for sessions stored/generated on local storage to generate the output in the same directory.\n"
+	"When the [dasher](dasher) is used together with this mode, this will force all generated segments to have the same name, duration and fragmentation properties as the input ones. It is therefore not recommended for sessions stored/generated on local storage to generate the output in the same directory.\n"
 	)
 	.private_size = sizeof(GF_DASHDmxCtx),
 	.initialize = dashdmx_initialize,
 	.finalize = dashdmx_finalize,
 	.args = DASHDmxArgs,
 	SETCAPS(DASHDmxCaps),
-	.flags = GF_FS_REG_REQUIRES_RESOLVER,
+	//we need the resolver, and pids are declared dynamically
+	.flags = GF_FS_REG_REQUIRES_RESOLVER | GF_FS_REG_DYNAMIC_PIDS,
 	.configure_pid = dashdmx_configure_pid,
 	.process = dashdmx_process,
 	.process_event = dashdmx_process_event,
@@ -3280,6 +3441,8 @@ const GF_FilterRegister *dashdmx_register(GF_FilterSession *session)
 #endif
 }
 
+
+#ifndef GPAC_DISABLE_DASH_CLIENT
 static s32 dashdmx_rate_adaptation_ext(void *udta, u32 group_idx, u32 base_group_idx, Bool force_lower_complexity, GF_DASHCustomAlgoInfo *stats)
 {
 	GF_DASHDmxCtx *ctx = (GF_DASHDmxCtx*) udta;
@@ -3297,7 +3460,7 @@ typedef struct
 	u32 current_seg_dur;
 } GF_DASHDownloadStats;
 
-s32 dashdmx_download_monitor_ext(void *udta, u32 group_idx, u32 bits_per_sec, u64 total_bytes, u64 bytes_done, u64 us_since_start, u32 buffer_dur_ms, u32 current_seg_dur)
+static s32 dashdmx_download_monitor_ext(void *udta, u32 group_idx, u32 bits_per_sec, u64 total_bytes, u64 bytes_done, u64 us_since_start, u32 buffer_dur_ms, u32 current_seg_dur)
 {
 	GF_DASHDmxCtx *ctx = (GF_DASHDmxCtx*) udta;
 	GF_DASHDownloadStats stats;
@@ -3310,6 +3473,7 @@ s32 dashdmx_download_monitor_ext(void *udta, u32 group_idx, u32 bits_per_sec, u6
 	stats.current_seg_dur = current_seg_dur;
 	return ctx->on_download_monitor(ctx->rt_udta, group_idx, &stats);
 }
+#endif /*GPAC_DISABLE_DASH_CLIENT*/
 
 
 GF_EXPORT

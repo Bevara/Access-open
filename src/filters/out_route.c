@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2020
+ *			Copyright (c) Telecom ParisTech 2020-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ROUTE output filter
@@ -127,6 +127,7 @@ typedef struct
 	u8 *init_seg_data;
 	u32 init_seg_size;
 	u32 init_seg_crc;
+	Bool no_init;
 	char *init_seg_name;
 
 	//0: not manifest, 1: MPD, 2: HLS
@@ -437,6 +438,11 @@ static GF_Err routeout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	if (manifest_type) {
 		rserv->creation_time = gf_sys_clock();
 		gf_filter_pid_ignore_blocking(pid, GF_TRUE);
+	} else {
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_NO_INIT);
+		if (p && p->value.boolean) {
+			rpid->no_init = GF_TRUE;
+		}
 	}
 
 	gf_list_add(rserv->pids, rpid);
@@ -708,7 +714,7 @@ static GF_Err routeout_check_service_updates(GF_ROUTEOutCtx *ctx, ROUTEService *
 		//media file, check for init segment and hls child manifest
 		if (!rpid->manifest_type) {
 			nb_media++;
-			while (1) {
+			while (! rpid->no_init) {
 				GF_FilterPacket *pck = gf_filter_pid_get_packet(rpid->pid);
 				if (!pck) break;
 
@@ -740,7 +746,7 @@ static GF_Err routeout_check_service_updates(GF_ROUTEOutCtx *ctx, ROUTEService *
 
 				break;
 			}
-			if (rpid->init_seg_data) {
+			if (rpid->init_seg_data || rpid->no_init) {
 				nb_media_init ++;
 				if (serv->manifest_type==2) {
 					if (!rpid->hld_child_pl_name)
@@ -780,7 +786,7 @@ static GF_Err routeout_check_service_updates(GF_ROUTEOutCtx *ctx, ROUTEService *
 			if (!file_name) {
 				snprintf(szLocManfest, 100, "manifest.%s", (serv->manifest_type==2) ? "m3u8" : "mpd");
 				file_name = szLocManfest;
-				GF_LOG(GF_LOG_WARNING, GF_LOG_ROUTE, ("[ROUTE] Cannot guess manifest name, assuming %s\n", file_name));
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_ROUTE, ("[ROUTE] No manifest name assigned, will use %s\n", file_name));
 			}
 
 			//child subplaylist
@@ -944,8 +950,12 @@ static GF_Err routeout_check_service_updates(GF_ROUTEOutCtx *ctx, ROUTEService *
 
 
 		if (serv->manifest) {
-			snprintf(temp, 1000, " <item metadataURI=\"%s\" version=\"%d\" contentType=\"%s\"/>\n", serv->manifest_name, serv->manifest_version, serv->manifest_mime);
+			gf_dynstrcat(&payload_text, " <item metadataURI=\"", NULL);
+			gf_dynstrcat(&payload_text, serv->manifest_name, NULL);
+			snprintf(temp, 1000, "\" version=\"%d\" contentType=\"", serv->manifest_version);
 			gf_dynstrcat(&payload_text, temp, NULL);
+			gf_dynstrcat(&payload_text, serv->manifest_mime, NULL);
+			gf_dynstrcat(&payload_text, "\"/>\n", NULL);
 		}
 
 		gf_dynstrcat(&payload_text, "</metadataEnvelope>\n\r\n", NULL);
@@ -967,10 +977,12 @@ static GF_Err routeout_check_service_updates(GF_ROUTEOutCtx *ctx, ROUTEService *
 		snprintf(temp, 1000, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
 				"<BundleDescriptionROUTE xmlns=\"tag:atsc.org,2016:XMLSchemas/ATSC3/Delivery/ROUTEUSD/1.0/\">\n"
 				" <UserServiceDescription serviceId=\"%d\">\n"
-				"  <Name lang=\"eng\">%s</Name>\n"
-				"  <DeliveryMethod>\n"
-				"   <BroadcastAppService>\n", service_id, service_name);
+				"  <Name lang=\"eng\">", service_id);
 		gf_dynstrcat(&payload_text, temp, NULL);
+		gf_dynstrcat(&payload_text, service_name, NULL);
+		gf_dynstrcat(&payload_text, "</Name>\n"
+				"  <DeliveryMethod>\n"
+				"   <BroadcastAppService>\n", NULL);
 
 		for (i=0;i<count; i++) {
 			rpid = gf_list_get(serv->pids, i);
@@ -1040,8 +1052,12 @@ static GF_Err routeout_check_service_updates(GF_ROUTEOutCtx *ctx, ROUTEService *
 			src_ip = szIP;
 		}
 
-		snprintf(temp, 1000, " <RS dIpAddr=\"%s\" dPort=\"%d\" sIpAddr=\"%s\">\n", rlct->ip, rlct->port, src_ip);
+		gf_dynstrcat(&payload_text, " <RS dIpAddr=\"", NULL);
+		gf_dynstrcat(&payload_text, rlct->ip, NULL);
+		snprintf(temp, 1000, "\" dPort=\"%d\" sIpAddr=\"", rlct->port);
 		gf_dynstrcat(&payload_text, temp, NULL);
+		gf_dynstrcat(&payload_text, src_ip, NULL);
+		gf_dynstrcat(&payload_text, "\">\n", NULL);
 
 		for (i=0; i<count; i++) {
 			const GF_PropertyValue *p;
@@ -1114,7 +1130,7 @@ static GF_Err routeout_check_service_updates(GF_ROUTEOutCtx *ctx, ROUTEService *
 					max_size *= 2;
 				}
 
-				snprintf(temp, 1000, " Expires=\"4294967295\" afdt:maxTransportSize=\"%d\">\n", max_size);
+				snprintf(temp, 1000, " Expires=\"4000000000\" afdt:maxTransportSize=\"%d\">\n", max_size);
 				gf_dynstrcat(&payload_text, temp, NULL);
 			}
 
@@ -1679,7 +1695,7 @@ next_packet:
 				send_hls_child = GF_TRUE;
 				GF_LOG(GF_LOG_INFO, GF_LOG_ROUTE, ("[ROUTE] Sending init segment %s\n", rpid->init_seg_name));
 
-				//send init asap
+				//send init asap (may be empty)
 				offset = 0;
 				while (offset < rpid->init_seg_size) {
 					//we use codepoint 5 (new IS) or 7 (repeated IS)
@@ -1909,6 +1925,9 @@ static void routeout_send_lls(GF_ROUTEOutCtx *ctx)
 			ROUTEService *serv = gf_list_get(ctx->services, i);
 			u32 sid = serv->service_id;
 			if (!sid) sid = 1;
+			u32 minor = sid % 1000;
+			if (!minor) minor = 1;
+			u32 major = GF_4CC('G', 'P', 'A', 'C')  % 1000;
 
 			rpid = gf_list_get(serv->pids, 0);
 			p = gf_filter_pid_get_property_str(rpid->pid, "ShortServiceName");
@@ -1921,7 +1940,7 @@ static void routeout_send_lls(GF_ROUTEOutCtx *ctx)
 			szIP[len] = 0;
 
 			snprintf(tmp, 2000,
-				" <Service serviceId=\"%d\" sltSvcSeqNum=\"0 \" serviceCategory=\"1\" globalServiceId=\"urn:gpac:atsc:serviceid:%d.%d\" majorChannelNo=\"666\" minorChannelNo=\"666\" shortServiceName=\"%s\">\n", sid, ctx->bsid, sid, szIP);
+				" <Service serviceId=\"%d\" sltSvcSeqNum=\"0 \" serviceCategory=\"1\" globalServiceID=\"urn:atsc:gpac:%d:%d\" majorChannelNo=\"%d\" minorChannelNo=\"%d\" shortServiceName=\"%s\">\n", sid, ctx->bsid, sid, major, minor, szIP);
 			gf_dynstrcat(&payload_text, tmp, NULL);
 
 			src_ip = ctx->ifce;
@@ -2078,13 +2097,13 @@ static Bool routeout_use_alias(GF_Filter *filter, const char *url, const char *m
 
 static const GF_FilterArgs ROUTEOutArgs[] =
 {
-	{ OFFS(dst), "destination URL - see filter help", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(dst), "destination URL", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(ext), "set extension for graph resolution, regardless of file extension", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(mime), "set mime type for graph resolution", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(ifce), "default interface to use for multicast. If NULL, the default system interface will be used", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(carousel), "carousel period in ms for repeating signaling and raw file data - see filter help", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(carousel), "carousel period in ms for repeating signaling and raw file data", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(first_port), "port number of first ROUTE session in ATSC mode", GF_PROP_UINT, "6000", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(ip), "mulicast IP address for ROUTE session in ATSC mode", GF_PROP_STRING, "225.1.1.0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(ip), "multicast IP address for ROUTE session in ATSC mode", GF_PROP_STRING, "225.1.1.0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(ttl), "time-to-live for multicast packets", GF_PROP_UINT, "0", NULL, 0},
 	{ OFFS(bsid), "ID for ATSC broadcast stream", GF_PROP_UINT, "800", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(mtu), "size of LCT MTU in bytes", GF_PROP_UINT, "1472", NULL, 0},
@@ -2095,7 +2114,7 @@ static const GF_FilterArgs ROUTEOutArgs[] =
 		, GF_PROP_UINT, "off", "off|type|all", 0},
 	{ OFFS(korean), "use Korean version of ATSC 3.0 spec instead of US", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(llmode), "use low-latency mode", GF_PROP_BOOL, "false", NULL, GF_ARG_HINT_EXPERT},
-	{ OFFS(brinc), "bitrate increase in percent when estimating timing in low latency mode - see filter help", GF_PROP_UINT, "10", NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(brinc), "bitrate increase in percent when estimating timing in low latency mode", GF_PROP_UINT, "10", NULL, GF_ARG_HINT_EXPERT},
 	{ OFFS(noreg), "disable rate regulation for media segments, pushing them as fast as received", GF_PROP_BOOL, "false", NULL, GF_ARG_HINT_EXPERT},
 
 	{ OFFS(runfor), "run for the given time in ms", GF_PROP_UINT, "0", NULL, 0},
@@ -2120,7 +2139,7 @@ GF_FilterRegister ROUTEOutRegister = {
 		"- `route://IP:port`: session is a ROUTE session running on given multicast IP and port\n"
 		"\n"
 		"The filter only accepts input PIDs of type `FILE`.\n"
-		"- HAS Manifests files are detected by file extension and/or MIME types, and sent as part of the signaling bundle or as LCT object files for HLS subplaylists.\n"
+		"- HAS Manifests files are detected by file extension and/or MIME types, and sent as part of the signaling bundle or as LCT object files for HLS child playlists.\n"
 		"- HAS Media segments are detected using the `OrigStreamType` property, and send as LCT object files using the DASH template string.\n"
 		"- A PID without `OrigStreamType` property set is delivered as a regular LCT object file (called `raw` hereafter).\n"
 		"  \n"
@@ -2135,8 +2154,8 @@ GF_FilterRegister ROUTEOutRegister = {
 		"When DASHing for multi-service ATSC, forcing an extension will force all service to use the same formats.\n"
 		"EX \"atsc://:ext=mpd\", \"route://IP:PORT/manifest.mpd\"\n"
 		"If multiple services with different formats are needed, you will need to explicit your filters:\n"
-		"EX gpac -i DASH_URL:#ServiceID=1 @ dashin:forward=file:FID=1 -i HLS_URL:#ServiceID=2 @ dashin:forward=file:FID=2 -o atsc://:SID=1,2\n"
-		"EX gpac -i MOVIE1:#ServiceID=1 @ dasher:FID=1:mname=manifest.mpd -i MOVIE2:#ServiceID=2 @ dasher:FID=2:mname=manifest.m3u8 -o atsc://:SID=1,2\n"
+		"EX gpac -i DASH_URL:#ServiceID=1 dashin:forward=file:FID=1 -i HLS_URL:#ServiceID=2 dashin:forward=file:FID=2 -o atsc://:SID=1,2\n"
+		"EX gpac -i MOVIE1:#ServiceID=1 dasher:FID=1:mname=manifest.mpd -i MOVIE2:#ServiceID=2 dasher:FID=2:mname=manifest.m3u8 -o atsc://:SID=1,2\n"
 		"\n"
 		"Warning: When forwarding an existing DASH/HLS session, do NOT set any extension or manifest name.\n"
 		"\n"
@@ -2146,7 +2165,7 @@ GF_FilterRegister ROUTEOutRegister = {
 		"- raw files are assigned TSI 1 and increasing number of TOI\n"
 		"- otherwise, the first PID found is assigned TSI 10, the second TSI 20 etc ...\n"
 		"\n"
-		"Init segments and HLS subplaylists are sent before each new segment, independently of [-carousel]().\n"
+		"Init segments and HLS child playlists are sent before each new segment, independently of [-carousel]().\n"
 		"# ATSC 3.0 mode\n"
 		"In this mode, the filter allows multiple service multiplexing, identified through the `ServiceID` property.\n"
 		"By default, a single multicast IP is used for route sessions, each service will be assigned a different port.\n"
@@ -2163,22 +2182,22 @@ GF_FilterRegister ROUTEOutRegister = {
 		"When using low-latency mode, the input media segments are not re-assembled in a single packet but are instead sent as they are received.\n"
 		"In order for the real-time scheduling of data chunks to work, each fragment of the segment should have a CTS and timestamp describing its timing.\n"
 		"If this is not the case (typically when used with an existing DASH session in file mode), the scheduler will estimate CTS and duration based on the stream bitrate and segment duration. The indicated bitrate is increased by [-brinc]() percent for safety.\n"
-		"If this fails, the muxer will trigger warnings and send as fast as possible.\n"
+		"If this fails, the filter will trigger warnings and send as fast as possible.\n"
 		"Note: The LCT objects are sent with no length (TOL header) assigned until the final segment size is known, potentially leading to a final 0-size LCT fragment signaling only the final size.\n"
 		"\n"
 		"# Examples\n"
 		"Since the ROUTE filter only consumes files, it is required to insert:\n"
-		"- the dash demuxer in file forwarding mode when loading a DASH session\n"
-		"- the dash muxer when creating a DASH session\n"
+		"- the dash demultiplexer in file forwarding mode when loading a DASH session\n"
+		"- the dash multiplexer when creating a DASH session\n"
 		"\n"
-		"Muxing an existing DASH session in route:\n"
-		"EX gpac -i source.mpd dashin:forward=file @ -o route://225.1.1.0:6000/\n"
-		"Muxing an existing DASH session in atsc:\n"
-		"EX gpac -i source.mpd dashin:forward=file @ -o atsc://\n"
-		"Dashing and muxing in route:\n"
-		"EX gpac -i source.mp4 dasher:profile=live @ -o route://225.1.1.0:6000/manifest.mpd\n"
-		"Dashing and muxing in route Low Latency (experimental):\n"
-		"EX gpac -i source.mp4 dasher @ -o route://225.1.1.0:6000/manifest.mpd:profile=live:cdur=0.2:llmode\n"
+		"Multiplexing an existing DASH session in route:\n"
+		"EX gpac -i source.mpd dashin:forward=file -o route://225.1.1.0:6000/\n"
+		"Multiplexing an existing DASH session in atsc:\n"
+		"EX gpac -i source.mpd dashin:forward=file -o atsc://\n"
+		"Dashing and multiplexing in route:\n"
+		"EX gpac -i source.mp4 dasher:profile=live -o route://225.1.1.0:6000/manifest.mpd\n"
+		"Dashing and multiplexing in route Low Latency:\n"
+		"EX gpac -i source.mp4 dasher -o route://225.1.1.0:6000/manifest.mpd:profile=live:cdur=0.2:llmode\n"
 		"\n"
 		"Sending a single file in ROUTE using half a second upload time, 2 seconds carousel:\n"
 		"EX gpac -i URL:#ROUTEUpload=0.5:#ROUTECarousel=2 -o route://225.1.1.0:6000/\n"
@@ -2186,11 +2205,11 @@ GF_FilterRegister ROUTEOutRegister = {
 		"Common mistakes:\n"
 		"EX gpac -i source.mpd -o route://225.1.1.0:6000/\n"
 		"This will only send the manifest file as a regular object and will not load the dash session.\n"
-		"EX gpac -i source.mpd dasher @ -o route://225.1.1.0:6000/\n"
-		"EX gpac -i source.mpd dasher @ -o route://225.1.1.0:6000/manifest.mpd\n"
-		"These will load the dash session, instantiate a new dasher filter (hence a new DASH manifest), sending the output of the dasher to ROUTE\n"
-		"EX gpac -i source.mpd dashin:forward=file @ -o route://225.1.1.0:6000/manifest.mpd\n"
-		"This will force the ROUTE muxer to only accept .mpd files, and will drop all segment files (same if [-ext]() is used).\n"
+		"EX gpac -i source.mpd dashin:forward=file -o route://225.1.1.0:6000/manifest.mpd\n"
+		"This will force the ROUTE multiplexer to only accept .mpd files, and will drop all segment files (same if [-ext]() is used).\n"
+		"EX gpac -i source.mpd dasher -o route://225.1.1.0:6000/\n"
+		"EX gpac -i source.mpd dasher -o route://225.1.1.0:6000/manifest.mpd\n"
+		"These will demultiplex the input, re-dash it and send the output of the dasher to ROUTE\n"
 	)
 	.private_size = sizeof(GF_ROUTEOutCtx),
 	.max_extra_pids = -1,

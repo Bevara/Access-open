@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Authoring Tools sub-project
@@ -411,6 +411,7 @@ typedef struct __track_import
 	const char *filter_dst_opts;
 	/*! filter chain to insert before destination, formatted as "f1[:args]@f2[:args]" options to pass to sink*/
 	const char *filter_chain;
+	Bool is_chain_old_syntax;
 
 	/*! force mode for the created  ISOBMFF sample entry*/
 	GF_AudioSampleEntryImportMode asemode;
@@ -429,6 +430,13 @@ typedef struct __track_import
 	/*! target timescale to set*/
 	s32 moov_timescale;
 
+	/*! value for created track
+		0: let importer decide
+		0xFFFFFFFF: try to keep source ID
+		other value: trackk ID value
+	*/
+	u32 target_trackID;
+
 	/*magic number for identifying source, will be set to the destination track. Only the low 32 bits are used
 	the high 32 bits are updated by the importer as follows:
 		1<<33: if bit is set, source was an isobmff file
@@ -438,6 +446,8 @@ typedef struct __track_import
 	GF_FilterSession *run_in_session;
 	/*! muxer arguments when running multiple importers in one session*/
 	char *update_mux_args;
+	/*! muxer source ID argument when running multiple importers in one session*/
+	char *update_mux_sid;
 	/*! index of source importer when running multiple importers in one session*/
 	u32 track_index;
 	/*! target start time in source*/
@@ -707,6 +717,8 @@ typedef enum
 	GF_DASH_BSMODE_NONE,
 	/*! always inband parameter sets */
 	GF_DASH_BSMODE_INBAND,
+	/*! out of band parameter sets except PPS and APS, used for VVC */
+	GF_DASH_BSMODE_INBAND_PPS,
 	/*! attempts to merge parameter sets in a single sample entry */
 	GF_DASH_BSMODE_MERGED,
 	/*! parameter sets are in different sample entries */
@@ -939,7 +951,9 @@ typedef enum
 	//! PSSH box in moof and MPD
 	GF_DASH_PSSH_MOOF_MPD,
 	//! PSSH box in MPD only
-	GF_DASH_PSSH_MPD
+	GF_DASH_PSSH_MPD,
+	//! Drop PSSH info from mpd and init seg
+	GF_DASH_PSSH_NONE,
 } GF_DASHPSSHMode;
 
 /*!
@@ -1179,7 +1193,7 @@ enum
 	/*! Experimental Streaming Instructions */
 	GF_EXPORT_SIX = (1<<16),
 
-	/*! ony probes extraction format*/
+	/*! only probes extraction format*/
 	GF_EXPORT_PROBE_ONLY = (1<<30),
 	/*when set by user during export, will abort*/
 	GF_EXPORT_DO_ABORT = 0x80000000 //(1<<31)
@@ -1431,6 +1445,16 @@ GF_Err gf_saf_mux_for_time(GF_SAFMuxer *mux, u32 time_ms, Bool force_end_of_sess
 \param ts_inc output timestamp increment value
 */
 void gf_media_get_video_timing(Double fps, u32 *timescale, u32 *ts_inc);
+
+/*! gets dolby vision level
+ \param width width in pixels of video
+ \param height height in pixels of video
+ \param fps_num framerate numerator
+ \param fps_den framerate denominator
+ \param codecid GPAC codec ID
+ \return dv level
+*/
+u32 gf_dolby_vision_level(u32 width, u32 height, u64 fps_num, u64 fps_den, u32 codecid);
 
 #ifdef __cplusplus
 }

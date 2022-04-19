@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -80,7 +80,10 @@ enum
 	JSFS_HTTP_MAX_RATE,
 	JSFS_HTTP_RATE,
 	JSFS_RMT_SAMPLING,
-	JSFS_CONNECTED
+	JSFS_CONNECTED,
+	JSFS_LAST_PROCESS_ERR,
+	JSFS_LAST_CONNECT_ERR,
+	JSFS_PATH
 };
 
 GF_Filter *jsff_get_filter(JSContext *c, JSValue this_val)
@@ -159,12 +162,19 @@ static JSValue jsfs_prop_get(JSContext *ctx, JSValueConst this_val, int magic)
 		return JS_NULL;
 	case JSFS_RMT_SAMPLING:
 		return JS_NewBool(ctx, gf_sys_profiler_sampling_enabled() );
+	case JSFS_LAST_CONNECT_ERR:
+		return JS_NewInt32(ctx, gf_fs_get_last_process_error(fs) );
+	case JSFS_LAST_PROCESS_ERR:
+		return JS_NewInt32(ctx, gf_fs_get_last_connect_error(fs) );
+	case JSFS_PATH:
+		return JS_NewString(ctx, jsf_get_script_filename(ctx) );
 	}
 	return JS_UNDEFINED;
 }
 
 static JSValue jsfs_prop_set(JSContext *ctx, JSValueConst this_val, JSValueConst value, int magic)
 {
+	s32 ival;
 	GF_FilterSession *fs = JS_GetOpaque(this_val, fs_class_id);
 	if (!fs)
 		return GF_JS_EXCEPTION(ctx);
@@ -172,7 +182,6 @@ static JSValue jsfs_prop_set(JSContext *ctx, JSValueConst this_val, JSValueConst
 	switch (magic) {
 	case JSFS_HTTP_MAX_RATE:
 		if (fs->download_manager) {
-			s32 ival;
 			if (JS_ToInt32(ctx, &ival, value)) return GF_JS_EXCEPTION(ctx);
 			gf_dm_set_data_rate(fs->download_manager, (u32) ival);
 		}
@@ -409,8 +418,14 @@ static JSValue jsfs_set_fun_callback(JSContext *ctx, JSValueConst this_val, int 
 	task->fun = JS_DupValue(ctx, argv[0]);
 	task->_obj = JS_DupValue(ctx, this_val);
 
-	if (cbk_type == 1)
+	if (cbk_type == 1) {
 		gf_sys_profiler_set_callback(task, jsfs_rmt_user_callback);
+#ifdef GPAC_ENABLE_COVERAGE
+		if (gf_sys_is_cov_mode()) {
+			jsfs_rmt_user_callback(task, "test");
+		}
+#endif
+	}
 	else if (cbk_type == 2)
 		fs->new_f_task = task;
 	else if (cbk_type == 3)
@@ -1101,6 +1116,7 @@ static JSValue jsfs_add_filter(JSContext *ctx, JSValueConst this_val, int argc, 
 	const char *fname, *link_args;
 	GF_Filter *new_f;
 	GF_Err e;
+	Bool relative_to_script = GF_FALSE;
 	Bool is_source = GF_FALSE;
 	GF_Filter *link_from = NULL;
 	GF_FilterSession *fs = JS_GetOpaque(this_val, fs_class_id);
@@ -1113,22 +1129,22 @@ static JSValue jsfs_add_filter(JSContext *ctx, JSValueConst this_val, int argc, 
 	link_args = NULL;
 	if (argc>1) {
 		link_from = JS_GetOpaque(argv[1], fs_f_class_id);
-		if (!link_from) {
-			JS_FreeCString(ctx, fname);
-			return GF_JS_EXCEPTION(ctx);
-		}
 		if (argc>2) {
 			link_args = JS_ToCString(ctx, argv[2]);
+		}
+		if (argc>3) {
+			relative_to_script = JS_ToBool(ctx, argv[3]);
 		}
 	}
 
 	gf_fs_lock_filters(fs, GF_TRUE);
 
+	const char *parent_url = relative_to_script ? jsf_get_script_filename(ctx) : NULL;
 	if (!strncmp(fname, "src=", 4)) {
-		new_f = gf_fs_load_source(fs, fname+4, NULL, NULL, &e);
+		new_f = gf_fs_load_source(fs, fname+4, NULL, parent_url, &e);
 		is_source = GF_TRUE;
 	} else if (!strncmp(fname, "dst=", 4)) {
-		new_f = gf_fs_load_destination(fs, fname+4, NULL, NULL, &e);
+		new_f = gf_fs_load_destination(fs, fname+4, NULL, parent_url, &e);
 	} else {
 		new_f = gf_fs_load_filter(fs, fname, &e);
 	}
@@ -1195,12 +1211,18 @@ static JSValue jsfs_new_filter(JSContext *ctx, JSValueConst this_val, int argc, 
 {
 	GF_Filter *f;
 	GF_Err e;
+	u32 flags=0;
 	const char *name = NULL;
 	GF_FilterSession *fs = JS_GetOpaque(this_val, fs_class_id);
 	if (!fs) return GF_JS_EXCEPTION(ctx);
-	if (argc) name = JS_ToCString(ctx, argv[0]);
+	if (argc) {
+		name = JS_ToCString(ctx, argv[0]);
+		if (argc>1) {
+			JS_ToInt32(ctx, &flags, argv[1]);
+		}
+	}
 
-	f = gf_fs_new_filter(fs, name, &e);
+	f = gf_fs_new_filter(fs, name, flags, &e);
 	if (name) JS_FreeCString(ctx, name);
 	if (!f) return js_throw_err(ctx, e);
 
@@ -1215,6 +1237,9 @@ static const JSCFunctionListEntry fs_funcs[] = {
 	JS_CGETSET_MAGIC_DEF("http_bitrate", jsfs_prop_get, NULL, JSFS_HTTP_RATE),
 	JS_CGETSET_MAGIC_DEF("rmt_sampling", jsfs_prop_get, jsfs_prop_set, JSFS_RMT_SAMPLING),
 	JS_CGETSET_MAGIC_DEF("connected", jsfs_prop_get, NULL, JSFS_CONNECTED),
+	JS_CGETSET_MAGIC_DEF("last_process_error", jsfs_prop_get, NULL, JSFS_LAST_PROCESS_ERR),
+	JS_CGETSET_MAGIC_DEF("last_connect_error", jsfs_prop_get, NULL, JSFS_LAST_CONNECT_ERR),
+	JS_CGETSET_MAGIC_DEF("jspath", jsfs_prop_get, NULL, JSFS_PATH),
 
     JS_CFUNC_DEF("post_task", 0, jsfs_post_task),
     JS_CFUNC_DEF("abort", 0, jsfs_abort),
@@ -1265,6 +1290,14 @@ GF_Err gf_fs_load_js_api(JSContext *c, GF_FilterSession *fs)
 	global_obj = JS_GetGlobalObject(c);
 
 	js_load_constants(c, global_obj);
+
+#define DEF_CONST( _val ) \
+    JS_SetPropertyStr(c, global_obj, #_val, JS_NewInt32(c, _val));
+
+	DEF_CONST(GF_FS_FLUSH_NONE)
+	DEF_CONST(GF_FS_FLUSH_ALL)
+	DEF_CONST(GF_FS_FLUSH_FAST)
+
 	if (!fs->jstasks) {
 		fs->jstasks = gf_list_new();
 		if (!fs->jstasks) return GF_OUT_OF_MEM;
@@ -1316,6 +1349,7 @@ GF_Err gf_fs_load_script(GF_FilterSession *fs, const char *jsfile)
 	fs->js_ctx = ctx;
 
 	JS_SetPropertyStr(fs->js_ctx, global_obj, "_gpac_log_name", JS_NewString(fs->js_ctx, gf_file_basename(jsfile) ) );
+	JS_SetPropertyStr(fs->js_ctx, global_obj, "_gpac_script_src", JS_NewString(fs->js_ctx, jsfile ) );
     JS_FreeValue(fs->js_ctx, global_obj);
 
 
@@ -1351,6 +1385,7 @@ GF_Err gf_fs_load_script(GF_FilterSession *fs, const char *jsfile)
 		return GF_BAD_PARAM;
 	}
 	JS_FreeValue(fs->js_ctx, ret);
+	js_std_loop(fs->js_ctx);
 	return GF_OK;
 #else
 	return GF_NOT_SUPPORTED;

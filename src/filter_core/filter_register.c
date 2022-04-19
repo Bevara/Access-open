@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -154,12 +154,24 @@ const GF_FilterRegister *mcdec_register(GF_FilterSession *session);
 const GF_FilterRegister *flac_dmx_register(GF_FilterSession *session);
 const GF_FilterRegister *proresdmx_register(GF_FilterSession *session);
 const GF_FilterRegister *bsrw_register(GF_FilterSession *session);
+const GF_FilterRegister *bs_split_register(GF_FilterSession *session);
+const GF_FilterRegister *bs_agg_register(GF_FilterSession *session);
 const GF_FilterRegister *mhas_dmx_register(GF_FilterSession *session);
 const GF_FilterRegister *mhasmx_register(GF_FilterSession *session);
 const GF_FilterRegister *routeout_register(GF_FilterSession *session);
 const GF_FilterRegister *truehd_register(GF_FilterSession *session);
 const GF_FilterRegister *cryptfin_register(GF_FilterSession *session);
 const GF_FilterRegister *cryptfout_register(GF_FilterSession *session);
+const GF_FilterRegister *restamp_register(GF_FilterSession *session);
+const GF_FilterRegister *oggmux_register(GF_FilterSession *session);
+const GF_FilterRegister *vtt2tx3g_register(GF_FilterSession *session);
+const GF_FilterRegister *rfsrt_register(GF_FilterSession *session);
+const GF_FilterRegister *ttxtuf_register(GF_FilterSession *session);
+const GF_FilterRegister *tx3g2srt_register(GF_FilterSession *session);
+const GF_FilterRegister *tx3g2vtt_register(GF_FilterSession *session);
+const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session);
+const GF_FilterRegister *ttmlconv_register(GF_FilterSession *session);
+const GF_FilterRegister *ttmlconv2_register(GF_FilterSession *session);
 
 void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 {
@@ -278,6 +290,16 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, proresdmx_register(a_sess));
 	gf_fs_add_filter_register(fsess, m2tssplit_register(a_sess));
 	gf_fs_add_filter_register(fsess, bsrw_register(a_sess));
+	gf_fs_add_filter_register(fsess, bs_split_register(a_sess));
+	gf_fs_add_filter_register(fsess, bs_agg_register(a_sess));
+	gf_fs_add_filter_register(fsess, ttxtuf_register(a_sess));
+	gf_fs_add_filter_register(fsess, tx3g2srt_register(a_sess));
+	gf_fs_add_filter_register(fsess, tx3g2vtt_register(a_sess));
+	gf_fs_add_filter_register(fsess, tx3g2ttml_register(a_sess));
+	gf_fs_add_filter_register(fsess, vtt2tx3g_register(a_sess) );
+	gf_fs_add_filter_register(fsess, rfsrt_register(a_sess) );
+	gf_fs_add_filter_register(fsess, ttmlconv_register(a_sess) );
+	gf_fs_add_filter_register(fsess, ttmlconv2_register(a_sess) );
 
 	gf_fs_add_filter_register(fsess, ffdmx_register(a_sess) );
 	gf_fs_add_filter_register(fsess, ffdec_register(a_sess) );
@@ -292,6 +314,8 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, truehd_register(a_sess) );
 	gf_fs_add_filter_register(fsess, cryptfin_register(a_sess) );
 	gf_fs_add_filter_register(fsess, cryptfout_register(a_sess) );
+	gf_fs_add_filter_register(fsess, restamp_register(a_sess) );
+	gf_fs_add_filter_register(fsess, oggmux_register(a_sess) );
 
 #if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
 	gf_fs_add_filter_register(fsess, dtout_register(a_sess) );

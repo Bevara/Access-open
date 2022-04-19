@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019-2021
+ *			Copyright (c) Telecom ParisTech 2019-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / QuickJS bindings for GF_Filter
@@ -155,6 +155,7 @@ enum
 	JSF_PID_EOS_SEEN,
 	JSF_PID_EOS_RECEIVED,
 	JSF_PID_WOULD_BLOCK,
+	JSF_PID_SPARSE,
 	JSF_PID_FILTER_NAME,
 	JSF_PID_FILTER_SRC,
 	JSF_PID_FILTER_ARGS,
@@ -483,11 +484,23 @@ const char *jsf_get_script_filename(JSContext *c)
 	JSValue global = JS_GetGlobalObject(c);
 	JSValue filter_obj = JS_GetPropertyStr(c, global, "filter");
 	JS_FreeValue(c, global);
-	if (JS_IsNull(filter_obj) || JS_IsException(filter_obj)) return NULL;
+	if (JS_IsNull(filter_obj) || JS_IsException(filter_obj)) {
+		return NULL;
+	}
+
 	jsf = JS_GetOpaque(filter_obj, jsf_filter_class_id);
 	JS_FreeValue(c, filter_obj);
-	if (!jsf) return NULL;
-	return jsf->js;
+	if (jsf) return jsf->js;
+
+	JSValue g = JS_GetGlobalObject(c);
+	JSValue v = JS_GetPropertyStr(c, g, "_gpac_script_src");
+	const char *parent = NULL;
+	if (!JS_IsUndefined(v))
+		parent = JS_ToCString(c, v);
+	JS_FreeValue(c, g);
+	JS_FreeCString(c, parent);
+	JS_FreeValue(c, v);
+	return parent;
 }
 
 JSValue jsf_NewProp(JSContext *ctx, const GF_PropertyValue *new_val)
@@ -1044,7 +1057,6 @@ static JSValue jsf_filter_prop_get(JSContext *ctx, JSValueConst this_val, int ma
 		return JS_NULL;
 	case JSF_FILTER_PATH:
 	{
-		JSValue res;
 		char c=0;
 		char *path = (char *) jsf_get_script_filename(ctx);
 		if (!path) return JS_NULL;
@@ -1071,6 +1083,7 @@ static JSValue jsf_filter_set_arg(JSContext *ctx, JSValueConst this_val, int arg
 	const char *name=NULL;
 	const char *def = NULL;
 	const char *min_enum = NULL;
+	u32 arg_flags=0;
 	u32 type = 0;
 	Bool is_wildcard=GF_FALSE;
 	GF_JSFilterCtx *jsf = JS_GetOpaque(this_val, jsf_filter_class_id);
@@ -1117,6 +1130,17 @@ static JSValue jsf_filter_set_arg(JSContext *ctx, JSValueConst this_val, int arg
 	if (!JS_IsUndefined(v)) min_enum = JS_ToCString(ctx, v);
 	JS_FreeValue(ctx, v);
 
+	v = JS_GetPropertyStr(ctx, argv[0], "hint");
+	if (!JS_IsUndefined(v)) {
+		const char *hint = JS_ToCString(ctx, v);
+		if (hint && !strcmp(hint, "expert")) arg_flags = GF_FS_ARG_HINT_EXPERT;
+		else if (hint && !strcmp(hint, "advanced")) arg_flags = GF_FS_ARG_HINT_ADVANCED;
+		else if (hint && !strcmp(hint, "hide")) arg_flags = GF_FS_ARG_HINT_HIDE;
+
+		JS_FreeCString(ctx, hint);
+	}
+	JS_FreeValue(ctx, v);
+
 	jsf->args = gf_realloc(jsf->args, sizeof(GF_FilterArgs)*(jsf->nb_args+2));
 	memset(&jsf->args[jsf->nb_args], 0, 2*sizeof(GF_FilterArgs));
 	jsf->args[jsf->nb_args].arg_name = gf_strdup(name);
@@ -1125,6 +1149,7 @@ static JSValue jsf_filter_set_arg(JSContext *ctx, JSValueConst this_val, int arg
 	jsf->args[jsf->nb_args].min_max_enum = min_enum ? gf_strdup(min_enum) : NULL;
 	jsf->args[jsf->nb_args].arg_type = type;
 	jsf->args[jsf->nb_args].offset_in_private = -1;
+	jsf->args[jsf->nb_args].flags = arg_flags;
 
 	jsf->nb_args ++;
 
@@ -1756,6 +1781,7 @@ static JSValue jsf_filter_set_blocking(JSContext *ctx, JSValueConst this_val, in
 	return JS_UNDEFINED;
 }
 
+
 static const JSCFunctionListEntry jsf_filter_funcs[] = {
     JS_CGETSET_MAGIC_DEF("initialize", jsf_filter_prop_get, jsf_filter_prop_set, JSF_EVT_INITIALIZE),
     JS_CGETSET_MAGIC_DEF("finalize", jsf_filter_prop_get, jsf_filter_prop_set, JSF_EVT_FINALIZE),
@@ -1856,20 +1882,24 @@ static JSValue jsf_filter_has_pid_connections_pending(JSContext *ctx, JSValueCon
 	return JS_NewBool(ctx, gf_filter_has_pid_connection_pending(jsfi->filter, stop_at) );
 }
 
-static void jsf_on_setup_error(GF_Filter *f, void *on_setup_error_udta, GF_Err e)
+static Bool jsf_on_setup_error(GF_Filter *f, void *on_setup_error_udta, GF_Err e)
 {
-	GF_JSFilterInstanceCtx *f_inst = on_setup_error_udta;
+	Bool res = GF_FALSE;
 	JSValue ret, argv[1];
-	gf_js_lock(f_inst->jsf->ctx, GF_TRUE);
+	GF_JSFilterInstanceCtx *f_inst = on_setup_error_udta;
+	JSContext *ctx = f_inst->jsf->ctx;
+	gf_js_lock(ctx, GF_TRUE);
 
-	argv[0] = JS_NewInt32(f_inst->jsf->ctx, e);
+	argv[0] = JS_NewInt32(ctx, e);
 
-	ret = JS_Call(f_inst->jsf->ctx, f_inst->setup_failure_fun, f_inst->filter_obj, 0, NULL);
+	ret = JS_Call(ctx, f_inst->setup_failure_fun, f_inst->filter_obj, 0, NULL);
+	if (JS_IsBool(ret) && JS_ToBool(ctx, ret)) res = GF_TRUE;
 
-	JS_FreeValue(f_inst->jsf->ctx, argv[0]);
-	JS_FreeValue(f_inst->jsf->ctx, ret);
-	gf_js_lock(f_inst->jsf->ctx, GF_FALSE);
-	js_std_loop(f_inst->jsf->ctx);
+	JS_FreeValue(ctx, argv[0]);
+	JS_FreeValue(ctx, ret);
+	gf_js_lock(ctx, GF_FALSE);
+	js_std_loop(ctx);
+	return res;
 }
 
 enum
@@ -2048,6 +2078,8 @@ static JSValue jsf_pid_get_prop(JSContext *ctx, JSValueConst this_val, int magic
 		return JS_NewBool (ctx, gf_filter_pid_eos_received(pctx->pid) );
 	case JSF_PID_WOULD_BLOCK:
 		return JS_NewBool(ctx, gf_filter_pid_would_block(pctx->pid) );
+	case JSF_PID_SPARSE:
+		return JS_NewBool(ctx, gf_filter_pid_is_sparse(pctx->pid) );
 	case JSF_PID_FILTER_NAME:
 		return JS_NewString(ctx, gf_filter_pid_get_filter_name(pctx->pid) );
 	case JSF_PID_FILTER_SRC:
@@ -2750,6 +2782,7 @@ static const JSCFunctionListEntry jsf_pid_funcs[] = {
     JS_CGETSET_MAGIC_DEF("eos_seen", jsf_pid_get_prop, NULL, JSF_PID_EOS_SEEN),
     JS_CGETSET_MAGIC_DEF("eos_received", jsf_pid_get_prop, NULL, JSF_PID_EOS_RECEIVED),
     JS_CGETSET_MAGIC_DEF("would_block", jsf_pid_get_prop, NULL, JSF_PID_WOULD_BLOCK),
+    JS_CGETSET_MAGIC_DEF("sparse", jsf_pid_get_prop, NULL, JSF_PID_SPARSE),
     JS_CGETSET_MAGIC_DEF("filter_name", jsf_pid_get_prop, NULL, JSF_PID_FILTER_NAME),
     JS_CGETSET_MAGIC_DEF("src_name", jsf_pid_get_prop, NULL, JSF_PID_FILTER_SRC),
     JS_CGETSET_MAGIC_DEF("args", jsf_pid_get_prop, NULL, JSF_PID_FILTER_ARGS),
@@ -3495,6 +3528,7 @@ enum
 	JSF_PCK_SIZE,
 	JSF_PCK_DATA,
 	JSF_PCK_FRAME_IFCE,
+	JSF_PCK_HAS_PROPERTIES,
 };
 
 static JSValue jsf_pck_set_prop(JSContext *ctx, JSValueConst this_val, JSValueConst value, int magic)
@@ -3694,6 +3728,9 @@ static JSValue jsf_pck_get_prop(JSContext *ctx, JSValueConst this_val, int magic
 		if (gf_filter_pck_get_frame_interface(pck) != NULL)
 			return JS_NewBool(ctx, 1);
 		else return JS_NewBool(ctx, 0);
+
+	case JSF_PCK_HAS_PROPERTIES:
+		return JS_NewBool(ctx, gf_filter_pck_has_properties(pck) );
 	}
     return JS_UNDEFINED;
 }
@@ -4057,6 +4094,7 @@ static const JSCFunctionListEntry jsf_pck_funcs[] =
     JS_CGETSET_MAGIC_DEF("size", jsf_pck_get_prop, NULL, JSF_PCK_SIZE),
     JS_CGETSET_MAGIC_DEF("data", jsf_pck_get_prop, NULL, JSF_PCK_DATA),
     JS_CGETSET_MAGIC_DEF("frame_ifce", jsf_pck_get_prop, NULL, JSF_PCK_FRAME_IFCE),
+    JS_CGETSET_MAGIC_DEF("has_properties", jsf_pck_get_prop, NULL, JSF_PCK_HAS_PROPERTIES),
 
     JS_CFUNC_DEF("set_readonly", 0, jsf_pck_set_readonly),
     JS_CFUNC_DEF("enum_properties", 0, jsf_pck_enum_properties),
@@ -4656,6 +4694,10 @@ static GF_Err jsfilter_initialize_ex(GF_Filter *filter, JSContext *custom_ctx)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[JSF] Error loading script file %s: %s\n", jsf->js, gf_error_to_string(e) ));
 		return e;
 	}
+	if (!strstr(buf, "session.") && !strstr(buf, "filter.") ) {
+		gf_free(buf);
+		return GF_FILTER_NOT_FOUND;
+	}
 
 	if (strstr(buf, "session.")) {
 		GF_Err gf_fs_load_js_api(JSContext *c, GF_FilterSession *fs);
@@ -4664,6 +4706,7 @@ static GF_Err jsfilter_initialize_ex(GF_Filter *filter, JSContext *custom_ctx)
 		e = gf_fs_load_js_api(jsf->ctx, filter->session);
 		if (e) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[JSF] Error loading session API: %s\n", gf_error_to_string(e) ));
+			gf_free(buf);
 			return e;
 		}
 		jsf->unload_session_api = GF_TRUE;
@@ -4689,6 +4732,7 @@ static GF_Err jsfilter_initialize_ex(GF_Filter *filter, JSContext *custom_ctx)
 		return GF_BAD_PARAM;
 	}
 	JS_FreeValue(jsf->ctx, ret);
+	js_std_loop(jsf->ctx);
 	return GF_OK;
 }
 
@@ -4737,10 +4781,21 @@ static void jsfilter_finalize(GF_Filter *filter)
 	if (jsf->unload_session_api)
 		gf_fs_unload_script(filter->session, jsf->ctx);
 
-	if (!jsf->is_custom)
+	if (!jsf->is_custom) {
+		u32 i, count;
+		//we created the context, detach all other filters jsvals
+		gf_mx_p(jsf->filter->session->filters_mx);
+		count = gf_list_count(jsf->filter->session->filters);
+		for (i=0; i<count; i++) {
+			GF_Filter *a_f = gf_list_get(jsf->filter->session->filters, i);
+			if (a_f == jsf->filter) continue;;
+			jsfs_on_filter_destroyed(a_f);
+		}
+		gf_mx_v(jsf->filter->session->filters_mx);
 		gf_js_delete_context(jsf->ctx);
-	else
+	} else {
 		gf_js_call_gc(jsf->ctx);
+	}
 
 	while (gf_list_count(jsf->pids)) {
 		GF_JSPidCtx *pctx = gf_list_pop_back(jsf->pids);
@@ -4808,7 +4863,7 @@ static GF_Err jsfilter_update_arg(GF_Filter *filter, const char *arg_name, const
 		if (gf_opts_get_bool("temp", "helponly"))
 			jsf->disable_filter = GF_TRUE;
 
-		if (gf_opts_get_bool("temp", "gpac-help") || gf_opts_get_bool("temp", "gendoc")) {
+		if (gf_opts_get_key("temp", "gpac-help") || gf_opts_get_bool("temp", "gendoc")) {
 			js_std_loop(jsf->ctx);
 			jsf->disable_filter = GF_FALSE;
 		}
@@ -4929,14 +4984,14 @@ static const char * jsfilter_probe_data(const u8 *data, u32 size, GF_FilterProbe
 static GF_FilterArgs JSFilterArgs[] =
 {
 	{ OFFS(js), "location of script source", GF_PROP_NAME, NULL, NULL, 0},
-	{ "*", -1, "any possible options defined for the script. See `gpac -hx jsf:js=$YOURSCRIPT`", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
+	{ "*", -1, "any possible options defined for the script (see `gpac -hx jsf:js=$YOURSCRIPT` or `gpac -hx $YOURSCRIPT`)", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
 	{0}
 };
 
 static const GF_FilterCapability JSFilterCaps[] =
 {
-	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_UNKNOWN),
-	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_UNKNOWN),
+       CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_UNKNOWN),
+       CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_UNKNOWN),
 };
 
 GF_FilterRegister JSFilterRegister = {

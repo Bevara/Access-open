@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre, Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2004-2012
+ *			Copyright (c) Telecom ParisTech 2004-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / DOM 3 Events sub-project
@@ -189,11 +189,15 @@ GF_Err gf_dom_event_remove_listener_from_parent(GF_DOMEventTarget *event_target,
 	return GF_OK;
 }
 
-void gf_dom_event_remove_all_listeners(GF_DOMEventTarget *event_target)
+void gf_dom_event_remove_all_listeners(GF_DOMEventTarget *event_target, GF_SceneGraph *sg)
 {
 	while (gf_list_count(event_target->listeners)) {
 		GF_Node *n = (GF_Node *)gf_list_get(event_target->listeners, 0);
-		gf_dom_listener_del(n, event_target);
+		if (gf_list_find(sg->exported_nodes, n)>=0) {
+			gf_list_rem(event_target->listeners, 0);
+		} else {
+			gf_dom_listener_del(n, event_target);
+		}
 	}
 }
 
@@ -260,6 +264,7 @@ void gf_sg_handle_dom_event(GF_Node *hdl, GF_DOM_Event *event, GF_Node *observer
 	if (hdl->sgprivate->scenegraph->svg_js) {
 		void svgjs_handler_execute(struct __tag_svg_script_ctx *svg_js, GF_Node *hdl, GF_DOM_Event *event, GF_Node *observer, const char *_none);
 		svgjs_handler_execute(hdl->sgprivate->scenegraph->svg_js, hdl, event, observer, NULL);
+		return;
 	}
 #endif
 	GF_LOG(GF_LOG_WARNING, GF_LOG_INTERACT, ("[DOM Events] JavaScript context not found \n"));
@@ -714,7 +719,7 @@ static void gf_smil_handle_event(GF_Node *timed_elt, GF_FieldInfo *info, GF_DOM_
 		if (j!=count) i++;
 		count++;
 		found++;
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_SMIL, ("[SMIL Timing   ] Time %f - Timed element %s - Inserting new time in %s: %f\n", gf_node_get_scene_time(timed_elt), gf_node_get_log_name(timed_elt), (is_end?"end":"begin"), resolved->clock));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[SMIL Timing   ] Time %f - Timed element %s - Inserting new time in %s: %f\n", gf_node_get_scene_time(timed_elt), gf_node_get_log_name(timed_elt), (is_end?"end":"begin"), resolved->clock));
 	}
 	/* calling indirectly gf_smil_timing_modified */
 	if (found) gf_node_changed(timed_elt, info);
@@ -723,7 +728,7 @@ static void gf_smil_handle_event(GF_Node *timed_elt, GF_FieldInfo *info, GF_DOM_
 static void gf_smil_handle_event_begin(GF_Node *hdl, GF_DOM_Event *evt, GF_Node *observer)
 {
 	GF_FieldInfo info;
-	SVGTimedAnimBaseElement *timed_elt = (SVGTimedAnimBaseElement *)gf_node_get_private(hdl);
+	SVGTimedAnimBaseElement *timed_elt = (SVGTimedAnimBaseElement *) ((SVG_handlerElement *)hdl)->timed_elt;
 	if (!timed_elt || !timed_elt->timingp) return;
 
 	memset(&info, 0, sizeof(GF_FieldInfo));
@@ -736,7 +741,9 @@ static void gf_smil_handle_event_begin(GF_Node *hdl, GF_DOM_Event *evt, GF_Node 
 static void gf_smil_handle_event_end(GF_Node *hdl, GF_DOM_Event *evt, GF_Node *observer)
 {
 	GF_FieldInfo info;
-	GF_Node *timed_elt = (GF_Node *)gf_node_get_private(hdl);
+	SVGTimedAnimBaseElement *timed_elt = (SVGTimedAnimBaseElement *) ((SVG_handlerElement *)hdl)->timed_elt;
+	if (!timed_elt || !timed_elt->timingp) return;
+
 	memset(&info, 0, sizeof(GF_FieldInfo));
 	info.name = "end";
 	info.far_ptr = ((SVGTimedAnimBaseElement *)timed_elt)->timingp->end;
@@ -777,22 +784,12 @@ static void gf_smil_setup_event_list(GF_Node *node, GF_List *l, Bool is_begin)
 
 		if (hdl) {
 			((SVG_handlerElement *)hdl)->handle_event = is_begin ? gf_smil_handle_event_begin : gf_smil_handle_event_end;
+			//remember parent timed element
+			((SVG_handlerElement *)hdl)->timed_elt = node;
 		}
 		else {
 			continue;
 		}
-
-		//this code is broken, it introduces a cyclic ref between the parent and the handler but
-		//the listener (parent of the handler) is not inserted in the graph, so destruction of the handler
-		//will only happen if the SMIL_Time is destroyed (thus destroying the listener), but this SMIL_time
-		//will never get destroyed since the attribute owner (node) has an extra instance
-#if 0
-		/*We don't want to insert the implicit listener in the DOM. However remember
-		the listener at the handler level in case the handler gets destroyed*/
-		gf_node_set_private((GF_Node *)hdl, node);
-		gf_node_register((GF_Node*)node, NULL);
-#endif
-
 		/*we keep the t->element pointer in order to discard the source of identical events (begin of # elements, ...)*/
 	}
 }

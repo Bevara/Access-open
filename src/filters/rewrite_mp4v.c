@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG-4 part2 video rewrite filter
@@ -60,27 +60,28 @@ GF_Err m4vmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 	if (! gf_filter_pid_check_caps(pid))
 		return GF_NOT_SUPPORTED;
 
+	if (!ctx->opid) {
+		ctx->opid = gf_filter_pid_new(filter);
+	}
+	ctx->ipid = pid;
+
+	//copy properties at init or reconfig
+	gf_filter_pid_copy_properties(ctx->opid, pid);
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
+
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL);
+	gf_filter_pid_set_framing_mode(ctx->ipid, GF_TRUE);
+
 	dcd = gf_filter_pid_get_property(pid, GF_PROP_PID_DECODER_CONFIG);
-	if (!dcd) return GF_NON_COMPLIANT_BITSTREAM;
+	//not ready yet
+	if (!dcd) return GF_OK;
 
 	crc = gf_crc_32(dcd->value.data.ptr, dcd->value.data.size);
 	if (ctx->crc == crc) return GF_OK;
 	ctx->crc = crc;
 
-	if (!ctx->opid) {
-		ctx->opid = gf_filter_pid_new(filter);
-	}
-	//copy properties at init or reconfig
-	gf_filter_pid_copy_properties(ctx->opid, pid);
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
-
-	ctx->ipid = pid;
-
 	ctx->dsi = dcd->value.data.ptr;
 	ctx->dsi_size = dcd->value.data.size;
-
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL);
-	gf_filter_pid_set_framing_mode(ctx->ipid, GF_TRUE);
 	return GF_OK;
 }
 
@@ -101,6 +102,15 @@ GF_Err m4vmx_process(GF_Filter *filter)
 	}
 
 	data = (char *) gf_filter_pck_get_data(pck, &pck_size);
+	if (!pck_size) {
+		//if output and packet properties, forward - this is required for sinks using packets for state signaling
+		//such as TS muxer in dash mode looking for EODS property
+		if (ctx->opid && gf_filter_pck_has_properties(pck))
+			gf_filter_pck_forward(pck, ctx->opid);
+
+		gf_filter_pid_drop_packet(ctx->ipid);
+		return GF_OK;
+	}
 
 	sap_type = gf_filter_pck_get_sap(pck);
 	if (!sap_type) {
@@ -158,7 +168,7 @@ static const GF_FilterArgs M4VMxArgs[] =
 GF_FilterRegister M4VMxRegister = {
 	.name = "ufm4v",
 	GF_FS_SET_DESCRIPTION("M4V writer")
-	GF_FS_SET_HELP("This filter converts MPEG-4 part 2 visual streams into dumpable format (reinsert decoder config).")
+	GF_FS_SET_HELP("This filter converts MPEG-4 part 2 visual streams into writable format (reinsert decoder config).")
 	.private_size = sizeof(GF_M4VMxCtx),
 	.args = M4VMxArgs,
 	SETCAPS(M4VMxCaps),

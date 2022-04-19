@@ -154,11 +154,11 @@ struct __xhr_context
 
 	GF_DOMEventTarget *event_target;
 
+#ifndef GPAC_DISABLE_SVG
 	/* dom graph in which the XHR is created */
 	GF_SceneGraph *owning_graph;
 	Bool local_graph;
 
-#ifndef GPAC_DISABLE_SVG
 	/* dom graph used to parse XML into */
 	GF_SceneGraph *document;
 #endif
@@ -376,12 +376,13 @@ static void xml_http_finalize(JSRuntime *rt, JSValue obj)
 		}
 		gf_dom_event_target_del(ctx->event_target);
 	}
-#endif
 
 	if (ctx->local_graph) {
 		dom_js_unload();
 		gf_sg_del(ctx->owning_graph);
 	}
+#endif
+
 
 	gf_free(ctx);
 }
@@ -425,6 +426,8 @@ static JSValue xml_http_constructor(JSContext *c, JSValueConst new_target, int a
 	obj = JS_NewObjectClass(c, xhrClass.class_id);
 	p->c = c;
 	p->_this = obj;
+
+#ifndef GPAC_DISABLE_SVG
 	p->owning_graph = xml_get_scenegraph(c);
 	if (!p->owning_graph) {
 		p->local_graph = GF_TRUE;
@@ -432,7 +435,6 @@ static JSValue xml_http_constructor(JSContext *c, JSValueConst new_target, int a
 		dom_js_load(p->owning_graph, c);
 	}
 
-#ifndef GPAC_DISABLE_SVG
 	if (p->owning_graph)
 		p->event_target = gf_dom_event_target_new(GF_DOM_EVENT_TARGET_XHR, p);
 #endif
@@ -484,11 +486,11 @@ static void xml_http_state_change(XMLHTTPContext *ctx)
 	js_std_loop(ctx->c);
 	gf_js_lock(ctx->c, GF_FALSE);
 
+#ifndef GPAC_DISABLE_VRML
 	if (! ctx->owning_graph) return;
 	if (ctx->local_graph) return;
 
 	/*Flush BIFS eventOut events*/
-#ifndef GPAC_DISABLE_VRML
 	scene = (GF_SceneGraph *)JS_GetContextOpaque(ctx->c);
 	/*this is a scene, we look for a node (if scene is used, this is DOM-based scripting not VRML*/
 	if (scene->__reserved_null == 0) return;
@@ -538,7 +540,11 @@ static JSValue xml_http_open(JSContext *c, JSValueConst obj, int argc, JSValueCo
 	val = JS_ToCString(c, argv[1]);
 	par.uri.url = (char *) val;
 	ctx->url = NULL;
-	if (scene && scene->script_action) {
+
+	if (!strncmp(val, "gpac://", 7)) {
+		ctx->url = gf_strdup(val+7);
+	}
+	else if (scene && scene->script_action) {
 		scene->script_action(scene->script_action_cbck, GF_JSAPI_OP_RESOLVE_URI, scene->RootNode, &par);
 		ctx->url = par.uri.url;
 	} else {
@@ -1428,6 +1434,9 @@ static void xml_http_gc_mark(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_
 	JS_MarkValue(rt, ctx->onprogress, mark_func);
 	JS_MarkValue(rt, ctx->onreadystatechange, mark_func);
 	JS_MarkValue(rt, ctx->ontimeout, mark_func);
+
+	if (!JS_IsUndefined(ctx->arraybuffer))
+		JS_MarkValue(rt, ctx->arraybuffer, mark_func);
 }
 
 static JSValue xhr_load_class(JSContext *c)

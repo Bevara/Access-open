@@ -224,7 +224,7 @@ void gf_svg_reset_path(SVG_PathData d)
 
 
 /* TODO: update for elliptical arcs */
-#if USE_GF_PATH
+#if USE_GF_PATH==0
 void gf_svg_path_build(GF_Path *path, GF_List *commands, GF_List *points)
 {
 	u32 i, j, command_count;
@@ -359,7 +359,8 @@ void gf_svg_delete_paint(GF_SceneGraph *sg, SVG_Paint *paint)
 static void svg_delete_one_anim_value(u8 anim_datatype, void *anim_value, GF_SceneGraph *sg)
 {
 	/* TODO: handle specific animation types : Motion, else ? */
-	gf_svg_delete_attribute_value(anim_datatype, anim_value, sg);
+	if (anim_value)
+		gf_svg_delete_attribute_value(anim_datatype, anim_value, sg);
 }
 
 void gf_svg_reset_animate_values(SMIL_AnimateValues anim_values, GF_SceneGraph *sg)
@@ -399,6 +400,10 @@ void gf_svg_delete_attribute_value(u32 type, void *value, GF_SceneGraph *sg)
 		break;
 	case SVG_Focus_datatype:
 		gf_svg_reset_iri(sg, & ((SVG_Focus*)value)->target);
+		gf_free(value);
+		break;
+	case SVG_ClipPath_datatype:
+		gf_svg_reset_iri(sg, & ((SVG_ClipPath*)value)->target);
 		gf_free(value);
 		break;
 	case SVG_PathData_datatype:
@@ -486,6 +491,8 @@ void gf_svg_delete_attribute_value(u32 type, void *value, GF_SceneGraph *sg)
 	case 0:
 		if (*(SVG_String *)value) gf_free(*(SVG_String *)value);
 		gf_free(value);
+		break;
+	case SVG_NodeList_datatype:
 		break;
 	case SMIL_RepeatCount_datatype:
 	case SMIL_Duration_datatype:

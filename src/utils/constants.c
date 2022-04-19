@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -81,7 +81,8 @@ CodecIDReg CodecRegistry [] = {
 	{GF_CODECID_AAC_MPEG2_LCP, GF_CODECID_AAC_MPEG2_LCP, GF_STREAM_AUDIO, "MPEG-2 AAC Audio Low Complexity", "aac|aac2l", "mp4a", "audio/aac", GF_CODECID_AAC_MPEG4},
 	{GF_CODECID_AAC_MPEG2_SSRP, GF_CODECID_AAC_MPEG2_SSRP, GF_STREAM_AUDIO, "MPEG-2 AAC Audio Scalable Sampling Rate", "aac|aac2s", "mp4a", "audio/aac", GF_CODECID_AAC_MPEG4},
 	{GF_CODECID_MPEG_AUDIO, GF_CODECID_MPEG_AUDIO, GF_STREAM_AUDIO, "MPEG-1 Audio", "mp3|m1a", ".mp3", "audio/mp3"},
-	{GF_CODECID_MPEG2_PART3, GF_CODECID_MPEG2_PART3, GF_STREAM_AUDIO, "MPEG-2 Audio", "mp3|m2a", ".mp3", "audio/mp3"},
+	{GF_CODECID_MPEG2_PART3, GF_CODECID_MPEG2_PART3, GF_STREAM_AUDIO, "MPEG-2 Audio", "mp2", ".mp3", "audio/mpeg"},
+	{GF_CODECID_MPEG_AUDIO_L1, GF_CODECID_MPEG_AUDIO, GF_STREAM_AUDIO, "MPEG-1 Audio Layer 1", "mp1", ".mp3", "audio/mpeg"},
 	{GF_CODECID_S263, 0, GF_STREAM_VISUAL, "H263 Video", "h263", "s263", "video/h263", .alt_codecid=GF_CODECID_H263},
 	{GF_CODECID_H263, 0, GF_STREAM_VISUAL, "H263 Video", "h263", "h263", "video/h263", .alt_codecid=GF_CODECID_S263},
 	{GF_CODECID_HEVC_TILES, 0, GF_STREAM_VISUAL, "HEVC tiles Video", "hvt1", "hvt1", "video/x-hevc-tiles", .alt_codecid=GF_CODECID_HEVC},
@@ -115,6 +116,7 @@ CodecIDReg CodecRegistry [] = {
 	{GF_CODECID_SUBS_TEXT, 0, GF_STREAM_TEXT, "Subtitle text Stream", "subs", "sbtt", "text/text"},
 	{GF_CODECID_SUBS_XML, 0, GF_STREAM_TEXT, "Subtitle XML Stream", "subx", "stpp", "text/text+xml"},
 	{GF_CODECID_TX3G, 0, GF_STREAM_TEXT, "Subtitle/text 3GPP/Apple Stream", "tx3g", "tx3g", "quicktime/text"},
+	{GF_CODECID_SUBS_SSA, 0, GF_STREAM_TEXT, "SSA /ASS Subtitles", "ssa", NULL, "text/x-ssa"},
 	{GF_CODECID_THEORA, 0xDF, GF_STREAM_VISUAL, "Theora Video", "theo|theora", NULL, "video/theora"},
 	{GF_CODECID_VORBIS, 0xDD, GF_STREAM_AUDIO, "Vorbis Audio", "vorb|vorbis", NULL, "audio/vorbis"},
 	{GF_CODECID_OPUS, 0xDE, GF_STREAM_AUDIO, "Opus Audio", "opus", NULL, "audio/opus"},
@@ -156,10 +158,12 @@ CodecIDReg CodecRegistry [] = {
 
 	{GF_CODECID_TMCD, 0, GF_STREAM_METADATA, "QT TimeCode", "tmcd", NULL, NULL},
 	{GF_CODECID_VVC, 0, GF_STREAM_VISUAL, "VVC Video", "vvc|266|h266", "vvc1", "video/vvc"},
+	{GF_CODECID_VVC_SUBPIC, 0, GF_STREAM_VISUAL, "VVC Subpicture Video", "vvs1", "vvs1", "video/x-vvc-subpic", .alt_codecid=GF_CODECID_VVC},
 	{GF_CODECID_USAC, GF_CODECID_AAC_MPEG4, GF_STREAM_AUDIO, "xHEAAC / USAC Audio", "usac|xheaac", "mp4a", "audio/x-xheaac"},
-	{GF_CODECID_V210, 0, GF_STREAM_VISUAL, "v210 YUV 422 10 bits", "v210", "v210", "video/x-raw-v210"},
+	{GF_CODECID_FFV1, 0, GF_STREAM_VISUAL, "FFMPEG Video Codec 1", "ffv1", NULL, "video/x-ffv1"},
 
-
+	{GF_CODECID_DVB_SUBS, 0, GF_STREAM_TEXT, "DVB Subtitles", "dvbs", NULL, NULL},
+	{GF_CODECID_DVB_TELETEXT, 0, GF_STREAM_TEXT, "DVB-TeleText", "dvbs", NULL, NULL},
 };
 
 
@@ -196,7 +200,14 @@ GF_CodecID gf_codec_id_from_isobmf(u32 isobmftype)
 {
 	switch (isobmftype) {
 	case GF_ISOM_SUBTYPE_DVHE:
+	case GF_ISOM_SUBTYPE_DVH1:
 		return GF_CODECID_HEVC;
+	case GF_ISOM_SUBTYPE_DVA1:
+	case GF_ISOM_SUBTYPE_DVAV:
+		return GF_CODECID_AVC;
+	case GF_ISOM_SUBTYPE_AV01:
+	case GF_ISOM_SUBTYPE_DAV1:
+		return GF_CODECID_AV1;
 	case GF_ISOM_SUBTYPE_3GP_AMR:
 		return GF_CODECID_AMR;
 	case GF_ISOM_SUBTYPE_3GP_AMR_WB:
@@ -244,8 +255,12 @@ GF_CodecID gf_codec_id_from_isobmf(u32 isobmftype)
 	case GF_ISOM_SUBTYPE_VVC1:
 	case GF_ISOM_SUBTYPE_VVI1:
 		return GF_CODECID_VVC;
-	case GF_QT_SUBTYPE_YUV422_10:
-		return GF_CODECID_V210;
+	case GF_ISOM_SUBTYPE_VP08:
+		return GF_CODECID_VP8;
+	case GF_ISOM_SUBTYPE_VP09:
+		return GF_CODECID_VP9;
+	case GF_ISOM_SUBTYPE_VP10:
+		return GF_CODECID_VP10;
 
 	case GF_QT_SUBTYPE_APCH:
 		return GF_CODECID_APCH;
@@ -273,6 +288,8 @@ GF_CodecID gf_codec_id_from_isobmf(u32 isobmftype)
 		return GF_CODECID_RAW;
 	case GF_ISOM_SUBTYPE_MLPA:
 		return GF_CODECID_TRUEHD;
+	case GF_ISOM_SUBTYPE_FFV1:
+		return GF_CODECID_FFV1;
 	default:
 		break;
 	}
@@ -453,7 +470,7 @@ u32 gf_stream_type_by_name(const char *val)
 			return GF_StreamTypes[i].st;
 	}
 	if (strnicmp(val, "unkn", 4) && strnicmp(val, "undef", 5)) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unknow stream type %s\n", val));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unknow stream type %s\n", val));
 	}
 	return GF_STREAM_UNKNOWN;
 }
@@ -473,7 +490,7 @@ const char *gf_stream_type_all_names()
 		for (i=0; i<nb_st; i++) {
 			u32 len = (u32) strlen(GF_StreamTypes[i].name);
 			if (len+tot_len+2>=500) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Not enough memory to hold all stream types!!\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Not enough memory to hold all stream types!!\n"));
 				break;
 			}
 			if (i) {
@@ -553,6 +570,7 @@ static const GF_AudioFmt GF_AudioFormats[] =
 {
 	{GF_AUDIO_FMT_U8, "u8", "8 bit PCM", "pc8"},
 	{GF_AUDIO_FMT_S16, "s16", "16 bit PCM Little Endian", "pcm"},
+	{GF_AUDIO_FMT_S16_BE, "s16b", "16 bit PCM Big Endian", "pcmb"},
 	{GF_AUDIO_FMT_S24, "s24", "24 bit PCM"},
 	{GF_AUDIO_FMT_S32, "s32", "32 bit PCM Little Endian"},
 	{GF_AUDIO_FMT_FLT, "flt", "32-bit floating point PCM"},
@@ -579,7 +597,7 @@ GF_AudioFormat gf_audio_fmt_parse(const char *af_name)
 			return GF_AudioFormats[i].sfmt;
 		i++;
 	}
-	GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported audio format %s\n", af_name));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported audio format %s\n", af_name));
 	return 0;
 }
 
@@ -591,7 +609,7 @@ const char *gf_audio_fmt_name(GF_AudioFormat sfmt)
 		if (GF_AudioFormats[i].sfmt==sfmt) return GF_AudioFormats[i].name;
 		i++;
 	}
-	GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported audio format %d\n", sfmt ));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported audio format %d\n", sfmt ));
 	return "unknown";
 }
 GF_EXPORT
@@ -606,7 +624,7 @@ const char *gf_audio_fmt_sname(GF_AudioFormat sfmt)
 		}
 		i++;
 	}
-	GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported audio format %d\n", sfmt ));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported audio format %d\n", sfmt ));
 	return "unknown";
 }
 
@@ -622,7 +640,7 @@ const char *gf_audio_fmt_all_names()
 		while (!i || GF_AudioFormats[i].sfmt) {
 			u32 len = (u32) strlen(GF_AudioFormats[i].name);
 			if (len+tot_len+2>=500) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Not enough memory to hold all audio formats!!\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Not enough memory to hold all audio formats!!\n"));
 				break;
 			}
 			strcat((char *)szAllAudioFormats, ",");
@@ -648,7 +666,7 @@ const char *gf_audio_fmt_all_shortnames()
 			const char * n = GF_AudioFormats[i].sname ? GF_AudioFormats[i].sname : GF_AudioFormats[i].name;
 			u32 len = (u32) strlen(n);
 			if (len+tot_len+1>=500) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Not enough memory to hold all audio formats!!\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Not enough memory to hold all audio formats!!\n"));
 				break;
 			}
 			if (i) {
@@ -692,6 +710,7 @@ u32 gf_audio_fmt_bit_depth(GF_AudioFormat audio_fmt)
 	case GF_AUDIO_FMT_U8: return 8;
 
 	case GF_AUDIO_FMT_S16P:
+	case GF_AUDIO_FMT_S16_BE:
 	case GF_AUDIO_FMT_S16: return 16;
 
 	case GF_AUDIO_FMT_S32P:
@@ -739,7 +758,7 @@ static struct pcmfmt_to_qt
 	{GF_AUDIO_FMT_DBL, GF_QT_SUBTYPE_FL64},
 	{GF_AUDIO_FMT_S24, GF_QT_SUBTYPE_IN24},
 	{GF_AUDIO_FMT_S32, GF_QT_SUBTYPE_IN32},
-	{GF_AUDIO_FMT_S16, GF_QT_SUBTYPE_TWOS},
+	{GF_AUDIO_FMT_S16_BE, GF_QT_SUBTYPE_TWOS},
 };
 
 GF_EXPORT
@@ -773,8 +792,10 @@ u32 gf_audio_fmt_get_cicp_layout(u32 nb_chan, u32 nb_surr, u32 nb_lfe)
 	else if ((nb_chan==3) && !nb_surr && !nb_lfe) return 3;
 	else if ((nb_chan==3) && (nb_surr==1) && !nb_lfe) return 4;
 	else if ((nb_chan==3) && (nb_surr==2) && !nb_lfe) return 5;
+
 	else if ((nb_chan==3) && (nb_surr==2) && (nb_lfe==1)) return 6;
 	else if ((nb_chan==5) && (nb_surr==0) && (nb_lfe==1)) return 6;
+	else if ((nb_chan==6) && (nb_surr==0) && (nb_lfe==0)) return 6; //mis-signalled 5.1
 
 	else if ((nb_chan==5) && (nb_surr==2) && (nb_lfe==1)) return 7;
 	else if ((nb_chan==2) && (nb_surr==1) && !nb_lfe) return 9;
@@ -785,13 +806,16 @@ u32 gf_audio_fmt_get_cicp_layout(u32 nb_chan, u32 nb_surr, u32 nb_lfe)
 	//we miss left / right front center vs left / right front vertical to signal this one
 //	else if ((nb_chan==5) && (nb_surr==2) && (nb_lfe==1)) return 14;
 	else if ((nb_chan==5) && (nb_surr==5) && (nb_lfe==2)) return 15;
+
 	else if ((nb_chan==5) && (nb_surr==4) && (nb_lfe==1)) return 16;
+	else if ((nb_chan==10) && (nb_surr==0) && (nb_lfe==0)) return 16; //mis-signalled 5.1.4
+
 	else if ((nb_surr==5) && (nb_lfe==1) && (nb_chan==6)) return 17;
 	else if ((nb_surr==7) && (nb_lfe==1) && (nb_chan==6)) return 18;
 	else if ((nb_chan==5) && (nb_surr==6) && (nb_lfe==1)) return 19;
 	else if ((nb_chan==7) && (nb_surr==6) && (nb_lfe==1)) return 20;
 
-	GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("Unkown CICP mapping for channel config %d/%d.%d\n", nb_chan, nb_surr, nb_lfe));
+	GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("Unknown CICP mapping for channel config %d/%d.%d\n", nb_chan, nb_surr, nb_lfe));
 	return 0;
 }
 
@@ -833,7 +857,7 @@ u64 gf_audio_fmt_get_layout_from_cicp(u32 cicp_layout)
 	for (i = 0; i < nb_cicp; i++) {
 		if (GF_CICPLayouts[i].cicp == cicp_layout) return GF_CICPLayouts[i].channel_mask;
 	}
-	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported cicp audio layout value %d\n", cicp_layout));
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unsupported cicp audio layout value %d\n", cicp_layout));
 	return 0;
 }
 
@@ -844,8 +868,8 @@ const char *gf_audio_fmt_get_layout_name_from_cicp(u32 cicp_layout)
 	for (i = 0; i < nb_cicp; i++) {
 		if (GF_CICPLayouts[i].cicp == cicp_layout) return GF_CICPLayouts[i].name;
 	}
-	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported cicp audio layout value %d\n", cicp_layout));
-	return "unknwon";
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unsupported cicp audio layout value %d\n", cicp_layout));
+	return "unknown";
 }
 
 GF_EXPORT
@@ -855,8 +879,8 @@ const char *gf_audio_fmt_get_layout_name(u64 ch_layout)
 	for (i = 0; i < nb_cicp; i++) {
 		if (GF_CICPLayouts[i].channel_mask == ch_layout) return GF_CICPLayouts[i].name;
 	}
-	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported audio layout value "LLU"\n", ch_layout));
-	return "unknwon";
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unsupported audio layout value "LLU"\n", ch_layout));
+	return "unknown";
 }
 
 GF_EXPORT
@@ -871,22 +895,7 @@ u64 gf_audio_fmt_get_layout_from_name(const char *name)
 		if (GF_CICPLayouts[i].cicp ==  iname)
 			return GF_CICPLayouts[i].channel_mask;
 	}
-	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported audio layout name %s\n", name));
-	return 0;
-}
-GF_EXPORT
-u32 gf_audio_fmt_get_cicp_from_name(const char *name)
-{
-	u32 i, iname, nb_cicp = sizeof(GF_CICPLayouts) / sizeof(GF_CICPAudioLayout);
-	if (!name) return 0;
-	iname = atoi(name);
-	for (i = 0; i < nb_cicp; i++) {
-		if (!strcmp(GF_CICPLayouts[i].name, name))
-			return GF_CICPLayouts[i].cicp;
-		if (GF_CICPLayouts[i].cicp == iname)
-			return GF_CICPLayouts[i].cicp;
-	}
-	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported audio layout name %s\n", name));
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unsupported audio layout name %s\n", name));
 	return 0;
 }
 
@@ -898,20 +907,46 @@ u32 gf_audio_fmt_get_cicp_from_layout(u64 chan_layout)
 	for (i = 0; i < nb_cicp; i++) {
 		if (GF_CICPLayouts[i].channel_mask == chan_layout) return GF_CICPLayouts[i].cicp;
 	}
-	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported cicp audio layout for channel layout "LLU"\n", chan_layout));
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unsupported cicp audio layout for channel layout "LLU"\n", chan_layout));
 	return 255;
 }
 
-GF_EXPORT
+//unused
+#if 0
+/*! get channel CICP code  from name
+\param name channel layout name
+\return channel CICP code
+*/
+u32 gf_audio_fmt_get_cicp_from_name(const char *name)
+{
+	u32 i, iname, nb_cicp = sizeof(GF_CICPLayouts) / sizeof(GF_CICPAudioLayout);
+	if (!name) return 0;
+	iname = atoi(name);
+	for (i = 0; i < nb_cicp; i++) {
+		if (!strcmp(GF_CICPLayouts[i].name, name))
+			return GF_CICPLayouts[i].cicp;
+		if (GF_CICPLayouts[i].cicp == iname)
+			return GF_CICPLayouts[i].cicp;
+	}
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unsupported audio layout name %s\n", name));
+	return 0;
+}
+
+/*! get channel CICP name from
+\param cicp_code channel cicp code
+\return channel CICP name
+*/
 const char *gf_audio_fmt_get_cicp_name(u32 cicp_code)
 {
 	u32 i, nb_cicp = sizeof(GF_CICPLayouts) / sizeof(GF_CICPAudioLayout);
 	for (i = 0; i < nb_cicp; i++) {
 		if (GF_CICPLayouts[i].cicp == cicp_code) return GF_CICPLayouts[i].name;
 	}
-	GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("Unsupported cicp audio layout for channel layout "LLU"\n", cicp_code));
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Unsupported cicp audio layout for channel layout "LLU"\n", cicp_code));
 	return NULL;
 }
+#endif
+
 
 GF_EXPORT
 u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout)
@@ -1014,15 +1049,18 @@ static const GF_PixFmt GF_PixelFormats[] =
 	{GF_PIXEL_YUYV_10, "yuyl", "Packed YUYV 422 10->16 bit"},
 	{GF_PIXEL_YVYU_10, "yvyl", "Packed YVYU 422 10->16 bit"},
 	{GF_PIXEL_NV12, "nv12", "Semi-planar YUV 420 8 bit, Y plane and UV packed plane"},
-	{GF_PIXEL_NV21, "nv21", "Semi-planar YUV 420 8 bit, Y plane and VU packed plane"},
+	{GF_PIXEL_NV21, "nv21", "Semi-planar YVU 420 8 bit, Y plane and VU packed plane"},
 	{GF_PIXEL_NV12_10, "nv1l", "Semi-planar YUV 420 10 bit, Y plane and UV plane"},
-	{GF_PIXEL_NV21_10, "nv2l", "Semi-planar YUV 420 8 bit, Y plane and VU plane"},
+	{GF_PIXEL_NV21_10, "nv2l", "Semi-planar YVU 420 8 bit, Y plane and VU plane"},
 	{GF_PIXEL_YUVA, "yuva", "Planar YUV+alpha 420 8 bit"},
 	{GF_PIXEL_YUVD, "yuvd", "Planar YUV+depth  420 8 bit"},
 	{GF_PIXEL_YUVA444, "yuv444a", "Planar YUV+alpha 444 8 bit", "yp4a"},
 	{GF_PIXEL_YUV444_PACK, "yuv444p", "Packed YUV 444 8 bit", "yv4p"},
+	{GF_PIXEL_VYU444_PACK, "v308", "Packed VYU 444 8 bit"},
 	{GF_PIXEL_YUVA444_PACK, "yuv444ap", "Packed YUV+alpha 444 8 bit", "y4ap"},
-	{GF_PIXEL_YUV444_10_PACK, "yuv444p_10", "Packed YUV 444 10 bit", "y4lp"},
+	{GF_PIXEL_UYVA444_PACK, "v408", "Packed UYV+alpha 444 8 bit"},
+	{GF_PIXEL_YUV444_10_PACK, "v410", "Packed UYV 444 10 bit LE"},
+	{GF_PIXEL_V210, "v210", "Packed UYVY 422 10 bit LE"},
 
 	//first non-yuv format
 	{GF_PIXEL_GREYSCALE, "grey", "Greyscale 8 bit"},
@@ -1061,9 +1099,33 @@ GF_PixelFormat gf_pixel_fmt_parse(const char *pf_name)
 			return GF_PixelFormats[i].pixfmt;
 		i++;
 	}
-	GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported pixel format %s\n", pf_name));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported pixel format %s\n", pf_name));
 	return 0;
 }
+
+GF_EXPORT
+Bool gf_pixel_fmt_probe(GF_PixelFormat pf_4cc, const char *pf_name)
+{
+	u32 i=0;
+	if (pf_name) {
+		if (!strcmp(pf_name, "none") || !strcmp(pf_name, "0")) return GF_TRUE;
+	}
+	while (GF_PixelFormats[i].pixfmt) {
+		if (pf_4cc) {
+			if (GF_PixelFormats[i].pixfmt == pf_4cc)
+				return GF_TRUE;
+		}
+		if (pf_name) {
+			if (!strcmp(GF_PixelFormats[i].name, pf_name))
+				return GF_TRUE;
+			if (GF_PixelFormats[i].sname && !strcmp(GF_PixelFormats[i].sname, pf_name))
+				return GF_TRUE;
+		}
+		i++;
+	}
+	return GF_FALSE;
+}
+
 GF_EXPORT
 const char *gf_pixel_fmt_name(GF_PixelFormat pfmt)
 {
@@ -1072,7 +1134,7 @@ const char *gf_pixel_fmt_name(GF_PixelFormat pfmt)
 		if (GF_PixelFormats[i].pixfmt==pfmt) return GF_PixelFormats[i].name;
 		i++;
 	}
-	GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported pixel format %d (%s)\n", pfmt, gf_4cc_to_str(pfmt) ));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported pixel format %d (%s)\n", pfmt, gf_4cc_to_str(pfmt) ));
 	return "unknown";
 }
 GF_EXPORT
@@ -1087,7 +1149,7 @@ const char *gf_pixel_fmt_sname(GF_PixelFormat pfmt)
 		}
 		i++;
 	}
-	GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported pixel format %d (%s)\n", pfmt, gf_4cc_to_str(pfmt) ));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported pixel format %d (%s)\n", pfmt, gf_4cc_to_str(pfmt) ));
 	return "unknown";
 
 }
@@ -1141,7 +1203,7 @@ const char *gf_pixel_fmt_all_names()
 
 			len = (u32) strlen(GF_PixelFormats[i].name);
 			if (len+tot_len+2>=5000) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Not enough memory to hold all pixel formats!!\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Not enough memory to hold all pixel formats!!\n"));
 				break;
 			}
 			strcat((char *)szAllPixelFormats, ",");
@@ -1173,7 +1235,7 @@ const char *gf_pixel_fmt_all_shortnames()
 			n = GF_PixelFormats[i].sname ? GF_PixelFormats[i].sname : GF_PixelFormats[i].name;
 			len = (u32) strlen(n);
 			if (len+tot_len+1>=5000) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Not enough memory to hold all pixel formats!!\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Not enough memory to hold all pixel formats!!\n"));
 				break;
 			}
 			if (i) {
@@ -1349,11 +1411,13 @@ Bool gf_pixel_get_size_info(GF_PixelFormat pixfmt, u32 width, u32 height, u32 *o
 		size = height * stride;
 		break;
 	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_VYU444_PACK:
 		stride = no_in_stride ? 3 * width : *out_stride;
 		planes=1;
 		size = height * stride;
 		break;
 	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_UYVA444_PACK:
 		stride = no_in_stride ? 4 * width : *out_stride;
 		planes=1;
 		size = height * stride;
@@ -1371,8 +1435,19 @@ Bool gf_pixel_get_size_info(GF_PixelFormat pixfmt, u32 width, u32 height, u32 *o
 		stride_uv = 0;
 		uv_height = 0;
 		break;
+	case GF_PIXEL_V210:
+		if (no_in_stride) {
+			stride = width;
+			while (stride % 48) stride++;
+			stride = stride * 16 / 6; //4 x 32 bits to represent 6 pixels
+		} else {
+			stride = *out_stride;
+		}
+		planes=1;
+		size = height * stride;
+		break;
 	default:
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported pixel format %s, cannot get size info\n", gf_pixel_fmt_name(pixfmt) ));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported pixel format %s, cannot get size info\n", gf_pixel_fmt_name(pixfmt) ));
 		return GF_FALSE;
 	}
 	if (out_size) *out_size = size;
@@ -1381,6 +1456,28 @@ Bool gf_pixel_get_size_info(GF_PixelFormat pixfmt, u32 width, u32 height, u32 *o
 	if (out_planes) *out_planes = planes;
 	if (out_plane_uv_height) *out_plane_uv_height = uv_height;
 	return GF_TRUE;
+}
+
+GF_EXPORT
+Bool gf_pixel_fmt_is_transparent(GF_PixelFormat pixfmt)
+{
+	switch (pixfmt) {
+	case GF_PIXEL_ALPHAGREY:
+	case GF_PIXEL_GREYALPHA:
+	case GF_PIXEL_ARGB:
+	case GF_PIXEL_RGBA:
+	case GF_PIXEL_ABGR:
+	case GF_PIXEL_BGRA:
+	case GF_PIXEL_RGBAS:
+	case GF_PIXEL_YUVA:
+	case GF_PIXEL_YUVA444:
+	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_UYVA444_PACK:
+		return GF_TRUE;
+	default:
+		break;
+	}
+	return GF_FALSE;
 }
 
 GF_EXPORT
@@ -1397,6 +1494,7 @@ u32 gf_pixel_is_wide_depth(GF_PixelFormat pixfmt)
 	case GF_PIXEL_YUYV_10:
 	case GF_PIXEL_YVYU_10:
 	case GF_PIXEL_YUV444_10_PACK:
+	case GF_PIXEL_V210:
 		return 10;
 	default:
 		return 8;
@@ -1465,14 +1563,17 @@ u32 gf_pixel_get_bytes_per_pixel(GF_PixelFormat pixfmt)
 	case GF_PIXEL_YVYU_10:
 		return 2;
 	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_VYU444_PACK:
 	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_UYVA444_PACK:
 	case GF_PIXEL_YUV444_10_PACK:
+	case GF_PIXEL_V210:
 		return 1;
 
 	case GF_PIXEL_GL_EXTERNAL:
 		return 1;
 	default:
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported pixel format %s, cannot get bytes per pixel info\n", gf_pixel_fmt_name(pixfmt) ));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported pixel format %s, cannot get bytes per pixel info\n", gf_pixel_fmt_name(pixfmt) ));
 		break;
 	}
 	return 0;
@@ -1548,16 +1649,19 @@ u32 gf_pixel_get_nb_comp(GF_PixelFormat pixfmt)
 	case GF_PIXEL_YVYU_10:
 		return 3;
 	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_VYU444_PACK:
 		return 3;
 	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_UYVA444_PACK:
 		return 4;
 	case GF_PIXEL_YUV444_10_PACK:
 		return 3;
-
+	case GF_PIXEL_V210:
+		return 3;
 	case GF_PIXEL_GL_EXTERNAL:
 		return 1;
 	default:
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unsupported pixel format %s, cannot get number of components per pixel info\n", gf_pixel_fmt_name(pixfmt) ));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unsupported pixel format %s, cannot get number of components per pixel info\n", gf_pixel_fmt_name(pixfmt) ));
 		break;
 	}
 	return 0;
@@ -1571,17 +1675,18 @@ static struct pixfmt_to_qt
 	{GF_PIXEL_RGB, GF_QT_SUBTYPE_RAW},
 	{GF_PIXEL_YUYV, GF_QT_SUBTYPE_YUYV},
 	{GF_PIXEL_UYVY, GF_QT_SUBTYPE_UYVY},
-	{GF_PIXEL_YUV444_PACK, GF_QT_SUBTYPE_YUV444},
-	{GF_PIXEL_YUVA444_PACK, GF_QT_SUBTYPE_YUVA444},
+	{GF_PIXEL_VYU444_PACK, GF_QT_SUBTYPE_YUV444},
+	{GF_PIXEL_UYVA444_PACK, GF_QT_SUBTYPE_YUVA444},
 	{GF_PIXEL_UYVY_10, GF_QT_SUBTYPE_YUV422_16},
 	{GF_PIXEL_YVYU, GF_QT_SUBTYPE_YVYU},
 	{GF_PIXEL_YUV444_10_PACK, GF_QT_SUBTYPE_YUV444_10},
 	{GF_PIXEL_YUV, GF_QT_SUBTYPE_YUV420},
 	{GF_PIXEL_YUV, GF_QT_SUBTYPE_I420},
 	{GF_PIXEL_YUV, GF_QT_SUBTYPE_IYUV},
-	{GF_PIXEL_YVU, GF_QT_SUBTYPE_YV12},
+	{GF_PIXEL_YUV, GF_QT_SUBTYPE_YV12},
 	{GF_PIXEL_RGBA, GF_QT_SUBTYPE_RGBA},
-	{GF_PIXEL_ABGR, GF_QT_SUBTYPE_ABGR}
+	{GF_PIXEL_ABGR, GF_QT_SUBTYPE_ABGR},
+	{GF_PIXEL_V210, GF_QT_SUBTYPE_YUV422_10}
 };
 
 GF_EXPORT
@@ -1679,7 +1784,7 @@ static struct _itags {
 	{"thanks", NULL, GF_ISOM_ITUNE_THANKS, 0, GF_ITAG_STR, 0},
 	{"online_info", NULL, GF_ISOM_ITUNE_ONLINE, 0, GF_ITAG_STR, 0},
 	{"exec_producer", NULL, GF_ISOM_ITUNE_EXEC_PRODUCER, 0, GF_ITAG_STR, 0},
-
+	{"genre", NULL, GF_ISOM_ITUNE_GENRE_USER, GF_ID3V2_FRAME_TCON, GF_ITAG_ID3_GENRE, 0},
 };
 
 GF_EXPORT
@@ -1854,7 +1959,7 @@ u32 gf_cicp_parse_color_primaries(const char *val)
 		}
 	}
 	if (strcmp(val, "-1")) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unknow CICP color primaries type %s\n", val));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unknow CICP color primaries type %s\n", val));
 	}
 	return (u32) -1;
 }
@@ -1868,7 +1973,7 @@ const char *gf_cicp_color_primaries_name(u32 cicp_mx)
 			return CICPColorPrimaries[i].name;
 		}
 	}
-	return "unknwon";
+	return "unknown";
 }
 
 static char szCICPPrimAllNames[1024];
@@ -1924,7 +2029,7 @@ u32 gf_cicp_parse_color_transfer(const char *val)
 		}
 	}
 	if (strcmp(val, "-1")) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unknow CICP color transfer type %s\n", val));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unknow CICP color transfer type %s\n", val));
 	}
 	return (u32) -1;
 }
@@ -1938,7 +2043,7 @@ const char *gf_cicp_color_transfer_name(u32 cicp_mx)
 			return CICPColorTransfer[i].name;
 		}
 	}
-	return "unknwon";
+	return "unknown";
 }
 
 static char szCICPTFCAllNames[1024];
@@ -1985,7 +2090,7 @@ u32 gf_cicp_parse_color_matrix(const char *val)
 		}
 	}
 	if (strcmp(val, "-1")) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Unknow CICP color matrix type %s\n", val));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unknow CICP color matrix type %s\n", val));
 	}
 	return (u32) -1;
 }
@@ -1999,7 +2104,7 @@ const char *gf_cicp_color_matrix_name(u32 cicp_mx)
 			return CICPColorMatrixCoefficients[i].name;
 		}
 	}
-	return "unknwon";
+	return "unknown";
 }
 
 static char szCICPMXAllNames[1024];

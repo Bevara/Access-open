@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / NVidia Hardware decoder filter
@@ -587,6 +587,9 @@ static GF_Err nvdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	NVDecCtx *ctx = (NVDecCtx *) gf_filter_get_udta(filter);
 
 	if (is_remove) {
+		if (ctx->ipid != pid)
+			return GF_OK;
+
 		if (ctx->opid) {
 			gf_filter_pid_remove(ctx->opid);
 			ctx->opid = NULL;
@@ -618,7 +621,7 @@ static GF_Err nvdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	if (ctx->use_gl_texture && (ctx->fmode==NVDEC_GL) && !ctx->gl_provider_requested) {
 		GF_Err e = gf_filter_request_opengl(filter);
 		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[NVDec] failed to request an openGL provider (error %s), will not use OpenGL output\n", gf_error_to_string(e) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[NVDec] failed to request an OpenGL provider (error %s), will not use OpenGL output\n", gf_error_to_string(e) ));
 			ctx->use_gl_texture = GF_FALSE;
 		}
 		ctx->gl_provider_requested = GF_TRUE;
@@ -1188,7 +1191,7 @@ GF_Err nvframe_get_gl_texture(GF_FilterFrameInterface *frame, u32 plane_idx, u32
 		gl_fmt = GL_LUMINANCE_ALPHA;
 	}
 
-	cuGLMapBufferObject(&tx_data, &tx_pitch, pbo_id);
+	res = cuGLMapBufferObject(&tx_data, &tx_pitch, pbo_id);
 	if (res != CUDA_SUCCESS) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[NVDec] failed to map GL texture data %s\n", cudaGetErrorEnum(res) ) );
 		return GF_IO_ERR;
@@ -1541,7 +1544,7 @@ static const GF_FilterArgs NVDecArgs[] =
 	{ OFFS(vmode), "video decoder backend\n"
 		"- cuvid: use dedicated video engines directly\n"
 		"- cuda: use a CUDA-based decoder if faster than dedicated engines\n"
-		"- dxva: go through DXVA internally if possible (requires D3D9 interop)", GF_PROP_UINT, "cuvid", "cuvid|cuda|dxva", GF_FS_ARG_HINT_ADVANCED },
+		"- dxva: go through DXVA internally if possible (requires D3D9)", GF_PROP_UINT, "cuvid", "cuvid|cuda|dxva", GF_FS_ARG_HINT_ADVANCED },
 	{ OFFS(fmode), "frame output mode\n"
 		"- copy: each frame is copied and dispatched\n"
 		"- single: frame data is only retrieved when used, single memory space for all frames (not safe if multiple consumers)\n"
@@ -1554,7 +1557,7 @@ static const GF_FilterArgs NVDecArgs[] =
 GF_FilterRegister NVDecRegister = {
 	.name = "nvdec",
 	GF_FS_SET_DESCRIPTION("NVidia decoder")
-	GF_FS_SET_HELP("This filter decodes MPEG-2, MPEG-4 Part 2, AVC|H264 and HEVC streams through NVideia decoder. It allows GPU frame dispatch or direct frame copy.")
+	GF_FS_SET_HELP("This filter decodes MPEG-2, MPEG-4 Part 2, AVC|H264 and HEVC streams through NVidia decoder. It allows GPU frame dispatch or direct frame copy.")
 	.private_size = sizeof(NVDecCtx),
 	SETCAPS(NVDecCaps),
 	.flags = GF_FS_REG_CONFIGURE_MAIN_THREAD,
@@ -1571,7 +1574,7 @@ const GF_FilterRegister *nvdec_register(GF_FilterSession *session)
 {
 	//check if nvdec is not globally blacklisted - if so, do not try to load CUDA SDK which may be time consuming on some devices
 	const char *blacklist = gf_opts_get_key("core", "blacklist");
-	if (blacklist && strstr(blacklist, "nvdec"))
+	if (blacklist && (blacklist[0]!='-') && strstr(blacklist, "nvdec"))
 		return NULL;
 
 	init_cuda_sdk();

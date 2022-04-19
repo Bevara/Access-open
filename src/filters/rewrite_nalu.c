@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / NALU video AnnexB write filter
@@ -183,9 +183,6 @@ static GF_Err nalumx_make_inband_header(GF_NALUMxCtx *ctx, char *dsi, u32 dsi_le
 	if (vvcc) gf_odf_vvc_cfg_del(vvcc);
 	if (s_vvcc) gf_odf_vvc_cfg_del(s_vvcc);
 
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL);
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG_ENHANCEMENT, NULL);
-
 	return GF_OK;
 }
 
@@ -221,7 +218,14 @@ GF_Err nalumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 	dcd_enh = gf_filter_pid_get_property(pid, GF_PROP_PID_DECODER_CONFIG_ENHANCEMENT);
 
 	crc_enh = dcd_enh ? gf_crc_32(dcd_enh->value.data.ptr, dcd_enh->value.data.size) : 0;
-	if ((ctx->crc == crc) && (ctx->crc_enh == crc_enh)) return GF_OK;
+	if ((ctx->crc == crc) && (ctx->crc_enh == crc_enh)) {
+		if (ctx->opid) {
+			//copy properties at init or reconfig
+			gf_filter_pid_copy_properties(ctx->opid, pid);
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
+		}
+		return GF_OK;
+	}
 	ctx->crc = crc;
 	ctx->crc_enh = crc_enh;
 
@@ -245,8 +249,6 @@ GF_Err nalumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, pid);
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL );
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG_ENHANCEMENT, NULL );
 
 	ctx->ipid = pid;
 	gf_filter_pid_set_framing_mode(ctx->ipid, GF_TRUE);
@@ -285,10 +287,10 @@ static Bool nalumx_is_nal_skip(GF_NALUMxCtx *ctx, u8 *data, u32 pos, Bool *has_n
 		}
 	} else if (ctx->vtype==UFNAL_VVC) {
 		u8 nal_type = data[pos+1] >> 3;
-		u8 temporal_id = data[pos+1] & 0x7;
+		u8 temporal_id = (data[pos+1] & 0x7) - 1;
 		u8 layer_id = data[pos] & 0x3f;
 		if (temporal_id > *out_temporal_id) *out_temporal_id = temporal_id;
-		if (! (*out_layer_id) ) *out_layer_id = 1+layer_id;
+		if (! (*out_layer_id) ) *out_layer_id = layer_id;
 
 		switch (nal_type) {
 		case GF_VVC_NALU_VID_PARAM:
@@ -357,12 +359,17 @@ GF_Err nalumx_process(GF_Filter *filter)
 	}
 
 	if (!ctx->nal_hdr_size) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[NALWrite] no NAL size length field set, assuming 4\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[NALWrite] no NAL size length field set, assuming 4\n"));
 		ctx->nal_hdr_size = 4;
 	}
 
 	data = (char *) gf_filter_pck_get_data(pck, &pck_size);
 	if (!pck_size || !data) {
+		//if output and packet properties, forward - this is required for sinks using packets for state signaling
+		//such as TS muxer in dash mode looking for EODS property
+		if (ctx->opid && gf_filter_pck_has_properties(pck))
+			gf_filter_pck_forward(pck, ctx->opid);
+
 		gf_filter_pid_drop_packet(ctx->ipid);
 		return GF_OK;
 	}
@@ -454,7 +461,7 @@ GF_Err nalumx_process(GF_Filter *filter)
 #ifndef GPAC_DISABLE_HEVC
 			gf_bs_write_int(ctx->bs_w, 0, 1);
 			gf_bs_write_int(ctx->bs_w, GF_HEVC_NALU_ACCESS_UNIT, 6);
-			gf_bs_write_int(ctx->bs_w, layer_id-1, 6); //we should pick the layerID of the following nalus ...
+			gf_bs_write_int(ctx->bs_w, layer_id-1, 6);
 			gf_bs_write_int(ctx->bs_w, temporal_id, 3);
 			/*pic-type - by default we signal all slice types possible*/
 			gf_bs_write_int(ctx->bs_w, 2, 3);
@@ -462,15 +469,11 @@ GF_Err nalumx_process(GF_Filter *filter)
 			gf_bs_write_int(ctx->bs_w, 0, 4); //4 bits to 0
 #endif
 		} else if (ctx->vtype==UFNAL_VVC) {
-			if (!layer_id)
-				layer_id=1;
-			if (!temporal_id)
-				temporal_id=1;
 			gf_bs_write_int(ctx->bs_w, 0, 1);
 			gf_bs_write_int(ctx->bs_w, 0, 1);
-			gf_bs_write_int(ctx->bs_w, layer_id-1, 6); //we should pick the layerID of the following nalus ...
+			gf_bs_write_int(ctx->bs_w, layer_id, 6);
 			gf_bs_write_int(ctx->bs_w, GF_VVC_NALU_ACCESS_UNIT, 5);
-			gf_bs_write_int(ctx->bs_w, temporal_id, 3);
+			gf_bs_write_int(ctx->bs_w, temporal_id+1, 3);
 			gf_bs_write_int(ctx->bs_w, sap ? 1 : 0, 1);
 			/*pic-type - by default we signal all slice types possible*/
 			gf_bs_write_int(ctx->bs_w, 2, 3);
@@ -577,6 +580,13 @@ static const GF_FilterCapability NALUMxCaps[] =
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_VVC),
 	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_TILE_BASE, GF_TRUE),
+	CAP_BOOL(GF_CAPS_OUTPUT, GF_PROP_PID_UNFRAMED, GF_TRUE),
+	{0},
+	//for HLS-SAES AVC
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_ENCRYPTED),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT, GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_4CC('s','a','e','s') ),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_AVC),
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_BOOL(GF_CAPS_OUTPUT, GF_PROP_PID_UNFRAMED, GF_TRUE),
 };
 

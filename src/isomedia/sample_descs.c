@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -45,7 +45,8 @@ void gf_isom_sample_entry_predestroy(GF_SampleEntryBox *ptr)
 
 void gf_isom_sample_entry_init(GF_SampleEntryBox *ent)
 {
-	ent->internal_type = GF_ISOM_SAMPLE_ENTRY_MP4S;
+	ent->internal_type = GF_ISOM_SAMPLE_ENTRY_GENERIC;
+//	ent->internal_type = GF_ISOM_SAMPLE_ENTRY_MP4S;
 }
 
 void gf_isom_video_sample_entry_init(GF_VisualSampleEntryBox *ent)
@@ -186,7 +187,6 @@ void gf_isom_audio_sample_entry_init(GF_AudioSampleEntryBox *ptr)
 {
 	gf_isom_sample_entry_init((GF_SampleEntryBox*)ptr);
 	ptr->internal_type = GF_ISOM_SAMPLE_ENTRY_AUDIO;
-
 	ptr->channel_count = 2;
 	ptr->bitspersample = 16;
 }
@@ -445,15 +445,15 @@ GF_Err gf_isom_truehd_config_new(GF_ISOFile *the_file, u32 trackNumber, char *UR
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 GF_EXPORT
-GF_Err gf_isom_opus_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_OpusSpecificBox *cfg, char *URLname, char *URNname, u32 *outDescriptionIndex)
+GF_Err gf_isom_opus_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_OpusConfig *cfg, char *URLname, char *URNname, u32 *outDescriptionIndex)
 {
 	GF_TrackBox *trak;
 	GF_Err e;
 	u32 dataRefIndex;
 	GF_MPEGAudioSampleEntryBox *entry;
 	GF_SampleDescriptionBox *stsd;
-	ptrdiff_t offset;
 
+	if (!cfg) return GF_BAD_PARAM;
 	e = CanAccessMovie(the_file, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
 
@@ -476,9 +476,8 @@ GF_Err gf_isom_opus_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_OpusSpe
 	if (!entry) return GF_OUT_OF_MEM;
 	entry->cfg_opus = (GF_OpusSpecificBox*)gf_isom_box_new_parent(&entry->child_boxes, GF_ISOM_BOX_TYPE_DOPS);
 	if (!entry->cfg_opus) return GF_OUT_OF_MEM;
-	//skip box header
-	offset = (ptrdiff_t)&cfg->version - (ptrdiff_t)cfg;
-	memcpy((char*)entry->cfg_opus + offset, (char*)cfg + offset, sizeof(GF_OpusSpecificBox) - (size_t)offset);
+	entry->cfg_opus->opcfg = *cfg;
+	entry->cfg_opus->opcfg.version = 0;
 
 	entry->dataReferenceIndex = dataRefIndex;
 	*outDescriptionIndex = gf_list_count(stsd->child_boxes);
@@ -486,8 +485,7 @@ GF_Err gf_isom_opus_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_OpusSpe
 }
 #endif
 
-GF_EXPORT
-GF_Err gf_isom_opus_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, u8 **dsi, u32 *dsi_size)
+static GF_Err gf_isom_opus_config_get_internal(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, u8 **dsi, u32 *dsi_size, GF_OpusConfig *ocfg)
 {
 	u32 type;
 	GF_TrackBox *trak;
@@ -495,6 +493,8 @@ GF_Err gf_isom_opus_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 Stream
 	trak = gf_isom_get_track_from_file(the_file, trackNumber);
 	if (dsi) *dsi = NULL;
 	if (dsi_size) *dsi_size = 0;
+	if (ocfg) memset(ocfg, 0, sizeof(GF_OpusConfig));
+
 	if (!trak || !StreamDescriptionIndex) return GF_BAD_PARAM;
 
 	entry = (GF_MPEGAudioSampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, StreamDescriptionIndex-1);
@@ -512,14 +512,26 @@ GF_Err gf_isom_opus_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 Stream
 		return GF_BAD_PARAM;
 
 	if (dsi && dsi_size) {
-		GF_BitStream *bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-		gf_isom_box_size((GF_Box *)entry->cfg_opus);
-		gf_isom_box_write((GF_Box *)entry->cfg_opus, bs);
-		gf_bs_get_content(bs, dsi, dsi_size);
-		gf_bs_del(bs);
+		gf_odf_opus_cfg_write(&entry->cfg_opus->opcfg, dsi, dsi_size);
 	}
+	if (ocfg)
+		*ocfg = entry->cfg_opus->opcfg;
 	return GF_OK;
 }
+
+GF_EXPORT
+GF_Err gf_isom_opus_config_get(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, u8 **dsi, u32 *dsi_size)
+{
+	return gf_isom_opus_config_get_internal(isom_file, trackNumber, sampleDescriptionIndex, dsi, dsi_size, NULL);
+}
+
+GF_EXPORT
+GF_Err gf_isom_opus_config_get_desc(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex, GF_OpusConfig *opcfg)
+{
+	return gf_isom_opus_config_get_internal(isom_file, trackNumber, sampleDescriptionIndex, NULL, NULL, opcfg);
+
+}
+
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
@@ -1182,7 +1194,7 @@ GF_Err gf_isom_new_xml_subtitle_description(GF_ISOFile  *movie, u32 trackNumber,
 	}
 
 	if (!xmlnamespace) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("XML (Subtitle, Metadata or Text) SampleEntry: namespace is mandatory. Abort.\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("XML (Subtitle, Metadata or Text) SampleEntry: namespace is mandatory. Abort.\n"));
 		return GF_BAD_PARAM;
 	}
 
@@ -1278,12 +1290,12 @@ GF_Err gf_isom_new_stxt_description(GF_ISOFile *movie, u32 trackNumber, u32 type
 	case GF_ISOM_SUBTYPE_METT:
 		break;
 	default:
-		GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("SampleEntry shall be either Metadata, Subtitle or SimpleText. Abort.\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("SampleEntry shall be either Metadata, Subtitle or SimpleText. Abort.\n"));
 		return GF_BAD_PARAM;
 	}
 
 	if (!mime) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("Text (Metadata, Subtitle or SimpleText) SampleEntry: mime is mandatory. Using text/plain.\n"));
+		GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("Text (Metadata, Subtitle or SimpleText) missing mime, using text/plain.\n"));
 		mime = "text/plain";
 	}
 

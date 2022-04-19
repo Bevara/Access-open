@@ -72,13 +72,13 @@ static void SFS_AddString(ScriptParser *parser, char *str)
 	char *new_str;
 	if (!str) return;
 	if (strlen(parser->string) + strlen(str) >= parser->length) {
-		parser->length += PARSER_STEP_ALLOC;
+		parser->length = (u32) ( strlen(parser->string) + strlen(str) + PARSER_STEP_ALLOC );
 		new_str = (char *)gf_malloc(sizeof(char)*parser->length);
 		strcpy(new_str, parser->string);
 		gf_free(parser->string);
 		parser->string = new_str;
 	}
-	strcat(parser->string, str);
+	strncat(parser->string, str, parser->length - strlen(parser->string) - 1);
 }
 
 static void SFS_AddInt(ScriptParser *parser, s32 val)
@@ -105,7 +105,7 @@ GF_Err ParseScriptField(ScriptParser *parser)
 
 	eventType = gf_bs_read_int(parser->bs, 2);
 	fieldType = gf_bs_read_int(parser->bs, 6);
-	gf_bifs_dec_name(parser->bs, name);
+	gf_bifs_dec_name(parser->bs, name, 1000);
 	field = gf_sg_script_field_new(parser->script, eventType, fieldType, name);
 	if (!field) return GF_NON_COMPLIANT_BITSTREAM;
 
@@ -244,7 +244,7 @@ void SFS_Identifier(ScriptParser *parser)
 	}
 	//parse
 	else {
-		gf_bifs_dec_name(parser->bs, name);
+		gf_bifs_dec_name(parser->bs, name, 500);
 		gf_list_add(parser->identifiers, gf_strdup(name));
 		SFS_AddString(parser, name);
 	}
@@ -672,7 +672,7 @@ void SFS_Expression(ScriptParser *parser)
 		SFS_StatementBlock(parser, GF_TRUE);
 		break;
 	default:
-		assert(0);
+		parser->codec->LastError = GF_NON_COMPLIANT_BITSTREAM;
 		break;
 	}
 }
@@ -769,7 +769,7 @@ void SFS_GetString(ScriptParser *parser)
 {
 	char name[1000];
 	if (parser->codec->LastError) return;
-	gf_bifs_dec_name(parser->bs, name);
+	gf_bifs_dec_name(parser->bs, name, 1000);
 	SFS_AddString(parser, name);
 }
 

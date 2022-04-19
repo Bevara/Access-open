@@ -403,15 +403,15 @@ offscreen-yuv=indique si yuv-> rgb hors écran est activé. peut être réglé s
 offscreen-yuv_crc=3163794729
 overlay-color-key=indique la couleur à utiliser pour l'incrustation YUV, format hexadécimal
 overlay-color-key_crc=1982790583
-gl-offscreen=@indique le mode openGL pour le rendu hors écran.
+gl-offscreen=@indique le mode OpenGL pour le rendu hors écran.
 	Window: Une fenêtre cachée est utilisée pour effectuer un rendu hors écran. Selon votre pilote vidéo et votre configuration X11, cela peut ne pas fonctionner.
 	VisibleWindow: une fenêtre visible est utilisée pour effectuer un rendu hors écran. Cela peut être utile lors du débogage
 	Pixmap: Un Pixmap X11 est utilisé pour effectuer un rendu hors écran. Selon votre pilote vidéo et votre configuration X11, cela peut ne pas fonctionner et même planter le lecteur.
 	PBuffer: utilise opengl PBuffers pour le dessin, pas toujours supporté@
 gl-offscreen_crc=2846403537
-gl-bits-comp=nombre de bits par composante de couleur dans openGL
+gl-bits-comp=nombre de bits par composante de couleur dans OpenGL
 gl-bits-comp_crc=1796229199
-gl-bits-depth=nombre de bits pour le tampon de profondeur dans openGL
+gl-bits-depth=nombre de bits pour le tampon de profondeur dans OpenGL
 gl-bits-depth_crc=2302848994
 gl-doublebuf=active le double buffer OpenGL
 gl-doublebuf_crc=4108413565
@@ -897,7 +897,7 @@ nav=overrides the default navigation mode of MPEG-4/VRML (Walk) and X3D (Examine
 nav_crc=4231320967
 linegl=specifies that outlining shall be done through OpenGL pen width rather than vectorial outlining
 linegl_crc=4224418980
-epow2=@emulate power-of-2 textures for openGL (old hardware). Ignored if OpenGL rectangular texture extension is enabled
+epow2=@emulate power-of-2 textures for OpenGL (old hardware). Ignored if OpenGL rectangular texture extension is enabled
 	yes: video texture is not resized but emulated with padding. This usually speeds up video mapping on shapes but disables texture transformations
 	no: video is resized to a power of 2 texture when mapping to a shape@
 epow2_crc=2327000520
@@ -1240,7 +1240,7 @@ screen_res_crc=3526471735
 timeshift=Sets initial timshift in ms (if >0) or in %% of timeshift buffer (if <0)
 timeshift_crc=3110845565
 tile_mode=@Sets tile adaptiaion mode:
-	none: bitrate is shared equaly accross all tiles
+	none: bitrate is shared equaly across all tiles
 	rows: bitrate decreases for each row of tiles starting from the top, same rate for each tile on the row
 	rrows: bitrate decreases for each row of tiles starting from the bottom, same rate for each tile on the row
 	mrows: bitrate decreased for top and bottom rows only, same rate for each tile on the row
@@ -1543,7 +1543,7 @@ desc=Generic file output
 desc_crc=320552344
 help=@The file output filter can work as a null sink when its destination is "null", dropping all input packets. In this case it accepts ANY type of input pid, not just file ones.
 In regular mode, the filter will dump to file incomming packets (stream type file), starting a new file for each packet having a start block set, unless operating in cat mode.
-The ouput file name can use gpac templating mechanism, see gpac help.@
+The output file name can use gpac templating mechanism, see gpac help.@
 help_crc=606079466
 dst=location of destination file - see filter help 
 dst_crc=2944539646
@@ -1789,7 +1789,7 @@ The following directives (separated with space or comma) are supported:
 		This works on any source (implemented independetly from seek support)
 
 The source lines follow the usual source syntax, see main help
-		Additionnal pid properties can be added per source, but are valid only for the current source, and reset at next source
+		additional pid properties can be added per source, but are valid only for the current source, and reset at next source
 The playlist file is refreshed whenever the next source has to be reloaded in order to allow for dynamic pushing of sources in the playlist
 If the last URL played cannot be found in the playlist, the first URL in the playlist file will be loaded
 @
@@ -1903,7 +1903,7 @@ Standard DASH replacement strings
 	$Time$ is replaced by segment start time
 	$Bandwidth$ is replaced by representation bandwidth.
 
-Additionnal replacement strings (not DASH, not generic GPAC replacements but may occur multiple times in template):
+additional replacement strings (not DASH, not generic GPAC replacements but may occur multiple times in template):
 	$Init=NAME$ is replaced by NAME for init segment, ignored otherwise
 	$Index=NAME$ is replaced by NAME for index segments, ignored otherwise
 	$Path=PATH$ is replaced by PATH when creating segments, ignored otherwise

@@ -177,7 +177,10 @@ GF_Err gf_bifs_dec_sf_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *n
 	}
 	break;
 	case GF_SG_VRML_SFIMAGE:
-		if (((SFImage *)field->far_ptr)->pixels) gf_free(((SFImage *)field->far_ptr)->pixels);
+		if (((SFImage *)field->far_ptr)->pixels) {
+			gf_free(((SFImage *)field->far_ptr)->pixels);
+			((SFImage *)field->far_ptr)->pixels = NULL;
+		}
 		w = gf_bs_read_int(bs, 12);
 		h = gf_bs_read_int(bs, 12);
 		length = gf_bs_read_int(bs, 2);
@@ -202,6 +205,7 @@ GF_Err gf_bifs_dec_sf_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *n
 		if (sfcb->buffer) {
 			gf_free(sfcb->buffer);
 			sfcb->buffer = NULL;
+			sfcb->bufferSize = 0;
 		}
 		while (gf_list_count(sfcb->commandList)) {
 			GF_Command *com = (GF_Command*)gf_list_get(sfcb->commandList, 0);
@@ -232,12 +236,33 @@ GF_Err gf_bifs_dec_sf_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *n
 		if (codec->dec_memory_mode || (node->sgprivate->tag==TAG_MPEG4_InputSensor)) {
 			CommandBufferItem *cbi = (CommandBufferItem *)gf_malloc(sizeof(CommandBufferItem));
 			cbi->node = node;
+			gf_node_register(cbi->node, NULL);
 			cbi->cb = sfcb;
 			gf_list_add(codec->command_buffers, cbi);
 		}
 	}
 	break;
 	case GF_SG_VRML_SFNODE:
+		//if not memory dec mode, unregister previous node
+		//otherwise the field points to the memory command internal field
+		if (!is_mem_com) {
+			GF_Node *old_node = *((GF_Node **) field->far_ptr);
+			if (old_node != NULL) {
+				u32 i, count = gf_list_count(codec->command_buffers);
+				for (i=0; i<count; i++) {
+					CommandBufferItem *cbi = (CommandBufferItem*) gf_list_get(codec->command_buffers, i);
+					if (cbi->node == old_node) {
+						gf_list_rem(codec->command_buffers, i);
+						i--;
+						count--;
+						gf_node_unregister(cbi->node, NULL);
+						gf_free(cbi);
+					}
+				}
+				gf_node_unregister(old_node, node);
+				 *((GF_Node **) field->far_ptr) = NULL;
+			}
+		}
 		//for nodes the field ptr is a ptr to the field, which is a node ptr ;)
 		new_node = gf_bifs_dec_node(codec, bs, field->NDTtype);
 		if (new_node) {
@@ -249,7 +274,7 @@ GF_Err gf_bifs_dec_sf_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *n
 		break;
 	case GF_SG_VRML_SFSCRIPT:
 #ifdef GPAC_HAS_QJS
-		codec->LastError = SFScript_Parse(codec, (SFScript*)field->far_ptr, bs, node);
+		codec->LastError = node ? SFScript_Parse(codec, (SFScript*)field->far_ptr, bs, node) : GF_NON_COMPLIANT_BITSTREAM;
 #else
 		return GF_NOT_SUPPORTED;
 #endif
@@ -288,6 +313,7 @@ GF_Err BD_DecMFFieldList(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 	sffield.fieldIndex = field->fieldIndex;
 	sffield.fieldType = gf_sg_vrml_get_sf_type(field->fieldType);
 	sffield.NDTtype = field->NDTtype;
+	sffield.name = field->name;
 
 	nbF = 0;
 	qp_on = qp_local = 0;
@@ -377,6 +403,7 @@ GF_Err BD_DecMFFieldVec(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node,
 	sffield.fieldIndex = field->fieldIndex;
 	sffield.fieldType = gf_sg_vrml_get_sf_type(field->fieldType);
 	sffield.NDTtype = field->NDTtype;
+	sffield.name = field->name;
 
 	initial_qp = qp_local = qp_on = 0;
 
@@ -498,7 +525,8 @@ GF_Err gf_bifs_dec_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 				* (GF_ChildNodeItem **)field->far_ptr = NULL;
 			} else {
 				//remove all items of the MFField
-				gf_sg_vrml_mf_reset(field->far_ptr, field->fieldType);
+				e = gf_sg_vrml_mf_reset(field->far_ptr, field->fieldType);
+				if (e) return e;
 			}
 		}
 
@@ -530,7 +558,7 @@ GF_Err gf_bifs_dec_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 			} else {
 				e = BD_DecMFFieldVec(codec, bs, node, field, is_mem_com);
 			}
-			if (e) return e;
+			if (e) return codec->LastError = e;
 		}
 	}
 	return GF_OK;
@@ -803,7 +831,7 @@ GF_Node *gf_bifs_dec_node(GF_BifsDecoder * codec, GF_BitStream *bs, u32 NDT_Tag)
 	if ((node_tag == TAG_MPEG4_IndexedFaceSet) && codec->info->config.Use3DMeshCoding) {
 		if (gf_bs_read_int(bs, 1)) {
 			/*nodeID = 1 + */gf_bs_read_int(bs, codec->info->config.NodeIDBits);
-			if (codec->UseName) gf_bifs_dec_name(bs, name);
+			if (codec->UseName) gf_bifs_dec_name(bs, name, 1000);
 		}
 		/*parse the 3DMesh node*/
 		return NULL;
@@ -822,7 +850,7 @@ GF_Node *gf_bifs_dec_node(GF_BifsDecoder * codec, GF_BitStream *bs, u32 NDT_Tag)
 			return NULL;
 		}
 		nodeID = 1 + gf_bs_read_int(bs, codec->info->config.NodeIDBits);
-		if (codec->UseName) gf_bifs_dec_name(bs, name);
+		if (codec->UseName) gf_bifs_dec_name(bs, name, 1000);
 	}
 
 	new_node = NULL;
@@ -870,19 +898,6 @@ GF_Node *gf_bifs_dec_node(GF_BifsDecoder * codec, GF_BitStream *bs, u32 NDT_Tag)
 		return NULL;
 	}
 
-	/*VRML: "The transformation hierarchy shall be a directed acyclic graph; results are undefined if a node
-	in the transformation hierarchy is its own ancestor"
-	that's good, because the scene graph can't handle cyclic graphs (destroy will never be called).
-	We therefore only register the node once parsed*/
-	if (nodeID) {
-		if (strlen(name)) {
-			gf_node_set_id(new_node, nodeID, name);
-		} else {
-			gf_node_set_id(new_node, nodeID, NULL);
-		}
-	}
-
-
 	/*update default time fields except in proto parsing*/
 	if (!codec->pCurrentProto) UpdateTimeNode(codec, new_node);
 	/*nodes are only init outside protos, nodes internal to protos are never intialized */
@@ -915,6 +930,18 @@ GF_Node *gf_bifs_dec_node(GF_BifsDecoder * codec, GF_BitStream *bs, u32 NDT_Tag)
 		/*unregister (deletes)*/
 		gf_node_unregister(new_node, NULL);
 		return NULL;
+	}
+
+	/*VRML: "The transformation hierarchy shall be a directed acyclic graph; results are undefined if a node
+	in the transformation hierarchy is its own ancestor"
+	that's good, because the scene graph can't handle cyclic graphs (destroy will never be called).
+	We therefore only register the node once parsed*/
+	if (nodeID) {
+		if (strlen(name)) {
+			gf_node_set_id(new_node, nodeID, name);
+		} else {
+			gf_node_set_id(new_node, nodeID, NULL);
+		}
 	}
 
 	if (!skip_init)

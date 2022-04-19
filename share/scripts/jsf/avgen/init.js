@@ -46,16 +46,16 @@ filter.set_help(
 +"\n"
 +"If NTP injection is used, each video packet (but not audio ones) has a `SenderNTP` property set; if video is not used, each audio packet has a `SenderNTP` property set.\n"
 +"\n"
-+"# Multistream generation\n"
++"# Multiple output stream generation\n"
 +"More than one output size can be specified. This will result in multiple sources being generated, one per size.\n"
 +"A size can be specified more than once, resulting in packet references when [-copy]() is not set, or full copies otherwise.\n"
 +"Target encoding bitrates can be assigned to each output using [-rates](). This can be useful when generating dash:\n"
-+"EX gpac avgen:sizes=1280x720,1920x1080:rates=2M,5M enc:c=aac:FID=1 enc:c=264:FID=2:clone -o live.mpd:SID=1,2\n"
++"EX gpac avgen:sizes=1280x720,1920x1080:rates=2M,5M c=aac:FID=1 c=264:FID=2:clone -o live.mpd:SID=1,2\n"
 +"\n"
 +"# Multiview generation\n"
 +"In multiview mode, only the animated counter will move in depth backward and forward, as indicated by the [-disparity]() value.\n"
 +"When [-pack]() is set, a packed stereo couple is generated for each video packet.\n"
-+"Otherwise, when [-views]() is greater than 2, each view is generated on a dedicated output pid with the property `ViewIdx` set in [1, views].\n"
++"Otherwise, when [-views]() is greater than 2, each view is generated on a dedicated output PID with the property `ViewIdx` set in [1, views].\n"
 +"Multi-view output forces usage of [-copy]() mode.\n"
 +"\n"
 +"# PID Naming\n"
@@ -81,7 +81,7 @@ filter.set_arg({ name: "dyn", desc: "move bottom banner", type: GF_PROP_BOOL, de
 filter.set_arg({ name: "ntp", desc: "send NTP along with packets", type: GF_PROP_BOOL, def: "true"} );
 filter.set_arg({ name: "copy", desc: "copy the framebuffer into each video packet instead of using packet references", type: GF_PROP_BOOL, def: "false"} );
 filter.set_arg({ name: "dur", desc: "run for the given time in second", type: GF_PROP_FRACTION, def: "0/0"} );
-filter.set_arg({ name: "adjust", desc: "adjust start time to synchronize counter and UTC - see filter help", type: GF_PROP_BOOL, def: "true"} );
+filter.set_arg({ name: "adjust", desc: "adjust start time to synchronize counter and UTC", type: GF_PROP_BOOL, def: "true"} );
 filter.set_arg({ name: "pack", desc: "packing mode for stereo views\n - no: no packing\n - ss: side by side packing, forces [-views]() to 2\n - tb: top-bottom packing, forces [-views]() to 2", type: GF_PROP_UINT, def: "no", minmax_enum: "no|ss|tb"} );
 filter.set_arg({ name: "disparity", desc: "disparity in pixels between left-most and right-most views", type: GF_PROP_UINT, def: "20"} );
 filter.set_arg({ name: "views", desc: "number of views", type: GF_PROP_UINT, def: "1"} );
@@ -339,6 +339,7 @@ function put_image(vsrc, tx, is_testcard, is_first)
 		}
 	}
 	tx.mx = mmx;
+	tx.auto_mx=false;
 	vsrc.canvas.fill(tx);
 
 	if (is_testcard) return;

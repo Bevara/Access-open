@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / AAC ADTS write filter
@@ -86,8 +86,21 @@ GF_Err adtsmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 	if (!p) return GF_NOT_SUPPORTED;
 	ctx->codecid = p->value.uint;
 
+	if (!ctx->opid) {
+		ctx->opid = gf_filter_pid_new(filter);
+	}
+	ctx->ipid = pid;
+	gf_filter_pid_copy_properties(ctx->opid, pid);
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL);
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
+	if (ctx->is_latm)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED_LATM, &PROP_BOOL(GF_TRUE) );
+
+	gf_filter_pid_set_framing_mode(ctx->ipid, GF_TRUE);
+
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLE_RATE);
-	if (!p) return GF_NOT_SUPPORTED;
+	//not known yet
+	if (!p) return GF_OK;
 	sr = p->value.uint;
 
 	ctx->channels = 0;
@@ -135,23 +148,23 @@ GF_Err adtsmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 			} else
 #endif
 			{
-				GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[RFADTS] no AAC decoder config, assuming AAC-LC\n"));
+				GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[UFADTS] no AAC decoder config, assuming AAC-LC\n"));
 				ctx->aac_type = GF_M4A_AAC_LC;
 
 				if (!ctx->channels) {
-					GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[RFADTS] no channel config found for ADTS, forcing stereo\n"));
+					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[UFADTS] no channel config found for ADTS, forcing stereo\n"));
 					chan_cfg = ctx->channels = 2;
 					patch_channels = GF_TRUE;
 				}
 
 				if (!chan_cfg) {
-					GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[RFADTS] Unkown channel config, will not be able to signal it in ADTS\n"));
+					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[UFADTS] Unknown channel config, will not be able to signal it in ADTS\n"));
 				}
 			}
 		}
 
 		if (chan_cfg>7) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[RFADTS] Unkown channel config, will not be able to signal it in ADTS\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[UFADTS] Unknown channel config, will not be able to signal it in ADTS\n"));
 			chan_cfg = 0;
 		}
 	} else {
@@ -161,12 +174,12 @@ GF_Err adtsmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 #ifndef GPAC_DISABLE_AV_PARSERS
 	if (ctx->channels && ctx->acfg.nb_chan && (ctx->channels != ctx->acfg.nb_chan)) {
 		//do not warn here, as most MP4 files will use nbChan=2 for multichan
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[RFADTS] Mismatch between container number of channels (%d) and AAC config (%d), using AAC config\n", ctx->channels, ctx->acfg.nb_chan));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[UFADTS] Mismatch between container number of channels (%d) and AAC config (%d), using AAC config\n", ctx->channels, ctx->acfg.nb_chan));
 		ctx->channels = ctx->acfg.nb_chan;
 		patch_channels = GF_TRUE;
 	}
 	if ((ctx->acfg.base_object_type==2) && (ctx->acfg.base_sr!=sr)) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[RFADTS] Mismatch between container samplerate (%d) and AAC config SBR base samplerate (%d), using AAC config\n", sr, ctx->acfg.base_sr));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[UFADTS] Mismatch between container samplerate (%d) and AAC config SBR base samplerate (%d), using AAC config\n", sr, ctx->acfg.base_sr));
 		sr = ctx->acfg.base_sr;
 	}
 	if (!ctx->acfg.chan_cfg && ctx->acfg.program_config_element_present) {
@@ -177,7 +190,7 @@ GF_Err adtsmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 		gf_bs_get_content(bs, &ctx->pce, &ctx->pce_size);
 		gf_bs_del(bs);
 
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[RFADTS] ADTS will use multiple raw blocks to signal channel configuration\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[UFADTS] ADTS will use multiple raw blocks to signal channel configuration\n"));
 	}
 #else
 
@@ -197,20 +210,8 @@ GF_Err adtsmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 		}
 	}
 
-
-	if (!ctx->opid) {
-		ctx->opid = gf_filter_pid_new(filter);
-	}
-	ctx->ipid = pid;
-	gf_filter_pid_copy_properties(ctx->opid, pid);
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL);
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
-	if (ctx->is_latm)
-		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED_LATM, &PROP_BOOL(GF_TRUE) );
-
 	if (patch_channels)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(ctx->channels));
-	gf_filter_pid_set_framing_mode(ctx->ipid, GF_TRUE);
 	return GF_OK;
 }
 
@@ -233,6 +234,15 @@ GF_Err adtsmx_process(GF_Filter *filter)
 	}
 
 	data = (char *) gf_filter_pck_get_data(pck, &pck_size);
+	if (!pck_size) {
+		//if output and packet properties, forward - this is required for sinks using packets for state signaling
+		//such as TS muxer in dash mode looking for EODS property
+		if (ctx->opid && gf_filter_pck_has_properties(pck))
+			gf_filter_pck_forward(pck, ctx->opid);
+
+		gf_filter_pid_drop_packet(ctx->ipid);
+		return GF_OK;
+	}
 
 	if (ctx->is_latm) {
 		u32 asize;
@@ -362,7 +372,9 @@ static void adtsmx_finalize(GF_Filter *filter)
 {
 	GF_ADTSMxCtx *ctx = gf_filter_get_udta(filter);
 	if (ctx->bs_w) gf_bs_del(ctx->bs_w);
+#ifndef GPAC_DISABLE_AV_PARSERS
 	if (ctx->pce) gf_free(ctx->pce);
+#endif
 }
 
 static const GF_FilterCapability ADTSMxCaps[] =

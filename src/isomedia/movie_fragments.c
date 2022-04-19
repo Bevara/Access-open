@@ -646,7 +646,7 @@ u32 UpdateRuns(GF_ISOFile *movie, GF_TrackFragmentBox *traf)
 				if (j==1 || (trun->nb_samples==1) ) RunFlags = ent->flags;
 
 				if (ssize != RunSize) RunSize = 0;
-				if (ent->Duration != RunDur)
+				if (RunDur && (ent->Duration != RunDur))
 					RunDur = 0;
 				if (j && (RunFlags != ent->flags)) NeedFlags = 1;
 			}
@@ -724,6 +724,10 @@ u32 UpdateRuns(GF_ISOFile *movie, GF_TrackFragmentBox *traf)
 			   we just need to check if the first entry flags need to be singled out*/
 			if (first_ent->flags != RunFlags) {
 				trun->flags |= GF_ISOM_TRUN_FIRST_FLAG;
+				//if not old arch write the flags
+				//in old arch we write 0, which means all deps unknown and sync sample set
+				if (!traf->no_sdtp_first_flags)
+					trun->first_sample_flags = first_ent->flags;
 			}
 		}
 
@@ -1184,6 +1188,17 @@ static GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_off
 		gf_bs_write_u64(bs, movie->moof->ntp);
 		gf_bs_write_u64(bs, movie->moof->timestamp);
 	}
+	if (movie->moof->emsgs) {
+		while (1) {
+			GF_Box *emsg = gf_list_pop_front(movie->moof->emsgs);
+			if (!emsg) break;
+			gf_isom_box_size(emsg);
+			gf_isom_box_write(emsg, bs);
+			gf_isom_box_del(emsg);
+		}
+		gf_list_del(movie->moof->emsgs);
+		movie->moof->emsgs = NULL;
+	}
 
 	if (moof_size) *moof_size = (u32) movie->moof->size;
 
@@ -1232,6 +1247,8 @@ static GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_off
 	}
 
 	if (!movie->use_segments) {
+		//remove from moof list (may happen in regular fragmentation when single traf per moof is used)
+		gf_list_del_item(movie->moof_list, movie->moof);
 		gf_isom_box_del((GF_Box *) movie->moof);
 		movie->moof = NULL;
 	}
@@ -1358,6 +1375,19 @@ static GF_Err gf_isom_write_styp(GF_ISOFile *movie, Bool last_segment)
 
 		movie->styp_written = GF_TRUE;
 	}
+
+	if (movie->emsgs) {
+		while (1) {
+			GF_Box *b = gf_list_pop_front(movie->emsgs);
+			if (!b) break;
+			gf_isom_box_size(b);
+			gf_isom_box_write(b, movie->editFileMap->bs);
+			gf_isom_box_del(b);
+		}
+		gf_list_del(movie->emsgs);
+		movie->emsgs = NULL;
+	}
+
 	return GF_OK;
 }
 
@@ -2425,7 +2455,7 @@ GF_Err gf_isom_start_fragment(GF_ISOFile *movie, GF_ISOStartFragmentFlags flags)
 
 	//store existing fragment
 	if (movie->moof) {
-		e = StoreFragment(movie, movie->use_segments ? GF_TRUE : GF_FALSE, 0, NULL, movie->use_segments ? GF_TRUE : GF_FALSE);
+		e = StoreFragment(movie, movie->use_segments ? GF_TRUE : GF_FALSE, 0, NULL, movie->use_segments ? GF_TRUE : (movie->on_block_out ? GF_TRUE : GF_FALSE));
 		if (e) return e;
 	}
 
@@ -3234,5 +3264,26 @@ u32 gf_isom_get_next_moof_number(GF_ISOFile *movie)
 #endif
 	return 0;
 }
+
+GF_Err gf_isom_set_emsg(GF_ISOFile *movie, u8 *data, u32 size)
+{
+	if (!movie || !data) return GF_BAD_PARAM;
+#ifndef GPAC_DISABLE_ISOM_FRAGMENTS
+	if (!movie->moof) return GF_BAD_PARAM;
+
+	GF_BitStream *bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
+	while (gf_bs_available(bs)) {
+		GF_Box *emsg;
+		GF_Err e = gf_isom_box_parse(&emsg, bs);
+		if (e) break;
+
+		if (!movie->moof->emsgs) movie->moof->emsgs = gf_list_new();
+		gf_list_add(movie->moof->emsgs, emsg);
+	}
+	gf_bs_del(bs);
+#endif
+	return GF_OK;
+}
+
 
 #endif /*GPAC_DISABLE_ISOM*/

@@ -394,7 +394,7 @@ interface WebGLContext : implements WebGLRenderingContextBase {
 	void texImage2D(GLenum target, GLint level, GLint internalformat, GLenum format, GLenum type, FilterPacket source);
 
 	/*! creates a named texture
-  \param name the name of the texture
+  \param name the name of the texture - if `null`, generates name
   \param vcfg video config options - if null, default are assumed (everything unspecified, no full range)
 	\return a new named texture
 	*/
@@ -406,9 +406,15 @@ interface WebGLContext : implements WebGLRenderingContextBase {
 	*/
 	void bindTexture(GLenum target, NamedTexture texture);
 
+	/*! get the name of a named texture
+	\param texture target named texture
+	\return name of texture
+	*/
+	DOMString textureName(NamedTexture texture);
+
 
   /*!
-  \param use_gl_exts if true, queries all extensions supported by the underlying openGL implementation. Otherwise, queries only supported WebGL extensions (none at the moment)
+  \param use_gl_exts if true, queries all extensions supported by the underlying OpenGL implementation. Otherwise, queries only supported WebGL extensions (none at the moment)
   \return an array of strings, each entry being the name of a supported extension
   */
   sequence<DOMString>? getSupportedExtensions(optional boolean use_gl_exts=false);

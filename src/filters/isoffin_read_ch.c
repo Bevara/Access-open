@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -364,8 +364,10 @@ void isor_reader_get_sample(ISOMChannel *ch)
 				ch->edit_sync_frame++;
 				if (ch->edit_sync_frame < ch->sample_num) {
 					ch->sample = gf_isom_get_sample_ex(ch->owner->mov, ch->track, ch->edit_sync_frame, &sample_desc_index, ch->static_sample, &ch->sample_data_offset);
-					ch->sample->DTS = ch->sample_time;
-					ch->sample->CTS_Offset = 0;
+					if (ch->sample) {
+						ch->sample->DTS = ch->sample_time;
+						ch->sample->CTS_Offset = 0;
+					}
 				} else {
 					ch->edit_sync_frame = 0;
 					if (ch->sample) ch->sample_time = ch->sample->DTS;
@@ -404,7 +406,7 @@ void isor_reader_get_sample(ISOMChannel *ch)
 					ch->sample = NULL;
 					e = gf_isom_get_sample_for_movie_time(ch->owner->mov, ch->track, ch->sample_time + 1, &sample_desc_index, GF_ISOM_SEARCH_SYNC_BACKWARD, &ch->static_sample, &ch->sample_num, &ch->sample_data_offset);
 
-					if (e == GF_OK) ch->sample = ch->static_sample;
+					ch->sample = (e == GF_OK) ? ch->static_sample : NULL;
 
 					/*if no sync point in the past, use the first non-sync for the given time*/
 					if (!ch->sample || !ch->sample->data) {
@@ -480,10 +482,10 @@ void isor_reader_get_sample(ISOMChannel *ch)
 					ch->sample_num--;
 			} else {
 				if (ch->to_init && ch->sample_num) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[IsoMedia] Failed to fetch initial sample %d for track %d\n"));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[IsoMedia] Failed to fetch initial sample %d for track %d\n", ch->sample_num, ch->track));
 					ch->last_state = GF_ISOM_INVALID_FILE;
-				}
-				if (ch->sample_num >= gf_isom_get_sample_count(ch->owner->mov, ch->track)) {
+				} else {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[IsoMedia] File truncated, aborting read for track %d\n", ch->track));
 					ch->last_state = GF_EOS;
 				}
 			}
@@ -506,7 +508,11 @@ void isor_reader_get_sample(ISOMChannel *ch)
 			}
 		} else {
 			e = gf_isom_last_error(ch->owner->mov);
-			GF_LOG((e==GF_ISOM_INCOMPLETE_FILE) ? GF_LOG_DEBUG : GF_LOG_WARNING, GF_LOG_DASH, ("[IsoMedia] Track #%d fail to fetch sample %d / %d: %s\n", ch->track, ch->sample_num, gf_isom_get_sample_count(ch->owner->mov, ch->track), gf_error_to_string(e) ));
+			GF_LOG((e==GF_ISOM_INCOMPLETE_FILE) ? GF_LOG_DEBUG : GF_LOG_WARNING, GF_LOG_CONTAINER, ("[IsoMedia] Track #%d fail to fetch sample %d / %d: %s\n", ch->track, ch->sample_num, gf_isom_get_sample_count(ch->owner->mov, ch->track), gf_error_to_string(e) ));
+
+			if ((e<GF_OK) && (e!=GF_ISOM_INCOMPLETE_FILE)) {
+				ch->last_state = GF_EOS;
+			}
 		}
 		return;
 	}
@@ -551,7 +557,7 @@ void isor_reader_get_sample(ISOMChannel *ch)
 		}
 
 		if (ch->end && (ch->end < ch->sample->DTS + ch->sample->CTS_Offset + ch->au_duration)) {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[IsoMedia] End of Channel "LLD" (CTS "LLD")\n", ch->end, ch->sample->DTS + ch->sample->CTS_Offset));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[IsoMedia] End of Channel "LLD" (CTS "LLD")\n", ch->end, ch->sample->DTS + ch->sample->CTS_Offset));
 			ch->sample = NULL;
 			ch->last_state = GF_EOS;
 			ch->playing = 2;
@@ -762,6 +768,7 @@ void isor_sai_bytes_removed(ISOMChannel *ch, u32 pos, u32 removed)
 		offset = key_info_get_iv_size(ch->cenc_ki->value.data.ptr, ch->cenc_ki->value.data.size, 1, NULL, NULL);
 		sub_count_size = 2; //16bit sub count
 	}
+	if (sai_size < offset + sub_count_size) return;
 
 	sai += offset;
 	if (sub_count_size==2) {
@@ -785,6 +792,7 @@ void isor_sai_bytes_removed(ISOMChannel *ch, u32 pos, u32 removed)
 		}
 		cur_pos += clear + crypt;
 		sai += 6;
+		sai_size-=6;
 	}
 }
 
@@ -830,10 +838,11 @@ void isor_reader_check_config(ISOMChannel *ch)
 	if (!ch->nal_bs) ch->nal_bs = gf_bs_new(ch->sample->data, ch->sample->dataLength, GF_BITSTREAM_READ);
 	else gf_bs_reassign_buffer(ch->nal_bs, ch->sample->data, ch->sample->dataLength);
 
-	while (gf_bs_available(ch->nal_bs)) {
+	while (1) {
 		Bool replace_nal = GF_FALSE;
 		u8 nal_type=0;
 		u32 pos = (u32) gf_bs_get_position(ch->nal_bs);
+		if (pos + nalu_len >= ch->sample->dataLength) break;
 		u32 size = gf_bs_read_int(ch->nal_bs, nalu_len*8);
 		//this takes care of size + pos + nalu_len > 0 but (s32) size < 0 ...
 		if (ch->sample->dataLength < size) break;
@@ -913,5 +922,61 @@ void isor_reader_check_config(ISOMChannel *ch)
 		}
 	}
 }
+
+
+
+void isor_set_sample_groups_and_aux_data(ISOMReader *read, ISOMChannel *ch, GF_FilterPacket *pck)
+{
+	char szPName[30];
+
+	u32 grp_idx=0;
+	while (1) {
+		u32 grp_type=0, grp_size=0, grp_parameter=0;
+		const u8 *grp_data=NULL;
+		GF_Err e = gf_isom_enum_sample_group(read->mov, ch->track, ch->sample_num, &grp_idx, &grp_type, &grp_parameter, &grp_data, &grp_size);
+		if (e) continue;
+		if (!grp_type) break;
+		if (!grp_size || !grp_data) continue;
+
+		if (grp_type == GF_4CC('P','S','S','H')) {
+			gf_filter_pck_set_property(pck, GF_PROP_PID_CENC_PSSH, &PROP_DATA((u8*)grp_data, grp_size) );
+			continue;
+		}
+		//all other are mapped to sample groups
+		if (grp_parameter) sprintf(szPName, "grp_%s_%d", gf_4cc_to_str(grp_type), grp_parameter);
+		else sprintf(szPName, "grp_%s", gf_4cc_to_str(grp_type));
+
+		gf_filter_pck_set_property_dyn(pck, szPName, &PROP_DATA((u8*)grp_data, grp_size) );
+	}
+
+	u32 sai_idx=0;
+	while (1) {
+		u32 sai_type=0, sai_size=0, sai_parameter=0;
+		u8 *sai_data=NULL;
+		GF_Err e = gf_isom_enum_sample_aux_data(read->mov, ch->track, ch->sample_num, &sai_idx, &sai_type, &sai_parameter, &sai_data, &sai_size);
+		if (e) continue;
+		if (!sai_type) break;
+		if (!sai_size || !sai_data) continue;
+
+		//all other are mapped to sample groups
+		if (sai_parameter) sprintf(szPName, "sai_%s_%d", gf_4cc_to_str(sai_type), sai_parameter);
+		else sprintf(szPName, "sai_%s", gf_4cc_to_str(sai_type));
+
+		gf_filter_pck_set_property_dyn(pck, szPName, &PROP_DATA_NO_COPY(sai_data, sai_size) );
+	}
+
+
+	while (1) {
+		GF_Err gf_isom_pop_emsg(GF_ISOFile *the_file, u8 **emsg_data, u32 *emsg_size);
+		u8 *data=NULL;
+		u32 size;
+		GF_Err e = gf_isom_pop_emsg(read->mov, &data, &size);
+		if (e || !data) break;
+
+		gf_filter_pck_set_property_str(pck, "emsg", &PROP_DATA_NO_COPY(data, size));
+	}
+
+}
+
 
 #endif /*GPAC_DISABLE_ISOM*/

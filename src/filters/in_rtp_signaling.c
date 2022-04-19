@@ -55,7 +55,13 @@ static Bool rtpin_rtsp_is_active(GF_RTPInStream *stream)
 static void rtpin_rtsp_queue_command(GF_RTPInRTSP *sess, GF_RTPInStream *stream, GF_RTSPCommand *com, Bool needs_sess_id)
 {
 	if (needs_sess_id) {
-		com->Session = sess->session_id;
+		if (stream && !(stream->rtsp->flags & RTSP_AGG_CONTROL))  {
+			com->Session = stream->session_id;
+		} else {
+			com->Session = sess->session_id;
+			//session_id can still be null (setup reply not yet processed), remember we need it
+			com->user_flags = 1;
+		}
 	}
 	gf_list_add(sess->rtsp_commands, com);
 }
@@ -197,7 +203,11 @@ void rtpin_rtsp_setup_process(GF_RTPInRTSP *sess, GF_RTSPCommand *com, GF_Err e)
 		goto exit;
 	}
 	if (!sess->session_id) sess->session_id = gf_strdup(sess->rtsp_rsp->Session);
-	assert(!stream->session_id);
+
+	if (! (stream->rtsp->flags & RTSP_AGG_CONTROL) )  {
+		assert(!stream->session_id);
+		stream->session_id = gf_strdup(sess->rtsp_rsp->Session);
+	}
 
 	/*transport setup: break at the first correct transport */
 	i=0;
@@ -230,8 +240,10 @@ void rtpin_rtsp_setup_process(GF_RTPInRTSP *sess, GF_RTSPCommand *com, GF_Err e)
 		gf_rtp_set_interleave_callbacks(stream->rtp_ch, rtpin_rtsp_tcp_send_report, stream, stream);
 		sess->flags |= RTSP_TCP_FLUSH;
 #ifdef GPAC_ENABLE_COVERAGE
-		if (gf_sys_is_cov_mode())
+		if (gf_sys_is_cov_mode()) {
 			rtpin_rtsp_tcp_send_report(NULL, NULL, GF_FALSE, NULL, 0);
+			rtpin_satip_get_server_ip(NULL, NULL);
+		}
 #endif
 	}
 
@@ -268,7 +280,7 @@ Bool rtpin_rtsp_describe_preprocess(GF_RTPInRTSP *sess, GF_RTSPCommand *com)
 	RTPIn_StreamDescribe *ch_desc;
 	/*not a channel describe*/
 	if (!com->user_data) {
-		rtpin_send_message(sess->rtpin, GF_OK, "Connecting...");
+		GF_LOG(GF_LOG_INFO, GF_LOG_RTP, ("[RTSPIn] Connecting ...\n" ));
 		return GF_TRUE;
 	}
 
@@ -314,7 +326,7 @@ GF_Err rtpin_rtsp_describe_process(GF_RTPInRTSP *sess, GF_RTSPCommand *com, GF_E
 	if (ch_desc) {
 		stream = rtpin_find_stream(sess->rtpin, ch_desc->opid, ch_desc->ES_ID, ch_desc->esd_url, GF_FALSE);
 	} else {
-		rtpin_send_message(sess->rtpin, GF_OK, "Connected");
+		GF_LOG(GF_LOG_INFO, GF_LOG_RTP, ("[RTSPIn] Connected\n" ));
 	}
 
 	/*error on loading SDP is done internally*/
@@ -399,7 +411,7 @@ void rtpin_rtsp_describe_send(GF_RTPInRTSP *sess, char *esd_url, GF_FilterPid *o
 		}
 		
 		/*hardcoded channel*/
-		stream = rtpin_stream_new_satip(sess->rtpin, sess->satip_server);
+		stream = rtpin_stream_new_standalone(sess->rtpin, sess->satip_server, 0, GF_TRUE);
 		if (!stream) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("SAT>IP: couldn't create the RTP stream.\n"));
 			return;
@@ -474,6 +486,14 @@ Bool rtpin_rtsp_usercom_preprocess(GF_RTPInRTSP *sess, GF_RTSPCommand *com)
 
 		assert(stream->rtsp == sess);
 		assert(stream->opid == ch_ctrl->evt.base.on_pid);
+	}
+
+	if (!com->Session) {
+		if (stream && !(stream->rtsp->flags & RTSP_AGG_CONTROL) )  {
+			com->Session = stream->session_id;
+		} else {
+			com->Session = sess->session_id;
+		}
 	}
 
 	skip_it = GF_FALSE;
@@ -631,8 +651,17 @@ process_reply:
 		}
 	} else if (ch_ctrl->evt.base.type == GF_FEVT_STOP) {
 		sess->rtpin->eos_probe_start = gf_sys_clock();
-		if (stream)
+
+		if (sess->flags & RTSP_AGG_CONTROL) {
+			u32 i, count = gf_list_count(sess->rtpin->streams);
+			for (i=0; i<count; i++) {
+				stream = gf_list_get(sess->rtpin->streams, i);
+				if (stream->rtsp == sess)
+					stream->flags |= RTP_EOS;
+			}
+		} else if (stream) {
 			stream->flags |= RTP_EOS;
+		}
 	}
 	gf_free(ch_ctrl);
 	com->user_data = NULL;
@@ -747,16 +776,11 @@ void rtpin_rtsp_usercom_send(GF_RTPInRTSP *sess, GF_RTPInStream *stream, const G
 
 		if (sess->flags & RTSP_AGG_CONTROL)
 			rtpin_rtsp_skip_command(stream);
-		else if (strlen(stream->control))
+		else if (stream->control && strlen(stream->control))
 			com->ControlString = gf_strdup(stream->control);
 
 		if (rtpin_rtsp_is_active(stream)) {
 			if (!com->ControlString && stream->control) com->ControlString = gf_strdup(stream->control);
-		} else {
-			if (com->ControlString) {
-				gf_free(com->ControlString);
-				com->ControlString=NULL;
-			}
 		}
 
 	} else if (evt->base.type == GF_FEVT_PAUSE) {
@@ -801,8 +825,15 @@ void rtpin_rtsp_usercom_send(GF_RTPInRTSP *sess, GF_RTPInStream *stream, const G
 		}
 		/* otherwise send a PAUSE on the stream */
 		else {
-			if (stream->paused) {
+			//stream paused or not running, don't send event
+			if (stream->paused || (stream->status<RTP_Running)) {
 				if (com) gf_rtsp_command_del(com);
+				//if last active stream, send teardown
+				if (!rtpin_rtsp_is_active(stream))
+					rtpin_rtsp_teardown(sess, NULL);
+				//mark as disconnected and start processing eos
+				stream->status = RTP_Disconnected;
+				stream->flags |= RTP_EOS;
 				return;
 			}
 			range = gf_rtsp_range_new();

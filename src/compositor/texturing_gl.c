@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -480,6 +480,8 @@ static Bool tx_setup_format(GF_TextureHandler *txh)
 	case GF_PIXEL_VYUY:
 	case GF_PIXEL_UYVY:
 	case GF_PIXEL_GL_EXTERNAL:
+	case GF_PIXEL_YUV444_10_PACK:
+	case GF_PIXEL_V210:
 #if !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
 		if (!compositor->visual->compositor->shader_mode_disabled) {
 			break;
@@ -533,7 +535,7 @@ static Bool tx_setup_format(GF_TextureHandler *txh)
 			stride = txh->tx_io->conv_stride;
 			pfmt = txh->tx_io->conv_format;
 		}
-		gf_gl_txw_setup(&txh->tx_io->tx, pfmt, txh->width, txh->height, stride, 0, GF_TRUE, NULL, full_range, cmx);
+		gf_gl_txw_setup(&txh->tx_io->tx, pfmt, txh->width, txh->height, stride, 0, GF_TRUE, txh->frame_ifce, full_range, cmx);
 	}
 	return 1;
 }
@@ -876,7 +878,7 @@ Bool gf_sc_texture_push_image(GF_TextureHandler *txh, Bool generate_mipmaps, Boo
 	if (txh->stream) {
 		u32 ck;
 		gf_mo_get_object_time(txh->stream, &ck);
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[GL Texture] Texture (CTS %u) %d ms after due date - Pushed %s in %d ms - average push time %d ms (PBO enabled %s)\n", txh->last_frame_time, ck - txh->last_frame_time, txh->tx_io->tx.is_yuv ? "YUV textures" : "texture", push_time, txh->upload_time / txh->nb_frames, txh->tx_io->tx.pbo_state ? "yes" : "no"));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[GL Texture] Texture (CTS %u) %d ms after due date - Pushed %s in %d ms - average push time %d ms (PBO enabled %s)\n", txh->last_frame_time, ck - txh->last_frame_time, txh->tx_io->tx.is_yuv ? "YUV textures" : "texture", push_time, txh->upload_time / txh->nb_frames, txh->tx_io->tx.pbo_state ? "yes" : "no"));
 	}
 #endif
 	return 1;
@@ -1011,7 +1013,7 @@ void gf_sc_copy_to_stencil(GF_TextureHandler *txh)
 
 	if (txh->compositor->fbo_id) compositor_3d_enable_fbo(txh->compositor, GF_FALSE);
 
-	/*flip image because of openGL*/
+	/*flip image because of OpenGL*/
 	tmp = (char*)gf_malloc(sizeof(char)*txh->stride);
 	hy = txh->height/2;
 	for (i=0; i<hy; i++) {
@@ -1295,7 +1297,9 @@ void gf_sc_texture_set_stencil(GF_TextureHandler *txh, GF_EVGStencil * stencil)
 
 void gf_sc_texture_check_pause_on_first_load(GF_TextureHandler *txh, Bool do_freeze)
 {
-	if (!txh->stream || !txh->tx_io)
+	if (!txh->stream || !txh->tx_io || !txh->stream->odm)
+		return;
+	if (txh->stream->odm->flags & GF_ODM_IS_SPARSE)
 		return;
 
 	if (do_freeze) {

@@ -44,8 +44,8 @@ typedef struct {
 	GF_Node *node;
 	/*in case node is not defined yet*/
 	u32 node_id;
-	/*the rest is not needed at the current time, we only support simple sugnaling for FDP, BDP and IFS2D
-	which are using pre-defs masks*/
+	/*the rest is not needed at the current time, we only support simple signaling for FDP, BDP and IFS2D
+	which are using predefined masks*/
 } BIFSElementaryMask;
 
 typedef struct
@@ -83,6 +83,7 @@ typedef struct
 /*per_stream config support*/
 typedef struct
 {
+	//node is registered with NULL as parent
 	GF_Node *node;
 	SFCommandBuffer *cb;
 } CommandBufferItem;
@@ -142,7 +143,7 @@ GF_Err gf_bifs_dec_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 /*decodes a route*/
 GF_Err gf_bifs_dec_route(GF_BifsDecoder * codec, GF_BitStream *bs, Bool is_insert);
 /*get name*/
-void gf_bifs_dec_name(GF_BitStream *bs, char *name);
+void gf_bifs_dec_name(GF_BitStream *bs, char *name, u32 size);
 
 BIFSStreamInfo *gf_bifs_dec_get_stream(GF_BifsDecoder * codec, u16 ESID);
 /*decodes a BIFS command frame*/

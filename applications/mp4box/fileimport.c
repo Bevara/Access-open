@@ -343,16 +343,156 @@ Bool scan_color(char *val, u32 *clr_prim, u32 *clr_tranf, u32 *clr_mx, Bool *clr
 	return GF_FALSE;
 }
 
+static GF_Err set_dv_profile(GF_ISOFile *dest, u32 track, char *dv_profile_str)
+{
+	GF_Err e;
+	Bool remove=GF_FALSE;
+	Bool force_dv=GF_FALSE;
+	u32 dv_profile = 0;
+	u32 dv_compat_id=0;
+	char *sep = strchr(dv_profile_str, '.');
+	if (sep) {
+		sep[0] = 0;
+		if (!strcmp(sep+1, "none")) dv_compat_id=0;
+		else if (!strcmp(sep+1, "hdr10")) dv_compat_id=1;
+		else if (!strcmp(sep+1, "bt709")) dv_compat_id=2;
+		else if (!strcmp(sep+1, "hlg709")) dv_compat_id=3;
+		else if (!strcmp(sep+1, "hlg2100")) dv_compat_id=4;
+		else if (!strcmp(sep+1, "bt2020")) dv_compat_id=5;
+		else if (!strcmp(sep+1, "brd")) dv_compat_id=6;
+		else if ((sep[1]>='0') && (sep[1]<='9')) dv_compat_id=atoi(sep+1);
+		else {
+			M4_LOG(GF_LOG_WARNING, ("DV compatibility mode %s not recognized, using none\n", sep+1));
+		}
+	}
+	if (dv_profile_str[0]=='f') {
+		force_dv = GF_TRUE;
+		dv_profile_str++;
+	}
+
+	if (!strcmp(dv_profile_str, "none")) {
+		remove = GF_TRUE;
+	} else {
+		dv_profile = atoi(dv_profile_str);
+		if (dv_profile==8) {
+			if ((dv_compat_id!=1) && (dv_compat_id!=2)) {
+				M4_LOG(GF_LOG_ERROR, ("DV profile 8 must indicate a compatibility mode `hdr10` or `bt709`\n"));
+				return GF_BAD_PARAM;
+			}
+		}
+	}
+
+	GF_DOVIDecoderConfigurationRecord *dovi = gf_isom_dovi_config_get(dest, track, 1);
+	if (dovi) {
+		dovi->dv_profile = dv_profile;
+		dovi->dv_bl_signal_compatibility_id = dv_compat_id;
+		dovi->force_dv = force_dv;
+		e = gf_isom_set_dolby_vision_profile(dest, track, 1, remove ? NULL : dovi);
+		gf_odf_dovi_cfg_del(dovi);
+		return e;
+	}
+	if (remove) return GF_OK;
+	u32 nb_samples = gf_isom_get_sample_count(dest, track);
+	if (!nb_samples) {
+		M4_LOG(GF_LOG_ERROR, ("No DV config in file and no samples, cannot guess DV config\n"));
+		return GF_NOT_SUPPORTED;
+	}
+
+	GF_DOVIDecoderConfigurationRecord _dovi;
+	memset(&_dovi, 0, sizeof(GF_DOVIDecoderConfigurationRecord));
+	_dovi.dv_version_major = 1;
+	_dovi.dv_version_minor = 0;
+	_dovi.dv_profile = dv_profile;
+	_dovi.dv_bl_signal_compatibility_id = dv_compat_id;
+	_dovi.force_dv = force_dv;
+
+	u32 w, h;
+	Bool is_avc = GF_FALSE;
+
+	e = gf_isom_get_visual_info(dest, track, 1, &w, &h);
+	if (e) return e;
+	//no DV profile present in file, we need to guess
+	GF_AVCConfig *avcc = gf_isom_avc_config_get(dest, track, 1);
+	GF_HEVCConfig *hvcc = gf_isom_hevc_config_get(dest, track, 1);
+
+	if (!avcc && !hvcc) {
+		M4_LOG(GF_LOG_WARNING, ("DV profile can only be set on AVC or HEVC tracks\n"));
+		return GF_BAD_PARAM;
+	}
+
+	u32 nalu_length = avcc ? avcc->nal_unit_size : hvcc->nal_unit_size;
+	if (avcc) {
+		is_avc = GF_TRUE;
+		gf_odf_avc_cfg_del(avcc);
+	}
+	if (hvcc) gf_odf_hevc_cfg_del(hvcc);
+
+	//inspect at most first 50 samples
+	u32 i;
+	for (i=0; i<50; i++) {
+		u32 stsd_idx;
+		GF_BitStream *bs;
+
+		GF_ISOSample *samp = gf_isom_get_sample(dest, track, i+1, &stsd_idx);
+		if (!samp) break;
+
+		bs = gf_bs_new(samp->data, samp->dataLength, GF_BITSTREAM_READ);
+
+		while (gf_bs_available(bs)) {
+			u32 nal_type;
+			u32 nal_size = gf_bs_read_int(bs, nalu_length*8);
+			if (is_avc) {
+				nal_type = gf_bs_read_u8(bs);
+				nal_type = nal_type & 0x1F;
+				nal_size--;
+				if (nal_type == GF_AVC_NALU_DV_RPU) _dovi.rpu_present_flag = 1;
+				else if (nal_type == GF_AVC_NALU_DV_EL) _dovi.el_present_flag = 1;
+				else if (nal_type <= GF_AVC_NALU_IDR_SLICE) _dovi.bl_present_flag = 1;
+			} else {
+				gf_bs_read_int(bs, 1);
+				nal_type = gf_bs_read_int(bs, 6);
+				gf_bs_read_int(bs, 1);
+				nal_size--;
+				if (nal_type == GF_HEVC_NALU_DV_RPU) _dovi.rpu_present_flag = 1;
+				else if (nal_type == GF_HEVC_NALU_DV_EL) _dovi.el_present_flag = 1;
+				else if (nal_type <= GF_HEVC_NALU_SLICE_CRA) _dovi.bl_present_flag = 1;
+			}
+			gf_bs_skip_bytes(bs, nal_size);
+		}
+		gf_bs_del(bs);
+		gf_isom_sample_del(&samp);
+	}
+
+	//get dur and timescale to compute fps
+	//we don't divide mdur by nb_samples but rather multiple timescale with nb_samples
+	//this avoid rounding errors with non FPS-aligned input timescale (eg mkv using 1000 regardless of FPS)
+	u64 mdur;
+	u64 timescale = gf_isom_get_media_timescale(dest, track);
+	mdur = gf_isom_get_media_duration(dest, track);
+	if (timescale % 1000 == 0) {
+		timescale/=1000;
+		mdur/=1000;
+	}
+	else if (timescale % 1001 == 0) {
+		timescale/=1001;
+		mdur/=1001;
+	}
+	timescale *= nb_samples;
+
+	_dovi.dv_level = gf_dolby_vision_level(w, h, timescale, mdur, is_avc ? GF_CODECID_AVC : GF_CODECID_HEVC);
+	return gf_isom_set_dolby_vision_profile(dest, track, 1, &_dovi);
+}
+
 
 
 GF_Err apply_edits(GF_ISOFile *dest, u32 track, char *edits)
 {
-	GF_Err e = GF_OK;
 	u32 movie_ts = gf_isom_get_timescale(dest);
 	u32 media_ts = gf_isom_get_media_timescale(dest, track);
 	u64 media_dur = gf_isom_get_media_duration(dest, track);
 
 	while (edits) {
+		GF_Err e;
 		char c=0;
 		char *sep = strchr(edits+1, 'r');
 		if (!sep) sep = strchr(edits+1, 'e');
@@ -413,7 +553,6 @@ GF_Err apply_edits(GF_ISOFile *dest, u32 track, char *edits)
 				edur = edit_dur.num;
 				edur *= movie_ts;
 				edur /= edit_dur.den;
-				edur /= movie_time.den;
 				if (edur>media_dur)
 					edur = media_dur;
 			}
@@ -455,7 +594,7 @@ error:
 static const char *videofmt_names[] = { "component", "pal", "ntsc", "secam", "mac", "undef"};
 
 
-GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction force_fps, u32 frames_per_sample, GF_FilterSession *fsess, char **mux_args_if_first_pass, u32 tk_idx)
+GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction force_fps, u32 frames_per_sample, GF_FilterSession *fsess, char **mux_args_if_first_pass, char **mux_sid_if_first_pass, u32 tk_idx)
 {
 	u32 track_id, i, j, timescale, track, stype, profile, compat, level, new_timescale, rescale_num, rescale_den, svc_mode, txt_flags, split_tile_mode, temporal_mode, nb_tracks;
 	s32 par_d, par_n, prog_id, force_rate, moov_timescale;
@@ -479,7 +618,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	Bool has_mx=GF_FALSE;
 	s32 mx[9];
 	u32 bitdepth=0;
-	u32 dv_profile=0; /*Dolby Vision*/
+	char dv_profile[100]; /*Dolby Vision*/
 	u32 clr_type=0;
 	u32 clr_prim;
 	u32 clr_tranf;
@@ -500,6 +639,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	char *fchain = NULL;
 	char *edits = NULL;
 	const char *fail_msg = NULL;
+	char *hdr_file=NULL;
 	Bool set_ccst=GF_FALSE;
 	Bool has_last_sample_dur=GF_FALSE;
 	u32 fake_import = 0;
@@ -511,6 +651,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	u32 roll = 0;
 	Bool src_is_isom = GF_FALSE;
 
+	dv_profile[0] = 0;
 	rvc_predefined = 0;
 	chapter_name = NULL;
 	new_timescale = 1;
@@ -565,10 +706,9 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	par_d = par_n = -1;
 	force_par = rewrite_bs = GF_FALSE;
 
-
 	ext_start = gf_file_ext_start(final_name);
 	ext = strrchr(ext_start ? ext_start : final_name, '#');
-	if (!ext) ext = gf_url_colon_suffix(final_name);
+	if (!ext) ext = gf_url_colon_suffix(final_name, '=');
 	char c_sep = ext ? ext[0] : 0;
 	if (ext) ext[0] = 0;
  	if (!strlen(final_name) || !strcmp(final_name, "self")) {
@@ -579,7 +719,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 
 	if (ext) ext[0] = c_sep;
 
-	ext = gf_url_colon_suffix(final_name);
+	ext = gf_url_colon_suffix(final_name, '=');
 
 #define GOTO_EXIT(_msg) if (e) { fail_msg = _msg; goto exit; }
 
@@ -590,7 +730,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	handler_name = NULL;
 	rvc_config = NULL;
 	while (ext) {
-		char *ext2 = gf_url_colon_suffix(ext+1);
+		char *ext2 = gf_url_colon_suffix(ext+1, '=');
 
 		if (ext2) ext2[0] = 0;
 
@@ -619,7 +759,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		else if (!strnicmp(ext+1, "delay=", 6)) {
 			if (sscanf(ext+7, "%d/%u", &delay.num, &delay.den)!=2) {
 				delay.num = atoi(ext+7);
-				delay.den = 0;
+				delay.den = 1000; //in ms
 			}
 		}
 		else if (!strnicmp(ext+1, "par=", 4)) {
@@ -638,9 +778,17 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 				}
 				if (ext[5]=='w') {
 					rewrite_bs = GF_TRUE;
-					sscanf(ext+6, "%d:%d", &par_n, &par_d);
+					if (sscanf(ext+6, "%d:%d", &par_n, &par_d)!=2) {
+						M4_LOG(GF_LOG_ERROR, ("Unrecognized syntax for par=, expecting N:D got %s\n", ext+5));
+						e = GF_BAD_PARAM;
+						goto exit;
+					}
 				} else {
-					sscanf(ext+5, "%d:%d", &par_n, &par_d);
+					if (sscanf(ext+5, "%d:%d", &par_n, &par_d) != 2) {
+						M4_LOG(GF_LOG_ERROR, ("Unrecognized syntax for par=, expecting N:D got %s\n", ext+5));
+						e = GF_BAD_PARAM;
+						goto exit;
+					}
 				}
 			}
 		}
@@ -655,10 +803,10 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		}
 		else if (!strnicmp(ext+1, "mx=", 3)) {
 			if (strstr(ext+4, "0x")) {
-				if (sscanf(ext+4, "0x%d:0x%d:0x%d:0x%d:0x%d:0x%d:0x%d:0x%d:0x%d", &mx[0], &mx[1], &mx[2], &mx[3], &mx[4], &mx[5], &mx[6], &mx[7], &mx[8])==9) {
+				if (sscanf(ext+4, "0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%d", &mx[0], &mx[1], &mx[2], &mx[3], &mx[4], &mx[5], &mx[6], &mx[7], &mx[8])==9) {
 					has_mx=GF_TRUE;
 				}
-			} else if (sscanf(ext+4, "%d:%d:%d:%d:%d:%d:%d:%d:%d", &mx[0], &mx[1], &mx[2], &mx[3], &mx[4], &mx[5], &mx[6], &mx[7], &mx[8])==9) {
+			} else if (sscanf(ext+4, "%d,%d,%d,%d,%d,%d,%d,%d,%d", &mx[0], &mx[1], &mx[2], &mx[3], &mx[4], &mx[5], &mx[6], &mx[7], &mx[8])==9) {
 				has_mx=GF_TRUE;
 			}
 		}
@@ -677,14 +825,21 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 			}
 		}
 		else if (!strnicmp(ext+1, "hdlr=", 5)) handler = GF_4CC(ext[6], ext[7], ext[8], ext[9]);
+		else if (!strnicmp(ext+1, "stype=", 6)) stype = GF_4CC(ext[7], ext[8], ext[9], ext[10]);
 		else if (!strnicmp(ext+1, "tkhd", 4)) {
 			char *flags = ext+6;
 			if (flags[0]=='+') { track_flags_mode = GF_ISOM_TKFLAGS_ADD; flags += 1; }
 			else if (flags[0]=='-') { track_flags_mode = GF_ISOM_TKFLAGS_REM; flags += 1; }
 			else track_flags_mode = GF_ISOM_TKFLAGS_SET;
 
-			if (!strnicmp(flags, "0x", 2)) flags += 2;
-			sscanf(flags, "%X", &track_flags);
+			if (strstr(flags, "enable")) track_flags |= GF_ISOM_TK_ENABLED;
+			if (strstr(flags, "movie")) track_flags |= GF_ISOM_TK_IN_MOVIE;
+			if (strstr(flags, "preview")) track_flags |= GF_ISOM_TK_IN_PREVIEW;
+			if (strstr(flags, "size_ar")) track_flags |= GF_ISOM_TK_SIZE_IS_AR;
+			if (!track_flags) {
+				if (!strnicmp(flags, "0x", 2)) flags += 2;
+				sscanf(flags, "%X", &track_flags);
+			}
 		} else if (!strnicmp(ext+1, "disable", 7)) {
 			do_disable = !stricmp(ext+1, "disable=no") ? 2 : 1;
 		}
@@ -787,9 +942,6 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		/*force all composition offsets to be positive*/
 		else if (!strnicmp(ext+1, "negctts", 7)) {
 			neg_ctts_mode = !strnicmp(ext+1, "negctts=no", 10) ? 2 : 1;
-		}
-		else if (!strnicmp(ext+1, "stype=", 6)) {
-			stype = GF_4CC(ext[7], ext[8], ext[9], ext[10]);
 		}
 		else if (!stricmp(ext+1, "chap")) is_chap = 1;
 		else if (!strnicmp(ext+1, "chapter=", 8)) {
@@ -937,7 +1089,13 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 			if (opt_dst) import.filter_dst_opts = opt_dst+6;
 			if (fchain) {
 				//check for old syntax (0.9->1.0) :@@
-				import.filter_chain = fchain + ((fchain[2]=='@') ? 3 : 2);
+				if (fchain[2]=='@') {
+					import.filter_chain = fchain + 3;
+					import.is_chain_old_syntax = GF_TRUE;
+				} else {
+					import.filter_chain = fchain + 2;
+					import.is_chain_old_syntax = GF_FALSE;
+				}
 			}
 
 			ext = NULL;
@@ -965,9 +1123,14 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		} else if (!strnicmp(ext+1, "bitdepth=", 9)) {
 			bitdepth=atoi(ext+10);
 		}
+		else if (!strnicmp(ext+1, "hdr=", 4)) {
+			hdr_file = gf_strdup(ext+5);
+		}
 		else if (!strnicmp(ext+1, "colr=", 5)) {
 			char *cval = ext+6;
-			if (strlen(cval)<6) {
+			if (!strcmp(cval, "none")) {
+				clr_type = (u32) -1;
+			} else if (strlen(cval)<6) {
 				fmt_ok = GF_FALSE;
 			} else {
 				clr_type = GF_4CC(cval[0],cval[1],cval[2],cval[3]);
@@ -1004,7 +1167,8 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 			}
 		}
 		else if (!strnicmp(ext + 1, "dv-profile=", 11)) {
-			dv_profile = atoi(ext + 12);
+			strncpy(dv_profile, ext + 12, 99);
+			dv_profile[99]=0;
 		}
 		else if (!strnicmp(ext+1, "fullrange=", 10)) {
 			if (!stricmp(ext+11, "off") || !stricmp(ext+11, "no")) fullrange = 0;
@@ -1092,6 +1256,9 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 				}
 			}
 		}
+		else if (!strnicmp(ext+1, "ID=", 3)) {
+			import.target_trackID = (u32) atoi(ext+4);
+		}
 		/*unrecognized, assume name has colon in it*/
 		else {
 			M4_LOG(GF_LOG_ERROR, ("Unrecognized import option %s, ignoring\n", ext+1));
@@ -1146,7 +1313,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	}
 	else if (ext) {
 		ext++;
-		char *sep = gf_url_colon_suffix(ext);
+		char *sep = gf_url_colon_suffix(ext, '=');
 		if (sep) sep[0] = 0;
 
 		//we have a fragment, we need to check if the track or the program is present in source
@@ -1295,6 +1462,8 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		if (fsess) {
 			*mux_args_if_first_pass = import.update_mux_args;
 			import.update_mux_args = NULL;
+			*mux_sid_if_first_pass = import.update_mux_sid;
+			import.update_mux_sid = NULL;
 			goto exit;
 		}
 	}
@@ -1381,11 +1550,18 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 				GOTO_EXIT("changing bit depth")
 			}
 			if (clr_type) {
+				if (clr_type==(u32)-1)
+					clr_type = 0;
+
 				e = gf_isom_set_visual_color_info(dest, track, 1, clr_type, clr_prim, clr_tranf, clr_mx, clr_full_range, icc_data, icc_size);
 				GOTO_EXIT("changing color info")
 			}
-			if (dv_profile) {
-				e = gf_isom_set_dolby_vision_profile(dest, track, 1, dv_profile);
+			if (hdr_file) {
+				e = parse_high_dynamc_range_xml_desc(dest, track, hdr_file);
+				GOTO_EXIT("setting HDR info")
+			}
+			if (dv_profile[0]) {
+				e = set_dv_profile(dest, track, dv_profile);
 				GOTO_EXIT("setting DV profile")
 			}
 
@@ -1740,6 +1916,7 @@ exit:
 	if (opt_src) opt_src[0] = ':';
 	if (opt_dst) opt_dst[0] = ':';
 	if (fchain) fchain[0] = ':';
+	if (hdr_file) gf_free(hdr_file);
 
 	gf_list_del(kinds);
 	if (handler_name) gf_free(handler_name);
@@ -2095,7 +2272,8 @@ static u32 merge_avc_config(GF_ISOFile *dest, u32 tk_id, GF_ISOFile **o_orig, u3
 		dst_tk = gf_isom_get_track_by_id(dest, tk_id);
 		gf_isom_set_nalu_extract_mode(orig, src_track, GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG);
 		if (!force_cat) {
-			gf_isom_avc_set_inband_config(dest, dst_tk, 1, GF_FALSE);
+			//set inband config but keep param sets
+			gf_isom_avc_set_inband_config(dest, dst_tk, 1, GF_TRUE);
 		} else {
 			M4_LOG(GF_LOG_WARNING, ("WARNING: Concatenating track ID %d even though sample descriptions do not match\n", tk_id));
 		}
@@ -2151,7 +2329,7 @@ static u32 merge_hevc_config(GF_ISOFile *dest, u32 tk_id, GF_ISOFile **o_orig, u
 		dst_tk = gf_isom_get_track_by_id(dest, tk_id);
 		gf_isom_set_nalu_extract_mode(orig, src_track, GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG);
 		if (!force_cat) {
-			gf_isom_hevc_set_inband_config(dest, dst_tk, 1, GF_FALSE);
+			gf_isom_hevc_set_inband_config(dest, dst_tk, 1, GF_TRUE);
 		} else {
 			M4_LOG(GF_LOG_WARNING, ("WARNING: Concatenating track ID %d even though sample descriptions do not match\n", tk_id));
 		}
@@ -2227,8 +2405,8 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 		multi_cat[0] = 0;
 		multi_cat = &multi_cat[1];
 	}
-	opts = gf_url_colon_suffix(fileName);
 
+	opts = gf_url_colon_suffix(fileName, '=');
 	e = GF_OK;
 
 	/*if options are specified, reimport the file*/
@@ -2238,7 +2416,7 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 	if (!is_isom || multi_cat) {
 		orig = gf_isom_open("temp", GF_ISOM_WRITE_EDIT, NULL);
 		if (opts) opts[0] = ':';
-		e = import_file(orig, fileName, import_flags, force_fps, frames_per_sample, NULL, NULL, 0);
+		e = import_file(orig, fileName, import_flags, force_fps, frames_per_sample, NULL, NULL, NULL, 0);
 		if (e) return e;
 	} else {
 		//open read+edit mode to allow applying options on file
@@ -2247,7 +2425,7 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 		if (!orig) return gf_isom_last_error(NULL);
 
 		if (opts) {
-			e = import_file(orig, fileName, 0xFFFFFFFF, force_fps, frames_per_sample, NULL, NULL, 0);
+			e = import_file(orig, fileName, 0xFFFFFFFF, force_fps, frames_per_sample, NULL, NULL, NULL, 0);
 			if (e) return e;
 		}
 	}
@@ -2256,7 +2434,7 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 		char *sep = strchr(multi_cat, '+');
 		if (sep) sep[0] = 0;
 
-		e = import_file(orig, multi_cat, import_flags, force_fps, frames_per_sample, NULL, NULL, 0);
+		e = import_file(orig, multi_cat, import_flags, force_fps, frames_per_sample, NULL, NULL, NULL, 0);
 		if (e) {
 			gf_isom_delete(orig);
 			return e;
@@ -2725,6 +2903,13 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 				}
 				gf_isom_set_edit(dest, dst_tk, editTime, segmentDuration, mediaTime, editMode);
 			}
+			//no edit in added track, add duration
+			if (!count && (segmentDuration || mediaTime) && gf_isom_get_edits_count(dest, dst_tk)) {
+				t = (Double) (s64) gf_isom_get_media_duration(orig, i+1);
+				t *= gf_isom_get_timescale(dest);
+				t /= gf_isom_get_media_timescale(orig, i+1);
+				gf_isom_set_edit(dest, dst_tk, editTime, segmentDuration+(u64) t, mediaTime, editMode);
+			}
 		}
 		gf_media_update_bitrate(dest, dst_tk);
 
@@ -2858,7 +3043,7 @@ GF_Err cat_multiple_files(GF_ISOFile *dest, char *fileName, u32 import_flags, GF
 	sep[0] = 0;
 	sep = strchr(cat_enum.szRad2, '%');
 	if (!sep) sep = strchr(cat_enum.szRad2, '#');
-	if (!sep) sep = gf_url_colon_suffix(cat_enum.szRad2);
+	if (!sep) sep = gf_url_colon_suffix(cat_enum.szRad2, '=');
 	strcpy(cat_enum.szOpt, "");
 	if (sep) {
 		if (strlen(sep) >= sizeof(cat_enum.szOpt)) {
@@ -3551,7 +3736,7 @@ exit:
 	return file;
 }
 
-GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile *movie, char *file_name)
+GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile *movie, u32 track, char *file_name)
 {
 	GF_DOMParser *parser;
 	GF_XMLNode *root, *stream;
@@ -3562,6 +3747,15 @@ GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile *movie, char *file_name)
 
 	memset(&mdcv, 0, sizeof(GF_MasteringDisplayColourVolumeInfo));
 	memset(&clli, 0, sizeof(GF_ContentLightLevelInfo));
+
+	if (!strcmp(file_name, "none")) {
+		for (i=0; i<gf_isom_get_track_count(movie); i++) {
+			if (gf_isom_is_video_handler_type(gf_isom_get_media_type(movie, i+1))) {
+				gf_isom_set_high_dynamic_range_info(movie, i+1, 1, NULL, NULL);
+			}
+		}
+		return GF_OK;
+	}
 
 	parser = gf_xml_dom_new();
 	e = gf_xml_dom_parse(parser, file_name, NULL, NULL);
@@ -3584,17 +3778,25 @@ GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile *movie, char *file_name)
 
 	i = 0;
 	while ((stream = gf_list_enum(root->content, &i))) {
-		u32 id = 0, j;
+		u32 j;
 		GF_XMLAttribute* att = NULL;
 		GF_XMLNode *box = NULL;
 
 		if (stream->type != GF_XML_NODE_TYPE) continue;
 		if (strcmp(stream->name, "Track")) continue;
 
-		j = 0;
-		while ((att = gf_list_enum(stream->attributes, &j))) {
-			if (!strcmp(att->name, "id")) id = atoi(att->value);
-			else fprintf(stderr, "HDR XML: ignoring track attribute \"%s\"\n", att->name);
+		if (!track) {
+			j = 0;
+			while ((att = gf_list_enum(stream->attributes, &j))) {
+				if (!strcmp(att->name, "id")) {
+					u32 id = atoi(att->value);
+					track = gf_isom_get_track_by_id(movie, id);
+					if (!track) {
+						fprintf(stderr, "HDR XML: no track with ID %d, ignoring attribute\n", id);
+					}
+				}
+				else fprintf(stderr, "HDR XML: ignoring track attribute \"%s\"\n", att->name);
+			}
 		}
 
 		j = 0;
@@ -3631,7 +3833,16 @@ GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile *movie, char *file_name)
 			}
 		}
 
-		e = gf_isom_set_high_dynamic_range_info(movie, id, 1, &mdcv, &clli);
+		if (!track) {
+			for (i=0; i<gf_isom_get_track_count(movie); i++) {
+				if (gf_isom_is_video_handler_type(gf_isom_get_media_type(movie, i+1))) {
+					e = gf_isom_set_high_dynamic_range_info(movie, i+1, 1, &mdcv, &clli);
+					if (e) break;
+				}
+			}
+		} else {
+			e = gf_isom_set_high_dynamic_range_info(movie, track, 1, &mdcv, &clli);
+		}
 		if (e) {
 			M4_LOG(GF_LOG_ERROR, ("HDR XML: error in gf_isom_set_high_dynamic_range_info()\n"));
 			break;
@@ -3649,7 +3860,7 @@ GF_ISOFile *package_file(char *file_name, char *fcc, Bool make_wgt)
 	return NULL;
 }
 
-GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile* movie, char* file_name)
+GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile* movie, u32 track, char* file_name)
 {
 	M4_LOG(GF_LOG_ERROR, ("XML Not supported in this build of GPAC - cannot process HDR parameter file\n"));
 	return GF_OK;

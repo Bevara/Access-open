@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -76,9 +76,28 @@ void isor_emulate_chapters(GF_ISOFile *file, GF_InitialObjectDescriptor *iod)
 }
 #endif
 
+static void isor_export_ref(ISOMReader *read, ISOMChannel *ch, u32 rtype, char *rname)
+{
+	u32 nb_refs = gf_isom_get_reference_count(read->mov, ch->track, rtype);
+	if (nb_refs) {
+		u32 j;
+		GF_PropertyValue prop;
+		prop.type = GF_PROP_UINT_LIST;
+		prop.value.uint_list.nb_items = nb_refs;
+		prop.value.uint_list.vals = gf_malloc(sizeof(u32)*nb_refs);
+		for (j=0; j<nb_refs; j++) {
+			u32 ref_tk;
+			gf_isom_get_reference(read->mov, ch->track, rtype, j+1, &ref_tk );
+			prop.value.uint_list.vals[j] = gf_isom_get_track_id(read->mov, ref_tk);
+		}
+		gf_filter_pid_set_property_str(ch->pid, rname, &prop);
+		gf_free(prop.value.uint_list.vals);
+	}
+}
+
 static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32 stsd_idx, u32 streamtype, Bool use_iod)
 {
-	u32 w, h, sr, nb_ch, nb_bps, codec_id, depends_on_id, esid, avg_rate, max_rate, buffer_size, sample_count, max_size, nb_refs, exp_refs, base_track, audio_fmt, pix_fmt;
+	u32 w, h, sr, nb_ch, nb_bps, codec_id, depends_on_id, esid, avg_rate, max_rate, buffer_size, sample_count, max_size, base_track, audio_fmt, pix_fmt;
 	GF_ESD *an_esd;
 	const char *mime, *encoding, *stxtcfg, *namespace, *schemaloc, *mime_cfg;
 #if !defined(GPAC_DISABLE_ISOM_WRITE)
@@ -150,7 +169,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 #endif
 
 	} else {
-		u32 pcm_flags, pcm_size;
+		u32 i, pcm_flags, pcm_size;
 		Bool load_default = GF_FALSE;
 
 		if (an_esd)
@@ -242,9 +261,6 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			else
  				pix_fmt = GF_PIXEL_RGB;
 			break;
-		case GF_QT_SUBTYPE_YUV422_10:
-			codec_id = GF_CODECID_V210;
-			break;
 
 		case GF_ISOM_SUBTYPE_IPCM:
 			if (gf_isom_get_pcm_config(read->mov, track, stsd_idx, &pcm_flags, &pcm_size) == GF_OK) {
@@ -271,6 +287,31 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			}
 			codec_id = GF_CODECID_VVC;
 		}
+			break;
+		case GF_ISOM_SUBTYPE_VVS1:
+			base_tile_track = 0;
+			codec_id = gf_isom_get_track_group(read->mov, track, GF_4CC('a','l','t','e') );
+			for (i=0; i<gf_isom_get_track_count(read->mov); i++) {
+				u32 j, nb_refs = gf_isom_get_reference_count(read->mov, i+1, GF_ISOM_REF_SUBPIC);
+				for (j=0; j<nb_refs; j++) {
+					u32 ref_tk=0;
+					gf_isom_get_reference_ID(read->mov, i+1, GF_ISOM_REF_SUBPIC, j+1, &ref_tk);
+					if ((ref_tk == esid) || (ref_tk == codec_id)) {
+						base_tile_track = i+1;
+						depends_on_id = gf_isom_get_track_id(read->mov, base_tile_track);
+						break;
+					}
+				}
+				if (base_tile_track) break;
+			}
+			if (!base_tile_track) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[IsoMedia] VVC subpicture track ID %d with no base VVC track referencing it, ignoring\n", esid));
+				if (lang_desc) gf_odf_desc_del((GF_Descriptor *)lang_desc);
+				if (dsi) gf_free(dsi);
+				return;
+			}
+			codec_id = GF_CODECID_VVC_SUBPIC;
+			gf_isom_get_tile_info(read->mov, track, 1, NULL, &srd_id, &srd_indep, &srd_full_frame, &srd_x, &srd_y, &srd_w, &srd_h);
 			break;
 
 		case GF_ISOM_SUBTYPE_AC3:
@@ -305,14 +346,22 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			break;
 		}
 
+		case GF_ISOM_SUBTYPE_DVB_SUBS:
+			codec_id = GF_CODECID_DVB_SUBS;
+			load_default = GF_TRUE;
+			break;
+		case GF_ISOM_SUBTYPE_DVB_TELETEXT:
+			codec_id = GF_CODECID_DVB_TELETEXT;
+			load_default = GF_TRUE;
+			break;
 
 		default:
 			codec_id = gf_codec_id_from_isobmf(m_subtype);
-			if (!codec_id) {
+			if (!codec_id || (codec_id==GF_CODECID_RAW)) {
 				pix_fmt=0;
 				if (streamtype==GF_STREAM_VISUAL) {
 					pix_fmt = gf_pixel_fmt_from_qt_type(m_subtype);
-					if (!pix_fmt && (gf_pixel_fmt_sname(m_subtype)!= NULL))
+					if (!pix_fmt && gf_pixel_fmt_probe(m_subtype, NULL))
 						pix_fmt = m_subtype;
 				}
 
@@ -322,6 +371,8 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 					load_default = GF_TRUE;
 				}
 			}
+			else if (codec_id==GF_CODECID_FFV1)
+				load_default = GF_TRUE;
 			break;
 		}
 
@@ -333,10 +384,16 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			}
 			udesc = gf_isom_get_generic_sample_description(read->mov, track, stsd_idx);
 			if (udesc) {
-				dsi = udesc->extension_buf;
-				dsi_size = udesc->extension_buf_size;
-				udesc->extension_buf = NULL;
-				udesc->extension_buf_size = 0;
+				if ((codec_id==GF_CODECID_FFV1) && (udesc->extension_buf_size>8)) {
+					dsi = gf_malloc(udesc->extension_buf_size-8);
+					if (dsi) memcpy(dsi, udesc->extension_buf+8, udesc->extension_buf_size-8);
+					dsi_size = udesc->extension_buf_size - 8;
+				} else {
+					dsi = udesc->extension_buf;
+					dsi_size = udesc->extension_buf_size;
+					udesc->extension_buf = NULL;
+					udesc->extension_buf_size = 0;
+				}
 			}
 		}
 	}
@@ -466,8 +523,14 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			gf_filter_pid_set_property(pid, GF_PROP_PID_TRACK_NUM, &PROP_UINT(track) );
 
 		//Dolby Vision
-		if (m_subtype == GF_ISOM_SUBTYPE_DVHE) {
-			GF_DOVIDecoderConfigurationRecord *dovi = gf_isom_dovi_config_get(read->mov, track, 1);
+		switch (m_subtype) {
+		case GF_ISOM_SUBTYPE_DVHE:
+		case GF_ISOM_SUBTYPE_DVH1:
+		case GF_ISOM_SUBTYPE_DVA1:
+		case GF_ISOM_SUBTYPE_DVAV:
+		case GF_ISOM_SUBTYPE_DAV1:
+		{
+			GF_DOVIDecoderConfigurationRecord *dovi = gf_isom_dovi_config_get(read->mov, track, stsd_idx);
 			if (dovi) {
 				u8 *data = NULL;
 				u32 size = 0;
@@ -477,7 +540,15 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 				gf_filter_pid_set_property(pid, GF_PROP_PID_DOLBY_VISION, &PROP_DATA_NO_COPY(data, size));
 				gf_bs_del(bs);
 				gf_odf_dovi_cfg_del(dovi);
+
+				if (gf_isom_get_reference_count(read->mov, track, GF_4CC('v','d','e','p'))) {
+					GF_ISOTrackID ref_id=0;
+					gf_isom_get_reference_ID(read->mov, track, GF_4CC('v','d','e','p'), 1, &ref_id);
+					if (ref_id) gf_filter_pid_set_property(pid, GF_PROP_PID_DEPENDENCY_ID, &PROP_UINT(ref_id));
+				}
 			}
+		}
+			break;
 		}
 
 		//create our channel
@@ -501,6 +572,9 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		if (gf_isom_get_reference_count(read->mov, track, GF_ISOM_REF_SABT)>0) {
 			gf_filter_pid_set_property(pid, GF_PROP_PID_TILE_BASE, &PROP_BOOL(GF_TRUE));
 		}
+		else if (gf_isom_get_reference_count(read->mov, track, GF_ISOM_REF_SUBPIC)>0) {
+			gf_filter_pid_set_property(pid, GF_PROP_PID_TILE_BASE, &PROP_BOOL(GF_TRUE));
+		}
 
 		if (srd_w && srd_h) {
 			gf_filter_pid_set_property(pid, GF_PROP_PID_CROP_POS, &PROP_VEC2I_INT(srd_x, srd_y) );
@@ -512,28 +586,12 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			}
 		}
 
-		for (exp_refs=0; exp_refs<3; exp_refs++) {
-			u32 rtype = (exp_refs==2) ? GF_ISOM_REF_TBAS : exp_refs ? GF_ISOM_REF_SABT : GF_ISOM_REF_SCAL;
-			const char *rname = (exp_refs==2) ? "isom:tbas" : exp_refs ? "isom:sabt" : "isom:scal";
-			if (!exp_refs && (codec_id==GF_CODECID_LHVC))
-				continue;
 
-			nb_refs = gf_isom_get_reference_count(read->mov, track, rtype);
-			if (nb_refs) {
-				u32 j;
-				GF_PropertyValue prop;
-				prop.type = GF_PROP_UINT_LIST;
-				prop.value.uint_list.nb_items = nb_refs;
-				prop.value.uint_list.vals = gf_malloc(sizeof(u32)*nb_refs);
-				for (j=0; j<nb_refs; j++) {
-					u32 ref_tk;
-					gf_isom_get_reference(read->mov, track, rtype, j+1, &ref_tk );
-					prop.value.uint_list.vals[j] = gf_isom_get_track_id(read->mov, ref_tk);
-				}
-				gf_filter_pid_set_property_str(pid, rname, &prop);
-				gf_free(prop.value.uint_list.vals);
-			}
-		}
+		if (codec_id !=GF_CODECID_LHVC)
+			isor_export_ref(read, ch, GF_ISOM_REF_SCAL, "isom:scal");
+		isor_export_ref(read, ch, GF_ISOM_REF_SABT, "isom:sabt");
+		isor_export_ref(read, ch, GF_ISOM_REF_TBAS, "isom:tbas");
+		isor_export_ref(read, ch, GF_ISOM_REF_SUBPIC, "isom:subp");
 
 		ch->duration = gf_isom_get_track_duration(read->mov, ch->track);
 		if (!ch->duration) {
@@ -574,6 +632,10 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 
 		if (sample_count && (streamtype==GF_STREAM_VISUAL)) {
 			u64 mdur = gf_isom_get_media_duration(read->mov, track);
+			//if ts_offset is negative (skip), update media dur before computing fps
+			if (!gf_sys_old_arch_compat() && (ch->ts_offset<0))
+				mdur -= (u32) -ch->ts_offset;
+
 			mdur /= sample_count;
 			gf_filter_pid_set_property(pid, GF_PROP_PID_FPS, &PROP_FRAC_INT(ch->timescale, (u32) mdur));
 		}
@@ -838,7 +900,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 						u8 *udta=NULL;
 						u32 udta_size;
 						gf_isom_get_user_data(read->mov, ch->track, type, uuid, j+1, &udta, &udta_size);
-						if (!udta) continue;
+						if (!udta || !udta_size) continue;
 						if (nb_items>1)
 							snprintf(szName, 30, "udta_%s_%d", gf_4cc_to_str(type), j+1);
 						else
@@ -982,6 +1044,18 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		if (hspace != vspace)
 			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_SAR, &PROP_FRAC_INT(hspace, vspace) );
 
+		{
+			u32 colour_type;
+			u16 colour_primaries, transfer_characteristics, matrix_coefficients;
+			Bool full_range_flag;
+			if (GF_OK == gf_isom_get_color_info(read->mov, track, stsd_idx,
+				&colour_type, &colour_primaries, &transfer_characteristics, &matrix_coefficients, &full_range_flag)) {
+				gf_filter_pid_set_property(ch->pid, GF_PROP_PID_COLR_PRIMARIES, &PROP_UINT(colour_primaries));
+				gf_filter_pid_set_property(ch->pid, GF_PROP_PID_COLR_TRANSFER, &PROP_UINT(transfer_characteristics));
+				gf_filter_pid_set_property(ch->pid, GF_PROP_PID_COLR_MX, &PROP_UINT(matrix_coefficients));
+				gf_filter_pid_set_property(ch->pid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(full_range_flag));
+			}
+		}
 
 		e = gf_isom_get_y3d_info(ch->owner->mov, ch->track, stsd_idx, &yt3d);
 		if (e==GF_OK) {
@@ -1091,6 +1165,9 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			mime_cfg = "application/ttml+xml;codecs=im1i";
 		gf_filter_pid_set_property_str(ch->pid, "meta:mime", &PROP_STRING(mime_cfg) );
 	}
+
+	if (!gf_sys_is_test_mode() && (m_subtype==GF_ISOM_SUBTYPE_MPEG4))
+		m_subtype = gf_isom_get_mpeg4_subtype(read->mov, ch->track, stsd_idx);
 
 	gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_SUBTYPE, &PROP_4CC(m_subtype) );
 	if (stxtcfg) gf_filter_pid_set_property(ch->pid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA((char *)stxtcfg, (u32) strlen(stxtcfg) ));
@@ -1213,6 +1290,37 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CLAP_H, NULL);
 			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CLAP_X, NULL);;
 			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CLAP_Y, NULL);
+		}
+
+		const GF_MasteringDisplayColourVolumeInfo *mdcv = gf_isom_get_mastering_display_colour_info(ch->owner->mov, ch->track,ch->last_sample_desc_index ? ch->last_sample_desc_index : 1);
+		if (mdcv) {
+			u8 *pdata;
+			u32 psize, c;
+			GF_BitStream *bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+
+			for(c=0;c<3;c++) {
+				gf_bs_write_u16(bs, mdcv->display_primaries[c].x);
+				gf_bs_write_u16(bs, mdcv->display_primaries[c].x);
+			}
+			gf_bs_write_u16(bs, mdcv->white_point_x);
+			gf_bs_write_u16(bs, mdcv->white_point_y);
+			gf_bs_write_u32(bs, mdcv->max_display_mastering_luminance);
+			gf_bs_write_u32(bs, mdcv->min_display_mastering_luminance);
+			gf_bs_get_content(bs, &pdata, &psize);
+			gf_bs_del(bs);
+			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_MASTER_DISPLAY_COLOUR, &PROP_DATA_NO_COPY(pdata, psize));
+		}
+
+		const GF_ContentLightLevelInfo *clli = gf_isom_get_content_light_level_info(ch->owner->mov, ch->track,ch->last_sample_desc_index ? ch->last_sample_desc_index : 1);
+		if (clli) {
+			u8 *pdata;
+			u32 psize;
+			GF_BitStream *bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+			gf_bs_write_u16(bs, clli->max_content_light_level);
+			gf_bs_write_u16(bs, clli->max_pic_average_light_level);
+			gf_bs_get_content(bs, &pdata, &psize);
+			gf_bs_del(bs);
+			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CONTENT_LIGHT_LEVEL, &PROP_DATA_NO_COPY(pdata, psize));
 		}
 	}
 }
@@ -1383,7 +1491,7 @@ GF_Err isor_declare_objects(ISOMReader *read)
 			GF_FilterPid *cover_pid=NULL;
 			e = gf_filter_pid_raw_new(read->filter, NULL, NULL, NULL, NULL, (char *) tag, tlen, GF_FALSE, &cover_pid);
 			if (e) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[MP3Dmx] error setting up video pid for cover art: %s\n", gf_error_to_string(e) ));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP3Dmx] error setting up video pid for cover art: %s\n", gf_error_to_string(e) ));
 			}
 			if (cover_pid) {
 				u8 *out_buffer;
@@ -1412,6 +1520,8 @@ Bool isor_declare_item_properties(ISOMReader *read, ISOMChannel *ch, u32 item_id
 	u32 scheme_type=0, scheme_version=0, item_type;
 	const char *item_name, *item_mime_type, *item_encoding;
 
+retry:
+
 	if (item_idx>gf_isom_get_meta_item_count(read->mov, GF_TRUE, 0))
 		return GF_FALSE;
 
@@ -1438,7 +1548,11 @@ Bool isor_declare_item_properties(ISOMReader *read, ISOMChannel *ch, u32 item_id
 
 
 	esd = gf_media_map_item_esd(read->mov, item_id);
-	if (!esd) return GF_FALSE;
+	if (!esd) {
+		//unsupported item, try next
+		item_idx++;
+		goto retry;
+	}
 
 
 	//OK declare PID

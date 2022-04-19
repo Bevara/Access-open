@@ -63,12 +63,12 @@ void convert_file_info(char *inName, GF_ISOTrackID trackID);
 
 Bool mp4box_check_isom_fileopt(char *opt);
 
-GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile* movie, char* file_name);
+GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile* movie, u32 track, char* file_name);
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
 #ifndef GPAC_DISABLE_MEDIA_IMPORT
-GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction force_fps, u32 frames_per_sample, GF_FilterSession *fsess, char **mux_args_if_first_pass, u32 tk_idx);
+GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction force_fps, u32 frames_per_sample, GF_FilterSession *fsess, char **mux_args_if_first_pass, char **mux_sid_if_first_pass, u32 tk_idx);
 #else
 GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction force_fps, u32 frames_per_sample, GF_FilterSession *fsess, Bool second_pass) {
 	return GF_NOT_SUPPORTED;
@@ -120,7 +120,7 @@ void dump_isom_sdp(GF_ISOFile *file, char *inName, Bool is_final_name);
 #endif
 
 void dump_isom_timestamps(GF_ISOFile *file, char *inName, Bool is_final_name, Bool skip_offset);
-void dump_isom_nal(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool is_final_name, u32 dump_flags);
+GF_Err dump_isom_nal(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool is_final_name, u32 dump_flags);
 void dump_isom_saps(GF_ISOFile *file, GF_ISOTrackID trackID, u32 dump_saps_mode, char *inName, Bool is_final_name);
 
 void dump_isom_chunks(GF_ISOFile *file, char *inName, Bool is_final_name);

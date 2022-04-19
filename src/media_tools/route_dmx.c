@@ -25,7 +25,7 @@
 
 #include <gpac/route.h>
 
-#ifndef GPAC_DISABLE_ROUTE
+#if !defined(GPAC_DISABLE_ROUTE) && !defined(GPAC_DISABLE_CORE_TOOLS)
 
 #include <gpac/network.h>
 #include <gpac/bitstream.h>
@@ -226,6 +226,8 @@ static void gf_route_service_del(GF_ROUTEDmx *routedmx, GF_ROUTEService *s)
 GF_EXPORT
 void gf_route_dmx_del(GF_ROUTEDmx *routedmx)
 {
+	if (!routedmx) return;
+
 	if (routedmx->buffer) gf_free(routedmx->buffer);
 	if (routedmx->unz_buffer) gf_free(routedmx->unz_buffer);
 	if (routedmx->atsc_sock) gf_sk_del(routedmx->atsc_sock);
@@ -846,11 +848,11 @@ static GF_Err gf_route_service_gather_object(GF_ROUTEDmx *routedmx, GF_ROUTEServ
 				if (o->status>=GF_LCT_OBJ_DONE_ERR) continue;
 
 				if (!in_order) {
-					u32 ellapsed = gf_sys_clock() - o->last_gather_time;
-					if (ellapsed < routedmx->reorder_timeout)
+					u32 elapsed = gf_sys_clock() - o->last_gather_time;
+					if (elapsed < routedmx->reorder_timeout)
 						continue;
 
-					GF_LOG(GF_LOG_WARNING, GF_LOG_ROUTE, ("[ROUTE] Service %d object TSI %u TOI %u timeout after %d ms - forcing dispatch\n", s->service_id, o->tsi, o->toi, ellapsed ));
+					GF_LOG(GF_LOG_WARNING, GF_LOG_ROUTE, ("[ROUTE] Service %d object TSI %u TOI %u timeout after %d ms - forcing dispatch\n", s->service_id, o->tsi, o->toi, elapsed ));
 				} else if (o->rlct && !o->rlct->tsi_init) {
 					GF_LOG(GF_LOG_DEBUG, GF_LOG_ROUTE, ("[ROUTE] Service %d object TSI %u TOI %u incomplete (tune-in) - forcing dispatch\n", s->service_id, o->tsi, o->toi, toi ));
 				} else {
@@ -2042,4 +2044,4 @@ void gf_route_dmx_debug_tsi(GF_ROUTEDmx *routedmx, u32 tsi)
 	if (routedmx) routedmx->debug_tsi = tsi;
 }
 
-#endif /* GPAC_DISABLE_ROUTE */
+#endif /* !GPAC_DISABLE_ROUTE && !GPAC_DISABLE_CORE_TOOLS */

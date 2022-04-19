@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2007-2019
+ *			Copyright (c) Telecom ParisTech 2007-2022
  *			All rights reserved
  *
  *  This file is part of GPAC / Scene Graph sub-project
@@ -771,7 +771,7 @@ static GF_Node *create_listener(GF_SceneGraph *sg, GF_EventType evtType, GF_Node
 	if (callback) gf_dom_add_text_node((GF_Node *)handler, gf_strdup(callback));
 
 #ifndef GPAC_DISABLE_SVG
-	if (handler->sgprivate->scenegraph->svg_js)
+	if (handler->sgprivate->scenegraph->svg_js && !handler->handle_event)
 		handler->handle_event = gf_sg_handle_dom_event;
 #endif
 
@@ -893,7 +893,7 @@ JSValue gf_sg_js_event_remove_listener(JSContext *c, JSValueConst obj, int argc,
 #endif
 
 err_exit:
-	if (callback) JS_FreeCString(c, callback);
+	if (callback) gf_free(callback);
 	return JS_UNDEFINED;
 }
 
@@ -1181,6 +1181,8 @@ static const char *node_lookup_namespace_by_tag(GF_Node *node, u32 tag)
 	/*browse attributes*/
 	GF_DOMAttribute *att;
 	if (!node) return NULL;
+	if (node->sgprivate->tag < GF_NODE_FIRST_DOM_NODE_TAG) return NULL;
+
 	att = ((SVG_Element*)node)->attributes;
 	while (att) {
 		if (att->tag==TAG_DOM_ATT_any) {
@@ -1706,10 +1708,25 @@ static JSValue xml_element_get_attribute(JSContext *c, JSValueConst obj, int arg
 	if (n->sgprivate->tag==TAG_DOMFullNode) {
 		GF_DOMFullNode *node = (GF_DOMFullNode*)n;
 		GF_DOMFullAttribute *att = (GF_DOMFullAttribute*)node->attributes;
+		u32 ns_code = ns ? gf_sg_get_namespace_code_from_name(n->sgprivate->scenegraph, (char *) ns) : 0;
 		while (att) {
-			if ((att->tag==TAG_DOM_ATT_any) && !strcmp(att->name, name)) {
-				ret = JS_NewString(c, *(char**)att->data );
-				goto exit;
+			if (att->tag==TAG_DOM_ATT_any) {
+				Bool found = GF_FALSE;
+				if (!strcmp(att->name, name) && (ns_code == att->xmlns))
+					found = GF_TRUE;
+				else if (ns) {
+					char *nssep = strchr(att->name, ':');
+					if (nssep && !strcmp(nssep+1, name)) {
+						u32 ns_len = nssep - att->name;
+						//todo check namespace
+						if (!strcmp(ns, "*") || !strncmp(ns, att->name, ns_len))
+							found = GF_TRUE;
+					}
+				}
+				if (found) {
+					ret = JS_NewString(c, *(char**)att->data );
+					goto exit;
+				}
 			}
 			att = (GF_DOMFullAttribute *) att->next;
 		}
@@ -1828,23 +1845,26 @@ static JSValue xml_element_remove_attribute(JSContext *c, JSValueConst obj, int 
 	} else if (n->sgprivate->tag<=GF_NODE_RANGE_LAST_SVG) {
 		u32 ns_code = 0;
 		if (ns) ns_code = gf_sg_get_namespace_code_from_name(n->sgprivate->scenegraph, (char *) ns);
-		else ns_code = gf_sg_get_namespace_code(n->sgprivate->scenegraph, NULL);
+		else if (!strchr(name, ':'))
+			ns_code = gf_sg_get_namespace_code(n->sgprivate->scenegraph, NULL);
 
 		tag = gf_xml_get_attribute_tag(n, (char *)name, ns_code);
 	}
 
 	while (att) {
-		if ((att->tag==TAG_DOM_ATT_any) && !strcmp(att->name, name)) {
-			DOM_String *s;
-			if (prev) prev->next = att->next;
-			else node->attributes = att->next;
-			s = att->data;
-			if (*s) gf_free(*s);
-			gf_free(s);
-			gf_free(att->name);
-			gf_free(att);
-			dom_node_changed(n, GF_FALSE, NULL);
-			goto exit;
+		if (att->tag==TAG_DOM_ATT_any) {
+			if (!strcmp(att->name, name)) {
+				DOM_String *s;
+				if (prev) prev->next = att->next;
+				else node->attributes = att->next;
+				s = att->data;
+				if (*s) gf_free(*s);
+				gf_free(s);
+				gf_free(att->name);
+				gf_free(att);
+				dom_node_changed(n, GF_FALSE, NULL);
+				goto exit;
+			}
 		} else if (tag==att->tag) {
 			if (prev) prev->next = att->next;
 			else node->attributes = att->next;
@@ -1917,6 +1937,7 @@ static void gf_dom_full_set_attribute(GF_DOMFullNode *node, char *attribute_name
 		GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[DOMJS] Failed to allocate DOM attribute\n"));
 		return;
 	}
+	att->tag = TAG_DOM_ATT_any;
 	att->name = gf_strdup(attribute_name);
 	att->data_type = (u16) DOM_String_datatype;
 	att->data = gf_svg_create_attribute_value(att->data_type);
@@ -2180,7 +2201,7 @@ static JSValue xml_element_set_id(JSContext *c, JSValueConst obj, int argc, JSVa
 	}
 	if (is_id) {
 		if (!name) return GF_JS_EXCEPTION(c);
-		gf_node_set_id(n, gf_sg_get_max_node_id(n->sgprivate->scenegraph) + 1, gf_strdup(name) );
+		gf_node_set_id(n, gf_sg_get_max_node_id(n->sgprivate->scenegraph) + 1, name);
 	} else if (node_id) {
 		gf_node_remove_id(n);
 	}
@@ -2371,7 +2392,8 @@ static JSValue event_getProperty(JSContext *c, JSValueConst obj, int magic)
 		txt[0] = evt->detail;
 		txt[1] = 0;
 		srcp = (const u16 *) txt;
-		len = (u32) gf_utf8_wcstombs(szData, 5, &srcp);
+		len = gf_utf8_wcstombs(szData, 5, &srcp);
+		if (len == GF_UTF8_FAIL) len = 0;
 		szData[len] = 0;
 		return JS_NewString(c, szData);
 	}
@@ -2568,7 +2590,9 @@ static const JSCFunctionListEntry element_Funcs[] =
 	JS_CFUNC_DEF("removeAttributeNode", 1, xml_dom3_not_implemented),
 	JS_CFUNC_DEF("getAttributeNodeNS", 2, xml_dom3_not_implemented),
 	JS_CFUNC_DEF("setAttributeNodeNS", 1, xml_dom3_not_implemented),
-	JS_CFUNC_DEF("setIdAttributeNode", 2, xml_dom3_not_implemented)
+	JS_CFUNC_DEF("setIdAttributeNode", 2, xml_dom3_not_implemented),
+	/*eventTarget interface*/
+	JS_DOM3_EVENT_TARGET_INTERFACE
 };
 
 static const JSCFunctionListEntry text_Funcs[] =

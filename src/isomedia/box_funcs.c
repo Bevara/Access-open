@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -35,7 +35,7 @@ GF_Err gf_isom_parse_root_box(GF_Box **outBox, GF_BitStream *bs, u32 *box_type, 
 	GF_Err ret;
 	u64 start;
 	start = gf_bs_get_position(bs);
-	ret = gf_isom_box_parse_ex(outBox, bs, 0, GF_TRUE);
+	ret = gf_isom_box_parse_ex(outBox, bs, 0, GF_TRUE, 0);
 	if (ret == GF_ISOM_INCOMPLETE_FILE) {
 		if (!*outBox) {
 			// We could not even read the box size, we at least need 8 bytes
@@ -90,7 +90,9 @@ static GF_Err gf_isom_full_box_read(GF_Box *ptr, GF_BitStream *bs);
 
 u64 unused_bytes = 0;
 
-GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, Bool is_root_box)
+#define GF_SKIP_BOX 10
+
+GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, Bool is_root_box, u64 parent_size)
 {
 	u32 type, uuid_type, hdr_size, restore_type;
 	u64 size, start, comp_start, end;
@@ -132,7 +134,8 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 				size = gf_bs_available(bs) + 8;
 			} else {
 				if (!skip_logs) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box type %s (0x%08X) at position "LLU" has size 0 but is not at root/file level, skipping\n", gf_4cc_to_str(type), type, start));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box type %s (0x%08X) at position "LLU" has size 0 but is not at root/file level. Forbidden, skipping end of parent box !\n", gf_4cc_to_str(type), type, start));
+					return GF_SKIP_BOX;
 				}
 				return GF_OK;
 			}
@@ -202,7 +205,12 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Read Box type %s size "LLD" start "LLD"\n", gf_4cc_to_str(type), size,  start));
 
 	if ( size < hdr_size ) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Box size "LLD" less than box header size %d\n", size, hdr_size));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Box %s size "LLD" less than box header size %d\n", gf_4cc_to_str(type), size, hdr_size));
+		return GF_ISOM_INVALID_FILE;
+	}
+	//if parent size is given, make sure box fits within parent
+	if (parent_size && (parent_size<size)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Box %s size "LLU" is larger than remaining parent size "LLU"\n", gf_4cc_to_str(type), size, parent_size ));
 		return GF_ISOM_INVALID_FILE;
 	}
 	restore_type = 0;
@@ -302,8 +310,10 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 	if (e && (e != GF_ISOM_INCOMPLETE_FILE)) {
 		gf_isom_box_del(newBox);
 		*outBox = NULL;
+		if (is_root_box && (e==GF_SKIP_BOX))
+			e = GF_ISOM_INVALID_FILE;
 
-		if (!skip_logs) {
+		if (!skip_logs && (e!=GF_SKIP_BOX)) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box \"%s\" (start "LLU") failed (%s) - skipping\n", gf_4cc_to_str(type), start, gf_error_to_string(e)));
 		}
 		//we don't try to reparse known boxes that have been failing (too dangerous)
@@ -334,7 +344,7 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 GF_EXPORT
 GF_Err gf_isom_box_parse(GF_Box **outBox, GF_BitStream *bs)
 {
-	return gf_isom_box_parse_ex(outBox, bs, 0, GF_FALSE);
+	return gf_isom_box_parse_ex(outBox, bs, 0, GF_FALSE, 0);
 }
 
 void gf_isom_box_array_reset(GF_List *boxlist)
@@ -372,11 +382,6 @@ void gf_isom_box_array_del_parent(GF_List **child_boxes, GF_List *boxlist)
 	gf_list_del(boxlist);
 }
 
-
-GF_Err gf_isom_box_array_read(GF_Box *parent, GF_BitStream *bs)
-{
-	return gf_isom_box_array_read_ex(parent, bs, parent->type);
-}
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
@@ -863,6 +868,7 @@ ISOM_BOX_IMPL_DECL(load)
 
 /* Dolby Vision */
 ISOM_BOX_IMPL_DECL(dvcC)
+ISOM_BOX_IMPL_DECL(dvvC)
 ISOM_BOX_IMPL_DECL(dvhe)
 ISOM_BOX_IMPL_DECL(dfla)
 
@@ -1206,10 +1212,10 @@ static struct box_registry_entry {
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_ESDS, esds, "mp4a mp4s mp4v encv enca encs resv wave", 0, "p14"),
 
 	//part 15 boxes
-	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_AVCC, avcc, "avc1 avc2 avc3 avc4 encv resv ipco", "p15"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_AVCC, avcc, "avc1 avc2 avc3 avc4 encv resv ipco dva1 dvav", "p15"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_SVCC, avcc, "avc1 avc2 avc3 avc4 svc1 svc2 encv resv", "p15"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_MVCC, avcc, "avc1 avc2 avc3 avc4 mvc1 mvc2 encv resv", "p15"),
-	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_HVCC, hvcc, "hvc1 hev1 hvc2 hev2 encv resv ipco dvhe", "p15"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_HVCC, hvcc, "hvc1 hev1 hvc2 hev2 encv resv ipco dvh1 dvhe", "p15"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_LHVC, hvcc, "hvc1 hev1 hvc2 hev2 lhv1 lhe1 encv resv ipco", "p15"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_VVCC, vvcc, "vvc1 vvi1 encv resv ipco dvhe", 0, "p15"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_VVNC, vvnc, "vvs1 encv resv ipco dvhe", 0, "p15"),
@@ -1247,7 +1253,7 @@ static struct box_registry_entry {
 
 	//AV1 in ISOBMFF boxes
 	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_AV01, video_sample_entry, "stsd", "av1"),
-	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_AV1C, av1c, "av01 encv resv ipco", "av1"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_AV1C, av1c, "av01 encv resv ipco dav1", "av1"),
 
 	// VP8-9 boxes
 	FBOX_DEFINE_FLAGS_S( GF_ISOM_BOX_TYPE_VPCC, vpcc, "vp08 vp09 encv resv", 1, 0, "vp"),
@@ -1310,8 +1316,8 @@ static struct box_registry_entry {
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_IAUX, iaux, "ipco", 0, "cenc"),
 
 	//MIAF
-	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_CLLI, clli, "mp4v jpeg avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 vvc1 vvi1 encv resv", "miaf"),
-	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_MDCV, mdcv, "mp4v jpeg avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 vvc1 vvi1 encv resv", "miaf"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_CLLI, clli, "video_sample_entry ipco encv resv", "p12"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_MDCV, mdcv, "video_sample_entry ipco encv resv", "p12"),
 
 	//AVIF
 	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_A1LX, a1lx, "ipco", "avif"),
@@ -1422,6 +1428,27 @@ static struct box_registry_entry {
 	ITUNES_TAG(GF_ISOM_ITUNE_COMPOSER),
 	ITUNES_TAG(GF_ISOM_ITUNE_TRACK),
 	ITUNES_TAG(GF_ISOM_ITUNE_CONDUCTOR),
+	ITUNES_TAG(GF_ISOM_ITUNE_ART_DIRECTOR),
+	ITUNES_TAG(GF_ISOM_ITUNE_ARRANGER),
+	ITUNES_TAG(GF_ISOM_ITUNE_LYRICIST),
+	ITUNES_TAG(GF_ISOM_ITUNE_COPY_ACK),
+	ITUNES_TAG(GF_ISOM_ITUNE_SONG_DESC),
+	ITUNES_TAG(GF_ISOM_ITUNE_DIRECTOR),
+	ITUNES_TAG(GF_ISOM_ITUNE_EQ_PRESET),
+	ITUNES_TAG(GF_ISOM_ITUNE_LINER_NOTES),
+	ITUNES_TAG(GF_ISOM_ITUNE_REC_COMPANY),
+	ITUNES_TAG(GF_ISOM_ITUNE_ORIG_ARTIST),
+	ITUNES_TAG(GF_ISOM_ITUNE_PHONO_RIGHTS),
+	ITUNES_TAG(GF_ISOM_ITUNE_PRODUCER),
+	ITUNES_TAG(GF_ISOM_ITUNE_PERFORMER),
+	ITUNES_TAG(GF_ISOM_ITUNE_PUBLISHER),
+	ITUNES_TAG(GF_ISOM_ITUNE_SOUND_ENG),
+	ITUNES_TAG(GF_ISOM_ITUNE_SOLOIST),
+	ITUNES_TAG(GF_ISOM_ITUNE_CREDITS),
+	ITUNES_TAG(GF_ISOM_ITUNE_THANKS),
+	ITUNES_TAG(GF_ISOM_ITUNE_ONLINE),
+	ITUNES_TAG(GF_ISOM_ITUNE_EXEC_PRODUCER),
+
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_iTunesSpecificInfo, ilst_item, "ilst data", "apple"),
 	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_GMHD, def_parent, "minf", "apple"),
 	BOX_DEFINE_S(GF_QT_BOX_TYPE_LOAD, load, "trak", "apple"),
@@ -1492,10 +1519,19 @@ static struct box_registry_entry {
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_EC3, audio_sample_entry, "stsd", "dolby"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DAC3, dac3, "ac-3 wave enca", "dolby"),
 	{GF_ISOM_BOX_TYPE_DEC3, dec3_box_new, dac3_box_del, dac3_box_read, dac3_box_write, dac3_box_size, dac3_box_dump, 0, 0, 0, "ec-3 wave enca", "dolby" },
-	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_DVCC, dvcC, "dvhe dvav dva1 dvh1 avc1 avc2 avc3 avc4 hev1 encv resv", "DolbyVision"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_DVCC, dvcC, "dvav dva1 dvhe dvh1 dav1 avc1 avc2 avc3 avc4 hev1 hvc1 av01 encv resv", "DolbyVision"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_DVVC, dvvC, "dvav dva1 dvhe dvh1 dav1 avc1 avc2 avc3 avc4 hev1 hvc1 av01 encv resv", "DolbyVision"),
 	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_DVHE, video_sample_entry, "stsd", "DolbyVision"),
+	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_DVH1, video_sample_entry, "stsd", "DolbyVision"),
+	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_DVA1, video_sample_entry, "stsd", "DolbyVision"),
+	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_DVAV, video_sample_entry, "stsd", "DolbyVision"),
+	BOX_DEFINE_S_CHILD(GF_ISOM_BOX_TYPE_DAV1, video_sample_entry, "stsd", "DolbyVision"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_MLPA, audio_sample_entry, "stsd", "dolby"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DMLP, dmlp, "mlpa enca", "dolby"),
+
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_HVCE, hvcc, "hvc1 hev1 hvc2 hev2 encv resv ipco dvh1 dvhe", "DolbyVision"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_AVCE, avcc, "avc1 avc2 avc3 avc4 encv resv ipco dva1 dvav", "DolbyVision"),
+
 
 	//Adobe boxes
 #ifndef GPAC_DISABLE_ISOM_ADOBE
@@ -1645,7 +1681,13 @@ GF_Box *gf_isom_box_new_ex(u32 boxType, u32 parentType, Bool skip_logs, Bool is_
 			case GF_ISOM_BOX_TYPE_iTunesSpecificInfo:
 			case GF_QT_BOX_TYPE_WAVE:
 				break;
+			//some sample descritions are handled as generic ones but we know them, don't warn
+			case GF_ISOM_BOX_TYPE_STSD:
+				if (boxType==GF_ISOM_SUBTYPE_FFV1) break;
+				//fallthrough
 			default:
+				if (boxType==GF_ISOM_BOX_TYPE_GDAT) break;
+
 				if (is_root_box) {
 					GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[iso file] Unknown top-level box type %s\n", gf_4cc_to_str(boxType)));
 				} else if (parentType) {
@@ -1697,18 +1739,19 @@ GF_Box *gf_isom_box_new(u32 boxType)
 	return gf_isom_box_new_ex(boxType, 0, 0, GF_FALSE);
 }
 
-GF_Err gf_isom_box_array_read_ex(GF_Box *parent, GF_BitStream *bs, u32 parent_type)
+GF_Err gf_isom_box_array_read(GF_Box *parent, GF_BitStream *bs)
 {
 	GF_Err e;
+	u32 parent_type = parent->type;
 	GF_Box *a = NULL;
 	Bool skip_logs = (gf_bs_get_cookie(bs) & GF_ISOM_BS_COOKIE_NO_LOGS ) ? GF_TRUE : GF_FALSE;
 
 	//we may have terminators in some QT files (4 bytes set to 0 ...)
 	while (parent->size>=8) {
-		e = gf_isom_box_parse_ex(&a, bs, parent_type, GF_FALSE);
+		e = gf_isom_box_parse_ex(&a, bs, parent_type, GF_FALSE, skip_logs ? 0 : parent->size);
 		if (e) {
 			if (a) gf_isom_box_del(a);
-			return e;
+			return (e==GF_SKIP_BOX) ? GF_OK : e;
 		}
 		//sub box parsing aborted with no error
 		if (!a) return GF_OK;
@@ -1716,6 +1759,10 @@ GF_Err gf_isom_box_array_read_ex(GF_Box *parent, GF_BitStream *bs, u32 parent_ty
 		if (parent->size < a->size) {
 			if (!skip_logs) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Box \"%s\" is larger than container box\n", gf_4cc_to_str(a->type)));
+			}
+			if (!gf_opts_get_bool("core", "no-check")) {
+				gf_isom_box_del(a);
+				return GF_ISOM_INVALID_FILE;
 			}
 			parent->size = 0;
 		} else {
@@ -1832,7 +1879,8 @@ void gf_isom_check_position(GF_Box *s, GF_Box *child, u32 *pos)
 
 	s32 cur_pos = gf_list_find(s->child_boxes, child);
 
-	assert (cur_pos >= 0);
+	//happens when partially cloning boxes 
+	if (cur_pos < 0) return;
 
 	if (cur_pos != (s32) *pos) {
 		gf_list_del_item(s->child_boxes, child);
@@ -1876,9 +1924,7 @@ GF_Err gf_isom_box_write(GF_Box *a, GF_BitStream *bs)
 	}
 	pos = gf_bs_get_position(bs) - pos;
 	if (pos != a->size) {
-		if ((a->type==GF_ISOM_BOX_TYPE_MDAT) || (a->type==GF_ISOM_BOX_TYPE_IDAT)) {
-
-		} else {
+		if (a->type != GF_ISOM_BOX_TYPE_MDAT) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Box %s wrote "LLU" bytes but size is "LLU"\n", gf_4cc_to_str(a->type), pos, a->size ));
 		}
 	}
@@ -2033,10 +2079,9 @@ GF_Err gf_isom_box_dump_start(GF_Box *a, const char *name, FILE * trace)
 		gf_fprintf(trace, "Version=\"%d\" Flags=\"%d\" ", ((GF_FullBox*)a)->version,((GF_FullBox*)a)->flags);
 	}
 	gf_fprintf(trace, "Specification=\"%s\" ", a->registry->spec);
-	//we don't want to rewrite our hashes
-	if (gf_sys_is_test_mode() && (a->type==GF_ISOM_BOX_TYPE_FTYP)) {
-		gf_fprintf(trace, "Container=\"file\" ");
-	} else {
+
+	//don't write containers in test mode, that would require rewriting hashes whenever spec changes
+	if (!gf_sys_is_test_mode()) {
 		gf_fprintf(trace, "Container=\"%s\" ", a->registry->parents_4cc);
 	}
 	return GF_OK;

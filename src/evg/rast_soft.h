@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / software 2D rasterizer
@@ -34,13 +34,14 @@ typedef struct _traster_ctx EVGRasterCtx;
 
 /*base stencil stack*/
 #define EVGBASESTENCIL	\
-	u32 type;	\
 	void (*fill_run)(GF_EVGStencil *p, EVGRasterCtx *rctx, s32 x, s32 y, u32 count);	\
 	GF_Matrix2D pmat;					\
 	GF_Matrix2D smat;					\
 	GF_Matrix2D smat_bck;					\
 	GF_Rect frame;					\
-	GF_ColorMatrix cmat;
+	GF_ColorMatrix cmat;\
+	u8 type;	\
+	u8 auto_mx;     \
 
 
 
@@ -89,7 +90,6 @@ typedef struct
 	gf_evg_vertex_shader vert_shader;
 	void *vert_shader_udta;
 	/*render state*/
-	u32 vp_x, vp_y, vp_w, vp_h;
 	Bool is_ccw;
 	Bool backface_cull;
 	Float max_depth;
@@ -102,18 +102,14 @@ typedef struct
 	Bool mode2d;
 	Bool clip_zero;
 	Float zw_factor, zw_offset;
-	/*internal variables for triangle rasterization*/
-	GF_EVGPrimitiveType prim_type;
-	GF_Vec4 s_v1, s_v2, s_v3;
-	Float area;
-	
-	Float s3_m_s2_x, s3_m_s2_y;
-	Float s1_m_s3_x, s1_m_s3_y;
-	Float s2_m_s1_x, s2_m_s1_y;
-	Float pt_radius;
-	Float v1v2_length, v1v3_length, v2v3_length;
-	GF_Vec v1v2, v1v3, v2v3;
 
+	/*internal variables for triangle rasterization*/
+	//primitive type
+	GF_EVGPrimitiveType prim_type;
+	//radius for point
+	Float pt_radius;
+	//line length
+	Float v1v2_length;
 	struct _gf_evg_base_stencil yuv_sten;
 } EVG_Surface3DExt;
 
@@ -215,10 +211,19 @@ typedef struct __evg_texture
 
 	u32 pad_rbg, fill_pad_color;
 	u64 fill_pad_color_wide;
+	u32 off_y, off_u, off_v;
+
+	const u8 *palette;
+	u32 palette_colors, palette_comp, palette_pfmt;
+	u32 pidx_a, pidx_r, pidx_g, pidx_b;
 } EVG_Texture;
 
 /*return u32 * for 8 bits destination surfaces, u64 *for wide color destination surfaces*/
 void *evg_fill_run(GF_EVGStencil *p, EVGRasterCtx *rctx, EVG_Span *span, s32 y);
+void *evg_fill_run_mask(GF_EVGStencil *p, EVGRasterCtx *rctx, EVG_Span *span, s32 y);
+void *evg_fill_run_mask_inv(GF_EVGStencil *p, EVGRasterCtx *rctx, EVG_Span *span, s32 y);
+
+void evg_fill_span_mask(int y, int count, EVG_Span *spans, GF_EVGSurface *surf, EVGRasterCtx *rctx);
 
 #define GF_COLW_ARGB(_a, _r, _g, _b)\
 	((u64)(_a)) << 48 | ((u64)(_r))<<32 | ((u64)(_g))<<16 | ((u64)(_b))
@@ -434,6 +439,7 @@ void gray_render_line(GF_EVGSurface *surf, TPos to_x, TPos to_y);
 struct _traster_ctx
 {
 	GF_Thread *th;
+	Bool active;
 	GF_EVGSurface *surf;
 	u32 first_line, last_line;
 
@@ -457,6 +463,8 @@ struct _traster_ctx
 
 	//for 2D
 	u8 fill_rule;
+	//for YUV
+	u8 no_yuv_flush;
 	//for 3D
 	u8 is_tri_raster;
 
@@ -570,6 +578,21 @@ struct _gf_evg_surface
 	u32 odd_fill;
 	u32 mix_val;
 	u32 run_size;
+
+	void *(*fill_run)(GF_EVGStencil *p, EVGRasterCtx *rctx, EVG_Span *span, s32 y);
+
+	u8 *internal_mask;
+	u32 mask_mode;
+
+	u32 vp_x, vp_y, vp_w, vp_h;
+
+	//for 3D rasterization, for mesh or for path
+	//triangle area
+	Float tri_area;
+	//transformed triangle points in NDC
+	GF_Vec4 s_v1, s_v2, s_v3;
+	//precomputed variables for edge function
+	Float s3_m_s2_x, s3_m_s2_y, s1_m_s3_x, s1_m_s3_y, s2_m_s1_x, s2_m_s1_y;
 };
 
 

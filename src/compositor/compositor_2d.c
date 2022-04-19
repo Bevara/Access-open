@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -446,7 +446,7 @@ static void store_blit_times(GF_TextureHandler *txh, u32 push_time)
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Compositor2D] Bliting frame (CTS %d) %d ms too late\n", txh->last_frame_time, ck - txh->last_frame_time ));
 	}
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[2D Blitter] At %u Blit texture (CTS %u) %d ms after due date - blit in %d ms - average push time %d ms\n", ck, txh->last_frame_time, ck - txh->last_frame_time, push_time, txh->upload_time / txh->nb_frames));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[2D Blitter] At %u Blit texture (CTS %u) %d ms after due date - blit in %d ms - average push time %d ms\n", ck, txh->last_frame_time, ck - txh->last_frame_time, push_time, txh->upload_time / txh->nb_frames));
 #endif
 }
 
@@ -1414,11 +1414,8 @@ void visual_2d_flush_overlay_areas(GF_VisualManager *visual, GF_TraverseState *t
 					gf_irect_intersect(&ctx->bi->clip, &the_clip);
 					tr_state->ctx = ctx;
 
-					if (ctx->drawable->flags & DRAWABLE_USE_TRAVERSE_DRAW) {
-						gf_node_traverse(ctx->drawable->node, tr_state);
-					} else {
-						drawable_draw(ctx->drawable, tr_state);
-					}
+					call_drawable_draw(ctx, tr_state, GF_FALSE);
+
 					ctx->bi->clip = prev_clip;
 				}
 				ctx = ctx->next;

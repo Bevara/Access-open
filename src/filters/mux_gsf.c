@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / GPAC stream serializer filter
@@ -322,7 +322,10 @@ static Bool gsfmx_can_serialize_prop(const GF_PropertyValue *p, u32 prop_4cc)
 	if (prop_4cc) {
 		u32 prop_type = gf_props_4cc_get_type(prop_4cc);
 		//prop_type can be 0 for unit test filters !!
-		if (prop_type && !gf_props_type_is_enum(prop_type) && (prop_type != p->type)) {
+		if (prop_type
+			&& !gf_props_type_is_enum(prop_type)
+			&& (gf_props_get_base_type(prop_type) != gf_props_get_base_type(p->type))
+		) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFMux] Mismatch between property advertised type (%s) and built-in type (%s) for %s, not serializing !\n\tPlease contact GPAC team or the developers of third-party filters used if any (run with -graph)\n", gf_props_get_type_name(p->type), gf_props_get_type_name(prop_type), gf_props_4cc_get_name(prop_4cc)));
 			return GF_FALSE;
 		}
@@ -457,6 +460,9 @@ static void gsfmx_write_prop(GSFMxCtx *ctx, const GF_PropertyValue *p)
 
 static GFINLINE Bool gsfmx_is_prop_skip(GSFMxCtx *ctx, u32 prop_4cc, const char *prop_name, u8 sep_l)
 {
+	if (prop_name && !strcmp(prop_name, "reframer_rem_edits"))
+		return GF_TRUE;
+
 	if (ctx->minp) {
 		u8 flags;
 		if (prop_name) return GF_TRUE;
@@ -599,9 +605,9 @@ static void gsfmx_write_pid_config(GF_Filter *filter, GSFMxCtx *ctx, GSFStream *
 		gsfmx_write_prop(ctx, p);
 
 #ifndef GPAC_DISABLE_LOG
-		if (gf_log_tool_level_on(GF_LOG_PARSER, GF_LOG_DEBUG)) {
+		if (gf_log_tool_level_on(GF_LOG_CONTAINER, GF_LOG_DEBUG)) {
 			char dump[GF_PROP_DUMP_ARG_SIZE];
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[GSFMux] Write pid %d %s property to %s\n", gst->idx, gf_props_4cc_get_name(prop_4cc), gf_props_dump(prop_4cc, p, dump, GF_PROP_DUMP_DATA_NONE) ) );
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[GSFMux] Write pid %d %s property to %s\n", gst->idx, gf_props_4cc_get_name(prop_4cc), gf_props_dump(prop_4cc, p, dump, GF_PROP_DUMP_DATA_NONE) ) );
 		}
 #endif
 	}
@@ -628,9 +634,9 @@ static void gsfmx_write_pid_config(GF_Filter *filter, GSFMxCtx *ctx, GSFStream *
 		gsfmx_write_prop(ctx, p);
 
 #ifndef GPAC_DISABLE_LOG
-		if (gf_log_tool_level_on(GF_LOG_PARSER, GF_LOG_DEBUG)) {
+		if (gf_log_tool_level_on(GF_LOG_CONTAINER, GF_LOG_DEBUG)) {
 			char dump[GF_PROP_DUMP_ARG_SIZE];
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[GSFMux] Write pid %d %s property to %s\n", gst->idx, prop_name ? prop_name : gf_props_4cc_get_name(prop_4cc), gf_props_dump(prop_4cc, p, dump, GF_PROP_DUMP_DATA_NONE) ) );
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[GSFMux] Write pid %d %s property to %s\n", gst->idx, prop_name ? prop_name : gf_props_4cc_get_name(prop_4cc), gf_props_dump(prop_4cc, p, dump, GF_PROP_DUMP_DATA_NONE) ) );
 		}
 #endif
 	}
@@ -961,7 +967,7 @@ static void gsfmx_write_data_packet(GSFMxCtx *ctx, GSFStream *gst, GF_FilterPack
 	} else if (data) {
 		u32 nb_write = gf_bs_write_data(ctx->bs_w, data, frame_size);
 		if (nb_write != frame_size) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[GSFMux] Write error, wrote %d bytes but had %d to write\n", nb_write, frame_size));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFMux] Write error, wrote %d bytes but had %d to write\n", nb_write, frame_size));
 		}
 		gsfmx_send_packets(ctx, gst, GFS_PCKTYPE_PCK, GF_FALSE, GF_FALSE, frame_size, frame_hdr_size);
 	} else if (frame_ifce) {
@@ -972,7 +978,7 @@ static void gsfmx_write_data_packet(GSFMxCtx *ctx, GSFStream *gst, GF_FilterPack
 			u32 out_stride = i ? stride_uv : stride;
 			GF_Err e = frame_ifce->get_plane(frame_ifce, i, &out_ptr, &out_stride);
 			if (e) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[GSFMux] Failed to fetch plane data from hardware frame, cannot write\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFMux] Failed to fetch plane data from hardware frame, cannot write\n"));
 				break;
 			}
 			write_h = h;
@@ -981,7 +987,7 @@ static void gsfmx_write_data_packet(GSFMxCtx *ctx, GSFStream *gst, GF_FilterPack
 			for (j=0; j<write_h; j++) {
 				u32 nb_write = (u32) gf_bs_write_data(ctx->bs_w, out_ptr, lsize);
 				if (nb_write != lsize) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[GSFMux] Write error, wrote %d bytes but had %d to write\n", nb_write, lsize));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFMux] Write error, wrote %d bytes but had %d to write\n", nb_write, lsize));
 				}
 				out_ptr += out_stride;
 			}
@@ -1245,19 +1251,19 @@ static const GF_FilterArgs GSFMxArgs[] =
 	"- nodata: force packet size to 0\n"
 	"- nopck: skip packet", GF_PROP_UINT, "no", "no|nodata|nopck", GF_FS_ARG_HINT_EXPERT},
 #ifndef GPAC_DISABLE_CRYPTO
-	{ OFFS(key), "encrypt packets using given key - see filter helps", GF_PROP_DATA, NULL, NULL, 0},
+	{ OFFS(key), "encrypt packets using given key", GF_PROP_DATA, NULL, NULL, 0},
 	{ OFFS(IV), "set IV for encryption - a constant IV is used to keep packet overhead small (cbcs-like)", GF_PROP_DATA, NULL, NULL, 0},
 	{ OFFS(pattern), "set nb_crypt / nb_skip block pattern. default is all encrypted", GF_PROP_FRACTION, "1/0", NULL, GF_FS_ARG_HINT_ADVANCED},
 #endif // GPAC_DISABLE_CRYPTO
 	{ OFFS(mpck), "set max packet size. 0 means no fragmentation (each AU is sent in one packet)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(magic), "magic string to append in setup packet", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(skp), "comma separated list of pid property names to skip - see filter help", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(minp), "include only the minimum set of properties required for stream processing - see filter help", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(crate), "carousel period for tune-in info in seconds - see filter help", GF_PROP_DOUBLE, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(ext), "file extension for file mode - see filter help", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(dst), "target URL in file mode - see filter help", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_SINK_ALIAS},
-	{ OFFS(mime), "file mime for file mode - see filter help", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_HIDE},
-	{ OFFS(mixed), "allow GSF to contain both files and media streams - see filter help", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_SINK_ALIAS},
+	{ OFFS(skp), "comma separated list of PID property names to skip", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(minp), "include only the minimum set of properties required for stream processing", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(crate), "carousel period for tune-in info in seconds", GF_PROP_DOUBLE, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(ext), "file extension for file mode", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(dst), "target URL in file mode", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_SINK_ALIAS},
+	{ OFFS(mime), "file mime for file mode", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_HIDE},
+	{ OFFS(mixed), "allow GSF to contain both files and media streams", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_SINK_ALIAS},
 
 	{0}
 };
@@ -1265,7 +1271,7 @@ static const GF_FilterArgs GSFMxArgs[] =
 
 GF_FilterRegister GSFMxRegister = {
 	.name = "gsfmx",
-	GF_FS_SET_DESCRIPTION("GSF Muxer")
+	GF_FS_SET_DESCRIPTION("GSF Multiplexer")
 #ifndef GPAC_DISABLE_DOC
 	.help = "This filter provides GSF (__GPAC Serialized Format__) multiplexing.\n"
 			"It serializes the stream states (config/reconfig/info update/remove/eos) and packets of input PIDs. "
@@ -1273,12 +1279,12 @@ GF_FilterRegister GSFMxRegister = {
 			"using either pipes or sockets. Upstream events are not serialized.\n"
 			"\n"
 			"The default behavior does not insert sequence numbers. When running over general protocols not ensuring packet order, this should be inserted.\n"
-			"The serializer sends tune-in packets (global and per pid) at the requested carousel rate - if 0, no carousel. These packets are marked as redundant so that they can be discarded by output filters if needed.\n"
+			"The serializer sends tune-in packets (global and per PID) at the requested carousel rate - if 0, no carousel. These packets are marked as redundant so that they can be discarded by output filters if needed.\n"
 			"\n"
 #ifndef GPAC_DISABLE_CRYPTO
 			"# Encryption\n"
 			"The stream format can be encrypted in AES 128 CBC mode. For all packets, the packet header (header, size, frame size/block offset and optional seq num) are in the clear "
-			"and the followings byte until the last byte of the last multiple of block size (16) fitting in the payload are encrypted.\n"
+			"and the following bytes until the last byte of the last multiple of block size (16) fitting in the payload are encrypted.\n"
 			"For data packets, each fragment is encrypted individually to avoid error propagation in case of losses.\n"
 			"For other packets, the entire packet is encrypted before fragmentation (fragments cannot be processed individually).\n"
 			"For header/tunein packets, the first 25 bytes after the header are in the clear (signature,version,IV and pattern).\n"
@@ -1287,23 +1293,23 @@ GF_FilterRegister GSFMxRegister = {
 			"\n"
 #endif
 			"# Filtering properties\n"
-			"The header/tunein packet may get quite big when all pid properties are kept. In order to help reduce its size, the [-minp]() option can be used: "
+			"The header/tunein packet may get quite big when all PID properties are kept. In order to help reduce its size, the [-minp]() option can be used: "
 			"this will remove all built-in properties marked as droppable (cf property help) as well as all non built-in properties.\n"
 			"The [-skp]() option may also be used to specify which property to drop:\n"
-			"EX skp=\"4CC1,Name2\n"\
-			"This will remove properties of type 4CC1 and properties (built-in or not) of name Name2.\n"
+			"EX skp=\"4CC1,Name2\n"
+			"This will remove properties of type `4CC1` and properties (built-in or not) of name `Name2`.\n"
 			"\n"
 			"# File mode\n"
 			"By default the filter only accepts framed media streams as input PID, not files. This can be changed by explicitly loading the filter with [-ext]() or [-dst]() set.\n"
-			"EX gpac -i source.mp4 gsfmx:dst=manifest.mpd @ -o dump.gsf\n"
+			"EX gpac -i source.mp4 gsfmx:dst=manifest.mpd -o dump.gsf\n"
 			"This will DASH the source and store every files produced as PIDs in the GSF mux.\n"
-			"In order to demux such a file, the GSF demuxer will likely need to be explicitly loaded:\n"
-			"EX gpac -i mux.gsf gsfdmx @ -o dump/$File$:dynext:clone\n"
+			"In order to demultiplex such a file, the `gsfdmx`filter will likely need to be explicitly loaded:\n"
+			"EX gpac -i mux.gsf gsfdmx -o dump/$File$:dynext:clone\n"
 			"This will extract all files from the GSF mux.\n"
 			"\n"
-			"When working in file mode, the filter by default only accepts PID of type `file` as input.\n"
+			"By default when working in file mode, the filter only accepts PIDs of type `file` as input.\n"
 			"To allow a mix of files and streams, use [-mixed]():\n"
-			"EX gpac -i source.mp4 gsfmx:dst=manifest.mpd:mixed @ -o dump.gsf\n"
+			"EX gpac -i source.mp4 gsfmx:dst=manifest.mpd:mixed -o dump.gsf\n"
 			"This will DASH the source, store the manifest file and the media streams with their packet properties in the GSF mux.\n"
 		,
 #endif

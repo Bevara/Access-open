@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2020
+ *			Copyright (c) Telecom ParisTech 2005-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / command-line client
@@ -270,7 +270,7 @@ GF_GPACArg mp4client_args[] =
 	GF_DEF_ARG("nk", NULL, "disable keyboard interaction", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED),
 	GF_DEF_ARG("h", "help", "show this help. Use `-hx` to show expert help", NULL, NULL, GF_ARG_BOOL, 0),
 	GF_DEF_ARG("hc", NULL, "show libgpac core options", NULL, NULL, GF_ARG_BOOL, 0),
-	GF_DEF_ARG("hr", NULL, "show runtime options when keybard interaction is enabled", NULL, NULL, GF_ARG_BOOL, 0),
+	GF_DEF_ARG("hr", NULL, "show runtime options when keyboard interaction is enabled", NULL, NULL, GF_ARG_BOOL, 0),
 	{0}
 };
 
@@ -286,6 +286,9 @@ void PrintUsage(Bool show_all)
 			"# General\n"
 			"The player accepts any URL supported by GPAC.\n"
 			"Specific URLs shortcuts are available, see [GPAC Compositor (gpac -h compositor)](compositor)\n"
+			"\n"
+			"Warning: MP4Client is being deprecated, use `gpac -play URL`, `gpac -gui URL` or `gpac -mp4c URL`.\n"
+			"\n"
 			"Version: %s\n"
 			"%s\n"
 			"For more info on GPAC configuration, use `gpac ` [-h](GPAC) `bin`  \n  \n"

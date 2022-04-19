@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / QCP stream to file filter
@@ -127,25 +127,25 @@ GF_Err qcpmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 	ctx->first = GF_TRUE;
 
 	if (ctx->exporter) {
-		GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("Exporting %s - SampleRate %d %d channels %d bits per sample\n", gf_codecid_name(ctx->codecid), sr, chan, bps));
+		GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("Exporting %s - SampleRate %d %d channels %d bits per sample\n", gf_codecid_name(ctx->codecid), sr, chan, bps));
 	}
 
 	ctx->ipid = pid;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DURATION);
-	if (p) ctx->duration = p->value.lfrac;
+	if (p && (p->value.lfrac.num>0)) ctx->duration = p->value.lfrac;
 
 	gf_filter_pid_set_framing_mode(pid, GF_TRUE);
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_MEDIA_DATA_SIZE);
 	if (!p) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[QCP] Unknown total media size, cannot write QCP file right away\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[QCP] Unknown total media size, cannot write QCP file right away\n"));
 		ctx->data_size = 0;
 	} else {
 		ctx->data_size = (u32) p->value.longuint;
 	}
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_NB_FRAMES);
 	if (!p) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[QCP] Unknown total number of media frames, cannot write QCP file\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[QCP] Unknown total number of media frames, cannot write QCP file\n"));
 		ctx->nb_frames = 0;
 	} else {
 		ctx->nb_frames = (u32) p->value.uint;
@@ -317,7 +317,7 @@ GF_Err qcpmx_process(GF_Filter *filter)
 			}
 		}
 		if (!rate_found) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[QCP] Frame size %d not in rate table, ignoring frame\n", pck_size));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[QCP] Frame size %d not in rate table, ignoring frame\n", pck_size));
 			gf_filter_pid_drop_packet(ctx->ipid);
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
@@ -377,7 +377,7 @@ static const GF_FilterArgs QCPMxArgs[] =
 GF_FilterRegister QCPMxRegister = {
 	.name = "writeqcp",
 	GF_FS_SET_DESCRIPTION("QCP writer")
-	GF_FS_SET_HELP("This filter converts a single stream to a QCP output file.")
+	GF_FS_SET_HELP("This filter converts a single QCELP, EVRC or MSV stream to a QCP output file.")
 	.private_size = sizeof(GF_QCPMxCtx),
 	.args = QCPMxArgs,
 	SETCAPS(QCPMxCaps),

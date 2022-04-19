@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2021
+ *			Copyright (c) Telecom ParisTech 2005-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / AVI demuxer filter
@@ -119,7 +119,9 @@ static void avidmx_setup(GF_Filter *filter, GF_AVIDmxCtx *ctx)
 		codecid = GF_CODECID_RAW;
 		pfmt = GF_PIXEL_BGR;
 	} else {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[AVIDmx] Video format %s not supported, patch welcome\n", comp));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[AVIDmx] Video format %s not natively supported, signaling as is\n", comp));
+		codecid = gf_4cc_parse(comp);
+		unframed = GF_FALSE;
 	}
 
 	ctx->v_in_use = GF_FALSE;
@@ -271,6 +273,17 @@ static void avidmx_setup(GF_Filter *filter, GF_AVIDmxCtx *ctx)
 			if (!sync_id) sync_id = 2 + st->stream_num;
 			st->audio_done = GF_FALSE;
 
+			if (codecid==GF_CODECID_MPEG_AUDIO) {
+				u32 cid;
+				char data[8];
+				AVI_set_audio_track(ctx->avi, i);
+				AVI_read_audio(ctx->avi, data, 8, (int*)&cid);
+				u32 hdr = GF_4CC(data[0], data[1], data[2], data[3]);
+				cid = gf_mp3_object_type_indication(hdr);
+				AVI_set_audio_position(ctx->avi, 0);
+				if (cid) codecid = cid;
+			}
+
 			gf_filter_pid_set_property(st->opid, GF_PROP_PID_STREAM_TYPE, &PROP_UINT(GF_STREAM_AUDIO) );
 			gf_filter_pid_set_property(st->opid, GF_PROP_PID_CODECID, &PROP_UINT( codecid) );
 			st->freq = AVI_audio_rate(ctx->avi);
@@ -289,7 +302,7 @@ static void avidmx_setup(GF_Filter *filter, GF_AVIDmxCtx *ctx)
 			st->audio_bps = 0;
 			if (unframed) {
 				gf_filter_pid_set_property(st->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL( GF_TRUE ) );
-				//we don't set timescale, let the reframer handle it
+				gf_filter_pid_set_property(st->opid, GF_PROP_PID_TIMESCALE, &PROP_UINT(st->freq) );
 			} else {
 				if (afmt) {
 					gf_filter_pid_set_property(st->opid, GF_PROP_PID_AUDIO_FORMAT, &PROP_UINT(afmt) );
@@ -522,6 +535,7 @@ GF_Err avidmx_process(GF_Filter *filter)
 			nb_done++;
 			continue;
 		}
+		if (!ctx->v_playing) video_done = GF_TRUE;
 		if (!st->playing || gf_filter_pid_would_block(st->opid) )
 			continue;
 		AVI_set_audio_track(ctx->avi, st->stream_num);
@@ -604,7 +618,7 @@ void avidmx_finalize(GF_Filter *filter)
 	gf_list_del(ctx->audios);
 
 	if (ctx->importer) {
-		GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("AVI Removed Frames: 1 VFW delay frames - 296 N-VOPs\n", ctx->dummy, ctx->nvops));
+		GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("AVI Removed Frames: 1 VFW delay frames - 296 N-VOPs\n", ctx->dummy, ctx->nvops));
 	}
 
 }
@@ -639,8 +653,8 @@ static const GF_FilterArgs AVIDmxArgs[] =
 
 GF_FilterRegister AVIDmxRegister = {
 	.name = "avidmx",
-	GF_FS_SET_DESCRIPTION("AVI demuxer")
-	GF_FS_SET_HELP("This filter demultiplexes AVI files/data to produce media PIDs and frames.")
+	GF_FS_SET_DESCRIPTION("AVI demultiplexer")
+	GF_FS_SET_HELP("This filter demultiplexes AVI files to produce media PIDs and frames.")
 	.private_size = sizeof(GF_AVIDmxCtx),
 	.initialize = avidmx_initialize,
 	.finalize = avidmx_finalize,

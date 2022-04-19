@@ -201,7 +201,7 @@ void do_js_gc(JSContext *c, GF_Node *node)
 #include <gpac/nodes_mpeg4.h>
 #include <gpac/nodes_x3d.h>
 
-void SFColor_fromHSV(SFColor *col)
+static void SFColor_fromHSV(SFColor *col)
 {
 	Fixed f, q, t, p, hue, sat, val;
 	u32 i;
@@ -253,7 +253,7 @@ void SFColor_fromHSV(SFColor *col)
 	}
 }
 
-void SFColor_toHSV(SFColor *col)
+static void SFColor_toHSV(SFColor *col)
 {
 	Fixed h, s;
 	Fixed _max = MAX(col->red, MAX(col->green, col->blue));
@@ -305,7 +305,7 @@ static GFINLINE GF_ScriptPriv *JS_GetScriptStack(JSContext *c)
 
 static JSValue getName(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-	return JS_NewString(ctx, "GPAC RichMediaEngine");
+	return JS_NewString(ctx, "GPAC");
 }
 static JSValue getVersion(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -603,6 +603,7 @@ static JSValue addRoute(JSContext *c, JSValueConst this_val, int argc, JSValueCo
 	else {
 		u32 i = 0;
 		const char *fun_name;
+		char *fun_name_dup=NULL;
 		JSAtom atom;
 		GF_RouteToScript *r = NULL;
 		if (!JS_IsFunction(c, argv[3]) ) return GF_JS_EXCEPTION(c);
@@ -619,12 +620,16 @@ static JSValue addRoute(JSContext *c, JSValueConst this_val, int argc, JSValueCo
 					break;
 			}
 		}
+		if (!r) fun_name_dup = gf_strdup(fun_name);
 		JS_FreeCString(c, fun_name);
 		JS_FreeAtom(c, atom);
 
 		if ( !r ) {
 			GF_SAFEALLOC(r, GF_RouteToScript)
-			if (!r) return JS_FALSE;
+			if (!r) {
+				if (fun_name_dup) gf_free(fun_name_dup);
+				return JS_FALSE;
+			}
 			r->script_route = 1;
 			r->FromNode = n1;
 			r->FromField.fieldIndex = f_id1;
@@ -635,7 +640,9 @@ static JSValue addRoute(JSContext *c, JSValueConst this_val, int argc, JSValueCo
 			r->ToField.on_event_in = on_route_to_object;
 			r->ToField.eventType = GF_SG_EVENT_IN;
 			r->ToField.far_ptr = NULL;
-			r->ToField.name = fun_name;
+			//store fun text val in name, route to obj cannot have their ID set
+			r->name = fun_name_dup;
+			r->ToField.name = r->name;
 
 			r->obj = JS_DupValue(c, argv[2]);
 			r->fun = JS_DupValue(c, argv[3]);
@@ -647,6 +654,8 @@ static JSValue addRoute(JSContext *c, JSValueConst this_val, int argc, JSValueCo
 				GF_SAFEALLOC(n1->sgprivate->interact, struct _node_interactive_ext);
 				if (!n1->sgprivate->interact) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_SCENE, ("[VRMLJS] Failed to create interact storage\n"));
+					if (fun_name_dup) gf_free(fun_name_dup);
+					gf_free(r);
 					return GF_JS_EXCEPTION(c);
 				}
 			}
@@ -937,13 +946,6 @@ static GFINLINE void sffield_toString(char **str, void *f_ptr, u32 fieldType)
 	{
 		SFVec3f val = * ((SFVec3f *) f_ptr);
 		sprintf(temp, "%f %f %f", FIX2FLT(val.x), FIX2FLT(val.y), FIX2FLT(val.z));
-		gf_dynstrcat(str, temp, NULL);
-		break;
-	}
-	case GF_SG_VRML_SFVEC4F:
-	{
-		SFVec4f val = * ((SFVec4f *) f_ptr);
-		sprintf(temp, "%f %f %f %f", FIX2FLT(val.x), FIX2FLT(val.y), FIX2FLT(val.z), FIX2FLT(val.q));
 		gf_dynstrcat(str, temp, NULL);
 		break;
 	}
@@ -1557,7 +1559,7 @@ static JSValue vec2f_setProperty(JSContext *c, JSValueConst obj, JSValueConst va
 
 static JSValue vec2f_operand(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv, u32 op)
 {
-	SFVec2f *v1, *v2;
+	SFVec2f *v1, *v2=NULL;
 	Double d = 0.0;
 	JSValue pNew;
 	Fixed v;
@@ -2059,7 +2061,7 @@ static JSValue rot_slerp(JSContext *c, JSValueConst obj, int argc, JSValueConst 
 	Double d;
 	GF_JSField *p;
 
-	if (argc<=0 || !JS_IsObject(argv[0]))
+	if ((argc<2) || !JS_IsObject(argv[0]))
 		return GF_JS_EXCEPTION(c);
 	p = JS_GetOpaque(obj, SFRotationClass.class_id);
 	if (!p) return GF_JS_EXCEPTION(c);
@@ -2165,7 +2167,7 @@ static JSValue color_setHSV(JSContext *c, JSValueConst obj, int argc, JSValueCon
 {
 	SFColor *v1, hsv;
 	Double h=0, s=0, v=0;
-	GF_JSField *ptr = (GF_JSField *) JS_GetOpaque(obj, SFRotationClass.class_id);
+	GF_JSField *ptr = (GF_JSField *) JS_GetOpaque(obj, SFColorClass.class_id);
 	if (!ptr) return GF_JS_EXCEPTION(c);
 	if (argc != 3) return JS_FALSE;
 
@@ -2188,9 +2190,8 @@ static JSValue color_getHSV(JSContext *c, JSValueConst obj, int argc, JSValueCon
 	SFColor *v1, hsv;
 	JSValue arr;
 
-	GF_JSField *ptr = (GF_JSField *) JS_GetOpaque(obj, SFRotationClass.class_id);
+	GF_JSField *ptr = (GF_JSField *) JS_GetOpaque(obj, SFColorClass.class_id);
 	if (!ptr) return GF_JS_EXCEPTION(c);
-	if (argc != 3) return JS_FALSE;
 
 	v1 = (ptr)->field.far_ptr;
 	hsv = *v1;
@@ -2801,6 +2802,7 @@ static const JSCFunctionListEntry SFImage_funcs[] =
 	JS_CGETSET_MAGIC_DEF("y", image_getProperty, image_setProperty, 1),
 	JS_CGETSET_MAGIC_DEF("comp", image_getProperty, image_setProperty, 2),
 	JS_CGETSET_MAGIC_DEF("array", image_getProperty, image_setProperty, 3),
+	JS_CFUNC_DEF("toString", 0, field_toString),
 };
 
 static const JSCFunctionListEntry MFArray_funcs[] =
@@ -4402,28 +4404,5 @@ Bool gf_sg_has_scripting()
 	return 1;
 #else
 	return 0;
-#endif
-}
-
-
-GF_Err gf_scene_execute_script(GF_SceneGraph *sg, const char *com)
-{
-#if defined(GPAC_HAS_QJS) && !defined(GPAC_DISABLE_SVG)
-	u32 tag;
-	GF_Err e;
-	GF_Node *root = gf_sg_get_root_node(sg);
-	if (root) {
-		tag = gf_node_get_tag(root);
-		if (tag >= GF_NODE_RANGE_FIRST_SVG) {
-			GF_Err svg_exec_script(struct __tag_svg_script_ctx *svg_js, GF_SceneGraph *sg, const char *com);
-			return svg_exec_script(sg->svg_js, sg, (char *)com);
-		} else {
-			e = GF_NOT_SUPPORTED;
-			return e;
-		}
-	}
-	return GF_BAD_PARAM;
-#else
-	return GF_NOT_SUPPORTED;
 #endif
 }

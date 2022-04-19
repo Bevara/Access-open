@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / generic pipe output filter
@@ -69,7 +69,7 @@ typedef struct
 
 	GF_FilterCapability in_caps[2];
 	char szExt[10];
-	char szFileName[GF_MAX_PATH];
+	char *szFileName;
 	Bool owns_pipe;
 
 } GF_PipeOutCtx;
@@ -108,7 +108,7 @@ static GF_Err pipeout_open_close(GF_PipeOutCtx *ctx, const char *filename, const
 	}
 	gf_filter_pid_resolve_file_template(ctx->pid, szName, szFinalName, file_idx, NULL);
 
-	if (!strcmp(szFinalName, ctx->szFileName) 
+	if (ctx->szFileName && !strcmp(szFinalName, ctx->szFileName) 
 #ifdef WIN32
 		&& (ctx->pipe != INVALID_HANDLE_VALUE)
 #else
@@ -191,15 +191,15 @@ static GF_Err pipeout_open_close(GF_PipeOutCtx *ctx, const char *filename, const
 	ctx->fd = open(szFinalName, O_WRONLY );
 
 	if (ctx->fd<0) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[PipeOut] Cannot open output pipe %s: %s\n", ctx->szFileName, gf_errno_str(errno)));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[PipeOut] Cannot open output pipe %s: %s\n", szFinalName, gf_errno_str(errno)));
 		e = ctx->owns_pipe ? GF_IO_ERR : GF_URL_ERROR;
 	}
 #endif
 	if (e) {
 		return e;
 	}
-	strncpy(ctx->szFileName, szFinalName, GF_MAX_PATH-1);
-	ctx->szFileName[GF_MAX_PATH-1] = 0;
+	if (ctx->szFileName) gf_free(ctx->szFileName);
+	ctx->szFileName = gf_strdup(szFinalName);
 	return GF_OK;
 }
 
@@ -302,8 +302,11 @@ static void pipeout_finalize(GF_Filter *filter)
 	GF_PipeOutCtx *ctx = (GF_PipeOutCtx *) gf_filter_get_udta(filter);
 	pipeout_open_close(ctx, NULL, NULL, 0, GF_FALSE);
 
-	if (ctx->owns_pipe)
-		gf_file_delete(ctx->szFileName);
+	if (ctx->szFileName) {
+		if (ctx->owns_pipe)
+			gf_file_delete(ctx->szFileName);
+		gf_free(ctx->szFileName);
+	}
 }
 
 static GF_Err pipeout_process(GF_Filter *filter)
@@ -463,9 +466,9 @@ static const GF_FilterArgs PipeOutArgs[] =
 	{ OFFS(ext), "indicate file extension of pipe data", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(mime), "indicate mime type of pipe data", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(dynext), "indicate the file extension is set by filter chain, not dst", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(start), "set playback start offset. Negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, 0},
-	{ OFFS(speed), "set playback speed. If speed is negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
-	{ OFFS(mkp), "create pipe if not found - see filter help", GF_PROP_BOOL, "false", NULL, 0 },
+	{ OFFS(start), "set playback start offset. A negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, 0},
+	{ OFFS(speed), "set playback speed. If negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
+	{ OFFS(mkp), "create pipe if not found", GF_PROP_BOOL, "false", NULL, 0 },
 	{ OFFS(block_size), "buffer size used to write to pipe, windows only", GF_PROP_UINT, "5000", NULL, GF_FS_ARG_HINT_ADVANCED },
 	{0}
 };
@@ -481,19 +484,19 @@ static const GF_FilterCapability PipeOutCaps[] =
 GF_FilterRegister PipeOutRegister = {
 	.name = "pout",
 	GF_FS_SET_DESCRIPTION("pipe output")
-	GF_FS_SET_HELP("This filter handles generic output pipes (mono-directional) in blocking mode only.\n"\
-		"Warning: Output pipes do not currently support non blocking mode.\n"\
-		"The associated protocol scheme is `pipe://` when loaded as a generic output (eg, -o `pipe://URL` where URL is a relative or absolute pipe name).\n"\
-		"Data format of the pipe **shall** be specified using extension (either in filename or through [-ext]() option) or MIME type through [-mime]()\n"\
-		"The pipe name indicated in [-dst]() can use template mechanisms from gpac, e.g. `dst=pipe_$ServiceID$`\n"\
-		"\n"\
-		"On Windows hosts, the default pipe prefix is `\\\\.\\pipe\\gpac\\` if no prefix is set \n"\
-		"EX dst=mypipe resolves in \\\\.\\pipe\\gpac\\mypipe\n"\
-		"EX dst=\\\\.\\pipe\\myapp\\mypipe resolves in \\\\.\\pipe\\myapp\\mypipe\n"
-		"Any destination name starting with `\\\\` is used as is, with `\\` translated in `/`\n"\
-		"\n"\
-		"The pipe input can create the pipe if not found using [-mkp](). On windows hosts, this will create a pipe server.\n"\
-		"On non windows hosts, the created pipe will delete the pipe file upon filter destruction."\
+	GF_FS_SET_HELP("This filter handles generic output pipes (mono-directional) in blocking mode only.\n"
+		"Warning: Output pipes do not currently support non blocking mode.\n"
+		"The associated protocol scheme is `pipe://` when loaded as a generic output (e.g. -o `pipe://URL` where URL is a relative or absolute pipe name).\n"
+		"Data format of the pipe **shall** be specified using extension (either in filename or through [-ext]() option) or MIME type through [-mime]()\n"
+		"The pipe name indicated in [-dst]() can use template mechanisms from gpac, e.g. `dst=pipe_$ServiceID$`\n"
+		"\n"
+		"On Windows hosts, the default pipe prefix is `\\\\.\\pipe\\gpac\\` if no prefix is set \n"
+		"`dst=mypipe` resolves in `\\\\.\\pipe\\gpac\\mypipe`\n"
+		"`dst=\\\\.\\pipe\\myapp\\mypipe` resolves in `\\\\.\\pipe\\myapp\\mypipe\n"
+		"Any destination name starting with `\\\\` is used as is, with `\\` translated in `/`\n"
+		"\n"
+		"The pipe input can create the pipe if not found using [-mkp](). On windows hosts, this will create a pipe server.\n"
+		"On non windows hosts, the created pipe will delete the pipe file upon filter destruction."
 	"")
 	.private_size = sizeof(GF_PipeOutCtx),
 	.args = PipeOutArgs,

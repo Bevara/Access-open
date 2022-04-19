@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -68,7 +68,19 @@ static GF_Err isoffin_setup(GF_Filter *filter, ISOMReader *read)
 	} else {
 		src = read->src;
 	}
-	if (!src)  return GF_SERVICE_ERROR;
+	if (!src) return GF_SERVICE_ERROR;
+
+	//if source is a fileIO, check if it is tagged for main thread
+	//if so, force main thread for this filter and configure at next process
+	if (!strncmp(src, "gfio://", 7) && !read->gfio_probe) {
+		read->gfio_probe = GF_TRUE;
+		if (gf_fileio_is_main_thread(src)) {
+			read->moov_not_loaded = 1;
+			gf_filter_force_main_thread(filter, GF_TRUE);
+			gf_filter_post_process_task(filter);
+			return GF_OK;
+		}
+	}
 
 	read->src_crc = gf_crc_32(src, (u32) strlen(src));
 
@@ -230,7 +242,6 @@ static GF_Err isoffin_reconfigure(GF_Filter *filter, ISOMReader *read, const cha
 		//but still further fragments to be pushed
 		if (!read->start_range && !read->end_range)
 			read->refresh_fragmented = GF_TRUE;
-		read->seg_name_changed = GF_TRUE;
 
 		for (i=0; i<gf_list_count(read->channels); i++) {
 			ISOMChannel *ch = gf_list_get(read->channels, i);
@@ -392,7 +403,7 @@ GF_Err isoffin_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 		isoffin_disconnect(read);
 		return GF_OK;
 	}
-	//check if we  have a file path; if not, this is a pure stream of boxes (no local file cache)
+	//check if we have a file path; if not, this is a pure stream of boxes (no local file cache)
 	prop = gf_filter_pid_get_property(pid, GF_PROP_PID_FILEPATH);
 	if (!prop || !prop->value.string) {
 		if (!read->mem_load_mode)
@@ -520,9 +531,11 @@ void isor_declare_pssh(ISOMChannel *ch)
 
 		gf_bs_write_data(pssh_bs, SystemID, 16);
 		gf_bs_write_u32(pssh_bs, version);
-		gf_bs_write_u32(pssh_bs, KID_count);
-		for (s=0; s<KID_count; s++) {
-			gf_bs_write_data(pssh_bs, KIDs[s], 16);
+		if (version) {
+			gf_bs_write_u32(pssh_bs, KID_count);
+			for (s=0; s<KID_count; s++) {
+				gf_bs_write_data(pssh_bs, KIDs[s], 16);
+			}
 		}
 		gf_bs_write_u32(pssh_bs, private_data_size);
 		gf_bs_write_data(pssh_bs, private_data, private_data_size);
@@ -791,7 +804,7 @@ u32 isoffin_channel_switch_quality(ISOMChannel *ch, GF_ISOFile *the_file, Bool s
 						u64 resume_at;
 						GF_Err e;
 						//try to locate sync after current time in base
-						resume_at = gf_timestamp_rescale(base->static_sample->DTS, base->timescale, ch->timescale);
+						resume_at = base->static_sample ? gf_timestamp_rescale(base->static_sample->DTS, base->timescale, ch->timescale) : 0;
 						e = gf_isom_get_sample_for_media_time(ch->owner->mov, ch->track, resume_at, &sample_desc_index, GF_ISOM_SEARCH_SYNC_FORWARD, &ch->static_sample, &ch->sample_num, &ch->sample_data_offset);
 						//found, rewind so that next fetch is the sync
 						if (e==GF_OK) {
@@ -1378,8 +1391,7 @@ static GF_Err isoffin_process(GF_Filter *filter)
 					gf_filter_pck_set_property(pck, GF_PROP_PCK_SUBS, &PROP_DATA_NO_COPY(subs_buf, subs_buf_size) );
 				}
 
-				if (ch->sai_buffer && ch->pck_encrypted) {
-					assert(ch->sai_buffer_size);
+				if (ch->sai_buffer && ch->sai_buffer_size && ch->pck_encrypted) {
 					gf_filter_pck_set_property(pck, GF_PROP_PCK_CENC_SAI, &PROP_DATA(ch->sai_buffer, ch->sai_buffer_size) );
 				}
 
@@ -1403,14 +1415,6 @@ static GF_Err isoffin_process(GF_Filter *filter)
 						if (finfo.sidx_end) {
 							gf_filter_pck_set_property(pck, GF_PROP_PCK_SIDX_RANGE, &PROP_FRAC64_INT(finfo.sidx_start , finfo.sidx_end));
 						}
-
-						if (read->seg_name_changed) {
-							const GF_PropertyValue *p = gf_filter_pid_get_property(read->pid, GF_PROP_PID_URL);
-							read->seg_name_changed = GF_FALSE;
-							if (p && p->value.string) {
-								gf_filter_pck_set_property(pck, GF_PROP_PID_URL, &PROP_STRING(p->value.string));
-							}
-						}
 					}
 				}
 				if (ch->sender_ntp) {
@@ -1425,6 +1429,12 @@ static GF_Err isoffin_process(GF_Filter *filter)
 				if ((ch->streamType==GF_STREAM_AUDIO) && (ch->sample_num == gf_isom_get_sample_count(read->mov, ch->track))) {
 					gf_filter_pck_set_property(pck, GF_PROP_PCK_END_RANGE, &PROP_BOOL(GF_TRUE));
 				}
+
+				if (!ch->item_id) {
+					isor_set_sample_groups_and_aux_data(read, ch, pck);
+				}
+				if (ch->sample_data_offset && !gf_sys_is_test_mode())
+					gf_filter_pck_set_byte_offset(pck, ch->sample_data_offset);
 
 				gf_filter_pck_send(pck);
 				isor_reader_release_sample(ch);
@@ -1509,8 +1519,8 @@ static const char *isoffin_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 
 static const GF_FilterArgs ISOFFInArgs[] =
 {
-	{ OFFS(src), "location of source content (only used when explicitly loading the demuxer)", GF_PROP_NAME, NULL, NULL, 0},
-	{ OFFS(allt), "load all tracks even if unknown", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(src), "local file name of source content (only used when explicitly loading the filter)", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(allt), "load all tracks even if unknown media type", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(noedit), "do not use edit lists", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(itt), "convert all items of root meta into a single PID", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(itemid), "keep item IDs in PID properties", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -1518,9 +1528,9 @@ static const GF_FilterArgs ISOFFInArgs[] =
 	"- split: each track is declared, extractors are removed\n"
 	"- splitx: each track is declared, extractors are kept\n"
 	"- single: a single track is declared (highest level for scalable, tile base for tiling)", GF_PROP_UINT, "split", "split|splitx|single", GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(alltk), "declare all tracks even disabled ones", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(alltk), "declare disabled tracks", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(frame_size), "frame size for raw audio samples (dispatches frame_size samples per packet)", GF_PROP_UINT, "1024", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(expart), "expose cover art as a dedicated video pid", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(expart), "expose cover art as a dedicated video PID", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(sigfrag), "signal fragment and segment boundaries of source on output packets", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 
 	{ OFFS(tkid), "declare only track based on given param\n"
@@ -1528,13 +1538,13 @@ static const GF_FilterArgs ISOFFInArgs[] =
 	"- audio: declares first audio track\n"
 	"- video: declares first video track\n"
 	"- 4CC: declares first track with matching 4CC for handler type", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(stsd), "only extract sample mapped to the given sample description index. 0 means no filter", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(stsd), "only extract sample mapped to the given sample description index (0 means extract all)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(mov), "pointer to a read/edit ISOBMF file used internally by importers and exporters", GF_PROP_POINTER, NULL, NULL, GF_FS_ARG_HINT_HIDE},
 	{ OFFS(analyze), "skip reformat of decoder config and SEI and dispatch all NAL in input order - shall only be used with inspect filter analyze mode!", GF_PROP_UINT, "off", "off|on|bs|full", GF_FS_ARG_HINT_HIDE},
 	{ OFFS(catseg), "append the given segment to the movie at init time (only local file supported)", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_HIDE},
 	{ OFFS(nocrypt), "signal encrypted tracks as non encrypted (mostly used for export)", GF_PROP_BOOL, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(mstore_size), "target buffer size in bytes", GF_PROP_UINT, "1000000", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(mstore_purge), "minimum size in bytes between memory purges when reading from memory stream (pipe etc...), 0 means purge as soon as possible", GF_PROP_UINT, "50000", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(mstore_size), "target buffer size in bytes when reading from memory stream (pipe etc...)", GF_PROP_UINT, "1000000", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(mstore_purge), "minimum size in bytes between memory purges when reading from memory stream, 0 means purge as soon as possible", GF_PROP_UINT, "50000", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(mstore_samples), "minimum number of samples to be present before purging sample tables when reading from memory stream (pipe etc...), 0 means purge as soon as possible", GF_PROP_UINT, "50", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(strtxt), "load text tracks (apple/tx3g) as MPEG-4 streaming text tracks", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(xps_check), "parameter sets extraction mode from AVC/HEVC/VVC samples\n"
@@ -1568,8 +1578,9 @@ static const GF_FilterCapability ISOFFInCaps[] =
 
 GF_FilterRegister ISOFFInRegister = {
 	.name = "mp4dmx",
-	GF_FS_SET_DESCRIPTION("ISOBMFF/QT demuxer")
-	GF_FS_SET_HELP("This filter demultiplexes ISOBMF and QT files (regular or fragmented).\n"
+	GF_FS_SET_DESCRIPTION("ISOBMFF/QT demultiplexer")
+	GF_FS_SET_HELP("This filter demultiplexes ISOBMF and QT files.\n"
+		"Input ISOBMFF/QT can be regular or fragmented, and available as files or as raw bytestream.\n"
 		"# Track Selection\n"
 		"The filter can use fragment identifiers of source to select a single track for playback. The allowed fragments are:\n"
 		" - #audio: only use the first audio track\n"
@@ -1582,14 +1593,15 @@ GF_FilterRegister ISOFFInRegister = {
 		" - #VAL: only use the track with given ID\n"
 		"\n"
 		"# Scalable Tracks\n"
-		"When scalable tracks are present in a file, the reader can operate in 3 modes using [-smode]() option:\n"\
-	 	"- smode=single: resolves all extractors to extract a single bitstream from a scalable set. The highest level is used\n"\
-	 	"In this mode, there is no enhancement decoder config, only a base one resulting from the merge of the configs\n"\
-	 	"- smode=split: all extractors are removed and every track of the scalable set is declared. In this mode, each enhancement track has no base decoder config\n"
-	 	"and an enhancement decoder config.\n"\
-	 	"- smode=splitx: extractors are kept in the bitstream, and every track of the scalable set is declared. In this mode, each enhancement track has a base decoder config\n"
-	 	" (copied from base) and an enhancement decoder config. This is mostly used for DASHing content.\n"\
-	 	"Warning: smode=splitx will result in extractor NAL units still present in the output bitstream, which shall only be true if the output is ISOBMFF based\n")
+		"When scalable tracks are present in a file, the reader can operate in 3 modes using [-smode]() option:\n"
+		"- smode=single: resolves all extractors to extract a single bitstream from a scalable set. The highest level is used\n"
+		"In this mode, there is no enhancement decoder config, only a base one resulting from the merge of the layers configurations\n"
+		"- smode=split: all extractors are removed and every track of the scalable set is declared. In this mode, each enhancement track has no base decoder config\n"
+		"and an enhancement decoder config.\n"
+		"- smode=splitx: extractors are kept in the bitstream, and every track of the scalable set is declared. In this mode, each enhancement track has a base decoder config\n"
+		" (copied from base) and an enhancement decoder config. This is mostly used for DASHing content.\n"
+		"Warning: smode=splitx will result in extractor NAL units still present in the output bitstream, which shall only be true if the output is ISOBMFF based\n"
+	 	)
 	.private_size = sizeof(ISOMReader),
 	.args = ISOFFInArgs,
 	.initialize = isoffin_initialize,

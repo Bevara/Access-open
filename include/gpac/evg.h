@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Embedded Vector Graphics engine
@@ -161,6 +161,26 @@ GF_Err gf_evg_stencil_set_matrix(GF_EVGStencil *stencil, GF_Matrix2D *mat);
 */
 Bool gf_evg_stencil_get_matrix(GF_EVGStencil * stencil, GF_Matrix2D *mat);
 
+/*! sets stencil transformation matrix auto mode.
+
+When auto matrix mode is activated, the stencil matrix only describes texture mapping transform in uv space (normalized UV coordinates, OpenGL like),
+and final transformation to raster coordinates is done internally.
+When auto matrix mode is not activated,, the stencil matrix must describe the complete transformation from uv space to raster coordinates (consequently, the matrix usually includes the final path transformation).
+
+Stencils are by default created in auto matrix mode.
+
+\param stencil the target stencil
+\param auto_on  If true,  the surface current matrix will be added to the stencil matrix when drawing, otherwise the stencil matrix is in final surface coordinates
+\return error if any
+*/
+GF_Err gf_evg_stencil_set_auto_matrix(GF_EVGStencil * stencil, Bool auto_on);
+
+/*! sets stencil transformation matrix auto mode.
+\param stencil the target stencil
+\return true if auto mode is enabled, false otherwise
+*/
+Bool gf_evg_stencil_get_auto_matrix(GF_EVGStencil * stencil);
+
 /*! gets stencil type
 \param stencil the target stencil
 \return stencil type
@@ -173,6 +193,12 @@ GF_StencilType gf_evg_stencil_type(GF_EVGStencil *stencil);
 \return error if any
 */
 GF_Err gf_evg_stencil_set_brush_color(GF_EVGStencil *stencil, GF_Color color);
+
+/*! gets color for solid brush stencil
+\param stencil the target stencil
+\return the stencil color
+*/
+GF_Color gf_evg_stencil_get_brush_color(GF_EVGStencil * stencil);
 
 /*! sets gradient repeat mode for a gradient stencil
 \note this may be called before the gradient is setup
@@ -226,7 +252,7 @@ GF_Err gf_evg_stencil_set_gradient_interpolation(GF_EVGStencil *stencil, Fixed *
 */
 GF_Err gf_evg_stencil_push_gradient_interpolation(GF_EVGStencil *stencil, Fixed pos, GF_Color col);
 
-/*! sets global alpha blending level for a texture or gradient stencil
+/*! sets global alpha blending level for a stencil
 The alpha channel will be combined with the color matrix if any
 \warning do not use with solid brush stencil
 \param stencil the target stencil
@@ -234,6 +260,12 @@ The alpha channel will be combined with the color matrix if any
 \return error if any
 */
 GF_Err gf_evg_stencil_set_alpha(GF_EVGStencil *stencil, u8 alpha);
+
+/*! gets global alpha blending level of a stencil
+\param stencil the target stencil
+\return the alpha value between 0 (full transparency) and 255 (full opacityy)
+*/
+u8 gf_evg_stencil_get_alpha(GF_EVGStencil *stencil);
 
 /*! sets pixel data for a texture stencil
 \param stencil the target stencil
@@ -263,6 +295,16 @@ GF_Err gf_evg_stencil_set_texture(GF_EVGStencil *stencil, u8 *pixels, u32 width,
 \return error if any
 */
 GF_Err gf_evg_stencil_set_texture_planes(GF_EVGStencil *stencil, u32 width, u32 height, GF_PixelFormat pixelFormat, const u8 *y_or_rgb, u32 stride, const u8 *u_plane, const u8 *v_plane, u32 uv_stride, const u8 *alpha_plane, u32 alpha_stride);
+
+
+/*! sets texture palette, only for greyscale textures.
+\param stencil the target stencil
+\param palette palette data
+\param pix_fmt palette pixel format, must be RGB/BGR or any RGBA format
+\param nb_cols number of colors in palette
+\return error if any
+*/
+GF_Err gf_evg_stencil_set_palette(GF_EVGStencil *stencil, const u8 *palette, u32 pix_fmt, u32 nb_cols);
 
 /*! callback function prototype for parametric textures
 \param cbk user data callback
@@ -316,12 +358,18 @@ u32 gf_evg_stencil_get_pad_color(GF_EVGStencil * stencil);
 GF_Err gf_evg_stencil_set_filter(GF_EVGStencil *stencil, GF_TextureFilter filter_mode);
 
 /*! sets color matrix of a stencil
-\warning ignored for solid brush stencil
 \param stencil the target stencil
 \param cmat the color matrix to use. If NULL, resets current color matrix
 \return error if any
  */
 GF_Err gf_evg_stencil_set_color_matrix(GF_EVGStencil *stencil, GF_ColorMatrix *cmat);
+
+/*! gets color matrix of a stencil
+\param stencil the target stencil
+\param cmat filled with current color matrix of stencil
+\return error if any
+ */
+GF_Err gf_evg_stencil_get_color_matrix(GF_EVGStencil *stencil, GF_ColorMatrix *cmat);
 
 /*! gets pixel at given position in ARGB format
 \param stencil the target stencil
@@ -437,7 +485,13 @@ GF_Err gf_evg_surface_set_matrix(GF_EVGSurface *surf, GF_Matrix2D *mat);
 
 /*! sets the given matrix as the current transformations for all drawn paths. The matrix shall be a projection matrix (ortho or perspective)
 with normalized coordinates in [-1,1]. It may also contain a modelview part.
-\warning 2D rasterizer does not work with texture coordinates, and perspective correct texture mapping is not supported for 2D rasterizer. Use this only for objects with plain colors for predictable results.
+
+Perspective correct mapping is supported for textures and gradients:
+- the bottom-left corner of the path bounds is texture coordinate 0,0
+- the top-right corner of the path bounds is texture coordinate 1,1
+
+\warning When 3D matrices are used, filling a path shall be done with a stencil in auto matrix mode.
+
 \note this is only used for 2D rasterizer, and ignored in 3D mode
 \param surf the surface object
 \param mat the matrix to set; if NULL, resets the current transformation
@@ -765,7 +819,7 @@ typedef struct
 	GF_EVGFragmentType frag_valid;
 
 	/*vars for lerp*/
-	/*perspective correct interpolation is done according to openGL eq 14.9
+	/*perspective correct interpolation is done according to OpenGL eq 14.9
 		f = (a*fa/wa + b*fb/wb + c*fc/wc) / (a/w_a + b/w_b + c/w_c)
 	*/
 	/*! perspective corrected barycentric, eg bc1/q1, bc2/q2, bc3/q3  - 3D shaders only*/
@@ -1005,6 +1059,40 @@ u64 gf_evg_argb_to_ayuv_wide(GF_EVGSurface *surf, u64 col);
 */
 u64 gf_evg_ayuv_to_argb_wide(GF_EVGSurface *surf, u64 col);
 
+/*! global alpha mask values */
+typedef enum
+{
+	/*! global alpha mask not used */
+	GF_EVGMASK_NONE = 0,
+	/*! subsequent draw operations will target the global alpha mask */
+	GF_EVGMASK_DRAW,
+	/*! subsequent draw operations will target the global alpha mask, but alpha mask is not cleared */
+	GF_EVGMASK_DRAW_NO_CLEAR,
+	/*! subsequent draw operations will be filtered with the global alpha mask */
+	GF_EVGMASK_USE,
+	/*! subsequent draw operations will be filtered with 1 minus the global alpha mask */
+	GF_EVGMASK_USE_INV,
+	/*! combine draw and use: the mask is set to 0xFF, each pixel drawn turns the mask value to 0 */
+	GF_EVGMASK_RECORD,
+} GF_EVGMaskMode;
+
+/*! sets global alpha mask mode
+
+The global alpha mask is an 8-bit alpha channel the size of the surface. Any resize operation on the surface will reset the alpha mask
+Typcial usage for the alpha mask is to setup the surface, use GF_EVGMASK_DRAW to draw your mask then GF_EVGMASK_USE to apply the mask on your draw calls
+
+Whenever the mask mode is changed to GF_EVGMASK_DRAW, the alpha masked is cleared
+\param surf the target surface
+\param mask_mode the current mask mode
+\return error if any
+*/
+GF_Err gf_evg_surface_set_mask_mode(GF_EVGSurface *surf, GF_EVGMaskMode mask_mode);
+
+/*! gets global alpha mask mode
+\param surf the target surface
+\return the current mask mode
+*/
+GF_EVGMaskMode gf_evg_surface_get_mask_mode(GF_EVGSurface *surf);
 
 /*! @} */
 

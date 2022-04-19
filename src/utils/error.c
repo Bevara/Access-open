@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -40,7 +40,7 @@ const char *gf_4cc_to_str(u32 type)
 	char *name = (char *)szTYPE;
 	if (!type) return "00000000";
 	buf_4cc_idx++;
-	if (buf_4cc_idx==NB_4CC_BUF)
+	if (buf_4cc_idx>=NB_4CC_BUF)
 		buf_4cc_idx=0;
 
 	for (i = 0; i < 4; i++) {
@@ -174,8 +174,6 @@ static struct log_tool_info {
 	{ GF_LOG_NETWORK, "network", GF_LOG_WARNING },
 	{ GF_LOG_HTTP, "http", GF_LOG_WARNING },
 	{ GF_LOG_RTP, "rtp", GF_LOG_WARNING },
-	{ GF_LOG_AUTHOR, "author", GF_LOG_WARNING },
-	{ GF_LOG_SYNC, "sync", GF_LOG_WARNING },
 	{ GF_LOG_CODEC, "codec", GF_LOG_WARNING },
 	{ GF_LOG_PARSER, "parser", GF_LOG_WARNING },
 	{ GF_LOG_MEDIA, "media", GF_LOG_WARNING },
@@ -183,10 +181,10 @@ static struct log_tool_info {
 	{ GF_LOG_SCRIPT, "script", GF_LOG_WARNING },
 	{ GF_LOG_INTERACT, "interact", GF_LOG_WARNING },
 	{ GF_LOG_COMPOSE, "compose", GF_LOG_WARNING },
+	{ GF_LOG_COMPTIME, "ctime", GF_LOG_WARNING },
 	{ GF_LOG_CACHE, "cache", GF_LOG_WARNING },
 	{ GF_LOG_MMIO, "mmio", GF_LOG_WARNING },
 	{ GF_LOG_RTI, "rti", GF_LOG_WARNING },
-	{ GF_LOG_SMIL, "smil", GF_LOG_WARNING },
 	{ GF_LOG_MEMORY, "mem", GF_LOG_WARNING },
 	{ GF_LOG_AUDIO, "audio", GF_LOG_WARNING },
 	{ GF_LOG_MODULE, "module", GF_LOG_WARNING },
@@ -640,22 +638,30 @@ u32 gf_log_get_tool_level(GF_LOG_Tool log_tool)
 FILE *gpac_log_file = NULL;
 Bool gpac_log_time_start = GF_FALSE;
 Bool gpac_log_utc_time = GF_FALSE;
+Bool last_log_is_lf = GF_TRUE;
 static u64 gpac_last_log_time=0;
 
-static void do_log_time(FILE *logs)
+static void do_log_time(FILE *logs, const char *fmt)
 {
-	if (gpac_log_time_start) {
-		u64 now = gf_sys_clock_high_res();
-		gf_fprintf(logs, "At "LLD" (diff %d) - ", now, (u32) (now - gpac_last_log_time) );
-		gpac_last_log_time = now;
+	if (!gpac_log_time_start && !gpac_log_utc_time) return;
+
+	if (last_log_is_lf) {
+		if (gpac_log_time_start) {
+			u64 now = gf_sys_clock_high_res();
+			gf_fprintf(logs, "At "LLD" (diff %d) - ", now, (u32) (now - gpac_last_log_time) );
+			gpac_last_log_time = now;
+		}
+		if (gpac_log_utc_time) {
+			u64 utc_clock = gf_net_get_utc() ;
+			time_t secs = utc_clock/1000;
+			struct tm t;
+			t = *gf_gmtime(&secs);
+			gf_fprintf(logs, "UTC %d-%02d-%02dT%02d:%02d:%02dZ (TS "LLU") - ", 1900+t.tm_year, t.tm_mon+1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, utc_clock);
+		}
 	}
-	if (gpac_log_utc_time) {
-		u64 utc_clock = gf_net_get_utc() ;
-		time_t secs = utc_clock/1000;
-		struct tm t;
-		t = *gf_gmtime(&secs);
-		gf_fprintf(logs, "UTC %d-%02d-%02dT%02d:%02d:%02dZ (TS "LLU") - ", 1900+t.tm_year, t.tm_mon+1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, utc_clock);
-	}
+	u32 flen = (u32) strlen(fmt);
+	if (flen && fmt[flen-1] == '\n') last_log_is_lf = GF_TRUE;
+	else last_log_is_lf = GF_FALSE;
 }
 
 int gf_fileio_printf(GF_FileIO *gfio, const char *format, va_list args);
@@ -664,7 +670,7 @@ void default_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, cons
 {
 	FILE *logs = gpac_log_file ? gpac_log_file : stderr;
 	if (tool != GF_LOG_APP)
-		do_log_time(logs);
+		do_log_time(logs, fmt);
 
 	if (gf_fileio_check(logs)) {
 		gf_fileio_printf((GF_FileIO *)logs, fmt, vlist);
@@ -698,7 +704,7 @@ void default_log_callback_color(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool
 		break;
 	}
 	if (tool != GF_LOG_APP)
-		do_log_time(stderr);
+		do_log_time(stderr, fmt);
 
 	vfprintf(stderr, fmt, vlist);
 	gf_sys_set_console_code(stderr, GF_CONSOLE_RESET);

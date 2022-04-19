@@ -2,7 +2,7 @@
  *					GPAC Multimedia Framework
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2021
+ *			Copyright (c) Telecom ParisTech 2005-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -719,9 +719,15 @@ static void h2_flush_send(GF_DownloadSession *sess)
 	u32 res;
 
 	while (sess->h2_send_data) {
+		GF_Err e;
 		h2_session_send(sess);
 		//read any frame pending from remote peer (window update and co)
-		gf_dm_read_data(sess, h2_flush, 1023, &res);
+		e = gf_dm_read_data(sess, h2_flush, 1023, &res);
+		if ((e<0) && (e != GF_IP_NETWORK_EMPTY) && (e != GF_IP_SOCK_WOULD_BLOCK)) {
+			sess->status = GF_NETIO_STATE_ERROR;
+			sess->last_error = e;
+			break;
+		}
 
 		//error or regular eos
 		if (!sess->h2_stream_id)
@@ -1105,6 +1111,137 @@ Bool gf_ssl_init_lib() {
 	return GF_FALSE;
 }
 
+#ifndef GPAC_DISABLE_LOG
+static const char *tls_rt_get_name(int type)
+{
+	switch(type) {
+#ifdef SSL3_RT_HEADER
+	case SSL3_RT_HEADER: return "TLS header";
+#endif
+	case SSL3_RT_CHANGE_CIPHER_SPEC: return "TLS change cipher";
+	case SSL3_RT_ALERT: return "TLS alert";
+	case SSL3_RT_HANDSHAKE: return "TLS handshake";
+	case SSL3_RT_APPLICATION_DATA: return "TLS app data";
+	default: return "TLS Unknown";
+	}
+}
+
+static const char *ssl_msg_get_name(int version, int msg)
+{
+#ifdef SSL_CTRL_SET_MSG_CALLBACK
+
+#ifdef SSL2_VERSION_MAJOR
+	if (version == SSL2_VERSION_MAJOR) {
+		switch(msg) {
+		case SSL2_MT_ERROR: return "Error";
+		case SSL2_MT_CLIENT_HELLO: return "Client hello";
+		case SSL2_MT_CLIENT_MASTER_KEY: return "Client key";
+		case SSL2_MT_CLIENT_FINISHED: return "Client finished";
+		case SSL2_MT_SERVER_HELLO: return "Server hello";
+		case SSL2_MT_SERVER_VERIFY: return "Server verify";
+		case SSL2_MT_SERVER_FINISHED: return "Server finished";
+		case SSL2_MT_REQUEST_CERTIFICATE: return "Request CERT";
+		case SSL2_MT_CLIENT_CERTIFICATE: return "Client CERT";
+		}
+	} else
+#endif
+	if (version == SSL3_VERSION_MAJOR) {
+		switch(msg) {
+		case SSL3_MT_HELLO_REQUEST: return "Hello request";
+		case SSL3_MT_CLIENT_HELLO: return "Client hello";
+		case SSL3_MT_SERVER_HELLO: return "Server hello";
+	#ifdef SSL3_MT_NEWSESSION_TICKET
+		case SSL3_MT_NEWSESSION_TICKET: return "Newsession Ticket";
+	#endif
+		case SSL3_MT_CERTIFICATE: return "Certificate";
+		case SSL3_MT_SERVER_KEY_EXCHANGE: return "Server key exchange";
+		case SSL3_MT_CLIENT_KEY_EXCHANGE: return "Client key exchange";
+		case SSL3_MT_CERTIFICATE_REQUEST: return "Request CERT";
+		case SSL3_MT_SERVER_DONE: return "Server finished";
+		case SSL3_MT_CERTIFICATE_VERIFY: return "CERT verify";
+		case SSL3_MT_FINISHED: return "Finished";
+#ifdef SSL3_MT_CERTIFICATE_STATUS
+		case SSL3_MT_CERTIFICATE_STATUS: return "Certificate Status";
+#endif
+#ifdef SSL3_MT_ENCRYPTED_EXTENSIONS
+		case SSL3_MT_ENCRYPTED_EXTENSIONS: return "Encrypted Extensions";
+#endif
+#ifdef SSL3_MT_SUPPLEMENTAL_DATA
+		case SSL3_MT_SUPPLEMENTAL_DATA: return "Supplemental data";
+#endif
+#ifdef SSL3_MT_END_OF_EARLY_DATA
+		case SSL3_MT_END_OF_EARLY_DATA: return "End of early data";
+#endif
+#ifdef SSL3_MT_KEY_UPDATE
+		case SSL3_MT_KEY_UPDATE: return "Key update";
+#endif
+#ifdef SSL3_MT_NEXT_PROTO
+		case SSL3_MT_NEXT_PROTO: return "Next protocol";
+#endif
+#ifdef SSL3_MT_MESSAGE_HASH
+		case SSL3_MT_MESSAGE_HASH: return "Message hash";
+#endif
+		}
+	}
+#endif
+	return "Unknown";
+}
+
+static void ssl_on_log(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *udat)
+{
+	const char *msg_name, *tls_rt_name;
+	int msg_type;
+	char szUnknown[32];
+	const char *szVersion = NULL;
+
+	if (!version) return;
+#ifdef SSL3_RT_INNER_CONTENT_TYPE
+	if (content_type == SSL3_RT_INNER_CONTENT_TYPE) return;
+#endif
+
+	switch (version) {
+#ifdef SSL2_VERSION
+	case SSL2_VERSION: szVersion = "SSLv2"; break;
+#endif
+#ifdef SSL3_VERSION
+	case SSL3_VERSION: szVersion = "SSLv3"; break;
+#endif
+	case TLS1_VERSION: szVersion = "TLSv1.0"; break;
+#ifdef TLS1_1_VERSION
+	case TLS1_1_VERSION: szVersion = "TLSv1.1"; break;
+#endif
+#ifdef TLS1_2_VERSION
+	case TLS1_2_VERSION: szVersion = "TLSv1.2"; break;
+#endif
+#ifdef TLS1_3_VERSION
+	case TLS1_3_VERSION: szVersion = "TLSv1.3"; break;
+#endif
+	case 0: break;
+	default:
+		snprintf(szUnknown, 31, "(%x)", version);
+		szVersion = szUnknown;
+		break;
+	}
+	version >>= 8;
+	if ((version == SSL3_VERSION_MAJOR) && content_type)
+		tls_rt_name = tls_rt_get_name(content_type);
+	else
+		tls_rt_name = "";
+
+	if (content_type == SSL3_RT_CHANGE_CIPHER_SPEC) {
+		msg_type = *(char *)buf;
+		msg_name = "Change cipher spec";
+	} else if (content_type == SSL3_RT_ALERT) {
+		msg_type = (((char *)buf)[0] << 8) + ((char *)buf)[1];
+		msg_name = SSL_alert_desc_string_long(msg_type);
+	} else {
+		msg_type = *(char *)buf;
+		msg_name = ssl_msg_get_name(version, msg_type);
+	}
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_NETWORK, ("[%s] %s %s (%d)\n", szVersion, tls_rt_name, msg_name, msg_type));
+}
+#endif //GPAC_DISABLE_LOG
+
 static int ssl_init(GF_DownloadManager *dm, u32 mode)
 {
 #if OPENSSL_VERSION_NUMBER > 0x00909000
@@ -1152,6 +1289,9 @@ static int ssl_init(GF_DownloadManager *dm, u32 mode)
 
 	dm->ssl_ctx = SSL_CTX_new(meth);
 	if (!dm->ssl_ctx) goto error;
+	SSL_CTX_set_options(dm->ssl_ctx, SSL_OP_ALL);
+//	SSL_CTX_set_max_proto_version(dm->ssl_ctx, 0);
+
 	SSL_CTX_set_default_verify_paths(dm->ssl_ctx);
 	SSL_CTX_load_verify_locations (dm->ssl_ctx, NULL, NULL);
 	/* SSL_VERIFY_NONE instructs OpenSSL not to abort SSL_connect if the
@@ -1159,6 +1299,13 @@ static int ssl_init(GF_DownloadManager *dm, u32 mode)
 	 ssl_check_certificate, which provides much better diagnostics
 	 than examining the error stack after a failed SSL_connect.  */
 	SSL_CTX_set_verify(dm->ssl_ctx, SSL_VERIFY_NONE, NULL);
+
+#ifndef GPAC_DISABLE_LOG
+	if (gf_log_tool_level_on(GF_LOG_NETWORK, GF_LOG_DEBUG) ) {
+		SSL_CTX_set_msg_callback(dm->ssl_ctx, ssl_on_log);
+	}
+#endif
+
 
 #ifdef GPAC_HAS_HTTP2
 	if (!dm->disable_http2) {
@@ -1234,6 +1381,13 @@ void *gf_ssl_server_context_new(const char *cert, const char *key)
 		return NULL;
 	}
 
+#ifndef GPAC_DISABLE_LOG
+	if (gf_log_tool_level_on(GF_LOG_NETWORK, GF_LOG_DEBUG) ) {
+		SSL_CTX_set_msg_callback(ctx, ssl_on_log);
+	}
+#endif
+
+
 #ifdef GPAC_HAS_HTTP2
 	if (!gf_opts_get_bool("core", "no-h2")) {
 		next_proto_list[0] = NGHTTP2_PROTO_VERSION_ID_LEN;
@@ -1275,11 +1429,7 @@ void *gf_ssl_new(void *ssl_ctx, GF_Socket *client_sock, GF_Err *e)
 	*e = GF_OK;
 	return ssl;
 }
-void gf_ssl_del(void *ssl)
-{
-	SSL_shutdown(ssl);
-	SSL_free(ssl);
-}
+
 
 static GF_Err gf_ssl_write(void *ssl_ctx, const u8 *buffer, u32 size)
 {
@@ -1707,7 +1857,7 @@ GF_Err gf_dm_sess_send_reply(GF_DownloadSession *sess, u32 reply_code, const cha
 	gf_dynstrcat(&rsp_buf, "\r\n", NULL);
 	if (!rsp_buf) return GF_OUT_OF_MEM;
 
-	GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTP] send reply for %s: %s\n", sess->orig_url, rsp_buf));
+	GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTP] send reply for %s:\n%s\n", sess->orig_url, rsp_buf));
 
 	if (response_body) {
 		gf_dynstrcat(&rsp_buf, response_body, NULL);
@@ -2922,6 +3072,11 @@ static void gf_dm_connect(GF_DownloadSession *sess)
 					SSL_load_error_strings();
 					ERR_error_string_n(ERR_get_error(), msg, sizeof(msg));
 					GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[SSL] Cannot connect, error %s\n", msg));
+#ifdef GPAC_HAS_HTTP2
+					if (!sess->dm->disable_http2) {
+						GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("\tYou may want to retry with HTTP/2 support disabled (-no-h2)\n"));
+					}
+#endif
 					sess->last_error = GF_SERVICE_ERROR;
 				} else {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[SSL] Cannot connect, error %d\n", ret));
@@ -4454,7 +4609,7 @@ static GF_Err http_send_headers(GF_DownloadSession *sess, char * sHTTP) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_HTTP, ("Cache Entry : %p, FAILED to append cache directives.", sess->cache_entry));
 		}
 
-		if (etag) PUSH_HDR("If-None-Match", "etag")
+		if (etag) PUSH_HDR("If-None-Match", etag)
 		if (last_modif) PUSH_HDR("If-Modified-Since", last_modif)
 	}
 
@@ -4834,9 +4989,9 @@ static GF_Err wait_for_header_and_parse(GF_DownloadSession *sess, char * sHTTP)
 					return GF_IP_NETWORK_EMPTY;
 				}
 				if (!sess->server_mode && (gf_sys_clock_high_res() - sess->request_start_time > 1000 * sess->request_timeout)) {
-					sess->last_error = GF_IP_NETWORK_EMPTY;
+					sess->last_error = GF_IP_NETWORK_FAILURE;
 					sess->status = GF_NETIO_STATE_ERROR;
-					return GF_IP_NETWORK_EMPTY;
+					return GF_IP_NETWORK_FAILURE;
 				}
 				if (sess->server_mode)
 					sess->last_error = GF_IP_NETWORK_EMPTY;
@@ -6016,7 +6171,7 @@ const char * gf_cache_get_cache_filename_range( const GF_DownloadSession * sess,
 \param sess The session
 \param flags The new flags for the session - if flags is 0xFFFFFFFF, existing flags are not modified
 \param user_io The new callback function
-\param cbk The new user data to ba used in the callback function
+\param cbk The new user data to be used in the callback function
 \param GF_OK or error
  */
 GF_Err gf_dm_sess_reassign(GF_DownloadSession *sess, u32 flags, gf_dm_user_io user_io, void *cbk)
@@ -6181,7 +6336,7 @@ GF_Err gf_dm_set_localcache_provider(GF_DownloadManager *dm, Bool (*local_cache_
 }
 
 GF_EXPORT
-const DownloadedCacheEntry gf_dm_add_cache_entry(GF_DownloadManager *dm, const char *szURL, GF_Blob *blob, u64 start_range, u64 end_range, const char *mime, Bool clone_memory, u32 download_time_ms)
+DownloadedCacheEntry gf_dm_add_cache_entry(GF_DownloadManager *dm, const char *szURL, GF_Blob *blob, u64 start_range, u64 end_range, const char *mime, Bool clone_memory, u32 download_time_ms)
 {
 	u32 i, count;
 	DownloadedCacheEntry the_entry = NULL;
@@ -6348,11 +6503,17 @@ void gf_dm_sess_flush_h2(GF_DownloadSession *sess)
 
 	in_time = gf_sys_clock_high_res();
 	while (nghttp2_session_want_read(sess->h2_sess->ng_sess)) {
+		GF_Err e;
 		if (gf_sys_clock_high_res() - in_time > 100000)
 			break;
 
 		//read any frame pending from remote peer (window update and co)
-		gf_dm_read_data(sess, h2_flush, 1023, &res);
+		e = gf_dm_read_data(sess, h2_flush, 2023, &res);
+		if ((e<0) && (e != GF_IP_NETWORK_EMPTY) && (e != GF_IP_SOCK_WOULD_BLOCK)) {
+			sess->last_error = e;
+			sess->status = GF_NETIO_STATE_ERROR;
+			break;
+		}
 	}
 #endif
 }

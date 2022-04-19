@@ -2052,7 +2052,7 @@ GF_Err gf_stretch_bits(GF_VideoSurface *dst, GF_VideoSurface *src, GF_Window *ds
 		load_line = load_line_vyuy;
 		break;
 	default:
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("Source pixel format %s not supported by gf_stretch_bits\n", gf_pixel_fmt_name(src->pixel_format) ));
+		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("Source pixel format %s not supported by gf_stretch_bits\n", gf_pixel_fmt_name(src->pixel_format) ));
 		return GF_NOT_SUPPORTED;
 	}
 
@@ -4325,6 +4325,8 @@ GF_Color gf_color_parse(const char *name)
 {
 	u32 i, count;
 	u32 res;
+	if (!strcmp(name, "none") )
+		return 0;
 	if ((name[0]=='$') || (name[0]=='#')) {
 		sscanf(name+1, "%x", &res);
 		if (strlen(name+1) == 8) return res;
@@ -4343,7 +4345,7 @@ GF_Color gf_color_parse(const char *name)
 			return res;
 		}
 	}
-
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Unknown color code %s, using 0x00000000\n", name));
 	return 0;
 
 }

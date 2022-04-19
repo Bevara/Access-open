@@ -1325,6 +1325,9 @@
     <ClCompile Include="..\..\src\filters\mux_isom.c">
       <Filter>filters</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filters\mux_ogg.c">
+      <Filter>filters</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\filters\out_audio.c">
       <Filter>filters</Filter>
     </ClCompile>
@@ -1382,6 +1385,9 @@
     <ClCompile Include="..\..\src\filters\resample_audio.c">
       <Filter>filters</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filters\restamp.c">
+      <Filter>filters</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\filters\rewind.c">
       <Filter>filters</Filter>
     </ClCompile>
@@ -1419,6 +1425,12 @@
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\dasher.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\bs_agg.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\bs_split.c">
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\bsrw.c">
@@ -1581,6 +1593,12 @@
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\tssplit.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\ttml_conv.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\write_tx3g.c">
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\dec_mediacodec.c">

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -26,7 +26,6 @@
 #ifndef GPAC_DISABLE_CORE_TOOLS
 
 #if defined(WIN32) || defined(_WIN32_WCE)
-
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
 #ifdef _WIN32_WCE
@@ -35,7 +34,6 @@
 #if !defined(__GNUC__)
 #pragma comment(lib, "winsock")
 #endif
-
 #else
 
 #include <sys/timeb.h>
@@ -50,17 +48,22 @@
 
 #include <windows.h>
 
-#if !defined(__GNUC__)
-
 #if defined(IPV6_MULTICAST_IF)
 #define GPAC_HAS_IPV6 1
-#pragma message("Using WinSock IPV6")
 #else
 #undef GPAC_HAS_IPV6
+#endif
+
+ /*
+ #if !defined(__GNUC__)
+#if defined(GPAC_HAS_IPV6)
+#pragma message("Using WinSock IPV6")
+#else
 #pragma message("Using WinSock IPV4")
 #endif
 
 #endif
+*/
 
 #include <errno.h>
 
@@ -396,8 +399,8 @@ GF_Err gf_sk_set_buffer_size(GF_Socket *sock, Bool SendBuffer, u32 NewSize)
 	} else {
 		res = getsockopt(sock->socket, SOL_SOCKET, SO_RCVBUF, (char *) &nsize, &psize );
 	}
-	if ((res>=0) && (nsize=!NewSize)) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[Socket] Asked to set socket %s buffer size to %d but system used %d\n", SendBuffer ? "send" : "receive", NewSize, nsize));
+	if ((res>=0) && (nsize!=NewSize)) {
+		GF_LOG(nsize <= NewSize ? GF_LOG_WARNING : GF_LOG_DEBUG, GF_LOG_NETWORK, ("[Socket] Asked to set socket %s buffer size to %d but system used %d\n", SendBuffer ? "send" : "receive", NewSize, nsize));
 	}
 
 	return GF_OK;
@@ -533,11 +536,11 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 		}
 		server_add.sun_family = AF_UNIX;
 		strcpy(server_add.sun_path, PeerName);
-		if (connect(sock->socket, (struct sockaddr *) &server_add, sizeof(struct sockaddr_un)) < 0) {
+		if (connect(sock->socket, (struct sockaddr *)&server_add, sizeof(struct sockaddr_un)) < 0) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[Socket] Failed to connect unix domain socket to %s\n", PeerName));
 			return GF_IP_CONNECTION_FAILURE;
-	     }
-	     return GF_OK;
+		}
+		return GF_OK;
 #else
 	     return GF_NOT_SUPPORTED;
 #endif
@@ -614,10 +617,6 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 	return GF_IP_CONNECTION_FAILURE;
 
 #else
-	if (local_ip) {
-		GF_Err e = gf_sk_bind(sock, local_ip, PortNumber, PeerName, PortNumber, GF_SOCK_REUSE_PORT);
-		if (e) return e;
-	}
 	if (!sock->socket) {
 		sock->socket = socket(AF_INET, (sock->flags & GF_SOCK_IS_TCP) ? SOCK_STREAM : SOCK_DGRAM, 0);
 		if (sock->flags & GF_SOCK_NON_BLOCKING)
@@ -646,6 +645,14 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 		}
 		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Host %s found\n", PeerName));
 		memcpy((char *) &sock->dest_addr.sin_addr, Host->h_addr_list[0], sizeof(u32));
+	}
+
+	if (local_ip) {
+		GF_Err e = gf_sk_bind(sock, local_ip, PortNumber, PeerName, PortNumber, GF_SOCK_REUSE_PORT);
+		if (e) return e;
+	}
+	if (!(sock->flags & GF_SOCK_IS_TCP)) {
+		return GF_OK;
 	}
 
 	GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Connecting to %s:%d\n", PeerName, PortNumber));
@@ -1455,6 +1462,13 @@ GF_Err gf_sk_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *By
 		switch (res) {
 		case EAGAIN:
 			return GF_IP_SOCK_WOULD_BLOCK;
+
+#if defined(WIN32) || defined(_WIN32_WCE)
+		//may happen if no select
+		case WSAEWOULDBLOCK:
+			return GF_IP_SOCK_WOULD_BLOCK;
+#endif
+
 #ifndef __SYMBIAN32__
 		case EMSGSIZE:
 			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] error reading: %s\n", gf_errno_str(LASTSOCKERROR)));
@@ -1462,7 +1476,8 @@ GF_Err gf_sk_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *By
 		case ENOTCONN:
 		case ECONNRESET:
 		case ECONNABORTED:
-			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[socket] error reading: %s\n", gf_errno_str(LASTSOCKERROR)));
+			//log as debug, let higher level decide if this is an error or not
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_NETWORK, ("[socket] error reading: %s\n", gf_errno_str(LASTSOCKERROR)));
 			return GF_IP_CONNECTION_CLOSED;
 #endif
 		default:

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / AAC ADTS reframer filter
@@ -74,6 +74,7 @@ typedef struct
 	Bool prev_sap;
 	u32 bitrate;
 	GF_Err in_error;
+	Bool copy_props;
 } GF_LATMDmxCtx;
 
 
@@ -215,6 +216,7 @@ GF_Err latm_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	}
+	if (ctx->timescale) ctx->copy_props = GF_TRUE;
 
 	return GF_OK;
 }
@@ -242,8 +244,12 @@ static void latm_dmx_check_dur(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->index_size = 0;
 
@@ -298,7 +304,6 @@ static void latm_dmx_check_dur(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	}
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 }
 
 static void latm_dmx_check_pid(GF_Filter *filter, GF_LATMDmxCtx *ctx)
@@ -308,17 +313,19 @@ static void latm_dmx_check_pid(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	u32 codecid;
 	if (!ctx->opid) {
 		ctx->opid = gf_filter_pid_new(filter);
-		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		latm_dmx_check_dur(filter, ctx);
 	}
 	if (!GF_M4ASampleRates[ctx->acfg.base_sr_index]) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[LATMDmx] Wrong sample rate in audio config, broken stream\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[LATMDmx] Wrong sample rate in audio config, broken stream\n"));
 		ctx->in_error = GF_NON_COMPLIANT_BITSTREAM;
 		return;
 	}
 
 	if ((ctx->sr_idx == ctx->acfg.base_sr_index) && (ctx->nb_ch == ctx->acfg.nb_chan )
-		&& (ctx->base_object_type == ctx->acfg.base_object_type) ) return;
+		&& (ctx->base_object_type == ctx->acfg.base_object_type) && !ctx->copy_props) return;
+
+	ctx->copy_props = GF_FALSE;
+	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 
 	if (ctx->acfg.base_object_type==GF_M4A_USAC)
 		codecid = GF_CODECID_USAC;
@@ -334,6 +341,8 @@ static void latm_dmx_check_pid(GF_Filter *filter, GF_LATMDmxCtx *ctx)
 	}
 	if (ctx->duration.num)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 
 
 	ctx->nb_ch = ctx->acfg.nb_chan;
@@ -416,6 +425,7 @@ static Bool latm_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	case GF_FEVT_STOP:
 		//don't cancel event
 		ctx->is_playing = GF_FALSE;
+		ctx->cts = 0;
 		return GF_FALSE;
 
 	case GF_FEVT_SET_SPEED:
@@ -481,6 +491,9 @@ GF_Err latm_dmx_process(GF_Filter *filter)
 	//input pid sets some timescale - we flushed pending data , update cts
 	if (ctx->timescale && pck) {
 		cts = gf_filter_pck_get_cts(pck);
+		//init cts at first packet
+		if (!ctx->cts && (cts != GF_FILTER_NO_TS))
+			ctx->cts = cts;
 	}
 
 	prev_pck_size = ctx->latm_buffer_size;
@@ -627,11 +640,11 @@ static const GF_FilterCapability LATMDmxCaps[] =
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "latm"),
 	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "audio/aac+latm"),
-	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
-	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG4),
-	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_MP),
-	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_LCP),
-	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_SSRP),
+	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
+	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG4),
+	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_MP),
+	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_LCP),
+	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_SSRP),
 	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	{0},
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),

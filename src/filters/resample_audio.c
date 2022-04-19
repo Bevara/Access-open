@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / audio resample filter
@@ -33,7 +33,7 @@
 typedef struct
 {
 	//opts
-	u32 och, osr, ofmt;
+	u32 och, osr, osfmt;
 
 	//internal
 	GF_FilterPid *ipid, *opid;
@@ -210,7 +210,7 @@ static GF_Err resample_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	//initial config
 	if (!ctx->freq || !ctx->nb_ch || !ctx->afmt) {
 		GF_Err e;
-		ctx->afmt = ctx->ofmt ? ctx->ofmt : afmt;
+		ctx->afmt = ctx->osfmt ? ctx->osfmt : afmt;
 		ctx->freq = ctx->osr ? ctx->osr : sr;
 		ctx->nb_ch = ctx->och ? ctx->och : nb_ch;
 
@@ -294,7 +294,9 @@ static GF_Err resample_process(GF_Filter *filter)
 				u64 cts = gf_timestamp_rescale(gf_filter_pck_get_cts(ctx->in_pck), FIX2INT(ctx->speed * ctx->timescale), ctx->freq);
 				if (!ctx->out_cts_plus_one) {
 					ctx->out_cts_plus_one = cts + 1;
-				} else if (ctx->freq != ctx->input_ai.samplerate) {
+				}
+				//if we drift by more than 200ms, resync to input cts
+				else {
 					s64 diff = cts;
 					diff -= ctx->out_cts_plus_one-1;
 					//200ms max
@@ -411,6 +413,7 @@ static GF_Err resample_reconfigure_output(GF_Filter *filter, GF_FilterPid *pid)
 		ctx->passthrough = GF_TRUE;
 
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(sr));
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, &PROP_UINT(sr));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_AUDIO_FORMAT, &PROP_UINT(afmt));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(nb_ch));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CHANNEL_LAYOUT, &PROP_LONGUINT(ch_cfg));
@@ -458,10 +461,10 @@ static const GF_FilterCapability ResamplerCaps[] =
 #define OFFS(_n)	#_n, offsetof(GF_ResampleCtx, _n)
 static GF_FilterArgs ResamplerArgs[] =
 {
-	{ OFFS(och), "desired number of output audio channels - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
-	{ OFFS(osr), "desired sample rate of output audio - 0 for auto", GF_PROP_UINT, "0", NULL, 0},
-	{ OFFS(ofmt), "desired format of output audio - none for auto", GF_PROP_PCMFMT, "none", NULL, 0},
-	{ OFFS(olayout), "desired CICP layout of output audio - null for auto", GF_PROP_STRING, NULL, NULL, 0},
+	{ OFFS(och), "desired number of output audio channels (0 for auto)", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(osr), "desired sample rate of output audio (0 for auto)", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(osfmt), "desired sample format of output audio (`none` for auto)", GF_PROP_PCMFMT, "none", NULL, 0},
+	{ OFFS(olayout), "desired CICP layout of output audio (null for auto)", GF_PROP_STRING, NULL, NULL, 0},
 	{0}
 };
 

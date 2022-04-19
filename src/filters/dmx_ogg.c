@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / XIPH OGG demux filter
@@ -30,7 +30,6 @@
 
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_OGG)
 #include <gpac/internal/ogg.h>
-#include <gpac/internal/isomedia_dev.h>
 //#include <ogg/ogg.h>
 #include <gpac/avparse.h>
 #include <gpac/base_coding.h>
@@ -72,7 +71,7 @@ typedef struct
 
 	GF_VorbisParser *vorbis_parser;
 
-	GF_OpusParser *opus_parser;
+	GF_OpusConfig *opus_cfg;
 } GF_OGGStream;
 
 typedef struct
@@ -98,6 +97,8 @@ typedef struct
 	ogg_sync_state oy;
 
 	GF_FilterPid *art_opid;
+
+	Bool is_dash;
 } GF_OGGDmxCtx;
 
 void oggdmx_signal_eos(GF_OGGDmxCtx *ctx)
@@ -209,36 +210,30 @@ static void oggdmx_get_stream_info(ogg_packet *oggpacket, OGGInfo *info)
 
 static void oggdmx_declare_pid(GF_Filter *filter, GF_OGGDmxCtx *ctx, GF_OGGStream *st)
 {
+	char szName[20];
+	const char *st_name;
+	u32 id;
 	if (!st->opid) {
 		st->opid = gf_filter_pid_new(filter);
 	}
-//	gf_filter_pid_set_property(st->opid, GF_PROP_PID_ID, &PROP_UINT(st->serial_no) );
-	gf_filter_pid_set_property(st->opid, GF_PROP_PID_ID, &PROP_UINT(1 + gf_list_find(ctx->streams, st) ) );
+
+	id = 1 + gf_list_find(ctx->streams, st);
+	gf_filter_pid_set_property(st->opid, GF_PROP_PID_ID, &PROP_UINT(id ) );
 	gf_filter_pid_set_property(st->opid, GF_PROP_PID_STREAM_TYPE, &PROP_UINT(st->info.streamType) );
 	gf_filter_pid_set_property(st->opid, GF_PROP_PID_CODECID, &PROP_UINT(st->info.type) );
 	gf_filter_pid_set_property(st->opid, GF_PROP_PID_BITRATE, &PROP_UINT(st->info.bitrate) );
 	gf_filter_pid_set_property(st->opid, GF_PROP_PID_TIMESCALE, &PROP_UINT(st->info.sample_rate ? st->info.sample_rate : st->info.frame_rate.den) );
 	gf_filter_pid_set_property(st->opid, GF_PROP_PID_PROFILE_LEVEL, &PROP_UINT(0xFE) );
 
+	st_name = gf_stream_type_name(st->info.streamType);
+	sprintf(szName, "%c%d", st_name[0], id);
+	gf_filter_pid_set_name(st->opid, szName);
+
 	//opus DSI is formatted as box (ffmpeg compat) we might want to change that to avoid the box header
 	if (st->info.type==GF_CODECID_OPUS) {
-		GF_OpusSpecificBox *opus = (GF_OpusSpecificBox *)gf_isom_box_new(GF_ISOM_BOX_TYPE_DOPS);
 		st->dsi_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-		opus->version = 0;
-
-		opus->OutputChannelCount = st->opus_parser->OutputChannelCount;
-		opus->PreSkip = st->opus_parser->PreSkip;
-		opus->InputSampleRate = st->opus_parser->InputSampleRate;
-		opus->OutputGain = st->opus_parser->OutputGain;
-		opus->ChannelMappingFamily = st->opus_parser->ChannelMappingFamily;
-		opus->StreamCount = st->opus_parser->StreamCount;
-		opus->CoupledCount = st->opus_parser->CoupledCount;
-		memcpy(opus->ChannelMapping, st->opus_parser->ChannelMapping, sizeof(char)*255);
-		gf_isom_box_size((GF_Box *) opus);
-		gf_isom_box_write((GF_Box *) opus, st->dsi_bs);
-		gf_isom_box_del((GF_Box *) opus);
-
-		st->info.nb_chan = st->opus_parser->OutputChannelCount;
+		gf_odf_opus_cfg_write_bs(st->opus_cfg, st->dsi_bs);
+		st->info.nb_chan = st->opus_cfg->OutputChannelCount;
 	}
 
 	if (st->dsi_bs) {
@@ -322,7 +317,7 @@ static void oggdmx_new_stream(GF_Filter *filter, GF_OGGDmxCtx *ctx, ogg_page *og
 		GF_SAFEALLOC(st->vorbis_parser, GF_VorbisParser);
 		break;
 	case GF_CODECID_OPUS:
-		GF_SAFEALLOC(st->opus_parser, GF_OpusParser);
+		GF_SAFEALLOC(st->opus_cfg, GF_OpusConfig);
 		break;
 	default:
 		break;
@@ -384,11 +379,11 @@ static void oggdmx_check_dur(GF_Filter *filter, GF_OGGDmxCtx *ctx)
 	u64 max_gran;
 	Bool has_stream = GF_FALSE;
 	GF_VorbisParser vp;
-	GF_OpusParser op;
+	GF_OpusConfig op;
 	u64 recompute_ts;
 	GF_Fraction64 dur;
 
-	if (!ctx->index || ctx->duration.num) return;
+	if (!ctx->index || ctx->duration.num || ctx->is_dash) return;
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
@@ -495,7 +490,8 @@ static void oggdmx_check_dur(GF_Filter *filter, GF_OGGDmxCtx *ctx)
 			GF_OGGStream *st;
 			ctx->duration = dur;
 			while ( (st = gf_list_enum(ctx->streams, &i)) ) {
-				gf_filter_pid_set_property(st->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+				if (st->opid)
+					gf_filter_pid_set_property(st->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 			}
 		}
 	}
@@ -519,6 +515,7 @@ static Bool oggdmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		if (! ctx->is_file) {
 			return GF_FALSE;
 		}
+		if (evt->play.no_byterange_forward) ctx->is_dash = GF_TRUE;
 		oggdmx_check_dur(filter, ctx);
 
 
@@ -607,7 +604,7 @@ static void oggdmx_parse_picture(GF_Filter *filter, GF_OGGStream *st, u8 *data_b
 		if (ctx->expart) {
 			GF_Err e = gf_filter_pid_raw_new(filter, NULL, NULL, NULL, NULL, output + skip, img_size, GF_FALSE, &ctx->art_opid);
 			if (e) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[OGGDmx] error setting up video pid for cover art: %s\n", gf_error_to_string(e) ));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[OGGDmx] error setting up video pid for cover art: %s\n", gf_error_to_string(e) ));
 			}
 			if (ctx->art_opid) {
 				u8 *out_buffer;
@@ -790,15 +787,15 @@ GF_Err oggdmx_process(GF_Filter *filter)
 				case GF_CODECID_VORBIS:
 					res = gf_vorbis_parse_header(st->vorbis_parser, (char *) oggpacket.packet, oggpacket.bytes);
 					if (!res) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[OGG] Failed to parse Vorbis header\n"));
+						GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[OGG] Failed to parse Vorbis header\n"));
 					} else {
 						add_page = GF_TRUE;
 					}
 					break;
 				case GF_CODECID_OPUS:
-					res = gf_opus_parse_header(st->opus_parser, (char *) oggpacket.packet, oggpacket.bytes);
+					res = gf_opus_parse_header(st->opus_cfg, (char *) oggpacket.packet, oggpacket.bytes);
 					if (!res) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[OGG] Failed to parse Opus header\n"));
+						GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[OGG] Failed to parse Opus header\n"));
 					}
 					break;
 				case GF_CODECID_THEORA:
@@ -850,7 +847,7 @@ GF_Err oggdmx_process(GF_Filter *filter)
 						if (!block_size) continue;
 					}
 					else if (st->info.type==GF_CODECID_OPUS) {
-						block_size = gf_opus_check_frame(st->opus_parser, (char *) oggpacket.packet, oggpacket.bytes);
+						block_size = gf_opus_check_frame(st->opus_cfg, (char *) oggpacket.packet, oggpacket.bytes);
 						if (!block_size) {
 							if ((oggpacket.bytes>8) && !strnicmp(oggpacket.packet, "OpusTags", 8)) {
 								oggdmx_parse_tags(filter, st, oggpacket.packet + 8, oggpacket.bytes - 8);
@@ -861,7 +858,7 @@ GF_Err oggdmx_process(GF_Filter *filter)
 						if (!st->recomputed_ts) {
 							//compat with old arch (keep same hashes), to remove once dropping it
 							if (!gf_sys_old_arch_compat()) {
-								gf_filter_pid_set_property(st->opid, GF_PROP_PID_DELAY, &PROP_LONGSINT( -st->opus_parser->PreSkip));
+								gf_filter_pid_set_property(st->opid, GF_PROP_PID_DELAY, &PROP_LONGSINT( -st->opus_cfg->PreSkip));
 							}
 						}
 					}
@@ -927,7 +924,7 @@ static void oggdmx_finalize(GF_Filter *filter)
 		ogg_stream_clear(&st->os);
 		if (st->dsi_bs) gf_bs_del(st->dsi_bs);
 		if (st->vorbis_parser) gf_free(st->vorbis_parser);
-		if (st->opus_parser) gf_free(st->opus_parser);
+		if (st->opus_cfg) gf_free(st->opus_cfg);
 		gf_free(st);
 	}
 	gf_list_del(ctx->streams);
@@ -965,15 +962,15 @@ static const GF_FilterCapability OGGDmxCaps[] =
 #define OFFS(_n)	#_n, offsetof(GF_OGGDmxCtx, _n)
 static const GF_FilterArgs OGGDmxArgs[] =
 {
-	{ OFFS(index), "indexing window length (unimplemented, only 0 disables stream probing for duration), ", GF_PROP_DOUBLE, "1.0", NULL, 0},
-	{ OFFS(expart), "expose pictures as a dedicated video pid", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(index), "indexing window length (not implemented), use 0 to disable stream probing for duration), ", GF_PROP_DOUBLE, "1.0", NULL, 0},
+	{ OFFS(expart), "expose pictures as a dedicated video PID", GF_PROP_BOOL, "false", NULL, 0},
 	{0}
 };
 
 
 GF_FilterRegister OGGDmxRegister = {
 	.name = "oggdmx",
-	GF_FS_SET_DESCRIPTION("OGG demuxer")
+	GF_FS_SET_DESCRIPTION("OGG demultiplexer")
 	GF_FS_SET_HELP("This filter demultiplexes OGG files/data into a set of media PIDs and frames.")
 	.private_size = sizeof(GF_OGGDmxCtx),
 	.initialize = oggdmx_initialize,

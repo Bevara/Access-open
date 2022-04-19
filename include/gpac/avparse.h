@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Authoring Tools sub-project
@@ -119,6 +119,11 @@ typedef struct
 	Double fps;
 	/*! position of next object in the bitstream*/
 	u32 next_object_start;
+
+	/*! progressive video sequence */
+	Bool progresive;
+	/*! chroma format */
+	u8 chroma_fmt;
 } GF_M4VDecSpecInfo;
 
 
@@ -163,7 +168,7 @@ void gf_m4v_parser_reset(GF_M4VParser *m4v, u8 obj_type);
 thus you can seek the bitstream to copy the payload without re-seeking it
 \param m4v the mpeg video parser
 \param dsi pointer to the decoder specific info parsed
-\param frame_type set to the frame type (I:0, P:1, B:2)
+\param frame_type set to the frame type (I:1, P:2, B:3, 0: no frame header found)
 \param time_inc set to the time increment since last frame
 \param size set to the size of the compressed frame
 \param start set to the position of the first byte in the buffer/bitstream
@@ -352,35 +357,20 @@ Bool gf_vorbis_parse_header(GF_VorbisParser *vp, u8 *data, u32 data_len);
 */
 u32 gf_vorbis_check_frame(GF_VorbisParser *vp, u8 *data, u32 data_len);
 
-/*! OPUS parser*/
-typedef struct
-{
-	u32 version;
-
-	u32 sample_rate, channels;
-	u8 OutputChannelCount;
-	u16 PreSkip;
-	u32 InputSampleRate;
-	u16 OutputGain;
-
-	u8 ChannelMappingFamily, StreamCount, CoupledCount;
-	u8 ChannelMapping[255];
-} GF_OpusParser;
-
-/*! parses opus header packets - initializes the parser on success, leave it to NULL otherwise
-\param op pointer to a vorbis parser to use
+/*! parses opus header packets - initializes the config  on success, leave it to NULL otherwise
+\param cfg pointer to a opus config to fill
 \param data opus header buffer to parse
 \param data_len size of opus header buffer
 \return 1 if success, 0 if error
 */
-Bool gf_opus_parse_header(GF_OpusParser *op, u8 *data, u32 data_len);
+Bool gf_opus_parse_header(GF_OpusConfig *cfg, u8 *data, u32 data_len);
 
 /*! checks if an opus frame is valid
-\param op the vorbis parser to use
+\param cfg pointer to a opus config to use
 \param data source buffer
 \param data_len size of buffer
 \return 0 if init error or not a vorbis frame, otherwise returns the number of audio samples in this frame*/
-u32 gf_opus_check_frame(GF_OpusParser *op, u8 *data, u32 data_len);
+u32 gf_opus_check_frame(GF_OpusConfig *cfg, u8 *data, u32 data_len);
 
 #endif /*!defined(GPAC_DISABLE_AV_PARSERS) && !defined (GPAC_DISABLE_OGG)*/
 
@@ -669,13 +659,32 @@ Bool gf_ac3_parser(u8 *buffer, u32 buffer_size, u32 *pos, GF_AC3Config *out_hdr,
 \return GF_TRUE if success
 */
 Bool gf_ac3_parser_bs(GF_BitStream *bs, GF_AC3Config *hdr, Bool full_parse);
-/*! parses an EAC-3 header from a bitstream
+
+/*! parses an EAC-3 header from a buffer and checks for next frame/blocks presence
+\param buffer buffer to parse
+\param buffer_size size of buffer to parse
+\param pos set to start offset (in bytes) of the AC3 header parsed
+\param hdr will be filled by parser
+\param full_parse if GF_TRUE, complete parsing of the header will be done
+\return GF_TRUE if success
+*/
+Bool gf_eac3_parser(u8 *buffer, u32 buffer_size, u32 *pos, GF_AC3Config *hdr, Bool full_parse);
+
+/*! parses an EAC-3 header from a bitstream and checks for next frale/blocks presence
 \param bs bitstream to parse
 \param hdr will be filled by parser
 \param full_parse if GF_TRUE, complete parsing of the header will be done
 \return GF_TRUE if success
 */
 Bool gf_eac3_parser_bs(GF_BitStream *bs, GF_AC3Config *hdr, Bool full_parse);
+
+/*! parses an EAC-3 header from a bitstream but does'nt check for next frames/blocks
+\param bs bitstream to parse
+\param hdr will be filled by parser
+\return GF_TRUE if success
+*/
+Bool gf_eac3_parser_header_bs(GF_BitStream *bs, GF_AC3Config *hdr);
+
 /*! gets the number of channels in an AC3 frame
 \param acmod acmod of the associated frame header
 \return number of channels
@@ -719,7 +728,25 @@ GF_Err gf_avc_get_pps_info(u8 *pps, u32 pps_size, u32 *pps_id, u32 *sps_id);
 */
 GF_Err gf_hevc_get_sps_info(u8 *sps_data, u32 sps_size, u32 *sps_id, u32 *width, u32 *height, s32 *par_n, s32 *par_d);
 
+/*! gets basic information from a VVC Sequence Parameter Set
+\param sps_data SPS NAL buffer
+\param sps_size size of buffer
+\param sps_id set to the ID
+\param width set to the width
+\param height set to the height
+\param par_n set to the pixel aspect ratio numerator
+\param par_d set to the pixel aspect ratio denominator
+\return error code if any
+*/
+GF_Err gf_vvc_get_sps_info(u8 *sps_data, u32 sps_size, u32 *sps_id, u32 *width, u32 *height, s32 *par_n, s32 *par_d);
+
 #endif /*GPAC_DISABLE_AV_PARSERS*/
+
+/*! get VVC profile name
+\param video_prof profile value
+\return the profile name
+*/
+const char *gf_vvc_get_profile_name(u8 video_prof);
 
 /*! gets chroma format name from MPEG chroma format
 \param chroma_format the chroma format to query (1: 420, 2: 422, 3: 444)
@@ -731,11 +758,12 @@ const char * gf_avc_hevc_get_chroma_format_name(u8 chroma_format);
 \return the name of the profile
 */
 const char *gf_avc_get_profile_name(u8 profile_idc);
-/*! checks if an AVC profile is a range extension profile
+
+/*! checks if avcc extensions are used for this profile
 \param profile_idc the PL indication
-\return GF_TRUE if given profile is in range extensions
+\return GF_TRUE if extensions must be written in avcc for the given profile
 */
-Bool gf_avc_is_rext_profile(u8 profile_idc);
+Bool gf_avcc_use_extensions(u8 profile_idc);
 
 /*! gets HEVC profile name from profile indication
 \param profile_idc the PL indication

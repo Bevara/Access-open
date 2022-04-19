@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / VideoToolBox decoder filter
@@ -95,6 +95,7 @@ typedef struct
 	u32 cfg_crc;
 	u32 codecid;
 	Bool is_hardware;
+	Bool wait_rap;
 
 	GF_Err last_error;
 	
@@ -149,7 +150,7 @@ typedef struct
 
 	Bool profile_supported, can_reconfig;
 	u32 nb_consecutive_errors;
-	//openGL output
+	//OpenGL output
 #ifdef VTB_GL_TEXTURE
 	Bool use_gl_textures;
 	GF_CVGLTextureCacheREF cache_texture;
@@ -168,7 +169,7 @@ typedef struct __vtb_frame_ifce
 	CVPixelBufferRef frame;
 	GF_VTBDecCtx *ctx;
 	GF_FilterPacket *pck_src;
-	//openGL mode
+	//OpenGL mode
 #ifdef VTB_GL_TEXTURE
 	GF_CVGLTextureREF y, u, v;
 #endif
@@ -327,17 +328,22 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	
     dec_dsi = CFDictionaryCreateMutable(kCFAllocatorDefault, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
-	if (ctx->ofmt==1) {
+	switch (ctx->ofmt) {
+	case GF_PIXEL_YUV:
 		kColorSpace = kCVPixelFormatType_420YpCbCr8Planar;
 		ctx->pix_fmt = GF_PIXEL_YUV;
-	} else if (ctx->ofmt==2) {
+		break;
+	case GF_PIXEL_RGB:
 		kColorSpace = kCVPixelFormatType_24RGB;
 		ctx->pix_fmt = GF_PIXEL_RGB;
-	} else {
+		break;
+	default:
 		kColorSpace = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
 		ctx->pix_fmt = GF_PIXEL_NV12;
+		break;
 	}
 
+	ctx->wait_rap = GF_TRUE;
 	ctx->reorder_probe = ctx->reorder;
 	ctx->reorder_detected = GF_FALSE;
 	pid = gf_list_get(ctx->streams, 0);
@@ -950,11 +956,11 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 	GF_VTBDecCtx *ctx = gf_filter_get_udta(filter);
 
 	if (is_remove) {
-		if (ctx->opid) {
+		gf_list_del_item(ctx->streams, pid);
+		if (ctx->opid && !gf_list_count(ctx->streams)) {
 			gf_filter_pid_remove(ctx->opid);
 			ctx->opid = NULL;
 		}
-		gf_list_del_item(ctx->streams, pid);
 		return GF_OK;
 	}
 	if (! gf_filter_pid_check_caps(pid)) {
@@ -1006,7 +1012,7 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 
 	dsi = gf_filter_pid_get_property(pid, GF_PROP_PID_DECODER_CONFIG);
 	dsi_crc = dsi ? gf_crc_32(dsi->value.data.ptr, dsi->value.data.size) : 0;
-	if ((codecid==ctx->codecid) && (dsi_crc == ctx->cfg_crc) && ctx->width && ctx->height) {
+	if (ctx->opid && (codecid==ctx->codecid) && (dsi_crc == ctx->cfg_crc) && ctx->width && ctx->height) {
 		gf_filter_pid_copy_properties(ctx->opid, pid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, &PROP_UINT(GF_CODECID_RAW) );
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL);
@@ -1499,6 +1505,7 @@ static GF_Err vtbdec_flush_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	gf_list_add(ctx->frames_res, vtbframe);
 	return GF_OK;
 }
+
 static GF_Err vtbdec_process(GF_Filter *filter)
 {
     OSStatus status;
@@ -1553,7 +1560,11 @@ static GF_Err vtbdec_process(GF_Filter *filter)
 		gf_filter_pid_drop_packet(ref_pid);
 		return GF_OK;
 	}
-
+	if (ctx->wait_rap && !gf_filter_pck_get_sap(pck)) {
+		gf_filter_pid_drop_packet(ref_pid);
+		return GF_OK;
+	}
+	ctx->wait_rap = GF_FALSE;
 	in_buffer = (char *) gf_filter_pck_get_data(pck, &in_buffer_size);
 
 	//discard empty packets
@@ -2027,8 +2038,8 @@ static const GF_FilterCapability VTBDecCaps[] =
 static const GF_FilterArgs VTBDecArgs[] =
 {
 	{ OFFS(reorder), "number of frames to wait for temporal re-ordering", GF_PROP_UINT, "6", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(no_copy), "dispatch VTB frames into filter chain (no copy)", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(ofmt), "set default pixel format for decoded video. If not matched default to nv12", GF_PROP_PIXFMT, "nv12", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(no_copy), "dispatch decoded frames as OpenGL textures (true) or as copied packets (false) ", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(ofmt), "set default pixel format for decoded video. If not found, fall back to `nv12`", GF_PROP_PIXFMT, "nv12", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(disable_hw), "disable hardware decoding", GF_PROP_BOOL, "false", NULL, 0},
 	{}
 };

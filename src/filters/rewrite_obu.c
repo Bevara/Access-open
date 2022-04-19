@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / AV1 OBU rewrite filter
@@ -87,8 +87,6 @@ GF_Err obumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 
 	ctx->ipid = pid;
 
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL);
-
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_CODECID);
 	ctx->codec_id = p ? p->value.uint : 0;
 	switch (ctx->codec_id) {
@@ -104,7 +102,7 @@ GF_Err obumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 				ctx->ivf_hdr = 1;
 			}
 		} else {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[OBUWrite] Couldn't guess desired output format type, assuming plain OBU\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[OBUWrite] Couldn't guess desired output format type, assuming plain OBU\n"));
 		}
 		break;
 	case GF_CODECID_VP8:
@@ -122,7 +120,7 @@ GF_Err obumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 		GF_AV1_OBUArrayEntry *obu;
 		ctx->av1c = gf_odf_av1_cfg_read(dcd->value.data.ptr, dcd->value.data.size);
 		if (!ctx->av1c) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[OBUWrite] Invalid av1 config\n"));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[OBUWrite] Invalid av1 config\n"));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
 		ctx->av1b_cfg_size = 0;
@@ -180,6 +178,17 @@ GF_Err obumx_process(GF_Filter *filter)
 	}
 
 	data = (char *) gf_filter_pck_get_data(pck, &pck_size);
+	if (!pck_size) {
+		//if output and packet properties, forward - this is required for sinks using packets for state signaling
+		//such as TS muxer in dash mode looking for EODS property
+		if (ctx->opid && gf_filter_pck_has_properties(pck))
+			gf_filter_pck_forward(pck, ctx->opid);
+
+		gf_filter_pid_drop_packet(ctx->ipid);
+		return GF_OK;
+	}
+
+
 	hdr_size = 0;
 	size = pck_size;
 	//always add temporal delim
@@ -225,7 +234,7 @@ GF_Err obumx_process(GF_Filter *filter)
 			gf_av1_parse_obu_header(ctx->bs_r, &obu_type, &obu_extension_flag, &obu_has_size_field, &temporal_id, &spatial_id);
 
 			if (!obu_has_size_field) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[OBUWrite] OBU without size field, bug in demux filter !!\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[OBUWrite] OBU without size field, bug in demux filter !!\n"));
 				return GF_NON_COMPLIANT_BITSTREAM;
 			}
 			obu_size = (u32)gf_av1_leb128_read(ctx->bs_r, NULL);
@@ -238,7 +247,7 @@ GF_Err obumx_process(GF_Filter *filter)
 			if (obu_type==OBU_FRAME) {
 				frame_idx++;
 				if (frame_idx==128) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[OBUWrite] more than 128 frames in a temporal unit not supported\n"));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[OBUWrite] more than 128 frames in a temporal unit not supported\n"));
 					return GF_NOT_SUPPORTED;
 				}
 				if (frame_idx>1)
@@ -327,22 +336,45 @@ GF_Err obumx_process(GF_Filter *filter)
 			gf_bs_write_u16_le(ctx->bs_w, 0);
 			gf_bs_write_u16_le(ctx->bs_w, 32);
 
-			gf_bs_write_u32(ctx->bs_w, GF_4CC('A', 'V', '0', '1') ); //codec_fourcc
+			//codec_fourcc
+			switch (ctx->codec_id) {
+			case GF_CODECID_AV1:
+				gf_bs_write_u32(ctx->bs_w, GF_4CC('A', 'V', '0', '1') );
+				break;
+			case GF_CODECID_VP8:
+				gf_bs_write_u32(ctx->bs_w, GF_4CC('V', 'P', '8', '0') );
+				break;
+			case GF_CODECID_VP9:
+				gf_bs_write_u32(ctx->bs_w, GF_4CC('V', 'P', '9', '0') );
+				break;
+			case GF_CODECID_VP10:
+				gf_bs_write_u32(ctx->bs_w, GF_4CC('V', 'P', '1', '0') );
+				break;
+			default:
+				gf_bs_write_u32(ctx->bs_w, ctx->codec_id);
+				break;
+			}
+
 			gf_bs_write_u16_le(ctx->bs_w, ctx->w);
 			gf_bs_write_u16_le(ctx->bs_w, ctx->h);
 			gf_bs_write_u32_le(ctx->bs_w, ctx->fps.num);
 			gf_bs_write_u32_le(ctx->bs_w, ctx->fps.den);
-			gf_bs_write_u32_le(ctx->bs_w, 0); //nb frames
+			const GF_PropertyValue *p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_NB_FRAMES);
+			//nb frames
+			if (p)
+				gf_bs_write_u32_le(ctx->bs_w, p->value.uint );
+			else
+				gf_bs_write_u32_le(ctx->bs_w, 0);
 			gf_bs_write_u32_le(ctx->bs_w, 0);
 			ctx->ivf_hdr = 0;
 		}
 		if (ctx->mode==2) {
-			u64 cts = gf_timestamp_rescale(gf_filter_pck_get_cts(pck), ctx->fps.num * gf_filter_pck_get_timescale(pck), ctx->fps.den);
+			u64 cts = gf_timestamp_rescale(gf_filter_pck_get_cts(pck), ctx->fps.den * gf_filter_pck_get_timescale(pck), ctx->fps.num);
 			gf_bs_write_u32_le(ctx->bs_w, size);
-			gf_bs_write_u64(ctx->bs_w, cts);
+			gf_bs_write_u64_le(ctx->bs_w, cts);
 		}
 		if (ctx->codec_id==GF_CODECID_AV1) {
-			//write temporal delim with obu size set
+			//write temporal delim without obu size set
 			gf_bs_write_u8(ctx->bs_w, 0x12);
 			gf_bs_write_u8(ctx->bs_w, 0);
 
@@ -398,7 +430,10 @@ static const GF_FilterArgs OBUMxArgs[] =
 GF_FilterRegister OBUMxRegister = {
 	.name = "ufobu",
 	GF_FS_SET_DESCRIPTION("IVF/OBU/annexB writer")
-	GF_FS_SET_HELP("This filter is used to rewrite AV1 OBU bitstream into IVF, annex B or OBU sequence, reinserting the temporal delimiter OBU.")
+	GF_FS_SET_HELP("This filter rewrites VPx or AV1 bitstreams into a IVF, annexB or OBU sequence.\n"
+	"The temporal delimiter OBU is re-inserted in annexB (`.av1` and `.av1b`files, with obu_size set) and OBU sequences (`.obu`files, without obu_size)\n"
+	"Note: VP8/9 codecs will only use IVF output (equivalent to file extension `.ivf` or `:ext=ivf` set on output).\n"
+	)
 	.private_size = sizeof(GF_OBUMxCtx),
 	.args = OBUMxArgs,
 	SETCAPS(OBUMxCaps),

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -57,6 +57,10 @@ struct __gf_prop_entry
 	GF_PropertyValue prop;
 	u32 alloc_size;
 };
+
+//we use the same value internally but with reverse meaning
+#define GF_FS_FLAG_IMPLICIT_MODE	GF_FS_FLAG_NO_IMPLICIT
+
 
 #ifndef GF_PROPS_HASHTABLE_SIZE
 #define GF_PROPS_HASHTABLE_SIZE 0
@@ -191,7 +195,9 @@ enum
 	//2 bits for crypt type
 	GF_PCK_CMD_POS = 13,
 	GF_PCK_CMD_MASK = 0x3 << GF_PCK_CMD_POS,
-	//RESERVED bits [9,12]
+	GF_PCKF_FORCE_MAIN = 1<<12,
+	//RESERVED bits [8,11]
+
 	//2 bits for is_leading
 	GF_PCK_ISLEADING_POS = 6,
 	GF_PCK_ISLEADING_MASK = 0x3 << GF_PCK_ISLEADING_POS,
@@ -279,6 +285,7 @@ struct __gf_fs_task
 	Bool requeue_request;
 	Bool can_swap;
 	Bool blocking;
+	Bool force_main;
 
 	u64 schedule_next_time;
 
@@ -294,7 +301,7 @@ void gf_fs_post_task(GF_FilterSession *fsess, gf_fs_task_callback fun, GF_Filter
 /* extended version of gf_fs_post_task
 force_direct_call shall only be true for gf_filter_process_task
 */
-void gf_fs_post_task_ex(GF_FilterSession *fsess, gf_fs_task_callback task_fun, GF_Filter *filter, GF_FilterPid *pid, const char *log_name, void *udta, Bool is_configure, Bool force_direct_call);
+void gf_fs_post_task_ex(GF_FilterSession *fsess, gf_fs_task_callback task_fun, GF_Filter *filter, GF_FilterPid *pid, const char *log_name, void *udta, Bool is_configure, Bool force_main_thread, Bool force_direct_call);
 
 void gf_filter_pid_send_event_downstream(GF_FSTask *task);
 
@@ -319,15 +326,21 @@ typedef struct __gf_fs_thread
 
 } GF_SessionThread;
 
+typedef enum {
+	GF_ARGTYPE_LOCAL = 0, //:arg syntax
+	GF_ARGTYPE_GLOBAL, //--arg syntax
+	GF_ARGTYPE_META, //old -+arg syntax
+	GF_ARGTYPE_META_REPORTING
+} GF_FSArgItemType;
+
 typedef struct
 {
 	char *argname;
-	u32 type;
-	//0: not found, 1: found but can be later reset to 0, 2: found no reset
-	u32 found_type;
+	GF_FSArgItemType type;
+	Bool found;
 } GF_FSArgItem;
 
-void gf_fs_push_arg(GF_FilterSession *session, const char *szArg, u32 was_found, u32 type);
+void gf_fs_push_arg(GF_FilterSession *session, const char *szArg, Bool was_found, GF_FSArgItemType type, GF_Filter *meta_filter);
 
 enum
 {
@@ -346,7 +359,11 @@ struct __gf_filter_session
 	Bool direct_mode;
 	volatile u32 tasks_in_process;
 	Bool requires_solved_graph;
-	Bool no_main_thread;
+	//non blicking session mode:
+	//0: session is blocking
+	//1: session is non-blocking and first call to gf_fs_run (extra threads not started)
+	//2: session is non-blocking and not first call to gf_fs_run (extra threads started)
+	u32 non_blocking;
 
 	GF_List *registry;
 	GF_List *filters;
@@ -467,6 +484,7 @@ struct __gf_filter_session
 
 	gf_fs_on_filter_creation on_filter_create_destroy;
 	void *rt_udta;
+	Bool force_main_thread_tasks;
 
 #ifdef GF_FS_ENABLE_LOCALES
 	GF_List *uri_relocators;
@@ -504,6 +522,18 @@ typedef enum
 	GF_FILTER_ARG_EXPLICIT_SINK,
 } GF_FilterArgType;
 
+typedef enum
+{
+	//filter cannot be cloned
+	GF_FILTER_NO_CLONE=0,
+	//filter can be cloned
+	GF_FILTER_CLONE,
+	//filter may be cloned in implicit link session mode only
+	GF_FILTER_CLONE_PROBE,
+} GF_FilterCloneType;
+
+//#define DEBUG_BLOCKMODE
+
 struct __gf_filter
 {
 	const GF_FilterRegister *freg;
@@ -526,8 +556,11 @@ struct __gf_filter
 
 	//indicates the max number of additional input PIDs - muxers and scalable filters typically set this to (u32) -1
 	u32 max_extra_pids;
+	volatile u32 nb_sparse_pids;
 
-	void (*on_setup_error)(GF_Filter *f, void *on_setup_error_udta, GF_Err e);
+	u32 subsession_id, subsource_id;
+
+	Bool (*on_setup_error)(GF_Filter *f, void *on_setup_error_udta, GF_Err e);
 	void *on_setup_error_udta;
 	GF_Filter *on_setup_error_filter;
 
@@ -562,6 +595,7 @@ struct __gf_filter
 	Bool no_probe;
 	Bool no_inputs;
 	Bool is_blocking_source;
+	Bool force_demux;
 
 	s32 nb_pids_playing;
 
@@ -651,8 +685,11 @@ struct __gf_filter
 #endif
 
 	volatile u32 would_block; //concurrent inc/dec
+#ifdef DEBUG_BLOCKMODE
 	//sets once broken blocking mode has been detected
 	Bool blockmode_broken;
+#endif
+
 	//requested by a filter to disable blocking
 	Bool prevent_blocking;
 
@@ -664,8 +701,8 @@ struct __gf_filter
 	u32 removed;
 	//setup has been notified
 	Bool setup_notified;
-	//filter loaded to solve a filter chain
-	Bool dynamic_filter;
+	//filter loaded to solve a filter chain - special value 2 is for dummy reframer when forcing demux
+	u32 dynamic_filter;
 	//filter block EOS queries
 	Bool block_eos;
 	//set when one input pid of the filter has been marked for removal through gf_filter_remove_src
@@ -675,7 +712,9 @@ struct __gf_filter
 	//2 means temporary sticky, used when reconfiguring filter chain
 	u32 sticky;
 	//explicitly loaded filters are usually not cloned, except if this flag is set
-	Bool clonable;
+	GF_FilterCloneType clonable;
+	//set to true during pid link resolution for filters accepting a single pid
+	Bool in_link_resolution;
 	//one of the output PID needs reconfiguration
 	volatile u32 nb_caps_renegociate;
 
@@ -742,7 +781,7 @@ struct __gf_filter
 
 	GF_Err in_connect_err;
 
-	Bool main_thread_forced;
+	volatile u32 nb_main_thread_forced;
 	Bool no_dst_arg_inherit;
 	GF_List *source_filters;
 
@@ -774,7 +813,7 @@ struct __gf_filter
 };
 
 GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg, const char *args, const char *dst_args, GF_FilterArgType arg_type, GF_Err *err, GF_Filter *multi_sink_target, Bool dynamic_filter);
-GF_Filter *gf_filter_clone(GF_Filter *filter);
+GF_Filter *gf_filter_clone(GF_Filter *filter, GF_Filter *source_filter);
 void gf_filter_del(GF_Filter *filter);
 
 Bool gf_filter_swap_source_register(GF_Filter *filter);
@@ -919,6 +958,9 @@ struct __gf_filter_pid
 	u64 buffer_duration;
 	//true if the pid carries raw media
 	Bool raw_media;
+	//true if pid is sparse (may not have data for a long time)
+	//a sparse pid always triggers blocking if parent filter has more than one output
+	Bool is_sparse;
 	//for stats only
 	u32 stream_type, codecid;
 

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -65,6 +65,7 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 
 	i=0;
 	while ((traf = (GF_TrackFragmentBox*)gf_list_enum(moof->TrackList, &i))) {
+		u32 prev_sample_count;
 		if (!traf->tfhd) {
 			trak = NULL;
 			traf->trex = NULL;
@@ -87,8 +88,10 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 			return GF_ISOM_INVALID_FILE;
 		}
 
-		e = MergeTrack(trak, traf, moof, mov->current_top_box_start, moof->compressed_diff, &base_data_offset, !trak->first_traf_merged);
+		prev_sample_count = trak->Media->information->sampleTable->SampleSize ? trak->Media->information->sampleTable->SampleSize->sampleCount : 0;
+		e = MergeTrack(trak, traf, moof, mov->current_top_box_start, moof->compressed_diff, &base_data_offset);
 		if (e) return e;
+		trak->first_traf_merged = GF_TRUE;
 
 		trak->present_in_scalable_segment = 1;
 
@@ -97,7 +100,54 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 		if (trak->Header->duration > MaxDur)
 			MaxDur = trak->Header->duration;
 
-		trak->first_traf_merged = GF_TRUE;
+		//we have PSSH per moov, internally remap as a sample group of type PSSH
+		if (gf_list_count(moof->PSSHs)) {
+			u8 *pssh_data;
+			u32 pssh_len;
+			u32 j, k, nb_pssh = gf_list_count(moof->PSSHs);
+			GF_BitStream *pssh_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+			gf_bs_write_u32(pssh_bs, nb_pssh);
+			for (j=0; j<nb_pssh; j++) {
+				GF_ProtectionSystemHeaderBox *pssh = gf_list_get(moof->PSSHs, j);
+				gf_bs_write_data(pssh_bs, pssh->SystemID, 16);
+				gf_bs_write_u32(pssh_bs, pssh->version);
+				if (pssh->version) {
+					gf_bs_write_u32(pssh_bs, pssh->KID_count);
+					for (k=0; k<pssh->KID_count; k++) {
+						gf_bs_write_data(pssh_bs, pssh->KIDs[k], 16);
+					}
+				}
+				gf_bs_write_u32(pssh_bs, pssh->private_data_size);
+				gf_bs_write_data(pssh_bs, pssh->private_data, pssh->private_data_size);
+			}
+			gf_bs_get_content(pssh_bs, &pssh_data, &pssh_len);
+			gf_bs_del(pssh_bs);
+
+			gf_isom_set_sample_group_description_internal(mov, gf_list_find(mov->moov->trackList, trak)+1, 1+prev_sample_count, GF_4CC('P','S','S','H'), 0, pssh_data, pssh_len, GF_FALSE);
+			gf_free(pssh_data);
+		}
+
+
+		//we have emsg, internally remap as a sample group of type EMSG
+		if (gf_list_count(mov->emsgs)) {
+			u8 *emsg_data;
+			u32 emsg_len;
+			u32 j, nb_emsg = gf_list_count(mov->emsgs);
+			GF_BitStream *emsg_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+			for (j=0; j<nb_emsg; j++) {
+				GF_Box *emsg = gf_list_get(mov->emsgs, j);
+				gf_isom_box_write(emsg, emsg_bs);
+			}
+			gf_bs_get_content(emsg_bs, &emsg_data, &emsg_len);
+			gf_bs_del(emsg_bs);
+
+			gf_isom_set_sample_group_description_internal(mov, gf_list_find(mov->moov->trackList, trak)+1, 1+prev_sample_count, GF_4CC('E','M','S','G'), 0, emsg_data, emsg_len, GF_FALSE);
+			gf_free(emsg_data);
+		}
+	}
+	if (mov->emsgs) {
+		gf_isom_box_array_del(mov->emsgs);
+		mov->emsgs = NULL;
 	}
 
 	if (moof->child_boxes) {
@@ -265,6 +315,8 @@ static void convert_compact_sample_groups(GF_List *child_boxes, GF_List *sampleG
 			//unroll the pattern
 			while (nb_samples) {
 				u32 nb_same_index=1;
+				if (csgp->patterns[j].length<=k)
+					break;
 				u32 sg_idx = csgp->patterns[j].sample_group_description_indices[k];
 				while (nb_same_index+k<csgp->patterns[j].length) {
 					if (csgp->patterns[j].sample_group_description_indices[k+nb_same_index] != sg_idx)
@@ -284,6 +336,7 @@ static void convert_compact_sample_groups(GF_List *child_boxes, GF_List *sampleG
 					k = 0;
 			}
 		}
+		gf_isom_box_del((GF_Box*)csgp);
 	}
 }
 
@@ -320,7 +373,8 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 		e = gf_isom_parse_root_box(&a, mov->movieFileMap->bs, boxType, bytesMissing, progressive_mode);
 
 		if (e >= 0) {
-
+			//safety check, should never happen
+			if (!a) return GF_ISOM_INVALID_FILE;
 		} else if (e == GF_ISOM_INCOMPLETE_FILE) {
 			/*our mdat is uncomplete, only valid for READ ONLY files...*/
 			if (mov->openMode != GF_ISOM_OPEN_READ) {
@@ -423,6 +477,14 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				mov->first_data_toplevel_size = a->size;
 			}
 			totSize += a->size;
+
+#ifndef	GPAC_DISABLE_ISOM_FRAGMENTS
+			if (mov->emsgs) {
+				gf_isom_box_array_del(mov->emsgs);
+				mov->emsgs = NULL;
+			}
+#endif
+
 			if (mov->openMode == GF_ISOM_OPEN_READ) {
 				if (!mov->mdat) {
 					mov->mdat = (GF_MediaDataBox *) a;
@@ -575,7 +637,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 			//no support for inplace rewrite for fragmented files
 			gf_isom_disable_inplace_rewrite(mov);
 			if (!mov->moov) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Movie fragment but no moov (yet) - possibly broken parsing!\n"));
+				GF_LOG(mov->moof ? GF_LOG_DEBUG : GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Movie fragment but no moov (yet) - possibly broken parsing!\n"));
 			}
 			if (mov->single_moof_mode) {
 				mov->single_moof_state++;
@@ -699,7 +761,22 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 			}
 #endif
 		//fallthrough
-
+		case GF_ISOM_BOX_TYPE_EMSG:
+#ifndef GPAC_DISABLE_ISOM_FRAGMENTS
+			if (! (mov->FragmentsFlags & GF_ISOM_FRAG_READ_DEBUG)) {
+				if (!mov->emsgs) mov->emsgs = gf_list_new();
+				gf_list_add(mov->emsgs, a);
+				break;
+			}
+#endif
+		case GF_ISOM_BOX_TYPE_MFRA:
+		case GF_ISOM_BOX_TYPE_MFRO:
+			//only keep for dump mode, otherwise we ignore these boxes and we don't want to carry them over in non-fragmented file
+			if (! (mov->FragmentsFlags & GF_ISOM_FRAG_READ_DEBUG)) {
+				totSize += a->size;
+				gf_isom_box_del(a);
+				break;
+			}
 		default:
 			totSize += a->size;
 			e = gf_list_add(mov->TopBoxes, a);
@@ -1338,7 +1415,7 @@ err_exit:
 	return NULL;
 }
 
-GF_EdtsEntry *CreateEditEntry(u64 EditDuration, u64 MediaTime, u8 EditMode)
+GF_EdtsEntry *CreateEditEntry(u64 EditDuration, u64 MediaTime, u32 MediaRate, u8 EditMode)
 {
 	GF_EdtsEntry *ent;
 
@@ -1356,7 +1433,7 @@ GF_EdtsEntry *CreateEditEntry(u64 EditDuration, u64 MediaTime, u8 EditMode)
 		ent->mediaTime = MediaTime;
 		break;
 	default:
-		ent->mediaRate = 0x10000;
+		ent->mediaRate = MediaRate;
 		ent->mediaTime = MediaTime;
 		break;
 	}

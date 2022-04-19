@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / NHML stream to file filter
@@ -269,11 +269,11 @@ GF_Err nhmldump_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	name = (char*) gf_codecid_name(ctx->codecid);
 	if (ctx->exporter) {
 		if (ctx->w && ctx->h) {
-			GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("Exporting %s - Size %dx%d\n", name, ctx->w, ctx->h));
+			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("Exporting %s - Size %dx%d\n", name, ctx->w, ctx->h));
 		} else if (ctx->sr && ctx->chan) {
-			GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("Exporting %s - SampleRate %d %d channels %d bits per sample\n", name, ctx->sr, ctx->chan, ctx->bps));
+			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("Exporting %s - SampleRate %d %d channels %d bits per sample\n", name, ctx->sr, ctx->chan, ctx->bps));
 		} else {
-			GF_LOG(GF_LOG_INFO, GF_LOG_AUTHOR, ("Exporting %s\n", name));
+			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("Exporting %s\n", name));
 		}
 	}
 
@@ -306,8 +306,7 @@ GF_Err nhmldump_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	ctx->is_stpp = (cid==GF_CODECID_SUBS_XML) ? GF_TRUE : GF_FALSE;
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DURATION);
-	if (p) ctx->duration = p->value.lfrac;
-
+	if (p && (p->value.lfrac.num>0)) ctx->duration = p->value.lfrac;
 
 	if (ctx->opid_nhml)
 		gf_filter_pid_set_name(ctx->opid_nhml, "nhml");
@@ -476,7 +475,7 @@ static void nhmldump_send_header(GF_NHMLDumpCtx *ctx)
 	if (p) {
 		if (!strcmp(p->value.string, "deflate")) ctx->uncompress = GF_TRUE;
 		else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[NHMLMx] content_encoding %s not supported\n", p->value.string ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[NHMLMx] content_encoding %s not supported\n", p->value.string ));
 		}
 	}
 
@@ -593,7 +592,7 @@ static void nhmldump_send_dims(GF_NHMLDumpCtx *ctx, char *data, u32 data_size, G
 				inflateEnd(&d_stream);
 			}
 #else
-			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("Error: your version of GPAC was compiled with no libz support."));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Error: your version of GPAC was compiled with no libz support."));
 			gf_bs_del(ctx->bs_r);
 			if (prev)
 				data[pos+2+size] = prev;
@@ -766,7 +765,7 @@ static void nhmldump_send_frame(GF_NHMLDumpCtx *ctx, char *data, u32 data_size, 
 
 
 			if (offset_in_sample + s_size > data_size) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("Wrong subsample info: sample size %d vs subsample offset+size %dn", data_size, offset_in_sample + s_size));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("Wrong subsample info: sample size %d vs subsample offset+size %dn", data_size, offset_in_sample + s_size));
 				break;
 			}
 
@@ -781,8 +780,8 @@ static void nhmldump_send_frame(GF_NHMLDumpCtx *ctx, char *data, u32 data_size, 
 					gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
 				} else {
 					u32 d_size;
-					if (ctx->b64_buffer_size<2*s_size) {
-						ctx->b64_buffer_size = 2 * s_size;
+					if (ctx->b64_buffer_size < 2*s_size + 3) {
+						ctx->b64_buffer_size = 2 * s_size + 3;
 						ctx->b64_buffer = gf_realloc(ctx->b64_buffer, ctx->b64_buffer_size);
 					}
 					d_size = gf_base64_encode(data + offset_in_sample, s_size, ctx->b64_buffer, ctx->b64_buffer_size);
@@ -947,7 +946,7 @@ static const GF_FilterArgs NHMLDumpArgs[] =
 {
 	{ OFFS(exporter), "compatibility with old exporter, displays export results", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(dims), "use DIMS mode", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(name), "set output name of files produced (needed media/info files referred to from XML", GF_PROP_STRING, NULL, NULL, 0},
+	{ OFFS(name), "set output name of media and info files produced", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(nhmlonly), "only dump NHML info, not media", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(pckp), "full NHML dump", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(chksum), "insert frame checksum\n"

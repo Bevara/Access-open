@@ -35,13 +35,23 @@ GF_Err BD_DecMFFieldVec(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node,
 
 
 
-void gf_bifs_dec_name(GF_BitStream *bs, char *name)
+void gf_bifs_dec_name(GF_BitStream *bs, char *name, u32 size)
 {
+	Bool error = GF_FALSE;
 	u32 i = 0;
 	while (1) {
-		name[i] = gf_bs_read_int(bs, 8);
-		if (!name[i]) break;
+		char c = gf_bs_read_int(bs, 8);
+		if (i<size)
+			name[i] = c;
+		else {
+			error = GF_TRUE;
+		}
+		if (!c) break;
 		i++;
+	}
+	if (error) {
+		name[size-1] = 0;
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[BIFS] name too long %d bytes but max size %d, truncating\n", i, size));
 	}
 }
 
@@ -779,7 +789,7 @@ static GF_Err BD_DecFieldReplace(GF_BifsDecoder * codec, GF_BitStream *bs)
 {
 	GF_Err e;
 	u32 NodeID, ind, field_ind, NumBits;
-	GF_Node *node, *prev_node;
+	GF_Node *node;
 	GF_ChildNodeItem *prev_child;
 	GF_FieldInfo field;
 
@@ -794,20 +804,16 @@ static GF_Err BD_DecFieldReplace(GF_BifsDecoder * codec, GF_BitStream *bs)
 	e = gf_node_get_field(node, field_ind, &field);
 	if (e) return e;
 
-	prev_node = NULL;
 	prev_child = NULL;
-	/*store prev SF node*/
-	if (field.fieldType == GF_SG_VRML_SFNODE) {
-		prev_node = *((GF_Node **) field.far_ptr);
-	}
 	/*store prev MFNode content*/
-	else if (field.fieldType == GF_SG_VRML_MFNODE) {
+	if (field.fieldType == GF_SG_VRML_MFNODE) {
 		prev_child = * ((GF_ChildNodeItem **) field.far_ptr);
 		* ((GF_ChildNodeItem **) field.far_ptr) = NULL;
 	}
 	/*regular field*/
 	else if (!gf_sg_vrml_is_sf_field(field.fieldType)) {
-		gf_sg_vrml_mf_reset(field.far_ptr, field.fieldType);
+		e = gf_sg_vrml_mf_reset(field.far_ptr, field.fieldType);
+		if (e) return e;
 	}
 
 	/*parse the field*/
@@ -815,9 +821,7 @@ static GF_Err BD_DecFieldReplace(GF_BifsDecoder * codec, GF_BitStream *bs)
 	e = gf_bifs_dec_field(codec, bs, node, &field, GF_FALSE);
 	codec->is_com_dec = GF_FALSE;
 	/*remove prev nodes*/
-	if (field.fieldType == GF_SG_VRML_SFNODE) {
-		if (prev_node) e = gf_node_unregister(prev_node, node);
-	} else if (field.fieldType == GF_SG_VRML_MFNODE) {
+	if (field.fieldType == GF_SG_VRML_MFNODE) {
 		gf_node_unregister_children(node, prev_child);
 	}
 	if (!e) gf_bifs_check_field_change(node, &field);
@@ -989,12 +993,13 @@ static GF_Err BD_DecReplace(GF_BifsDecoder * codec, GF_BitStream *bs)
 	return GF_OK;
 }
 
+void command_buffers_del(GF_List *command_buffers);
 
 /*if parent is non-NULL, we are in a proto code parsing, otherwise this is a top-level proto*/
 GF_Err gf_bifs_dec_proto_list(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List *proto_list)
 {
 	u8 flag, field_type, event_type, useQuant, useAnim, f;
-	u32 i, NbRoutes, ID, numProtos, numFields, count, qpsftype, QP_Type, NumBits;
+	u32 i, NbRoutes, ID, numProtos, numFields, count, qpsftype, QP_Type, NumBits, nb_cmd_bufs;
 	GF_Node *node;
 	char name[1000];
 	GF_ProtoFieldInterface *proto_field;
@@ -1011,6 +1016,7 @@ GF_Err gf_bifs_dec_proto_list(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List 
 	ParentProto = codec->pCurrentProto;
 	e = GF_OK;
 
+	nb_cmd_bufs = gf_list_count(codec->command_buffers);
 	numProtos = 0;
 	proto = NULL;
 	flag = gf_bs_read_int(bs, 1);
@@ -1022,7 +1028,7 @@ GF_Err gf_bifs_dec_proto_list(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List 
 		ID = gf_bs_read_int(bs, codec->info->config.ProtoIDBits);
 
 		if (codec->UseName) {
-			gf_bifs_dec_name(bs, name);
+			gf_bifs_dec_name(bs, name, 1000);
 		} else {
 			sprintf(name, "Proto%d", gf_list_count(codec->current_graph->protos) );
 		}
@@ -1046,7 +1052,7 @@ GF_Err gf_bifs_dec_proto_list(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List 
 			field_type = gf_bs_read_int(bs, 6);
 
 			if (codec->UseName) {
-				gf_bifs_dec_name(bs, name);
+				gf_bifs_dec_name(bs, name, 1000);
 			} else {
 				sprintf(name, "_field%d", numFields);
 			}
@@ -1116,9 +1122,19 @@ GF_Err gf_bifs_dec_proto_list(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List 
 		}
 		/*get proto code*/
 		else {
+			//scope command buffer solving by proto nodes - cf poc in #2040
+			//this means that any pending command buffer not solved at the end of a proto declaration is
+			//a falty one
+			GF_List *old_cb = codec->command_buffers;
+			codec->command_buffers = gf_list_new();
+			
 			/*parse sub-proto list - subprotos are ALWAYS registered with parent proto graph*/
 			e = gf_bifs_dec_proto_list(codec, bs, NULL);
-			if (e) goto exit;
+			if (e) {
+				command_buffers_del(codec->command_buffers);
+				codec->command_buffers = old_cb;
+				goto exit;
+			}
 
 			flag = 1;
 
@@ -1128,6 +1144,8 @@ GF_Err gf_bifs_dec_proto_list(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List 
 				if (!node) {
 					if (codec->LastError) {
 						e = codec->LastError;
+						command_buffers_del(codec->command_buffers);
+						codec->command_buffers = old_cb;
 						goto exit;
 					} else {
 						flag = gf_bs_read_int(bs, 1);
@@ -1135,14 +1153,20 @@ GF_Err gf_bifs_dec_proto_list(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List 
 					}
 				}
 				e = gf_node_register(node, NULL);
-				if (e) goto exit;
-
+				if (e) {
+					command_buffers_del(codec->command_buffers);
+					codec->command_buffers = old_cb;
+					goto exit;
+				}
 				//Ivica patch - Flush immediately because of proto instantiation
 				gf_bifs_flush_command_list(codec);
 
 				gf_sg_proto_add_node_code(proto, node);
 				flag = gf_bs_read_int(bs, 1);
 			}
+
+			command_buffers_del(codec->command_buffers);
+			codec->command_buffers = old_cb;
 
 			/*routes*/
 			flag = gf_bs_read_int(bs, 1);
@@ -1240,6 +1264,15 @@ exit:
 	if (e) {
 		if (proto) {
 			if (proto_list) gf_list_del_item(proto_list, proto);
+
+			//remove all command buffers inserted while decoding the proto list
+			u32 new_cmd_bufs = gf_list_count(codec->command_buffers);
+			while (nb_cmd_bufs < new_cmd_bufs) {
+				new_cmd_bufs--;
+				CommandBufferItem *cbi = gf_list_pop_back(codec->command_buffers);
+				gf_node_unregister(cbi->node, NULL);
+				gf_free(cbi);
+			}
 			gf_sg_proto_del(proto);
 		}
 		codec->current_graph = rootSG;
@@ -1266,7 +1299,7 @@ GF_Err gf_bifs_dec_route(GF_BifsDecoder * codec, GF_BitStream *bs, Bool is_inser
 	/*def'ed route*/
 	if (flag) {
 		RouteID = 1 + gf_bs_read_int(bs, codec->info->config.RouteIDBits);
-		if (codec->UseName) gf_bifs_dec_name(bs, name);
+		if (codec->UseName) gf_bifs_dec_name(bs, name, 1000);
 	}
 	/*origin*/
 	node_id = 1 + gf_bs_read_int(bs, codec->info->config.NodeIDBits);
@@ -1318,7 +1351,8 @@ GF_Err BD_DecSceneReplace(GF_BifsDecoder * codec, GF_BitStream *bs, GF_List *pro
 	e = gf_bifs_dec_proto_list(codec, bs, proto_list);
 	if (e) goto exit;
 
-	assert(codec->pCurrentProto==NULL);
+	//cannot have replace scene in a proto
+	if (codec->pCurrentProto) return GF_NON_COMPLIANT_BITSTREAM;
 	/*Parse the top node - always of type SFTopNode*/
 	root = gf_bifs_dec_node(codec, bs, NDT_SFTopNode);
 	if (!root && codec->LastError) {

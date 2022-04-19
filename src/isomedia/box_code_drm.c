@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre, Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2005-2021
+ *			Copyright (c) Telecom ParisTech 2005-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -108,7 +108,10 @@ GF_Err frma_box_write(GF_Box *s, GF_BitStream *bs)
 	if (!s) return GF_BAD_PARAM;
 	e = gf_isom_box_write_header(s, bs);
 	if (e) return e;
-	gf_bs_write_u32(bs, ptr->data_format);
+	if (ptr->gnr_type)
+		gf_bs_write_u32(bs, ptr->gnr_type);
+	else
+		gf_bs_write_u32(bs, ptr->data_format);
 	return GF_OK;
 }
 
@@ -1229,10 +1232,10 @@ GF_Box *senc_box_new()
 void senc_box_del(GF_Box *s)
 {
 	GF_SampleEncryptionBox *ptr = (GF_SampleEncryptionBox *)s;
-	while (gf_list_count(ptr->samp_aux_info)) {
-		GF_CENCSampleAuxInfo *sai = (GF_CENCSampleAuxInfo *)gf_list_get(ptr->samp_aux_info, 0);
-		if (sai) gf_isom_cenc_samp_aux_info_del(sai);
-		gf_list_rem(ptr->samp_aux_info, 0);
+	while (1) {
+		GF_CENCSampleAuxInfo *sai = (GF_CENCSampleAuxInfo *)gf_list_pop_back(ptr->samp_aux_info);
+		if (!sai) break;
+		gf_isom_cenc_samp_aux_info_del(sai);
 	}
 	if (ptr->samp_aux_info) gf_list_del(ptr->samp_aux_info);
 	gf_free(s);
@@ -1358,6 +1361,11 @@ GF_Err senc_Parse(GF_BitStream *bs, GF_TrackBox *trak, void *traf, GF_SampleEncr
 		if (trak) {
 			e = gf_isom_get_sample_cenc_info_internal(trak, traf, senc, sample_number, &is_encrypted, NULL, NULL, &key_info, &key_info_size);
 			if (! key_info) {
+				if (!key_info_size && is_encrypted) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isobmf] no key info and no associated IV size !\n" ));
+					gf_free(sai);
+					return GF_ISOM_INVALID_FILE;
+				}
 				IV_size = key_info_size; //piff default
 				use_multikey = GF_FALSE;
 				senc->piff_type = 2;

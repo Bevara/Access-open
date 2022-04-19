@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2020-2021
+ *			Copyright (c) Telecom ParisTech 2020-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / tile splitting filter
@@ -171,7 +171,7 @@ static GF_Err tilesplit_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool
 
 	if (! ctx->hevc.pps[pps_idx].tiles_enabled_flag) {
 		gf_odf_hevc_cfg_del(hvcc);
-		GF_LOG(GF_LOG_WARNING, GF_LOG_AUTHOR, ("[TileSplit] Tiles not enabled, using passthrough\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[TileSplit] Tiles not enabled, using passthrough\n"));
 		gf_filter_pid_set_property(ctx->base_opid, GF_PROP_PID_TILE_BASE, NULL);
 		ctx->passthrough = GF_TRUE;
 		return GF_OK;
@@ -411,7 +411,7 @@ static GF_Err tilesplit_process(GF_Filter *filter)
 		}
 
 		if (pck_size < nalu_size + ctx->nalu_size_length) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[TileSplit] Corrupted NAL size, %d indicated but %d remaining\n", nalu_size + ctx->nalu_size_length, pck_size));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[TileSplit] Corrupted NAL size, %d indicated but %d remaining\n", nalu_size + ctx->nalu_size_length, pck_size));
 			break;
 		}
 
@@ -440,7 +440,7 @@ static GF_Err tilesplit_process(GF_Filter *filter)
 			tx = ty = tw = th = 0;
 			cur_tile = hevc_get_tile_id(&ctx->hevc, &tx, &ty, &tw, &th);
 			if (cur_tile >= ctx->nb_tiles) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("[TileSplit] Tile index %d is greater than number of tiles %d in PPS\n", cur_tile, ctx->nb_tiles));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[TileSplit] Tile index %d is greater than number of tiles %d in PPS\n", cur_tile, ctx->nb_tiles));
 				e = GF_NON_COMPLIANT_BITSTREAM;
 				goto err_exit;
 			}
@@ -529,12 +529,6 @@ static void tilesplit_finalize(GF_Filter *filter)
 	if (ctx->pck_buf) gf_free(ctx->pck_buf);
 }
 
-#else
-static GF_Err tilesplit_process(GF_Filter *filter)
-{
-	return GF_NOT_SUPPORTED;
-}
-#endif
 
 static const GF_FilterCapability TileSplitCaps[] =
 {
@@ -560,7 +554,7 @@ static const GF_FilterCapability TileSplitCaps[] =
 
 static const GF_FilterArgs TileSplitArgs[] =
 {
-	{ OFFS(tiledrop), "specify indexes of tiles to drop (0-based, in tile raster scan order)", GF_PROP_UINT_LIST, "", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(tiledrop), "specify indexes of tiles to drop (0-based, in tile raster scan order)", GF_PROP_UINT_LIST, NULL, NULL, GF_FS_ARG_UPDATE},
 	{0}
 };
 
@@ -568,7 +562,7 @@ GF_FilterRegister TileSplitRegister = {
 	.name = "tilesplit",
 	.flags = GF_FS_REG_EXPLICIT_ONLY,
 	GF_FS_SET_DESCRIPTION("HEVC tile bitstream splitter")
-	GF_FS_SET_HELP("This filter splits an HEVC tiled stream into tiled HEVC streams (`hvt1` or `hvt2` in isobmff)."
+	GF_FS_SET_HELP("This filter splits an HEVC tiled stream into tiled HEVC streams (`hvt1` or `hvt2` in ISOBMFF)."
 	"\n"
 	"The filter will move to passthrough mode if the bitstream is not tiled.\n"
 	"If the `Bitrate` property is set on the input PID, the output tile PIDs will have a bitrate set to `(Bitrate - 10k)/nb_opids`, 10 kbps being reserved for the base.\n"
@@ -590,18 +584,13 @@ GF_FilterRegister TileSplitRegister = {
 	.configure_pid = tilesplit_configure_pid,
 #endif
 	.process = tilesplit_process,
-
 };
 
 
 const GF_FilterRegister *tilesplit_register(GF_FilterSession *session)
 {
-#if defined(GPAC_DISABLE_HEVC) || defined(GPAC_DISABLE_AV_PARSERS)
-	if (!gf_opts_get_bool("temp", "gendoc"))
-		return NULL;
-	TileSplitRegister.version = "! Warning: NOT AVAILABLE IN THIS BUILD !";
-#endif
 	return &TileSplitRegister;
 }
 
+#endif /* !defined(GPAC_DISABLE_HEVC) && !defined(GPAC_DISABLE_AV_PARSERS) */
 
