@@ -525,7 +525,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 {
 	GF_Err e;
 	u32 i, count;
-	char *sep_ext;
+	char *sep_ext, *o_sep_ext=NULL;
 	char *args=NULL, szArg[1024];
 	Bool multi_period = GF_FALSE;
 	Bool use_filter_chains = GF_FALSE;
@@ -549,16 +549,25 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		return GF_OUT_OF_MEM;
 	}
 
-	sep_ext = gf_url_colon_suffix(dasher->mpd_name);
-	if (sep_ext) {
-		if (sep_ext[1] == '\\') sep_ext = strchr(sep_ext+1, ':');
-		else if (sep_ext[1]=='/') {
-			sep_ext = strchr(sep_ext+1, '/');
-			if (sep_ext) sep_ext = strchr(sep_ext, ':');
-		}
-	}
+
+	sep_ext = strstr(dasher->mpd_name, ":gpac:");
 	if (sep_ext) {
 		sep_ext[0] = 0;
+		o_sep_ext = sep_ext;
+		sep_ext+=5;
+	} else {
+		sep_ext = gf_url_colon_suffix(dasher->mpd_name, '=');
+		if (sep_ext) {
+			if (sep_ext[1] == '\\') sep_ext = strchr(sep_ext+1, ':');
+			else if (sep_ext[1]=='/') {
+				sep_ext = strchr(sep_ext+1, '/');
+				if (sep_ext) sep_ext = strchr(sep_ext, ':');
+			}
+		}
+		if (sep_ext) {
+			sep_ext[0] = 0;
+			o_sep_ext = sep_ext;
+		}
 	}
 
 	if (dasher->segment_duration == (u32) dasher->segment_duration) {
@@ -593,6 +602,9 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		break;
 	case GF_DASH_BSMODE_INBAND:
 		e |= gf_dynstrcat(&args, "bs_switch=inband", ":");
+		break;
+	case GF_DASH_BSMODE_INBAND_PPS:
+		e |= gf_dynstrcat(&args, "bs_switch=pps", ":");
 		break;
 	case GF_DASH_BSMODE_MERGED:
 		e |= gf_dynstrcat(&args, "bs_switch=on", ":");
@@ -754,6 +766,9 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 	case GF_DASH_PSSH_MPD:
 		e |= gf_dynstrcat(&args, "pssh=m", ":");
 		break;
+	case GF_DASH_PSSH_NONE:
+		e |= gf_dynstrcat(&args, "pssh=n", ":");
+		break;
 	}
 
 
@@ -832,8 +847,8 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 
 	if (args) gf_free(args);
 
-	if (sep_ext) {
-		sep_ext[0] = ':';
+	if (o_sep_ext) {
+		o_sep_ext[0] = ':';
 	}
 
 	if (!dasher->output) {
@@ -1123,6 +1138,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 
 GF_Err dash_state_check_timing(const char *dash_state, u64 *next_gen_ntp_ms, u32 *next_time_ms)
 {
+#ifndef GPAC_DISABLE_CORE_TOOLS
 	u64 next_gen_ntp = 0;
 	GF_Err e = GF_OK;
 	GF_DOMParser *mpd_parser;
@@ -1160,6 +1176,9 @@ GF_Err dash_state_check_timing(const char *dash_state, u64 *next_gen_ntp_ms, u32
 		}
 	}
 	return GF_OK;
+#else
+	return GF_NOT_SUPPORTED;
+#endif /*GPAC_DISABLE_CORE_TOOLS*/
 }
 
 GF_EXPORT

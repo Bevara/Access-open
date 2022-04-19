@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / IETF RTP/RTSP/SDP sub-project
@@ -268,6 +268,7 @@ GF_RTPStreamer *gf_rtp_streamer_new(u32 streamType, u32 codecid, u32 timeScale,
 	/*MPEG1/2 audio*/
 	case GF_CODECID_MPEG2_PART3:
 	case GF_CODECID_MPEG_AUDIO:
+	case GF_CODECID_MPEG_AUDIO_L1:
 		if (!is_crypted) {
 			rtp_type = GF_RTP_PAYT_MPEG12_AUDIO;
 			/*use official RTP/AVP payload type*/
@@ -331,7 +332,12 @@ GF_RTPStreamer *gf_rtp_streamer_new(u32 streamType, u32 codecid, u32 timeScale,
 		rtp_type = GF_RTP_PAYT_LHVC;
 		PL_ID = 0x0F;
 		break;
-
+	/*VVC*/
+	case GF_CODECID_VVC:
+		required_rate = 90000;	/* "90 kHz clock rate MUST be used"*/
+		rtp_type = GF_RTP_PAYT_VVC;
+		PL_ID = 0x0F;
+		break;
 	case GF_CODECID_H263:
 		rtp_type = GF_RTP_PAYT_H263;
 		required_rate = 90000;
@@ -357,6 +363,11 @@ GF_RTPStreamer *gf_rtp_streamer_new(u32 streamType, u32 codecid, u32 timeScale,
 		rtp_type = GF_RTP_PAYT_AC3;
 		streamType = GF_STREAM_AUDIO;
 		has_mpeg4_mapping = GF_TRUE;
+		break;
+	case GF_CODECID_EAC3:
+		rtp_type = GF_RTP_PAYT_EAC3;
+		streamType = GF_STREAM_AUDIO;
+		has_mpeg4_mapping = GF_FALSE;
 		break;
 
 	case GF_CODECID_QCELP:
@@ -389,6 +400,11 @@ GF_RTPStreamer *gf_rtp_streamer_new(u32 streamType, u32 codecid, u32 timeScale,
 		rtp_type = GF_RTP_PAYT_MP2T;
 		PayloadType = OfficialPayloadType = GF_RTP_PAYT_MP2T;
 		required_rate = 90000;
+		break;
+	case GF_CODECID_OPUS:
+		rtp_type = GF_RTP_PAYT_OPUS;
+		streamType = GF_STREAM_AUDIO;
+		has_mpeg4_mapping = GF_FALSE;
 		break;
 
 	default:
@@ -516,7 +532,7 @@ void gf_media_format_ttxt_sdp(GP_RTPPacketizer *builder, char *payload_name, cha
 
 
 GF_EXPORT
-GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const u8 *dsi, u32 dsi_len, const u8 *dsi_enh, u32 dsi_enh_len, char *KMS_URI, u32 width, u32 height, u32 tw, u32 th, s32 tx, s32 ty, s16 tl, Bool for_rtsp, char **out_sdp_buffer)
+GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const u8 *dsi, u32 dsi_len, const u8 *dsi_enh, u32 dsi_enh_len, char *KMS_URI, u32 width, u32 height, u32 tw, u32 th, s32 tx, s32 ty, s16 tl, u32 nb_channels, Bool for_rtsp, char **out_sdp_buffer)
 {
 	u32 size;
 	u16 port=0;
@@ -529,14 +545,18 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 	if (!for_rtsp)
 		gf_rtp_get_ports(rtp->channel, &port, NULL);
 
-	sprintf(sdp, "m=%s %d RTP/%s %d\n", mediaName, for_rtsp ? 0 : port, rtp->packetizer->slMap.IV_length ? "SAVP" : "AVP", rtp->packetizer->PayloadType);
-	sprintf(sdpLine, "a=rtpmap:%d %s/%d\n", rtp->packetizer->PayloadType, payloadName, rtp->packetizer->sl_config.timestampResolution);
+	sprintf(sdp, "m=%s %d RTP/%s %u\n", mediaName, for_rtsp ? 0 : port, rtp->packetizer->slMap.IV_length ? "SAVP" : "AVP", rtp->packetizer->PayloadType);
+	if (nb_channels > 1)
+		sprintf(sdpLine, "a=rtpmap:%u %s/%u/%u\n", rtp->packetizer->PayloadType, payloadName, rtp->packetizer->sl_config.timestampResolution, nb_channels);
+	else
+		sprintf(sdpLine, "a=rtpmap:%u %s/%u\n", rtp->packetizer->PayloadType, payloadName, rtp->packetizer->sl_config.timestampResolution);
 	strcat(sdp, sdpLine);
 
 	if (ESID
 #if GPAC_ENABLE_3GPP_DIMS_RTP
 		&& (rtp->packetizer->rtp_payt != GF_RTP_PAYT_3GPP_DIMS)
 #endif
+		&& (rtp->packetizer->rtp_payt != GF_RTP_PAYT_OPUS)
 	 ) {
 		sprintf(sdpLine, "a=mpeg4-esid:%d\n", ESID);
 		strcat(sdp, sdpLine);
@@ -599,21 +619,44 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 			strcat(sdpLine, "\n");
 		}
 	}
-	else if ((rtp->packetizer->rtp_payt == GF_RTP_PAYT_HEVC) || (rtp->packetizer->rtp_payt == GF_RTP_PAYT_LHVC)) {
-#ifndef GPAC_DISABLE_HEVC
-		GF_HEVCConfig *hevcc = dsi ? gf_odf_hevc_cfg_read((u8*)dsi, dsi_len, GF_FALSE) : NULL;
-		if (hevcc) {
+	else if ((rtp->packetizer->rtp_payt == GF_RTP_PAYT_HEVC)
+		|| (rtp->packetizer->rtp_payt == GF_RTP_PAYT_LHVC)
+		|| (rtp->packetizer->rtp_payt == GF_RTP_PAYT_VVC)
+	) {
+		GF_VVCConfig *vvcc = NULL;
+		GF_HEVCConfig *hvcc = NULL;
+		GF_List *param_array = NULL;
+		u8 sps_nut=0, pps_nut=0, vps_nut=0;
+		if (rtp->packetizer->rtp_payt == GF_RTP_PAYT_VVC) {
+			vvcc = dsi ? gf_odf_vvc_cfg_read((u8*)dsi, dsi_len) : NULL;
+			param_array = vvcc ? vvcc->param_array : NULL;
+			sps_nut = GF_VVC_NALU_SEQ_PARAM;
+			pps_nut = GF_VVC_NALU_PIC_PARAM;
+			vps_nut = GF_VVC_NALU_VID_PARAM;
+		} else {
+			if (dsi) {
+				hvcc = gf_odf_hevc_cfg_read((u8*)dsi, dsi_len, GF_FALSE);
+			} else if (dsi_enh) {
+				hvcc = gf_odf_hevc_cfg_read((u8*)dsi_enh, dsi_enh_len, GF_TRUE);
+			}
+			param_array = hvcc ? hvcc->param_array : NULL;
+			sps_nut = GF_HEVC_NALU_SEQ_PARAM;
+			pps_nut = GF_HEVC_NALU_PIC_PARAM;
+			vps_nut = GF_HEVC_NALU_VID_PARAM;
+		}
+
+		if (param_array) {
 			u32 count, i, j, b64s;
 			char b64[200];
 			sprintf(sdpLine, "a=fmtp:%d", rtp->packetizer->PayloadType);
-			count = gf_list_count(hevcc->param_array);
+			count = gf_list_count(param_array);
 			for (i = 0; i < count; i++) {
-				GF_NALUFFParamArray *ar = (GF_NALUFFParamArray *)gf_list_get(hevcc->param_array, i);
-				if (ar->type==GF_HEVC_NALU_SEQ_PARAM) {
+				GF_NALUFFParamArray *ar = (GF_NALUFFParamArray *)gf_list_get(param_array, i);
+				if (ar->type==sps_nut) {
 					strcat(sdpLine, "; sprop-sps=");
-				} else if (ar->type==GF_HEVC_NALU_PIC_PARAM) {
+				} else if (ar->type==pps_nut) {
 					strcat(sdpLine, "; sprop-pps=");
-				} else if (ar->type==GF_HEVC_NALU_VID_PARAM) {
+				} else if (ar->type==vps_nut) {
 					strcat(sdpLine, "; sprop-vps=");
 				}
 				for (j = 0; j < gf_list_count(ar->nalus); j++) {
@@ -624,10 +667,10 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 					strcat(sdpLine, b64);
 				}
 			}
-			gf_odf_hevc_cfg_del(hevcc);
+			if (vvcc) gf_odf_vvc_cfg_del(vvcc);
+			if (hvcc) gf_odf_hevc_cfg_del(hvcc);
 			strcat(sdpLine, "\n");
 		}
-#endif
 	}
 	/*MPEG-4 decoder config*/
 	else if (rtp->packetizer->rtp_payt==GF_RTP_PAYT_MPEG4) {
@@ -732,7 +775,7 @@ char *gf_rtp_streamer_format_sdp_header(char *app_name, char *ip_dest, char *ses
 GF_EXPORT
 GF_Err gf_rtp_streamer_append_sdp(GF_RTPStreamer *rtp, u16 ESID, const u8 *dsi, u32 dsi_len, char *KMS_URI, char **out_sdp_buffer)
 {
-	return gf_rtp_streamer_append_sdp_extended(rtp, ESID, dsi, dsi_len, NULL, 0, KMS_URI, 0, 0, 0, 0, 0, 0, 0, GF_FALSE, out_sdp_buffer);
+	return gf_rtp_streamer_append_sdp_extended(rtp, ESID, dsi, dsi_len, NULL, 0, KMS_URI, 0, 0, 0, 0, 0, 0, 0, 0, GF_FALSE, out_sdp_buffer);
 }
 
 GF_EXPORT
@@ -777,7 +820,13 @@ GF_Err gf_rtp_streamer_send_rtcp(GF_RTPStreamer *streamer, Bool force_ts, u32 rt
 	streamer->channel->forced_ntp_frac = force_ntp_type ? ntp_frac : 0;
 	if (force_ntp_type==2)
 		streamer->channel->next_report_time = 0;
-	return gf_rtp_send_rtcp_report(streamer->channel);
+
+	GF_Err e = gf_rtp_send_rtcp_report(streamer->channel);
+	if (force_ntp_type) {
+		streamer->channel->forced_ntp_sec = 0;
+		streamer->channel->forced_ntp_frac = 0;
+	}
+	return e;
 }
 
 GF_EXPORT

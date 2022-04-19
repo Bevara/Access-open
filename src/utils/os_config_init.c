@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -431,8 +431,10 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 	if (path_type==GF_PATH_LIB) {
 #if defined(__DARWIN__) || defined(__APPLE__) || defined(GPAC_CONFIG_LINUX)
 		_Dl_info dl_info;
-		dladdr((void *)get_default_install_path, &dl_info);
-		if (dl_info.dli_fname) {
+		dl_info.dli_fname = NULL;
+		if (dladdr((void *)get_default_install_path, &dl_info)
+			&& dl_info.dli_fname
+		) {
 			strcpy(file_path, dl_info.dli_fname);
 			sep = strrchr(file_path, '/');
 			if (sep) sep[0] = 0;
@@ -895,7 +897,7 @@ static GF_Config *gf_cfg_init(const char *profile)
 
 	if (profile) {
 		prof_len = (u32) strlen(profile);
-		prof_opt = gf_url_colon_suffix(profile);
+		prof_opt = gf_url_colon_suffix(profile, 0);
 		if (prof_opt) {
 			prof_len -= (u32) strlen(prof_opt);
 			if (strstr(prof_opt, "reload")) force_new_cfg = GF_TRUE;
@@ -951,7 +953,7 @@ static GF_Config *gf_cfg_init(const char *profile)
 
 		if (nb_old_sec || force_new_cfg) {
 			if (nb_old_sec && (!profile || strcmp(profile, "0"))) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[core] Incompatible (0.8.0 or older) config file %s found in %s - creating new file\n", CFG_FILE_NAME, szPath ));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[core] Incompatible config file %s found in %s - creating new file\n", CFG_FILE_NAME, szPath ));
 			}
 			gf_cfg_del(cfg);
 			cfg = create_default_config(szPath, profile);
@@ -1140,49 +1142,48 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("log-file", "lf", "set output log file", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("log-clock", "lc", "log time in micro sec since start time of GPAC before each log line except for `app` tool", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("log-utc", "lu", "log UTC time in ms before each log line except for `app` tool", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_LOG),
- GF_DEF_ARG("logs", NULL, "set log tools and levels.  \n"\
-			"  \n"\
-			"You can independently log different tools involved in a session.  \n"\
-			"log_args is formatted as a colon (':') separated list of `toolX[:toolZ]@levelX`  \n"\
-	        "`levelX` can be one of:\n"\
-	        "- quiet: skip logs\n"\
-	        "- error: logs only error messages\n"\
-	        "- warning: logs error+warning messages\n"\
-	        "- info: logs error+warning+info messages\n"\
-	        "- debug: logs all messages\n"\
-	        "\n`toolX` can be one of:\n"\
-	        "- core: libgpac core\n"\
-	        "- coding: bitstream formats (audio, video, scene)\n"\
-	        "- container: container formats (ISO File, MPEG-2 TS, AVI, ...)\n"\
-	        "- network: network data except RTP traffic\n"\
-	        "- http: HTTP traffic\n"\
-	        "- rtp: RTP traffic\n"\
-	        "- author: authoring tools (hint, import, export)\n"\
-	        "- sync: terminal sync layer\n"\
-	        "- codec: terminal codec messages\n"\
-	        "- parser: scene parsers (svg, xmt, bt) and other\n"\
-	        "- media: terminal media object management\n"\
-	        "- scene: scene graph and scene manager\n"\
-	        "- script: scripting engine messages\n"\
-	        "- interact: interaction engine (events, scripts, etc)\n"\
-	        "- smil: SMIL timing engine\n"\
-	        "- compose: composition engine (2D, 3D, etc)\n"\
-	        "- mmio: Audio/Video HW I/O management\n"\
-	        "- rti: various run-time stats\n"\
-	        "- cache: HTTP cache subsystem\n"\
-	        "- audio: Audio renderer and mixers\n"\
-	        "- mem: GPAC memory tracker\n"\
-	        "- dash: HTTP streaming logs\n"\
-	        "- module: GPAC modules (av out, font engine, 2D rasterizer)\n"\
-	        "- filter: filters debugging\n"\
-	        "- sched: filter session scheduler debugging\n"\
-	        "- mutex: log all mutex calls\n"\
-	        "- route: ROUTE (ATSC3) debugging\n"\
-	        "- all: all tools logged - other tools can be specified afterwards.  \n"\
-	        "The special keyword `ncl` can be set to disable color logs.  \n"\
-	        "The special keyword `strict` can be set to exit at first error.  \n"\
-	        "\nEX -logs=all@info:dash@debug:ncl\n"\
-			"This moves all log to info level, dash to debug level and disable color logs"\
+ GF_DEF_ARG("logs", NULL, "set log tools and levels.  \n"
+			"  \n"
+			"You can independently log different tools involved in a session.  \n"
+			"log_args is formatted as a colon (':') separated list of `toolX[:toolZ]@levelX`  \n"
+	        "`levelX` can be one of:\n"
+	        "- quiet: skip logs\n"
+	        "- error: logs only error messages\n"
+	        "- warning: logs error+warning messages\n"
+	        "- info: logs error+warning+info messages\n"
+	        "- debug: logs all messages\n"
+	        "\n`toolX` can be one of:\n"
+	        "- core: libgpac core\n"
+	        "- mutex: log all mutex calls\n"
+	        "- mem: GPAC memory tracker\n"
+	        "- module: GPAC modules (av out, font engine, 2D rasterizer)\n"
+	        "- filter: filter session debugging\n"
+	        "- sched: filter session scheduler debugging\n"
+	        "- codec: codec messages (used by encoder and decoder filters)\n"
+	        "- coding: bitstream formats (audio, video, scene)\n"
+	        "- container: container formats (ISO File, MPEG-2 TS, AVI, ...) and multiplexer/demultiplexer filters\n"
+	        "- network: TCP/UDP sockets and TLS\n"
+	        "- http: HTTP traffic\n"
+	        "- cache: HTTP cache subsystem\n"
+	        "- rtp: RTP traffic\n"
+	        "- dash: HTTP streaming logs\n"
+	        "- route: ROUTE (ATSC3) debugging\n"
+	        "- media: messages from generic filters and reframer/rewriter filters\n"
+	        "- parser: textual parsers (svg, xmt, bt, ...)\n"
+	        "- mmio: I/O management (AV devices, file, pipes, OpenGL)\n"
+	        "- audio: audio renderer/mixer/output\n"
+	        "- script: script engine except console log\n"
+	        "- console: script console log\n"
+	        "- scene: scene graph and scene manager\n"
+	        "- compose: composition engine (2D, 3D, etc)\n"
+	        "- ctime: media and SMIL timing info from composition engine\n"
+	        "- interact: interaction messages (UI events and triggered DOM events and VRML route)\n"
+	        "- rti: run-time stats of compositor\n"
+	        "- all: all tools logged - other tools can be specified afterwards.  \n"
+	        "The special keyword `ncl` can be set to disable color logs.  \n"
+	        "The special keyword `strict` can be set to exit at first error.  \n"
+	        "\nEX -logs=all@info:dash@debug:ncl\n"
+			"This moves all log to info level, dash to debug level and disable color logs"
  			, NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_LOG),
  GF_DEF_ARG("proglf", NULL, "use new line at each progress messages", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_LOG),
 
@@ -1193,14 +1194,14 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("no-js-mods", NULL, "disable javascript module loading", NULL, NULL, GF_ARG_STRINGS, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("ifce", NULL, "set default multicast interface through interface IP address (default is 127.0.0.1)", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("lang", NULL, "set preferred language", NULL, NULL, GF_ARG_STRING, GF_ARG_SUBSYS_CORE),
- GF_DEF_ARG("cfg", "opt", "get or set configuration file value. The string parameter can be formatted as:\n"\
-	        "- `section:key=val`: set the key to a new value\n"\
-	        "- `section:key=null`, `section:key`: remove the key\n"\
-	        "- `section=null`: remove the section\n"\
-	        "- no argument: print the entire configuration file\n"\
-	        "- `section`: print the given section\n"\
-	        "- `section:key`: print the given `key` in `section` (section can be set to `*`)"\
-	        "- `*:key`: print the given `key` in all sections"\
+ GF_DEF_ARG("cfg", "opt", "get or set configuration file value. The string parameter can be formatted as:\n"
+	        "- `section:key=val`: set the key to a new value\n"
+	        "- `section:key=null`, `section:key`: remove the key\n"
+	        "- `section=null`: remove the section\n"
+	        "- no argument: print the entire configuration file\n"
+	        "- `section`: print the given section\n"
+	        "- `section:key`: print the given `key` in `section` (section can be set to `*`)"
+	        "- `*:key`: print the given `key` in all sections"
 			, NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-save", NULL, "discard any changes made to the config file upon exit", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("version", NULL, "set to GPAC version, used to check config file refresh", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_CORE),
@@ -1214,7 +1215,7 @@ GF_GPACArg GPAC_Args[] = {
  "- desktop: desktop device", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_CORE),
 
  GF_DEF_ARG("bs-cache-size", NULL, "cache size for bitstream read and write from file (0 disable cache, slower IOs)", "512", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
- GF_DEF_ARG("no-check", NULL, "disable compliancy tests for inputs (ISOBMFF for now). This will likely result in random crashes", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("no-check", NULL, "disable compliance tests for inputs (ISOBMFF for now). This will likely result in random crashes", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("unhandled-rejection", NULL, "dump unhandled promise rejections", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("cache", NULL, "cache directory location", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-on", NULL, "enable HTTP proxy", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
@@ -1222,7 +1223,7 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("proxy-port", NULL, "set HTTP proxy port", "80", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("maxrate", NULL, "set max HTTP download rate in bits per sec. 0 means unlimited", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("no-cache", NULL, "disable HTTP caching", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
- GF_DEF_ARG("offline-cache", NULL, "enable offline HTTP caching (no revalidation of existing resource in cache)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("offline-cache", NULL, "enable offline HTTP caching (no re-validation of existing resource in cache)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("clean-cache", NULL, "indicate if HTTP cache should be clean upon launch/exit", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("cache-size", NULL, "specify cache size in bytes", "100M", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("head-timeout", NULL, "set HTTP head request timeout in milliseconds", "5000", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
@@ -1243,27 +1244,27 @@ GF_GPACArg GPAC_Args[] = {
 #endif
 
  GF_DEF_ARG("dbg-edges", NULL, "log edges status in filter graph before dijkstra resolution (for debug). Edges are logged as edge_source(status, weight, src_cap_idx, dst_cap_idx)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
-GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot be linked", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
+GF_DEF_ARG("full-link", NULL, "throw error if any PID in the filter graph cannot be linked", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 
  GF_DEF_ARG("no-block", NULL, "disable blocking mode of filters\n"
 			"- no: enable blocking mode\n"
-			"- fanout: disable blocking on fanout, unblocking the PID as soon as one of its destinations requires a packet\n"
+			"- fanout: disable blocking on fan-out, unblocking the PID as soon as one of its destinations requires a packet\n"
 			"- all: disable blocking", "no", "no|fanout|all", GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-reg", NULL, "disable regulation (no sleep) in session", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
- GF_DEF_ARG("no-reassign", NULL, "disable source filter reassignment in pid graph resolution", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
- GF_DEF_ARG("sched", NULL, "set scheduler mode\n"\
-		"- free: lock-free queues except for task list (default)\n"\
-		"- lock: mutexes for queues when several threads\n"\
-		"- freex: lock-free queues including for task lists (experimental)\n"\
-		"- flock: mutexes for queues even when no thread (debug mode)\n"\
+ GF_DEF_ARG("no-reassign", NULL, "disable source filter reassignment in PID graph resolution", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
+ GF_DEF_ARG("sched", NULL, "set scheduler mode\n"
+		"- free: lock-free queues except for task list (default)\n"
+		"- lock: mutexes for queues when several threads\n"
+		"- freex: lock-free queues including for task lists (experimental)\n"
+		"- flock: mutexes for queues even when no thread (debug mode)\n"
 		"- direct: no threads and direct dispatch of tasks whenever possible (debug mode)", "free", "free|lock|flock|freex|direct", GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
- GF_DEF_ARG("max-chain", NULL, "set maximum chain length when resolving filter links. Default value covers for __[ in -> ] demux -> reframe -> decode -> encode -> reframe -> mux [ -> out]__. Filter chains loaded for adaptation (eg pixel format change) are loaded after the link resolution. Setting the value to 0 disables dynamic link resolution. You will have to specify the entire chain manually", "6", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
+ GF_DEF_ARG("max-chain", NULL, "set maximum chain length when resolving filter links. Default value covers for __[ in -> ] dmx -> reframe -> decode -> encode -> reframe -> mx [ -> out]__. Filter chains loaded for adaptation (e.g. pixel format change) are loaded after the link resolution. Setting the value to 0 disables dynamic link resolution. You will have to specify the entire chain manually", "6", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("max-sleep", NULL, "set maximum sleep time slot in milliseconds when regulation is enabled", "50", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 
  GF_DEF_ARG("threads", NULL, "set N extra thread for the session. -1 means use all available cores", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-probe", NULL, "disable data probing on sources and relies on extension (faster load but more error-prone)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-argchk", NULL, "disable tracking of argument usage (all arguments will be considered as used)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
- GF_DEF_ARG("blacklist", NULL, "blacklist the filters listed in the given string (comma-separated list)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
+ GF_DEF_ARG("blacklist", NULL, "blacklist the filters listed in the given string (comma-separated list). If first character is '-', this is a whitelist, i.e. only filters listed in the given string will be allowed", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-graph-cache", NULL, "disable internal caching of filter graph connections. If disabled, the graph will be recomputed at each link resolution (lower memory usage but slower)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-reservoir", NULL, "disable memory recycling for packets and properties. This uses much less memory but stresses the system memory allocator much more", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 
@@ -1276,15 +1277,15 @@ GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot
  GF_DEF_ARG("yuv-overlay", NULL, "indicate YUV overlay is possible on the video card. Always overridden by video output module", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_HIDE|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("offscreen-yuv", NULL, "indicate if offscreen yuv->rgb is enabled. can be set to false to force disabling", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("overlay-color-key", NULL, "color to use for overlay keying, hex format", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
- GF_DEF_ARG("gl-bits-comp", NULL, "number of bits per color component in openGL", "8", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
- GF_DEF_ARG("gl-bits-depth", NULL, "number of bits for depth buffer in openGL", "16", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
- GF_DEF_ARG("gl-doublebuf", NULL, "enable openGL double buffering", "yes", NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
+ GF_DEF_ARG("gl-bits-comp", NULL, "number of bits per color component in OpenGL", "8", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
+ GF_DEF_ARG("gl-bits-depth", NULL, "number of bits for depth buffer in OpenGL", "16", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
+ GF_DEF_ARG("gl-doublebuf", NULL, "enable OpenGL double buffering", "yes", NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("sdl-defer", NULL, "use defer rendering for SDL", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("no-colorkey", NULL, "disable color keying at the video output level", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("glfbo-txid", NULL, "set output texture ID when using `glfbo` output. The OpenGL context shall be initialized and gf_term_process shall be called with the OpenGL context active", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("video-output", NULL, "indicate the name of the video output module to use (see `gpac -h modules`)."
- 	" The reserved name `glfbo` is used in player mode to draw in the openGL texture identified by [-glfbo-txid](). "
- 	" In this mode, the application is responsible for sending event to the terminal"
+	" The reserved name `glfbo` is used in player mode to draw in the OpenGL texture identified by [-glfbo-txid](). "
+	" In this mode, the application is responsible for sending event to the terminal"
  , NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("audio-output", NULL, "indicate the name of the audio output module to use", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("alsa-devname", NULL, "set ALSA dev name", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_AUDIO),
@@ -1295,6 +1296,12 @@ GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot
  GF_DEF_ARG("rescan-fonts", NULL, "indicate the font directory must be rescanned", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
  GF_DEF_ARG("wait-fonts", NULL, "wait for SVG fonts to be loaded before displaying frames", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
  GF_DEF_ARG("webvtt-hours", NULL, "force writing hour when serializing WebVTT", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
+GF_DEF_ARG("charset", NULL, "set charset when not recognized from input. Possible values are:\n"
+"- utf8: force UTF-8\n"
+"- utf16: force UTF-16 little endian\n"
+"- utf16be: force UTF-16 big endian\n"
+"- other: attempt to parse anyway", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_TEXT),
+
  GF_DEF_ARG("rmt", NULL, "enable profiling through [Remotery](https://github.com/Celtoys/Remotery). A copy of Remotery visualizer is in gpac/share/vis, usually installed in __/usr/share/gpac/vis__ or __Program Files/GPAC/vis__", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_RMT),
  GF_DEF_ARG("rmt-port", NULL, "set remotery port", "17815", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_RMT),
  GF_DEF_ARG("rmt-reuse", NULL, "allow remotery to reuse port", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_RMT),
@@ -1307,6 +1314,8 @@ GF_DEF_ARG("full-link", NULL, "throw error if any pid in the filter graph cannot
 
  GF_DEF_ARG("m2ts-vvc-old", NULL, "hack for old TS streams using 0x32 for VVC instead of 0x33", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HACKS),
  GF_DEF_ARG("piff-force-subsamples", NULL, "hack for PIFF PSEC files generated by 0.9.0 and 1.0 MP4Box with wrong subsample_count inserted for audio", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HACKS),
+ GF_DEF_ARG("vvdec-annexb", NULL, "hack for old vvdec+libavcodec supporting only annexB format", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HACKS),
+
 
  {0}
 };
@@ -1631,7 +1640,7 @@ void gf_sys_print_arg(FILE *helpout, u32 flags, const GF_GPACArg *arg, const cha
 		}
 
 		sep = strchr(arg->description, ' ');
-		if (sep) {
+		if (sep && (sep>arg->description)) {
 			sep--;
 			if ((sep[0] == 's') && (sep[-1] != 's')) {
 				fprintf(stderr, "\nWARNING: arg %s bad description format \"%s\", should use infintive\n", arg->name, arg->description);
@@ -1833,6 +1842,7 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 	Bool escape_xml = GF_FALSE;
 	Bool escape_pipe = GF_FALSE;
 	Bool prev_was_example = GF_FALSE;
+	Bool prev_has_line_after = GF_FALSE;
 	u32 gen_doc = 0;
 	u32 is_app_opts = 0;
 	if (flags & GF_PRINTARG_MD) {
@@ -1880,6 +1890,12 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 
 		if (next_line) next_line[0]=0;
 
+		if (prev_has_line_after && !strlen(line)) {
+			if (!next_line) break;
+			line = next_line+1;
+			line_pos=0;
+			continue;
+		}
 
 		if ((line[0]=='#') && (line[1]==' ')) {
 			if (!gen_doc)
@@ -1897,11 +1913,21 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 				line+=3;
 			else if (gen_doc==2) {
 				line+=3;
-				header_string = ".P\n.B\n";
+				header_string = ".SS ";
 			}
 
 			console_code = GF_CONSOLE_MAGENTA;
 			line_before = GF_TRUE;
+		} else if ((line[0]=='#') && (line[1]=='#') && (line[2]=='#') && (line[3]==' ')) {
+			if (!gen_doc)
+				line+=4;
+			else if (gen_doc==2) {
+				line+=4;
+				header_string = ".P\n.B\n";
+			}
+
+			console_code = GF_CONSOLE_CYAN;
+			line_after = GF_TRUE;
 		} else if ((line[0]=='E') && (line[1]=='X') && (line[2]==' ')) {
 			line+=3;
 			console_code = GF_CONSOLE_YELLOW;
@@ -1995,6 +2021,12 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 		if (gen_doc==2) {
 			line_before = line_after = GF_FALSE;
 		}
+
+		if (prev_has_line_after) line_before = GF_FALSE;
+		prev_has_line_after = GF_FALSE;
+		if (!strlen(line))
+			prev_has_line_after = GF_TRUE;
+
 		if (line_before) {
 			fprintf(helpout, "\n");
 			line_pos=0;
@@ -2110,7 +2142,7 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 
 					if (pipe_start) {
 						pipe_start[0] = 0;
-						fprintf(helpout, "%s,", src_line);
+						fprintf(helpout, "%s ", src_line);
 						pipe_start[0] = '|';
 						src_line = pipe_start+1;
 					} else {
@@ -2251,6 +2283,7 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 			if (gen_doc==1) fprintf(helpout, "  ");
 			fprintf(helpout, (flags & GF_PRINTARG_NL_TO_BR) ? "<br/>" : "\n");
 			line_pos=0;
+			prev_has_line_after = GF_TRUE;
 		}
 
 		if (!next_line) break;
@@ -2268,6 +2301,22 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 	}
 }
 
+GF_EXPORT
+Bool gf_strnistr(const char *text, const char *subtext, u32 subtext_len)
+{
+	if (!*text || !subtext || !subtext_len)
+		return GF_FALSE;
+
+	while (*text) {
+		if (tolower(*text) == *subtext) {
+			if (!strnicmp(text, subtext, subtext_len))
+				return GF_TRUE;
+
+		}
+		text++;
+	}
+	return GF_FALSE;
+}
 
 GF_EXPORT
 Bool gf_sys_word_match(const char *orig, const char *dst)
@@ -2294,6 +2343,10 @@ Bool gf_sys_word_match(const char *orig, const char *dst)
 			return GF_TRUE;
 		return GF_FALSE;
 	}
+
+	if (gf_strnistr(orig, dst, dlen))
+		return GF_TRUE;
+
 	run = gf_malloc(sizeof(u32) * olen);
 	memset(run, 0, sizeof(u32) * olen);
 
@@ -2323,12 +2376,13 @@ retry_char:
 		gf_free(run);
 		return GF_FALSE;
 	}
+/*
 	//if 4/5 of characters are matched, suggest it
 	if (match * 5 >= 4 * dlen ) {
 		gf_free(run);
 		return GF_TRUE;
 	}
-/*	if ((olen<=4) && (match>=3) && (dlen*2<olen*3) ) {
+	if ((olen<=4) && (match>=3) && (dlen*2<olen*3) ) {
 		gf_free(run);
 		return GF_TRUE;
 	}

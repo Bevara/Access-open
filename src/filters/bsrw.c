@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2020-2021
+ *			Copyright (c) Telecom ParisTech 2020-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / compressed bitstream metadata rewrite filter
@@ -43,7 +43,9 @@ struct _bsrw_pid_ctx
 
 	u32 nalu_size_length;
 
+#ifndef GPAC_DISABLE_AV_PARSERS
 	GF_VUIInfo vui;
+#endif
 	Bool rewrite_vui;
 };
 
@@ -81,7 +83,11 @@ static GF_Err m4v_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 	memcpy(dsi, prop->value.data.ptr, sizeof(u8) * dsi_size);
 
 	if (ctx->sar.num && ctx->sar.den) {
+#ifndef GPAC_DISABLE_AV_PARSERS
 		e = gf_m4v_rewrite_par(&dsi, &dsi_size, ctx->sar.num, ctx->sar.den);
+#else
+		e = GF_NOT_SUPPORTED;
+#endif
 		if (e) {
 			gf_free(dsi);
 			return e;
@@ -89,8 +95,12 @@ static GF_Err m4v_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 		gf_filter_pid_set_property(pctx->opid, GF_PROP_PID_SAR, &PROP_FRAC(ctx->sar) );
 	}
 	if (ctx->m4vpl>=0) {
+#ifndef GPAC_DISABLE_AV_PARSERS
 		gf_m4v_rewrite_pl(&dsi, &dsi_size, (u32) ctx->m4vpl);
 		gf_filter_pid_set_property(pctx->opid, GF_PROP_PID_PROFILE_LEVEL, &PROP_UINT(ctx->m4vpl) );
+#else
+		return GF_NOT_SUPPORTED;
+#endif
 	}
 
 	gf_filter_pid_set_property(pctx->opid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA_NO_COPY(dsi, dsi_size) );
@@ -98,14 +108,16 @@ static GF_Err m4v_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 	return GF_OK;
 }
 
-static GF_Err avc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket *pck)
+static GF_Err nalu_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket *pck, u32 codec_type)
 {
+	Bool is_sei;
 	u32 size, pck_size, final_size;
 	GF_FilterPacket *dst;
 	u8 *output;
 	const u8 *data = gf_filter_pck_get_data(pck, &pck_size);
 	if (!data)
 		return gf_filter_pck_forward(pck, pctx->opid);
+
 
 	final_size = 0;
 	size=0;
@@ -120,9 +132,26 @@ static GF_Err avc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket
 			if (!nal_hdr) break;
 			nal_size<<=8;
 		}
-		nal_type = data[size];
-		nal_type = nal_type & 0x1F;
-		if (nal_type != GF_AVC_NALU_SEI) {
+		is_sei = GF_FALSE;
+		//AVC
+		if (codec_type==0) {
+			nal_type = data[size] & 0x1F;
+			if (nal_type == GF_AVC_NALU_SEI) is_sei = GF_TRUE;
+		}
+		//HEVC
+		else if (codec_type==1) {
+			nal_type = (data[size] & 0x7E) >> 1;
+			if ((nal_type == GF_HEVC_NALU_SEI_PREFIX) || (nal_type == GF_HEVC_NALU_SEI_SUFFIX))
+				is_sei = GF_TRUE;
+		}
+		//VVC
+		else if (codec_type==2) {
+			nal_type = data[size+1] >> 3;
+			if ((nal_type == GF_VVC_NALU_SEI_PREFIX) || (nal_type == GF_VVC_NALU_SEI_SUFFIX))
+				is_sei = GF_TRUE;
+		}
+
+		if (!is_sei) {
 			final_size += nal_size+pctx->nalu_size_length;
 		}
 		size += nal_size;
@@ -147,9 +176,27 @@ static GF_Err avc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket
 			if (!nal_hdr) break;
 			nal_size<<=8;
 		}
-		nal_type = data[size];
-		nal_type = nal_type & 0x1F;
-		if (nal_type == GF_AVC_NALU_SEI) {
+		is_sei = GF_FALSE;
+
+		//AVC
+		if (codec_type==0) {
+			nal_type = data[size] & 0x1F;
+			if (nal_type == GF_AVC_NALU_SEI) is_sei = GF_TRUE;
+		}
+		//HEVC
+		else if (codec_type==1) {
+			nal_type = (data[size] & 0x7E) >> 1;
+			if ((nal_type == GF_HEVC_NALU_SEI_PREFIX) || (nal_type == GF_HEVC_NALU_SEI_SUFFIX))
+				is_sei = GF_TRUE;
+		}
+		//VVC
+		else if (codec_type==2) {
+			nal_type = data[size+1] >> 3;
+			if ((nal_type == GF_VVC_NALU_SEI_PREFIX) || (nal_type == GF_VVC_NALU_SEI_SUFFIX))
+				is_sei = GF_TRUE;
+		}
+
+		if (is_sei) {
 			size += nal_size;
 			continue;
 		}
@@ -160,6 +207,20 @@ static GF_Err avc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket
 	return gf_filter_pck_send(dst);
 }
 
+static GF_Err avc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket *pck)
+{
+	return nalu_rewrite_packet(ctx, pctx, pck, 0);
+}
+static GF_Err hevc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket *pck)
+{
+	return nalu_rewrite_packet(ctx, pctx, pck, 1);
+}
+static GF_Err vvc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket *pck)
+{
+	return nalu_rewrite_packet(ctx, pctx, pck, 2);
+}
+
+#ifndef GPAC_DISABLE_AV_PARSERS
 static void update_props(BSRWPid *pctx, GF_VUIInfo *vui)
 {
 	if ((vui->ar_num>0) && (vui->ar_den>0))
@@ -174,9 +235,10 @@ static void update_props(BSRWPid *pctx, GF_VUIInfo *vui)
 		if (vui->color_tfc>=0)
 			gf_filter_pid_set_property(pctx->opid, GF_PROP_PID_COLR_TRANSFER, &PROP_UINT(vui->color_tfc) );
 		if (vui->color_matrix>=0)
-			gf_filter_pid_set_property(pctx->opid, GF_PROP_PID_COLR_PRIMARIES, &PROP_UINT(vui->color_matrix) );
+			gf_filter_pid_set_property(pctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT(vui->color_matrix) );
 	}
 }
+#endif /*GPAC_DISABLE_AV_PARSERS*/
 
 static GF_Err avc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 {
@@ -193,12 +255,16 @@ static GF_Err avc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 	avcc = gf_odf_avc_cfg_read(prop->value.data.ptr, prop->value.data.size);
 
 	if (pctx->rewrite_vui) {
+#ifndef GPAC_DISABLE_AV_PARSERS
 		GF_VUIInfo tmp_vui = pctx->vui;
 		tmp_vui.update = GF_TRUE;
 		e = gf_avc_change_vui(avcc, &tmp_vui);
 		if (!e) {
 			update_props(pctx, &tmp_vui);
 		}
+#else
+		return GF_NOT_SUPPORTED;
+#endif /*GPAC_DISABLE_AV_PARSERS*/
 	}
 
 	if ((ctx->lev>=0) || (ctx->prof>=0) || (ctx->pcomp>=0)) {
@@ -239,68 +305,6 @@ static GF_Err avc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 
 #ifndef GPAC_DISABLE_HEVC
 
-static GF_Err hevc_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPacket *pck)
-{
-	u32 size, pck_size, final_size;
-	GF_FilterPacket *dst;
-	u8 *output;
-	const u8 *data = gf_filter_pck_get_data(pck, &pck_size);
-	if (!data)
-		return gf_filter_pck_forward(pck, pctx->opid);
-
-	final_size = 0;
-	size=0;
-	while (size<pck_size) {
-		u8 nal_type=0;
-		u32 nal_hdr = pctx->nalu_size_length;
-		u32 nal_size = 0;
-		while (nal_hdr) {
-			nal_size |= data[size];
-			size++;
-			nal_hdr--;
-			if (!nal_hdr) break;
-			nal_size<<=8;
-		}
-		nal_type = data[size];
-		nal_type = (nal_type & 0x7E) >> 1;
-		if ((nal_type != GF_HEVC_NALU_SEI_PREFIX) && (nal_type != GF_HEVC_NALU_SEI_SUFFIX) ) {
-			final_size += nal_size+pctx->nalu_size_length;
-		}
-		size += nal_size;
-	}
-	if (final_size == pck_size)
-		return gf_filter_pck_forward(pck, pctx->opid);
-
-	dst = gf_filter_pck_new_alloc(pctx->opid, final_size, &output);
-	if (!dst) return GF_OUT_OF_MEM;
-	
-	gf_filter_pck_merge_properties(pck, dst);
-
-	size=0;
-	while (size<pck_size) {
-		u8 nal_type=0;
-		u32 nal_hdr = pctx->nalu_size_length;
-		u32 nal_size = 0;
-		while (nal_hdr) {
-			nal_size |= data[size];
-			size++;
-			nal_hdr--;
-			if (!nal_hdr) break;
-			nal_size<<=8;
-		}
-		nal_type = data[size];
-		nal_type = (nal_type & 0x7E) >> 1;
-		if ((nal_type == GF_HEVC_NALU_SEI_PREFIX) || (nal_type == GF_HEVC_NALU_SEI_SUFFIX) ) {
-			size += nal_size;
-			continue;
-		}
-		memcpy(output, &data[size-pctx->nalu_size_length], pctx->nalu_size_length+nal_size);
-		output += pctx->nalu_size_length+nal_size;
-		size += nal_size;
-	}
-	return gf_filter_pck_send(dst);
-}
-
 static GF_Err hevc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 {
 	GF_HEVCConfig *hvcc;
@@ -315,12 +319,16 @@ static GF_Err hevc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 
 	hvcc = gf_odf_hevc_cfg_read(prop->value.data.ptr, prop->value.data.size, (pctx->codec_id==GF_CODECID_LHVC) ? GF_TRUE : GF_FALSE);
 	if (pctx->rewrite_vui) {
+#ifndef GPAC_DISABLE_AV_PARSERS
 		GF_VUIInfo tmp_vui = pctx->vui;
 		tmp_vui.update = GF_TRUE;
 		e = gf_hevc_change_vui(hvcc, &tmp_vui);
 		if (!e) {
 			update_props(pctx, &tmp_vui);
 		}
+#else
+		return GF_NOT_SUPPORTED;
+#endif /*GPAC_DISABLE_AV_PARSERS*/
 	}
 
 	if (ctx->pidc>=0) hvcc->profile_idc = ctx->pidc;
@@ -344,6 +352,52 @@ static GF_Err hevc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 }
 #endif // GPAC_DISABLE_HEVC
 
+
+static GF_Err vvc_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
+{
+#ifndef GPAC_DISABLE_AV_PARSERS
+	GF_VVCConfig *vvcc;
+	GF_Err e = GF_OK;
+	u8 *dsi;
+	u32 dsi_size;
+	const GF_PropertyValue *prop;
+
+	prop = gf_filter_pid_get_property(pctx->ipid, GF_PROP_PID_DECODER_CONFIG);
+	if (!prop) return GF_OK;
+	pctx->reconfigure = GF_FALSE;
+
+	vvcc = gf_odf_vvc_cfg_read(prop->value.data.ptr, prop->value.data.size);
+	if (pctx->rewrite_vui) {
+		GF_VUIInfo tmp_vui = pctx->vui;
+		tmp_vui.update = GF_TRUE;
+		e = gf_vvc_change_vui(vvcc, &tmp_vui);
+		if (!e) {
+			update_props(pctx, &tmp_vui);
+		}
+	}
+
+	if (ctx->pidc>=0) vvcc->general_profile_idc = ctx->pidc;
+	if (ctx->lev>=0) vvcc->general_level_idc = ctx->pidc;
+
+
+	gf_odf_vvc_cfg_write(vvcc, &dsi, &dsi_size);
+	pctx->nalu_size_length = vvcc->nal_unit_size;
+	gf_odf_vvc_cfg_del(vvcc);
+	if (e) return e;
+
+	gf_filter_pid_set_property(pctx->opid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA_NO_COPY(dsi, dsi_size) );
+
+	if (ctx->rmsei) {
+		pctx->rewrite_packet = vvc_rewrite_packet;
+	} else {
+		pctx->rewrite_packet = none_rewrite_packet;
+	}
+	return GF_OK;
+#else
+	return GF_NOT_SUPPORTED;
+#endif /*GPAC_DISABLE_AV_PARSERS*/
+}
+
 static GF_Err none_rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 {
 	pctx->reconfigure = GF_FALSE;
@@ -360,6 +414,7 @@ static GF_Err rewrite_pid_config(GF_BSRWCtx *ctx, BSRWPid *pctx)
 
 static void init_vui(GF_BSRWCtx *ctx, BSRWPid *pctx)
 {
+#ifndef GPAC_DISABLE_AV_PARSERS
 	pctx->vui.ar_num = ctx->sar.num;
 	pctx->vui.ar_den = ctx->sar.den;
 	pctx->vui.color_matrix = ctx->cmx;
@@ -368,6 +423,7 @@ static void init_vui(GF_BSRWCtx *ctx, BSRWPid *pctx)
 	pctx->vui.remove_video_info = ctx->novsi;
 	pctx->vui.color_tfc = ctx->ctfc;
 	pctx->vui.video_format = ctx->vidfmt;
+#endif /*GPAC_DISABLE_AV_PARSERS*/
 
 	pctx->rewrite_vui = GF_TRUE;
 	if (ctx->sar.num>=0) return;
@@ -411,7 +467,7 @@ static GF_Err prores_rewrite_packet(GF_BSRWCtx *ctx, BSRWPid *pctx, GF_FilterPac
 		else if (ctx->sar.num * 9 == ctx->sar.den * 16) new_ar = 3;
 		else {
 			if (pctx->prev_sar != new_ar) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[BSRW] Aspect ratio %d/%d not registered in ProRes, using 0 (unknown)\n", ctx->sar.num, ctx->sar.den));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[BSRW] Aspect ratio %d/%d not registered in ProRes, using 0 (unknown)\n", ctx->sar.num, ctx->sar.den));
 			}
 		}
 		new_ar <<= 4;
@@ -497,6 +553,10 @@ static GF_Err bsrw_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		pctx->rewrite_pid_config = hevc_rewrite_pid_config;
 		break;
 #endif
+	case GF_CODECID_VVC:
+	case GF_CODECID_VVC_SUBPIC:
+		pctx->rewrite_pid_config = vvc_rewrite_pid_config;
+		break;
 	case GF_CODECID_MPEG4_PART2:
 		pctx->rewrite_pid_config = m4v_rewrite_pid_config;
 		break;
@@ -595,18 +655,18 @@ static GF_FilterArgs BSRWArgs[] =
 	{ OFFS(cprim), "color primaries according to ISO/IEC 23001-8 / 23091-2", GF_PROP_CICP_COL_PRIM, "-1", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(ctfc), "color transfer characteristics according to ISO/IEC 23001-8 / 23091-2", GF_PROP_CICP_COL_TFC, "-1", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(cmx), "color matrix coeficients according to ISO/IEC 23001-8 / 23091-2", GF_PROP_CICP_COL_MX, "-1", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(sar), "aspect ratio to rewrite - see filter help", GF_PROP_FRACTION, "-1/-1", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(sar), "aspect ratio to rewrite", GF_PROP_FRACTION, "-1/-1", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(m4vpl), "set ProfileLevel for MPEG-4 video part two", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(fullrange), "video full range for AVC|H264 and HEVC", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(fullrange), "video full range flag", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(novsi), "remove video_signal_type from VUI in AVC|H264 and HEVC", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(prof), "profile indication for AVC|H264", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(lev), "level indication for AVC|H264", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(lev), "level indication for AVC|H264, level_idc for VVC", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(pcomp), "profile compatibility for AVC|H264", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(pidc), "profile IDC for HEVC", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(pidc), "profile IDC for HEVC and VVC", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(pspace), "profile space for HEVC", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(gpcflags), "general compatibility flags for HEVC", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(rmsei), "remove SEI messages from bitstream for AVC|H264 and HEVC", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(vidfmt), "video format for AVC|H264 and HEVC", GF_PROP_UINT, "-1", "component|pal|ntsc|secam|mac|undef", GF_FS_ARG_UPDATE},
+	{ OFFS(rmsei), "remove SEI messages from bitstream for AVC|H264, HEVC and VVC", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(vidfmt), "video format for AVC|H264, HEVC and VVC", GF_PROP_UINT, "-1", "component|pal|ntsc|secam|mac|undef", GF_FS_ARG_UPDATE},
 	{0}
 };
 
@@ -650,7 +710,7 @@ GF_FilterRegister BSRWRegister = {
 	"- MPEG-4 Visual:\n"
 	"  - sample aspect ratio\n"
 	"  - profile and level\n"
-	"- AVC|H264 and HEVC:\n"
+	"- AVC|H264, HEVC and VVC:\n"
 	"  - sample aspect ratio\n"
 	"  - profile, level, profile compatibility\n"
 	"  - video format, video fullrange\n"
@@ -664,6 +724,7 @@ GF_FilterRegister BSRWRegister = {
 	"  \n"
 	"The filter can currently modify the following properties in the stream configuration but not in the bitstream:\n"
 	"- HEVC: profile IDC, profile space, general compatibility flags\n"
+	"- VVC: profile IDC, general profile and level indication\n"
 	"  \n"
 	"The filter will work in passthrough mode for all other codecs and media types.\n"
 	)

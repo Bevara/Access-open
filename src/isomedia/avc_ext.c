@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -578,7 +578,7 @@ GF_Err gf_isom_nalu_sample_rewrite(GF_MediaBox *mdia, GF_ISOSample *sample, u32 
 		e = gf_bs_reassign_buffer(mdia->nalu_parser, mdia->in_sample_buffer, sample->dataLength);
 		if (e) return e;
 	}
-	//setup ouput
+	//setup output
 	if (!mdia->nalu_out_bs) {
 		u8 *output;
 		u32 outSize;
@@ -718,14 +718,15 @@ GF_Err gf_isom_nalu_sample_rewrite(GF_MediaBox *mdia, GF_ISOSample *sample, u32 
 			}
 
 #ifndef GPAC_DISABLE_HEVC
-			/*we already wrote this stuff*/
-			if (nal_type==GF_HEVC_NALU_ACCESS_UNIT) {
+			switch (nal_type) {
+			/*we already wrote AU delim, and we trash aggregators*/
+			case GF_HEVC_NALU_ACCESS_UNIT:
+			case GF_HEVC_NALU_FF_AGGREGATOR:
 				gf_bs_skip_bytes(mdia->nalu_parser, nal_size-2);
 				continue;
-			}
-			switch (nal_type) {
+
 			//extractor
-			case 49:
+			case GF_HEVC_NALU_FF_EXTRACTOR:
 				e = process_extractor(file, mdia, sampleNumber, sample->DTS, nal_size, nal_hdr, nal_unit_size_field, GF_TRUE, rewrite_ps, rewrite_start_codes, extractor_mode);
 				if (e) goto exit;
 				break;
@@ -790,11 +791,12 @@ GF_Err gf_isom_nalu_sample_rewrite(GF_MediaBox *mdia, GF_ISOSample *sample, u32 
 
 		switch(nal_type) {
 		case GF_AVC_NALU_ACCESS_UNIT:
-			/*we already wrote this stuff*/
+		case GF_AVC_NALU_FF_AGGREGATOR:
+			/*we already wrote this stuff, and we trash aggregators*/
 			gf_bs_skip_bytes(mdia->nalu_parser, nal_size-1);
 			continue;
 		//extractor
-		case 31:
+		case GF_AVC_NALU_FF_EXTRACTOR:
 			e = process_extractor(file, mdia, sampleNumber, sample->DTS, nal_size, nal_hdr, nal_unit_size_field, GF_FALSE, rewrite_ps, rewrite_start_codes, extractor_mode);
 			if (e) goto exit;
 			break;
@@ -947,7 +949,7 @@ static void merge_avc_config(GF_AVCConfig *dst_cfg, GF_AVCConfig *src_cfg)
 	if (!src_cfg || !dst_cfg) return;
 	cfg = AVC_DuplicateConfig(src_cfg);
 	if (!cfg) return;
-	
+
 	while (gf_list_count(cfg->sequenceParameterSets)) {
 		GF_NALUFFParam *p = (GF_NALUFFParam*)gf_list_get(cfg->sequenceParameterSets, 0);
 		gf_list_rem(cfg->sequenceParameterSets, 0);
@@ -1261,7 +1263,7 @@ void gf_hevc_parse_ps(GF_HEVCConfig* hevccfg, HEVCState* hevc, u32 nal_type)
 {
 	u32 i, j;
 	if (!hevccfg) return;
-	
+
 	for (i = 0; i < gf_list_count(hevccfg->param_array); i++) {
 		GF_NALUFFParamArray* ar = gf_list_get(hevccfg->param_array, i);
 		if (ar->type != nal_type) continue;
@@ -1269,6 +1271,24 @@ void gf_hevc_parse_ps(GF_HEVCConfig* hevccfg, HEVCState* hevc, u32 nal_type)
 			u8 ntype, tid, lid;
 			GF_NALUFFParam* sl = gf_list_get(ar->nalus, j);
 			gf_hevc_parse_nalu(sl->data, sl->size, hevc, &ntype, &tid, &lid);
+		}
+	}
+}
+#endif
+
+#if !defined(GPAC_DISABLE_AV_PARSERS)
+void gf_vvc_parse_ps(GF_VVCConfig* vvccfg, VVCState* vvc, u32 nal_type)
+{
+	u32 i, j;
+	if (!vvccfg) return;
+
+	for (i = 0; i < gf_list_count(vvccfg->param_array); i++) {
+		GF_NALUFFParamArray* ar = gf_list_get(vvccfg->param_array, i);
+		if (ar->type != nal_type) continue;
+		for (j = 0; j < gf_list_count(ar->nalus); j++) {
+			u8 ntype, tid, lid;
+			GF_NALUFFParam* sl = gf_list_get(ar->nalus, j);
+			gf_vvc_parse_nalu(sl->data, sl->size, vvc, &ntype, &tid, &lid);
 		}
 	}
 }
@@ -1890,7 +1910,7 @@ GF_Err gf_isom_vp_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_VPConfig 
 	//create a new entry
 	entry = (GF_MPEGVisualSampleEntryBox *)gf_isom_box_new_parent(&stsd->child_boxes, vpx_type);
 	if (!entry) return GF_OUT_OF_MEM;
-	
+
 	entry->vp_config = (GF_VPConfigurationBox*)gf_isom_box_new_parent(&entry->child_boxes, GF_ISOM_BOX_TYPE_VPCC);
 	if (!entry->vp_config) return GF_OUT_OF_MEM;
 	entry->vp_config->config = VP_DuplicateConfig(cfg);
@@ -2093,7 +2113,7 @@ GF_Err gf_isom_hevc_config_update_ex(GF_ISOFile *the_file, u32 trackNumber, u32 
 					entry->lhvc_config->config = HEVC_DuplicateConfig(cfg);
 					if (!entry->lhvc_config->config) return GF_OUT_OF_MEM;
 				}
-				
+
 				if (operand_type==GF_ISOM_HVCC_SET_LHVC_WITH_BASE_BACKWARD) {
 					if (entry->type==GF_ISOM_BOX_TYPE_HEV2) entry->type = GF_ISOM_BOX_TYPE_HEV1;
 					else entry->type = GF_ISOM_BOX_TYPE_HVC1;
@@ -2209,7 +2229,7 @@ GF_Err gf_isom_vvc_config_update_ex(GF_ISOFile *the_file, u32 trackNumber, u32 D
 
 
 	if (operand_type <= GF_ISOM_VVCC_SET_INBAND) {
-		if ((operand_type != GF_ISOM_VVCC_SET_INBAND) && !entry->hevc_config) {
+		if ((operand_type != GF_ISOM_VVCC_SET_INBAND) && !entry->vvc_config) {
 			entry->vvc_config = (GF_VVCConfigurationBox*)gf_isom_box_new_parent(&entry->child_boxes, GF_ISOM_BOX_TYPE_VVCC);
 			if (!entry->vvc_config) return GF_OUT_OF_MEM;
 		}
@@ -2220,6 +2240,10 @@ GF_Err gf_isom_vvc_config_update_ex(GF_ISOFile *the_file, u32 trackNumber, u32 D
 		} else {
 			operand_type = GF_ISOM_VVCC_SET_INBAND;
 		}
+		if (operand_type == GF_ISOM_VVCC_UPDATE) {
+			return GF_OK;
+		}
+
 		array_incomplete = (operand_type==GF_ISOM_VVCC_SET_INBAND) ? 1 : 0;
 		if (entry->vvc_config && nalu_cleanup_config(entry->vvc_config->config ? entry->vvc_config->config->param_array : NULL,
 			(operand_type==GF_ISOM_VVCC_SET_INBAND),
@@ -2241,6 +2265,12 @@ GF_EXPORT
 GF_Err gf_isom_vvc_set_inband_config(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex, Bool keep_xps)
 {
 	return gf_isom_vvc_config_update_ex(the_file, trackNumber, DescriptionIndex, NULL, GF_ISOM_VVCC_SET_INBAND, keep_xps);
+}
+
+GF_EXPORT
+GF_Err gf_isom_vvc_config_update(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex, GF_VVCConfig *cfg)
+{
+	return gf_isom_vvc_config_update_ex(the_file, trackNumber, DescriptionIndex, cfg, GF_ISOM_VVCC_UPDATE, GF_FALSE);
 }
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
@@ -2341,6 +2371,10 @@ GF_ISOMVVCType gf_isom_get_vvc_type(GF_ISOFile *the_file, u32 trackNumber, u32 D
 	case GF_ISOM_BOX_TYPE_VVC1:
 	case GF_ISOM_BOX_TYPE_VVI1:
 		return GF_ISOM_VVCTYPE_ONLY;
+	case GF_ISOM_SUBTYPE_VVS1:
+		return GF_ISOM_VVCTYPE_SUBPIC;
+	case GF_ISOM_SUBTYPE_VVCN:
+		return GF_ISOM_VVCTYPE_NVCL;
 	default:
 		return GF_ISOM_VVCTYPE_NONE;
 	}
@@ -2351,15 +2385,25 @@ GF_EXPORT
 GF_VVCConfig *gf_isom_vvc_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex)
 {
 	GF_TrackBox *trak;
+	u32 type;
 	GF_MPEGVisualSampleEntryBox *entry;
 	/*todo, add support for subpic track and nvcl tracks*/
 	trak = gf_isom_get_track_from_file(the_file, trackNumber);
 	if (!trak || !trak->Media || !DescriptionIndex) return NULL;
-	if (gf_isom_get_vvc_type(the_file, trackNumber, DescriptionIndex)==GF_ISOM_VVCTYPE_NONE)
+	type = gf_isom_get_vvc_type(the_file, trackNumber, DescriptionIndex);
+	if (type==GF_ISOM_VVCTYPE_NONE)
 		return NULL;
 	entry = (GF_MPEGVisualSampleEntryBox*)gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, DescriptionIndex-1);
 	if (!entry) return NULL;
 	if (entry->internal_type != GF_ISOM_SAMPLE_ENTRY_VIDEO) return NULL;
+
+	if ((type==GF_ISOM_VVCTYPE_SUBPIC) || (type==GF_ISOM_VVCTYPE_NVCL)) {
+		GF_VVCNaluConfigurationBox *vvnc = (GF_VVCNaluConfigurationBox *) gf_isom_box_find_child(entry->child_boxes, GF_ISOM_BOX_TYPE_VVNC);
+		if (!vvnc) return NULL;
+		GF_VVCConfig *vvcc = gf_odf_vvc_cfg_new();
+		vvcc->nal_unit_size = vvnc->nal_unit_size;
+		return vvcc;
+	}
 	if (!entry->vvc_config) return NULL;
 	return VVC_DuplicateConfig(entry->vvc_config->config);
 }
@@ -2414,7 +2458,7 @@ GF_AV1Config *gf_isom_av1_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 
 	entry = (GF_MPEGVisualSampleEntryBox*)gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, DescriptionIndex - 1);
 	if (!entry) return NULL;
 	if (entry->internal_type != GF_ISOM_SAMPLE_ENTRY_VIDEO) return NULL;
-	if (!entry->av1_config|| !entry->av1_config->config) return NULL;
+	if (!entry->av1_config || !entry->av1_config->config) return NULL;
 	return AV1_DuplicateConfig(entry->av1_config->config);
 }
 
@@ -2479,6 +2523,8 @@ GF_ISOMAVCType gf_isom_get_avc_svc_type(GF_ISOFile *the_file, u32 trackNumber, u
 	case GF_ISOM_BOX_TYPE_AVC4:
 	case GF_ISOM_BOX_TYPE_SVC1:
 	case GF_ISOM_BOX_TYPE_MVC1:
+	case GF_ISOM_BOX_TYPE_DVA1:
+	case GF_ISOM_BOX_TYPE_DVAV:
 		break;
 	default:
 		return GF_ISOM_AVCTYPE_NONE;
@@ -2514,10 +2560,6 @@ GF_ISOMHEVCType gf_isom_get_hevc_lhvc_type(GF_ISOFile *the_file, u32 trackNumber
 		if (entry->rinf && entry->rinf->original_format) type = entry->rinf->original_format->data_format;
 	}
 
-	if (type == GF_ISOM_BOX_TYPE_DVHE) {
-		type = GF_ISOM_BOX_TYPE_HEV1;
-	}
-
 	switch (type) {
 	case GF_ISOM_BOX_TYPE_HVC1:
 	case GF_ISOM_BOX_TYPE_HEV1:
@@ -2526,6 +2568,8 @@ GF_ISOMHEVCType gf_isom_get_hevc_lhvc_type(GF_ISOFile *the_file, u32 trackNumber
 	case GF_ISOM_BOX_TYPE_LHV1:
 	case GF_ISOM_BOX_TYPE_LHE1:
 	case GF_ISOM_BOX_TYPE_HVT1:
+	case GF_ISOM_BOX_TYPE_DVHE:
+	case GF_ISOM_BOX_TYPE_DVH1:
 		break;
 	default:
 		return GF_ISOM_HEVCTYPE_NONE;
@@ -2696,11 +2740,18 @@ GF_Err avcc_box_read(GF_Box *s, GF_BitStream *bs)
 
 	ISOM_DECREASE_SIZE(ptr, 7) //7 includes the 2 counts of sps and pps
 
+	Bool is_avcc;
+	if ((ptr->type==GF_ISOM_BOX_TYPE_AVCC) || (ptr->type==GF_ISOM_BOX_TYPE_AVCE))
+		is_avcc = GF_TRUE;
+	else
+		is_avcc = GF_FALSE;
+
+	//we don't use gf_odf_avc_cfg_read to deal with missing rext profile signaling on many files
 	ptr->config->configurationVersion = gf_bs_read_u8(bs);
 	ptr->config->AVCProfileIndication = gf_bs_read_u8(bs);
 	ptr->config->profile_compatibility = gf_bs_read_u8(bs);
 	ptr->config->AVCLevelIndication = gf_bs_read_u8(bs);
-	if (ptr->type==GF_ISOM_BOX_TYPE_AVCC) {
+	if (is_avcc) {
 		gf_bs_read_int(bs, 6);
 	} else {
 		ptr->config->complete_representation = gf_bs_read_int(bs, 1);
@@ -2742,11 +2793,11 @@ GF_Err avcc_box_read(GF_Box *s, GF_BitStream *bs)
 	}
 
 	//not avcC (svcC; mvcC), no check for rext signaling
-	if (ptr->type!=GF_ISOM_BOX_TYPE_AVCC)
+	if (!is_avcc)
 		return GF_OK;
 
 	//not REXT profile, no check for rext signaling
-	if (!gf_avc_is_rext_profile(ptr->config->AVCProfileIndication))
+	if (!gf_avcc_use_extensions(ptr->config->AVCProfileIndication))
 		return GF_OK;
 
 	//non-compliant file (rext signaling missing), try to fill in values from SPS
@@ -2770,7 +2821,7 @@ GF_Err avcc_box_read(GF_Box *s, GF_BitStream *bs)
 			}
 		}
 #endif
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("AVCC: invalid syntax for REXT profile, patching.\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[isom/avcc] Missing REXT profile signaling, patching.\n"));
 		return GF_OK;
 	}
 	ISOM_DECREASE_SIZE(ptr, 4)
@@ -2827,11 +2878,17 @@ GF_Err avcc_box_write(GF_Box *s, GF_BitStream *bs)
 	e = gf_isom_box_write_header(s, bs);
 	if (e) return e;
 
+	Bool is_avcc;
+	if ((ptr->type==GF_ISOM_BOX_TYPE_AVCC) || (ptr->type==GF_ISOM_BOX_TYPE_AVCE))
+		is_avcc = GF_TRUE;
+	else
+		is_avcc = GF_FALSE;
+
 	gf_bs_write_u8(bs, ptr->config->configurationVersion);
 	gf_bs_write_u8(bs, ptr->config->AVCProfileIndication);
 	gf_bs_write_u8(bs, ptr->config->profile_compatibility);
 	gf_bs_write_u8(bs, ptr->config->AVCLevelIndication);
-	if (ptr->type==GF_ISOM_BOX_TYPE_AVCC) {
+	if (is_avcc) {
 		gf_bs_write_int(bs, 0x3F, 6);
 	} else {
 		gf_bs_write_int(bs, ptr->config->complete_representation, 1);
@@ -2856,8 +2913,8 @@ GF_Err avcc_box_write(GF_Box *s, GF_BitStream *bs)
 	}
 
 
-	if (ptr->type==GF_ISOM_BOX_TYPE_AVCC) {
-		if (gf_avc_is_rext_profile(ptr->config->AVCProfileIndication)) {
+	if (is_avcc) {
+		if (gf_avcc_use_extensions(ptr->config->AVCProfileIndication)) {
 			gf_bs_write_int(bs, 0xFF, 6);
 			gf_bs_write_int(bs, ptr->config->chroma_format, 2);
 			gf_bs_write_int(bs, 0xFF, 5);
@@ -2894,8 +2951,9 @@ GF_Err avcc_box_size(GF_Box *s)
 	for (i=0; i<count; i++)
 		ptr->size += 2 + ((GF_NALUFFParam *)gf_list_get(ptr->config->pictureParameterSets, i))->size;
 
-	if (ptr->type==GF_ISOM_BOX_TYPE_AVCC) {
-		if (gf_avc_is_rext_profile(ptr->config->AVCProfileIndication)) {
+
+	if ((ptr->type==GF_ISOM_BOX_TYPE_AVCC) || (ptr->type==GF_ISOM_BOX_TYPE_AVCE)) {
+		if (gf_avcc_use_extensions(ptr->config->AVCProfileIndication)) {
 			ptr->size += 4;
 			count = ptr->config->sequenceParameterSetExtensions ?gf_list_count(ptr->config->sequenceParameterSetExtensions) : 0;
 			for (i=0; i<count; i++)
@@ -2923,7 +2981,15 @@ GF_Err hvcc_box_read(GF_Box *s, GF_BitStream *bs)
 	if (ptr->config) gf_odf_hevc_cfg_del(ptr->config);
 
 	consumed = gf_bs_get_position(bs);
-	ptr->config = gf_odf_hevc_cfg_read_bs(bs, (s->type == GF_ISOM_BOX_TYPE_HVCC) ? GF_FALSE : GF_TRUE);
+	switch (s->type) {
+	case GF_ISOM_BOX_TYPE_HVCC:
+	case GF_ISOM_BOX_TYPE_HVCE:
+		ptr->config = gf_odf_hevc_cfg_read_bs(bs, GF_FALSE);
+		break;
+	default:
+		ptr->config = gf_odf_hevc_cfg_read_bs(bs, GF_TRUE);
+		break;
+	}
 	consumed = gf_bs_get_position(bs) - consumed ;
 	ISOM_DECREASE_SIZE(ptr, (u32)consumed)
 
@@ -3457,6 +3523,11 @@ GF_Err gf_isom_oinf_read_entry(void *entry, GF_BitStream *bs)
 			op->layers_info[j].layer_id = gf_bs_read_int(bs, 6);
 			op->layers_info[j].is_outputlayer = gf_bs_read_int(bs, 1) ? GF_TRUE : GF_FALSE;
 			op->layers_info[j].is_alternate_outputlayer = gf_bs_read_int(bs, 1) ? GF_TRUE : GF_FALSE;
+
+			if (gf_bs_is_overflow(bs)) {
+				gf_free(op);
+				return GF_NON_COMPLIANT_BITSTREAM;
+			}
 		}
 		op->minPicWidth = gf_bs_read_u16(bs);
 		op->minPicHeight = gf_bs_read_u16(bs);
@@ -3476,6 +3547,10 @@ GF_Err gf_isom_oinf_read_entry(void *entry, GF_BitStream *bs)
 			op->maxBitRate = gf_bs_read_u32(bs);
 			op->avgBitRate = gf_bs_read_u32(bs);
 		}
+		if (gf_bs_is_overflow(bs)) {
+			gf_free(op);
+			return GF_NON_COMPLIANT_BITSTREAM;
+		}
 		gf_list_add(ptr->operating_points, op);
 	}
 	count = gf_bs_read_u8(bs);
@@ -3494,6 +3569,10 @@ GF_Err gf_isom_oinf_read_entry(void *entry, GF_BitStream *bs)
 		for (j = 0; j < 16; j++) {
 			if (ptr->scalability_mask & (1 << j))
 				dep->dimension_identifier[j] = gf_bs_read_u8(bs);
+		}
+		if (gf_bs_is_overflow(bs)) {
+			gf_free(dep);
+			return GF_NON_COMPLIANT_BITSTREAM;
 		}
 		gf_list_add(ptr->dependency_layers, dep);
 	}

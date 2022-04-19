@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / software 2D rasterizer module
@@ -169,6 +169,8 @@ void gf_evg_surface_delete(GF_EVGSurface *surf)
 	}
 	gf_free(surf->scanlines);
 
+	if (surf->internal_mask) gf_free(surf->internal_mask);
+
 	evg_raster_ctx_uninit(&surf->raster_ctx);
 
 	if (surf->ext3d) {
@@ -267,10 +269,27 @@ static void evg_surface_set_components_idx(GF_EVGSurface *surf)
 		surf->idx_b=3;
 		break;
 	case GF_PIXEL_RGBA:
+	case GF_PIXEL_YUVA444_PACK:
 		surf->idx_a=3;
 		surf->idx_r=0;
 		surf->idx_g=1;
 		surf->idx_b=2;
+		break;
+	case GF_PIXEL_UYVA444_PACK:
+		surf->idx_a=3;
+		surf->idx_r=1;
+		surf->idx_g=0;
+		surf->idx_b=2;
+		break;
+	case GF_PIXEL_YUV444_PACK:
+		surf->idx_r=0;
+		surf->idx_g=1;
+		surf->idx_b=2;
+		break;
+	case GF_PIXEL_VYU444_PACK:
+		surf->idx_r=1;
+		surf->idx_g=2;
+		surf->idx_b=0;
 		break;
 	case GF_PIXEL_BGRA:
 		surf->idx_a=3;
@@ -379,10 +398,23 @@ GF_Err gf_evg_surface_attach_to_buffer(GF_EVGSurface *surf, u8 *pixels, u32 widt
 		BPP = 2;
 		surf->not_8bits = GF_TRUE;
 		break;
+	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_UYVA444_PACK:
+		surf->is_transparent = GF_TRUE;
+		BPP = 4;
+		break;
+	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_VYU444_PACK:
+		BPP = 3;
+		break;
 	default:
 		return GF_NOT_SUPPORTED;
 	}
 	if (!pitch_x) pitch_x = BPP;
+	if (!pitch_y) {
+		gf_pixel_get_size_info(pixelFormat, width, height, NULL, &pitch_y, NULL, NULL, NULL);
+	}
+
 	surf->pitch_x = pitch_x;
 	surf->pitch_y = pitch_y;
 	if (!surf->raster_ctx.stencil_pix_run || (surf->width != width)) {
@@ -430,14 +462,18 @@ GF_Err gf_evg_surface_attach_to_buffer(GF_EVGSurface *surf, u8 *pixels, u32 widt
 	evg_surface_set_components_idx(surf);
 	gf_evg_surface_set_matrix(surf, NULL);
 
+	if (size_changed && surf->internal_mask) {
+		gf_free(surf->internal_mask);
+		surf->internal_mask = NULL;
+	}
 	if (surf->ext3d && size_changed) {
 		surf->ext3d->depth_buffer = NULL;
 
-		if (!surf->ext3d->vp_w || !surf->ext3d->vp_h) {
-			surf->ext3d->vp_x = 0;
-			surf->ext3d->vp_y = 0;
-			surf->ext3d->vp_w = surf->width;
-			surf->ext3d->vp_h = surf->height;
+		if (!surf->vp_w || !surf->vp_h) {
+			surf->vp_x = 0;
+			surf->vp_y = 0;
+			surf->vp_w = surf->width;
+			surf->vp_h = surf->height;
 		}
 	}
 	return GF_OK;
@@ -452,6 +488,7 @@ GF_Err gf_evg_surface_attach_to_texture(GF_EVGSurface *surf, GF_EVGStencil * ste
 
 	return gf_evg_surface_attach_to_buffer(surf, tx->pixels, tx->width, tx->height, 0, tx->stride, tx->pixel_format);
 }
+
 
 
 GF_EXPORT
@@ -564,6 +601,14 @@ GF_Err gf_evg_surface_clear(GF_EVGSurface *surf, GF_IRect *rc, u32 color)
 		return evg_surface_clear_yuv422p_10(surf, clear, color);
 	case GF_PIXEL_YUV444_10:
 		return evg_surface_clear_yuv444p_10(surf, clear, color);
+
+	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_UYVA444_PACK:
+		return evg_surface_clear_argb(surf, clear, gf_evg_argb_to_ayuv(surf, color) );
+
+	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_VYU444_PACK:
+		return evg_surface_clear_rgb(surf, clear, gf_evg_argb_to_ayuv(surf, color) );
 	default:
 		return GF_BAD_PARAM;
 	}
@@ -641,6 +686,34 @@ static Bool setup_grey_callback(GF_EVGSurface *surf, Bool for_3d, Bool multi_ste
 	u32 a, uv_alpha_size=0;
 	Bool use_const = GF_TRUE;
 
+	//default fill_run callback
+	surf->fill_run = evg_fill_run;
+
+	//mask mode draw,
+	if (surf->mask_mode == GF_EVGMASK_DRAW) {
+		if (surf->sten && (surf->sten->type == GF_STENCIL_SOLID)) {
+			EVG_Brush *sc = (EVG_Brush *)surf->sten;
+			u32 col = sc->color;
+			if (sc->alpha < 0xFF) {
+				u32 ca = ((u32) (GF_COL_A(col) + 1) * sc->alpha) >> 8;
+				col = ( ((ca<<24) & 0xFF000000) ) | (col & 0x00FFFFFF);
+			}
+			surf->fill_col = col;
+			surf->fill_col_wide = evg_col_to_wide(surf->fill_col);
+			if (GF_COL_A(col)<0xFF)
+				surf->fill_spans = (EVG_SpanFunc) evg_grey_fill_const_a;
+			else
+				surf->fill_spans = (EVG_SpanFunc) evg_grey_fill_const;
+		} else {
+			surf->fill_spans = (EVG_SpanFunc) evg_grey_fill_var;
+		}
+		if (surf->ext3d) {
+			surf->fill_single = evg_grey_fill_single;
+			surf->fill_single_a = evg_grey_fill_single_a;
+		}
+		return GF_TRUE;
+	}
+
 	//in 3D mode, we only write one pixel at a time except in YUV modes
 	if (for_3d) {
 		a = 1;
@@ -658,6 +731,17 @@ static Bool setup_grey_callback(GF_EVGSurface *surf, Bool for_3d, Bool multi_ste
 	} else {
 		a = 0;
 		use_const = GF_FALSE;
+	}
+	//mask is used, force fill with variable alpha (xxx_fill_var) and use masking callback for fill_run
+	if ((surf->mask_mode == GF_EVGMASK_USE) || (surf->mask_mode == GF_EVGMASK_RECORD) ){
+		a = 0;
+		use_const = GF_FALSE;
+		if (surf->mask_mode == GF_EVGMASK_USE)
+			surf->fill_run = evg_fill_run_mask;
+	} else if (surf->mask_mode == GF_EVGMASK_USE_INV) {
+		a = 0;
+		use_const = GF_FALSE;
+		surf->fill_run = evg_fill_run_mask_inv;
 	}
 
 	if (use_const && !a && !surf->is_transparent) return GF_FALSE;
@@ -705,6 +789,9 @@ static Bool setup_grey_callback(GF_EVGSurface *surf, Bool for_3d, Bool multi_ste
 			surf->fill_single_a = evg_alphagrey_fill_single_a;
 		}
 		break;
+	case GF_PIXEL_YUVA444_PACK:
+	case GF_PIXEL_UYVA444_PACK:
+		surf->yuv_type = EVG_YUV;
 	case GF_PIXEL_ARGB:
 	case GF_PIXEL_RGBA:
 	case GF_PIXEL_BGRA:
@@ -745,6 +832,9 @@ static Bool setup_grey_callback(GF_EVGSurface *surf, Bool for_3d, Bool multi_ste
 		}
 		break;
 
+	case GF_PIXEL_YUV444_PACK:
+	case GF_PIXEL_VYU444_PACK:
+		surf->yuv_type = EVG_YUV;
 	case GF_PIXEL_RGB:
 	case GF_PIXEL_BGR:
 		if (use_const) {
@@ -1116,20 +1206,47 @@ static GF_Err gf_evg_setup_stencil(GF_EVGSurface *surf, GF_EVGStencil *sten, GF_
 
 		switch (sten->type) {
 		case GF_STENCIL_TEXTURE:
-			if (!surf->is_shader) {
-				EVG_Texture *texture = (EVG_Texture *) sten;
-				if (!texture->tx_callback && ! texture->pixels)
-					return GF_BAD_PARAM;
 
-				if (texture->mod & GF_TEXTURE_FLIP_Y) {
-					if (!surf->center_coords) gf_mx2d_add_scale(&sten->smat, FIX_ONE, -FIX_ONE);
-				} else {
-					if (surf->center_coords) gf_mx2d_add_scale(&sten->smat, FIX_ONE, -FIX_ONE);
+			//in 3D mode, we only need the orginal stencil matrix
+			if (!surf->is_3d_matrix) {
+				if (!surf->is_shader) {
+					EVG_Texture *texture = (EVG_Texture *) sten;
+					if (!texture->tx_callback && ! texture->pixels)
+						return GF_BAD_PARAM;
+
+					if (texture->mod & GF_TEXTURE_FLIP_Y) {
+						if (!surf->center_coords) gf_mx2d_add_scale(&sten->smat, FIX_ONE, -FIX_ONE);
+					} else {
+						if (surf->center_coords) gf_mx2d_add_scale(&sten->smat, FIX_ONE, -FIX_ONE);
+					}
+				}
+
+				//add texture transform (normalized)
+				gf_mx2d_add_matrix(&sten->smat, &sten->smat_bck);
+				if (sten->auto_mx) {
+					EVG_Texture *_tx = (EVG_Texture *)sten;
+					//move translation to texture size
+					sten->smat.m[2] *= _tx->width;
+					sten->smat.m[5] *= _tx->height;
+					//in auto mx, matrix is given inverted, as in OpenGL
+					gf_mx2d_inverse(&sten->smat);
+
+					//add texture -> untransformed path bounds matrix scale and translation
+					gf_mx2d_add_scale(&sten->smat, surf->path_bounds.width/_tx->width, surf->path_bounds.height/_tx->height);
+					gf_mx2d_add_translation(&sten->smat, -surf->path_bounds.width/2, surf->path_bounds.height/2);
+
+					//add final path matrix
+					gf_mx2d_add_matrix(&sten->smat, &surf->shader_mx);
+				}
+
+				//add surface matrix matrix
+				gf_mx2d_add_matrix(&sten->smat, mat);
+				gf_mx2d_inverse(&sten->smat);
+			} else {
+				if (!sten->auto_mx) {
+					return GF_NOT_SUPPORTED;
 				}
 			}
-			gf_mx2d_add_matrix(&sten->smat, &sten->smat_bck);
-			gf_mx2d_add_matrix(&sten->smat, mat);
-			gf_mx2d_inverse(&sten->smat);
 
 			evg_texture_init(sten, surf);
 			if (surf->is_shader) {
@@ -1141,8 +1258,20 @@ static GF_Err gf_evg_setup_stencil(GF_EVGSurface *surf, GF_EVGStencil *sten, GF_
 		case GF_STENCIL_LINEAR_GRADIENT:
 		{
 			EVG_LinearGradient *lin = (EVG_LinearGradient *)sten;
-			gf_mx2d_add_matrix(&sten->smat, &sten->smat_bck);
-			gf_mx2d_add_matrix(&sten->smat, mat);
+			gf_mx2d_copy(sten->smat, sten->smat_bck);
+			if (!surf->is_3d_matrix) {
+				if (sten->auto_mx) {
+					//add [0,1] -> untransformed path bounds and path translation
+					gf_mx2d_add_translation(&sten->smat, gf_divfix(surf->path_bounds.x, surf->path_bounds.width), gf_divfix(surf->path_bounds.y, surf->path_bounds.height));
+					gf_mx2d_add_scale(&sten->smat, surf->path_bounds.width, surf->path_bounds.height);
+					gf_mx2d_add_matrix(&sten->smat, &surf->shader_mx);
+				}
+				gf_mx2d_add_matrix(&sten->smat, mat);
+			} else {
+				if (!sten->auto_mx) {
+					return GF_NOT_SUPPORTED;
+				}
+			}
 			gf_mx2d_inverse(&sten->smat);
 			/*and finalize matrix in gradient coord system*/
 			gf_mx2d_add_matrix(&sten->smat, &lin->vecmat);
@@ -1150,20 +1279,32 @@ static GF_Err gf_evg_setup_stencil(GF_EVGSurface *surf, GF_EVGStencil *sten, GF_
 
 			/*init*/
 			evg_gradient_precompute((EVG_BaseGradient *)lin, surf);
-
 		}
 		break;
 		case GF_STENCIL_RADIAL_GRADIENT:
 		{
 			EVG_RadialGradient *rad = (EVG_RadialGradient*)sten;
 			gf_mx2d_copy(sten->smat, sten->smat_bck);
-			gf_mx2d_add_matrix(&sten->smat, mat);
+			if (!surf->is_3d_matrix) {
+				if (sten->auto_mx) {
+					//add [0,1] -> untransformed path bounds and path translation
+					gf_mx2d_add_translation(&sten->smat, gf_divfix(surf->path_bounds.x, surf->path_bounds.width), gf_divfix(surf->path_bounds.y, surf->path_bounds.height));
+					gf_mx2d_add_scale(&sten->smat, surf->path_bounds.width, surf->path_bounds.height);
+					gf_mx2d_add_matrix(&sten->smat, &surf->shader_mx);
+				}
+				gf_mx2d_add_matrix(&sten->smat, mat);
+			} else {
+				if (!sten->auto_mx) {
+					return GF_NOT_SUPPORTED;
+				}
+			}
 			gf_mx2d_inverse(&sten->smat);
 			gf_mx2d_add_translation(&sten->smat, -rad->center.x, -rad->center.y);
 			gf_mx2d_add_scale(&sten->smat, gf_invfix(rad->radius.x), gf_invfix(rad->radius.y));
 
 			rad->d_f.x = gf_divfix(rad->focus.x - rad->center.x, rad->radius.x);
 			rad->d_f.y = gf_divfix(rad->focus.y - rad->center.y, rad->radius.y);
+
 			/*init*/
 			evg_radial_init(rad);
 			evg_gradient_precompute((EVG_BaseGradient *)rad, surf);
@@ -1264,11 +1405,31 @@ GF_Err gf_evg_surface_multi_fill(GF_EVGSurface *surf, GF_EVGMultiTextureMode ope
 		surf->clip_yMax = (surf->height);
 	}
 
-	/*and call the raster*/
-	if (surf->is_3d_matrix)
-		e = evg_raster_render_path_3d(surf);
-	else
-		e = evg_raster_render(surf);
+	if (surf->mask_mode == GF_EVGMASK_DRAW) {
+		u32 old_pitch_x = surf->pitch_x;
+		u32 old_pitch_y = surf->pitch_y;
+		u8 *old_pixels = surf->pixels;
+
+		surf->pixels = surf->internal_mask;
+		surf->pitch_x = 1;
+		surf->pitch_y = surf->width;
+
+		/*and call the raster*/
+		if (surf->is_3d_matrix)
+			e = evg_raster_render_path_3d(surf);
+		else
+			e = evg_raster_render(surf);
+
+		surf->pitch_x = old_pitch_x;
+		surf->pitch_y = old_pitch_y;
+		surf->pixels = old_pixels;
+	} else {
+		/*and call the raster*/
+		if (surf->is_3d_matrix)
+			e = evg_raster_render_path_3d(surf);
+		else
+			e = evg_raster_render(surf);
+	}
 
 	if (reset_aa) surf->aa_level = 0;
 
@@ -1381,4 +1542,44 @@ GF_Err gf_evg_surface_draw_path(GF_EVGSurface *surf, GF_Path *path, Float z)
 	e = evg_raster_render3d_path(surf, path, z);
 	surf->max_gray_spans =  max_gray;
 	return e;
+}
+
+
+GF_Err gf_evg_surface_set_mask_mode(GF_EVGSurface *surf, GF_EVGMaskMode mask_mode)
+{
+	if (!surf) return GF_BAD_PARAM;
+
+	if ((mask_mode==GF_EVGMASK_DRAW)
+		|| (mask_mode==GF_EVGMASK_DRAW_NO_CLEAR)
+		|| (mask_mode==GF_EVGMASK_RECORD)
+	) {
+		u8 clear_val = 0;
+		Bool clear_mask = GF_FALSE;
+		if (!surf->internal_mask) {
+			surf->internal_mask = gf_malloc(sizeof(u8) * surf->width * surf->height);
+			if (!surf->internal_mask) return GF_OUT_OF_MEM;
+			clear_mask = GF_TRUE;
+		}
+		if ((mask_mode==GF_EVGMASK_DRAW) && (surf->mask_mode != GF_EVGMASK_DRAW))
+			clear_mask = GF_TRUE;
+
+		if (mask_mode==GF_EVGMASK_RECORD) {
+			clear_mask = GF_TRUE;
+			clear_val = 0xFF;
+		} else {
+			mask_mode = GF_EVGMASK_DRAW;
+		}
+
+		if (clear_mask) {
+			memset(surf->internal_mask, clear_val, sizeof(u8) * surf->width * surf->height);
+		}
+	}
+	surf->mask_mode = mask_mode;
+	return GF_OK;
+}
+
+GF_EVGMaskMode gf_evg_surface_get_mask_mode(GF_EVGSurface *surf)
+{
+	if (!surf) return GF_EVGMASK_NONE;
+	return surf->mask_mode;
 }

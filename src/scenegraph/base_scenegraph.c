@@ -196,6 +196,8 @@ void gf_sg_del(GF_SceneGraph *sg)
 	gf_free(sg);
 }
 
+//unused, cf gf_sg_reset
+#if 0
 /*recursive traverse of the whole graph to check for scope mixes (nodes from an inline graph
 inserted in a parent graph through bind or routes). We must do this otherwise we're certain to get random
 crashes or mem leaks.*/
@@ -297,6 +299,7 @@ void SG_GraphRemoved(GF_Node *node, GF_SceneGraph *sg)
 		}
 	}
 }
+#endif
 
 GFINLINE GF_Node *SG_SearchForNode(GF_SceneGraph *sg, GF_Node *node)
 {
@@ -331,9 +334,9 @@ void gf_sg_reset(GF_SceneGraph *sg)
 	NodeIDedItem *reg_node;
 	if (!sg) return;
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_SCENE, ("[SceneGraph] Reseting scene graph\n"));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_SCENE, ("[SceneGraph] resetting scene graph\n"));
 #if 0
-	/*inlined graph, remove any of this graph nodes from the parent graph*/
+	/*inline graph, remove any of this graph nodes from the parent graph*/
 	if (!sg->pOwningProto && sg->parent_scene) {
 		GF_SceneGraph *par = sg->parent_scene;
 		while (par->parent_scene) par = par->parent_scene;
@@ -364,7 +367,7 @@ void gf_sg_reset(GF_SceneGraph *sg)
 
 	gf_mx_p(sg->dom_evt_mx);
 	/*remove listeners attached to the doc*/
-	gf_dom_event_remove_all_listeners(sg->dom_evt);
+	gf_dom_event_remove_all_listeners(sg->dom_evt, sg);
 	/*flush any pending add_listener*/
 	gf_dom_listener_reset_deferred(sg);
 	gf_mx_v(sg->dom_evt_mx);
@@ -399,8 +402,10 @@ void gf_sg_reset(GF_SceneGraph *sg)
 	if (sg->RootNode) gf_node_unregister(sg->RootNode, NULL);
 	sg->RootNode = NULL;
 
+#ifndef GPAC_DISABLE_VRML
 	if (!sg->pOwningProto && gf_list_count(sg->protos) && sg->GetExternProtoLib)
 		sg->GetExternProtoLib(sg->userpriv, NULL);
+#endif
 
 	/*WATCHOUT: we may have cyclic dependencies due to
 	1- a node referencing itself (forbidden in VRML)
@@ -723,7 +728,6 @@ GF_Err gf_node_unregister(GF_Node *pNode, GF_Node *parentNode)
 	assert(pNode->sgprivate->parents==NULL);
 
 	if (pSG) {
-		GF_Route *r;
 		/*if def, remove from sg def table*/
 		if (pNode->sgprivate->flags & GF_NODE_IS_DEF) {
 			remove_node_id(pSG, pNode);
@@ -731,6 +735,7 @@ GF_Err gf_node_unregister(GF_Node *pNode, GF_Node *parentNode)
 
 #ifndef GPAC_DISABLE_VRML
 		/*check all routes from or to this node and destroy them - cf spec*/
+		GF_Route *r;
 		j=0;
 		while ((r = (GF_Route *)gf_list_enum(pSG->Routes, &j))) {
 			if ( (r->ToNode == pNode) || (r->FromNode == pNode)) {
@@ -1593,7 +1598,7 @@ void gf_node_free(GF_Node *node)
 		}
 #ifndef GPAC_DISABLE_SVG
 		if (node->sgprivate->interact->dom_evt) {
-			gf_dom_event_remove_all_listeners(node->sgprivate->interact->dom_evt);
+			gf_dom_event_remove_all_listeners(node->sgprivate->interact->dom_evt, node->sgprivate->scenegraph);
 			gf_dom_event_target_del(node->sgprivate->interact->dom_evt);
 		}
 		if (node->sgprivate->interact->animations) {
@@ -1868,14 +1873,15 @@ void gf_node_del(GF_Node *node)
 		gf_node_free(node);
 	}
 	else if (node->sgprivate->tag==TAG_DOMUpdates) {
-		u32 i, count;
 		GF_DOMUpdates *up = (GF_DOMUpdates *)node;
 		if (up->data) gf_free(up->data);
-		count = gf_list_count(up->updates);
+#ifndef GPAC_DISABLE_VRML
+		u32 i, count = gf_list_count(up->updates);
 		for (i=0; i<count; i++) {
 			GF_Command *com = gf_list_get(up->updates, i);
 			gf_sg_command_del(com);
 		}
+#endif
 		gf_list_del(up->updates);
 		gf_sg_parent_reset(node);
 		gf_node_free(node);
@@ -1923,7 +1929,7 @@ u32 gf_node_get_field_count(GF_Node *node)
 GF_EXPORT
 const char *gf_node_get_class_name(GF_Node *node)
 {
-	assert(node && node->sgprivate->tag);
+	if (!node) return "null";
 	if (node->sgprivate->tag==TAG_UndefinedNode) return "UndefinedNode";
 #ifndef GPAC_DISABLE_VRML
 	else if (node->sgprivate->tag==TAG_ProtoNode) return ((GF_ProtoInstance*)node)->proto_name;
@@ -2363,7 +2369,9 @@ GF_EXPORT
 GF_Err gf_node_replace_child(GF_Node *node, GF_ChildNodeItem **container, s32 pos, GF_Node *newNode)
 {
 	GF_ChildNodeItem *child, *prev;
+#ifndef GPAC_DISABLE_VRML
 	u32 tag;
+#endif
 	u32 cur_pos = 0;
 
 	child = *container;
@@ -2377,7 +2385,10 @@ GF_Err gf_node_replace_child(GF_Node *node, GF_ChildNodeItem **container, s32 po
 		}
 		break;
 	}
+#ifndef GPAC_DISABLE_VRML
 	tag = child->node->sgprivate->tag;
+#endif
+
 	gf_node_unregister(child->node, node);
 	if (newNode) {
 		child->node = newNode;
@@ -2437,6 +2448,7 @@ GF_SceneGraph *gf_sg_get_parent(GF_SceneGraph *scene)
 
 static GF_Err gf_sg_load_dom_node(GF_SceneGraph *document, GF_XMLNode *n, GF_DOMFullNode *par)
 {
+#ifndef GPAC_DISABLE_VRML
 	u32 i, count;
 	GF_DOMFullAttribute *prev = NULL;
 	GF_DOMFullNode *node;
@@ -2503,6 +2515,9 @@ static GF_Err gf_sg_load_dom_node(GF_SceneGraph *document, GF_XMLNode *n, GF_DOM
 		if (e) return e;
 	}
 	return GF_OK;
+#else
+	return GF_NOT_SUPPORTED;
+#endif
 }
 
 GF_Err gf_sg_init_from_xml_node(GF_SceneGraph *document, GF_DOMXMLNODE root_node)

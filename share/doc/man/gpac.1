@@ -13,17 +13,15 @@ gpac is GPAC's command line tool for setting up and running filter chains.
 .br
 
 .br
-FILTER: a single filter declaration (eg, -i file, -o dump, inspect, ...), see gpac -h doc.
+FILTER: a single filter declaration (e.g., -i file, -o dump, inspect, ...), see gpac -h doc.
 .br
-[LINK]: a link instruction (eg, @, @2, @2#StreamType=Visual, ...), see gpac -h doc.
+[LINK]: a link instruction (e.g., @, @2, @2#StreamType=Visual, ...), see gpac -h doc.
 .br
 [options]: one or more option strings, each starting with a - character.
 .br
   - an option using a single - indicates an option of gpac (see gpac -hx) or of libgpac (see gpac -hx core)
 .br
-  - an option using -- indicates a global filter option, for example --block_size=1000 (see gpac -h doc)
-.br
-  - an option using -+ indicates a global meta-filter filter (eg FFMPEG) option, for example -+profile=Baseline (see gpac -h doc)
+  - an option using -- indicates a global filter or meta-filter (e.g. FFMPEG) option, e.g. --block_size=1000 or --profile=Baseline (see gpac -h doc)
 .br
   
 .br
@@ -32,6 +30,10 @@ Filter declaration order may impact the link resolver which will try linking in 
 Options do not require any specific order, and may be present anywhere, including between link statements or filter declarations.  
 .br
 Boolean values do not need any value specified. Other types shall be formatted as opt=val, except .I -i, -src, .I -o, -dst and .I -h options.
+.br
+
+.br
+The session can be interrupted at any time using ctrl+c, which can also be used to toggle global reporting.
 .br
 
 .br
@@ -101,7 +103,7 @@ enable reporting
 .br
 * r: runtime reporting
 .br
-* r=FA[,FB]: runtime reporting but only print given filters, eg r=mp4mx for ISOBMFF muxer only
+* r=FA[,FB]: runtime reporting but only print given filters, e.g. r=mp4mx for ISOBMFF multiplexer only
 .br
 * r=: only print final report
 .br
@@ -143,6 +145,11 @@ specify an input file to wrap as GF_FileIO object (testing of GF_FileIO)
 specify an output file to wrap as GF_FileIO object (testing of GF_FileIO)
 .br
 .TP
+.B \-cl
+.br
+force complete mode when no link directive are set - see filters help (-h doc)
+.br
+.TP
 .B \-step
 .br
 test step mode in non-blocking session
@@ -174,21 +181,25 @@ Note: The @ character can be used in place of the * character. String parameter 
 .br
 * filters:*: print name of all available filters, including meta filters
 .br
-* codecs: print the supported builtin codecs
+* codecs: print the supported builtin codecs - use -hx to include unmapped codecs (ffmpeg, ...)
 .br
 * props: print the supported builtin PID and packet properties
 .br
+* props PNAME: print the supported builtin PID and packet properties mentioning PNAME
+.br
 * colors: print the builtin color names and their values
+.br
+* exts: print the builtin extensions and mime types - use -hx to include meta filters (ffmpeg, ...)
 .br
 * layouts: print the builtin CICP audio channel layout names and their values
 .br
-* links: print possible connections between each supported filters
+* links: print possible connections between each supported filters (use -hx to view src->dst cap bundle detail)
 .br
 * links FNAME: print sources and sinks for filter FNAME (either builtin or JS filter)
 .br
 * FNAME: print filter FNAME info (multiple FNAME can be given)
 .br
-  - For meta-filters, use FNAME:INST, eg ffavin:avfoundation
+  - For meta-filters, use FNAME:INST, e.g. ffavin:avfoundation
 .br
   - Use * to print info on all filters (big output!), *:* to print info on all filters including meta filter instances (really big output!)
 .br
@@ -266,7 +277,7 @@ log edges status in filter graph before dijkstra resolution (for debug). Edges a
 .TP
 .B \-full-link
 .br
-throw error if any pid in the filter graph cannot be linked
+throw error if any PID in the filter graph cannot be linked
 .br
 .TP
 .B \-no-block (Enum, default: no)
@@ -275,7 +286,7 @@ disable blocking mode of filters
 .br
 * no: enable blocking mode
 .br
-* fanout: disable blocking on fanout, unblocking the PID as soon as one of its destinations requires a packet
+* fanout: disable blocking on fan-out, unblocking the PID as soon as one of its destinations requires a packet
 .br
 * all: disable blocking
 .br
@@ -287,7 +298,7 @@ disable regulation (no sleep) in session
 .TP
 .B \-no-reassign
 .br
-disable source filter reassignment in pid graph resolution
+disable source filter reassignment in PID graph resolution
 .br
 .TP
 .B \-sched (Enum, default: free)
@@ -307,7 +318,7 @@ set scheduler mode
 .TP
 .B \-max-chain (int, default: 6)
 .br
-set maximum chain length when resolving filter links. Default value covers for [ in -> ] demux -> reframe -> decode -> encode -> reframe -> mux [ -> out]. Filter chains loaded for adaptation (eg pixel format change) are loaded after the link resolution. Setting the value to 0 disables dynamic link resolution. You will have to specify the entire chain manually
+set maximum chain length when resolving filter links. Default value covers for [ in -> ] dmx -> reframe -> decode -> encode -> reframe -> mx [ -> out]. Filter chains loaded for adaptation (e.g. pixel format change) are loaded after the link resolution. Setting the value to 0 disables dynamic link resolution. You will have to specify the entire chain manually
 .br
 .TP
 .B \-max-sleep (int, default: 50)
@@ -332,7 +343,7 @@ disable tracking of argument usage (all arguments will be considered as used)
 .TP
 .B \-blacklist (string)
 .br
-blacklist the filters listed in the given string (comma-separated list)
+blacklist the filters listed in the given string (comma-separated list). If first character is '-', this is a whitelist, i.e. only filters listed in the given string will be allowed
 .br
 .TP
 .B \-no-graph-cache
@@ -392,9 +403,11 @@ The specified index can be:
 .br
 * forward index: a strictly positive integer, 1 being the first argument after the alias
 .br
-* backward index: the value 'n' (or 'N') to indicate the last argument on the command line. This can be followed by -x to rewind arguments (eg @{n-1} is the before last argument)
+* backward index: the value 'n' (or 'N') to indicate the last argument on the command line. This can be followed by -x to rewind arguments (e.g. @{n-1} is the before last argument)
 .br
 
+.br
+Before solving aliases, all option arguments are moved at the beginning of the command line. This implies that alias arguments cannot be options.
 .br
 Arguments not used by any aliases are kept on the command line, other ones are removed
 .br
@@ -518,11 +531,11 @@ This is equivalent to specifying vout:buffer=100 aout:buffer=10.
 .br
 Warning: This syntax only applies to regular filter options. It cannot be used with builtin shortcuts (gfreg, enc, ...).
 .br
-Meta-filter options can be set in the same way using the syntax -+OPT_NAME=VAL.
+Meta-filter options can be set in the same way using the syntax --OPT_NAME=VAL.
 .br
 Example
 .br
--+profile=Baseline -i file.cmp -o dump.264
+--profile=Baseline -i file.cmp -o dump.264
 .br
 
 .br
@@ -530,7 +543,7 @@ This is equivalent to specifying -o dump.264:profile=Baseline.
 .br
   
 .br
-For both syntax, it is possible to specify the filter registry name of the option, using --FNAME@OPTNAME=VAL.
+For both syntax, it is possible to specify the filter registry name of the option, using --FNAME:OPTNAME=VAL or --FNAME@OPTNAME=VAL.
 .br
 In this case the option will only be set for filters which are instances of registry FNAME. This is used when several registries use same option names.
 .br
@@ -645,7 +658,7 @@ cache size for bitstream read and write from file (0 disable cache, slower IOs)
 .TP
 .B \-no-check
 .br
-disable compliancy tests for inputs (ISOBMFF for now). This will likely result in random crashes
+disable compliance tests for inputs (ISOBMFF for now). This will likely result in random crashes
 .br
 .TP
 .B \-unhandled-rejection
@@ -685,7 +698,7 @@ disable HTTP caching
 .TP
 .B \-offline-cache
 .br
-enable offline HTTP caching (no revalidation of existing resource in cache)
+enable offline HTTP caching (no re-validation of existing resource in cache)
 .br
 .TP
 .B \-clean-cache
@@ -770,7 +783,7 @@ log edges status in filter graph before dijkstra resolution (for debug). Edges a
 .TP
 .B \-full-link
 .br
-throw error if any pid in the filter graph cannot be linked
+throw error if any PID in the filter graph cannot be linked
 .br
 .TP
 .B \-no-block (Enum, default: no)
@@ -779,7 +792,7 @@ disable blocking mode of filters
 .br
 * no: enable blocking mode
 .br
-* fanout: disable blocking on fanout, unblocking the PID as soon as one of its destinations requires a packet
+* fanout: disable blocking on fan-out, unblocking the PID as soon as one of its destinations requires a packet
 .br
 * all: disable blocking
 .br
@@ -791,7 +804,7 @@ disable regulation (no sleep) in session
 .TP
 .B \-no-reassign
 .br
-disable source filter reassignment in pid graph resolution
+disable source filter reassignment in PID graph resolution
 .br
 .TP
 .B \-sched (Enum, default: free)
@@ -811,7 +824,7 @@ set scheduler mode
 .TP
 .B \-max-chain (int, default: 6)
 .br
-set maximum chain length when resolving filter links. Default value covers for [ in -> ] demux -> reframe -> decode -> encode -> reframe -> mux [ -> out]. Filter chains loaded for adaptation (eg pixel format change) are loaded after the link resolution. Setting the value to 0 disables dynamic link resolution. You will have to specify the entire chain manually
+set maximum chain length when resolving filter links. Default value covers for [ in -> ] dmx -> reframe -> decode -> encode -> reframe -> mx [ -> out]. Filter chains loaded for adaptation (e.g. pixel format change) are loaded after the link resolution. Setting the value to 0 disables dynamic link resolution. You will have to specify the entire chain manually
 .br
 .TP
 .B \-max-sleep (int, default: 50)
@@ -836,7 +849,7 @@ disable tracking of argument usage (all arguments will be considered as used)
 .TP
 .B \-blacklist (string)
 .br
-blacklist the filters listed in the given string (comma-separated list)
+blacklist the filters listed in the given string (comma-separated list). If first character is '-', this is a whitelist, i.e. only filters listed in the given string will be allowed
 .br
 .TP
 .B \-no-graph-cache
@@ -882,17 +895,17 @@ color to use for overlay keying, hex format
 .TP
 .B \-gl-bits-comp (int, default: 8)
 .br
-number of bits per color component in openGL
+number of bits per color component in OpenGL
 .br
 .TP
 .B \-gl-bits-depth (int, default: 16)
 .br
-number of bits for depth buffer in openGL
+number of bits for depth buffer in OpenGL
 .br
 .TP
 .B \-gl-doublebuf
 .br
-enable openGL double buffering
+enable OpenGL double buffering
 .br
 .TP
 .B \-sdl-defer
@@ -912,7 +925,7 @@ set output texture ID when using glfbo output. The OpenGL context shall be initi
 .TP
 .B \-video-output (string)
 .br
-indicate the name of the video output module to use (see gpac -h modules). The reserved name glfbo is used in player mode to draw in the openGL texture identified by .I glfbo-txid.  In this mode, the application is responsible for sending event to the terminal
+indicate the name of the video output module to use (see gpac -h modules). The reserved name glfbo is used in player mode to draw in the OpenGL texture identified by .I glfbo-txid.  In this mode, the application is responsible for sending event to the terminal
 .br
 .TP
 .B \-audio-output (string)
@@ -958,6 +971,19 @@ wait for SVG fonts to be loaded before displaying frames
 .B \-webvtt-hours
 .br
 force writing hour when serializing WebVTT
+.br
+.TP
+.B \-charset (string)
+.br
+set charset when not recognized from input. Possible values are:
+.br
+* utf8: force UTF-8
+.br
+* utf16: force UTF-16 little endian
+.br
+* utf16be: force UTF-16 big endian
+.br
+* other: attempt to parse anyway
 .br
 .TP
 .B \-rmt
@@ -1013,6 +1039,11 @@ hack for old TS streams using 0x32 for VVC instead of 0x33
 .B \-piff-force-subsamples
 .br
 hack for PIFF PSEC files generated by 0.9.0 and 1.0 MP4Box with wrong subsample_count inserted for audio
+.br
+.TP
+.B \-vvdec-annexb
+.br
+hack for old vvdec+libavcodec supporting only annexB format
 .br
 .SH libgpac logs options:
 .LP
@@ -1071,57 +1102,55 @@ toolX can be one of:
 .br
 * core: libgpac core
 .br
-* coding: bitstream formats (audio, video, scene)
-.br
-* container: container formats (ISO File, MPEG-2 TS, AVI, ...)
-.br
-* network: network data except RTP traffic
-.br
-* http: HTTP traffic
-.br
-* rtp: RTP traffic
-.br
-* author: authoring tools (hint, import, export)
-.br
-* sync: terminal sync layer
-.br
-* codec: terminal codec messages
-.br
-* parser: scene parsers (svg, xmt, bt) and other
-.br
-* media: terminal media object management
-.br
-* scene: scene graph and scene manager
-.br
-* script: scripting engine messages
-.br
-* interact: interaction engine (events, scripts, etc)
-.br
-* smil: SMIL timing engine
-.br
-* compose: composition engine (2D, 3D, etc)
-.br
-* mmio: Audio/Video HW I/O management
-.br
-* rti: various run-time stats
-.br
-* cache: HTTP cache subsystem
-.br
-* audio: Audio renderer and mixers
+* mutex: log all mutex calls
 .br
 * mem: GPAC memory tracker
 .br
-* dash: HTTP streaming logs
-.br
 * module: GPAC modules (av out, font engine, 2D rasterizer)
 .br
-* filter: filters debugging
+* filter: filter session debugging
 .br
 * sched: filter session scheduler debugging
 .br
-* mutex: log all mutex calls
+* codec: codec messages (used by encoder and decoder filters)
+.br
+* coding: bitstream formats (audio, video, scene)
+.br
+* container: container formats (ISO File, MPEG-2 TS, AVI, ...) and multiplexer/demultiplexer filters
+.br
+* network: TCP/UDP sockets and TLS
+.br
+* http: HTTP traffic
+.br
+* cache: HTTP cache subsystem
+.br
+* rtp: RTP traffic
+.br
+* dash: HTTP streaming logs
 .br
 * route: ROUTE (ATSC3) debugging
+.br
+* media: messages from generic filters and reframer/rewriter filters
+.br
+* parser: textual parsers (svg, xmt, bt, ...)
+.br
+* mmio: I/O management (AV devices, file, pipes, OpenGL)
+.br
+* audio: audio renderer/mixer/output
+.br
+* script: script engine except console log
+.br
+* console: script console log
+.br
+* scene: scene graph and scene manager
+.br
+* compose: composition engine (2D, 3D, etc)
+.br
+* ctime: media and SMIL timing info from composition engine
+.br
+* interact: interaction messages (UI events and triggered DOM events and VRML route)
+.br
+* rti: run-time stats of compositor
 .br
 * all: all tools logged - other tools can be specified afterwards.  
 .br
@@ -1147,30 +1176,26 @@ use new line at each progress messages
 .SH General
 .LP
 .br
-Filters are configurable processing units consuming and producing data packets. These packets are carried between filters through a data channel called pid. A PID is in charge of allocating/tracking data packets, and passing the packets to the destination filter(s). A filter output PID may be connected to zero or more filters. This fan-out is handled internally by GPAC (no such thing as a tee filter in GPAC).
+Filters are configurable processing units consuming and producing data packets. These packets are carried between filters through a data channel called PID. A PID is in charge of allocating/tracking data packets, and passing the packets to the destination filter(s). A filter output PID may be connected to zero or more filters. This fan-out is handled internally by GPAC (no such thing as a tee filter in GPAC).
 .br
 Note: When a PID cannot be connected to any filter, a warning is thrown and all packets dispatched on this PID will be destroyed. The session may however still run, unless .I -full-link is set.
 .br
   
 .br
-Each output PID carries a set of properties describing the data it delivers (eg width, height, codec, ...). Properties can be built-in (identified by a 4 character code abcd, see properties (-h props) ), or user-defined (identified by a string). Each PID tracks its properties changes and triggers filter reconfiguration during packet processing. This allows the filter chain to be reconfigured at run time, potentially reloading part of the chain (eg unload a video decoder when switching from compressed to uncompressed sources).
-.br
-  
-.br
-Each filter exposes one or more sets of capabilities, called capability bundle, which are property type and values that must be matched or excluded by connecting PIDs.
+Each output PID carries a set of properties describing the data it delivers (e.g. width, height, codec, ...). Properties can be built-in (see gpac -h props ), or user-defined. Each PID tracks its properties changes and triggers filter reconfiguration during packet processing. This allows the filter chain to be reconfigured at run time, potentially reloading part of the chain (e.g. unload a video decoder when switching from compressed to uncompressed sources).
 .br
   
 .br
 Each filter exposes a set of argument to configure itself, using property types and values described as strings formatted with separators. This help is given with default separator sets :=#,@ to specify filters, properties and options. Use .I -seps to change them.
 .br
-.SH Property format
+.SH Property and filter option format
 .LP
 .br
 * boolean: formatted as yes,true,1 or no,false,0
 .br
 * enumeration (for filter arguments only): must use the syntax given in the argument description, otherwise value 0 (first in enum) is assumed.
 .br
-* 1-dimension (numbers, floats, ints...): formatted as value[unit], where unit can be k,K (x 1000) or m,M (x 1000000) or g,G (x 1000000000) or sec (x 1000) or min (x 60000). For such properties, value +I means maximum possible value, -I minimum possible value.
+* 1-dimension (numbers, floats, ints...): formatted as value[unit], where unit can be k,K (x 1000) or m,M (x 1000000) or g,G (x 1000000000) or sec (x 1000) or min (x 60000). +I means max float/int/uint value, -I min float/int/uint value.
 .br
 * fraction: formatted as num/den or num-den or num, in which case the denominator is 1 if num is an integer, or 1000000 if num is a floating-point value.
 .br
@@ -1198,7 +1223,7 @@ Each filter exposes a set of argument to configure itself, using property types 
 .br
   * `b64@DATA`: load data from base-64 encoded DATA.
 .br
-* pointer: are formatted as address giving the pointer address (32 or 64 bit depending on platforms).
+* pointer: pointer address as formatted by %p in C.
 .br
 * string lists: formatted as val1,val2[,...]. Each value can also use file@FILE syntax.
 .br
@@ -1209,21 +1234,19 @@ Note: The special characters in property formats (0x,/,-,+I,-I,x) cannot be conf
 .SH Filter declaration [FILTER]
 .LP
 .br
-.P
-.B
-Generic declaration
+.SS Generic declaration
 .br
 Each filter is declared by its name, with optional filter arguments appended as a list of colon-separated name=value pairs. Additional syntax is provided for:
 .br
-* boolean: value can be omitted, defaulting to true (eg :noedit). Using ! before the name negates the result (eg :!moof_first)
+* boolean: value can be omitted, defaulting to true (e.g. :noedit). Using ! before the name negates the result (e.g. :!moof_first)
 .br
-* enumerations: name can be omitted (eg :disp=pbo is equivalent to :pbo), provided that filter developers pay attention to not reuse enumeration names in the same filter.
+* enumerations: name can be omitted, e.g. :disp=pbo is equivalent to :pbo.
 .br
 
 .br
   
 .br
-When string parameters are used (eg URLs), it is recommended to escape the string using the keyword gpac.  
+When string parameters are used (e.g. URLs), it is recommended to escape the string using the keyword gpac.  
 .br
 Example
 .br
@@ -1261,7 +1284,7 @@ Example
 .br
 This will extract the URL and options.
 .br
-Note: one trick to avoid the escape sequence is to declare the URLs option at the end, eg f1:opt1=foo:url=http://bar, provided you have only one URL parameter to specify on the filter.
+Note: one trick to avoid the escape sequence is to declare the URLs option at the end, e.g. f1:opt1=foo:url=http://bar, provided you have only one URL parameter to specify on the filter.
 .br
 
 .br
@@ -1277,17 +1300,7 @@ This will pass UDP://IP:PORT/:someopt=VAL to opt1 without inspecting it, and VAL
 .br
   
 .br
-A filter may be assigned a name (for inspection purposes, not inherited) using :N=name option. This name is not used in link resolution and may be changed at runtime by the filter instance.
-.br
-  
-.br
-A filter may be assigned a tag (any string) using :TAG=name option. This tag does not need to be unique, and can be used to exclude filter in link resolution. Tags are not inherited, therefore dynamically loaded filters never have a tag.
-.br
-  
-.br
-.P
-.B
-Source and Sink filters
+.SS Source and Sink filters
 .br
 Source and sink filters do not need to be addressed by the filter name, specifying src= or dst= instead is enough. You can also use the syntax -src URL or -i URL for sources and -dst URL or -o URL for destination, this allows prompt completion in shells.
 .br
@@ -1317,9 +1330,7 @@ The src= and dst= syntaxes can also be used in alias for dynamic argument clonin
 .br
 
 .br
-.P
-.B
-Forcing specific filters
+.SS Forcing specific filters
 .br
 There is a special option called gfreg which allows specifying preferred filters to use when handling URLs.
 .br
@@ -1333,9 +1344,7 @@ This will use ffdmx to read file.mp4 and ffdec to decode it.
 .br
 This can be used to test a specific filter when alternate filter chains are possible.
 .br
-.P
-.B
-Specifying encoders and decoders
+.SS Specifying encoders and decoders
 .br
 By default filters chain will be resolved without any decoding/encoding if the destination accepts the desired format. Otherwise, decoders/encoders will be dynamically loaded to perform the conversion, unless dynamic resolution is disabled. There is a special shortcut filter name for encoders enc allowing to match a filter providing the desired encoding. The parameters for enc are:
 .br
@@ -1351,13 +1360,15 @@ By default filters chain will be resolved without any decoding/encoding if the d
 .br
 
 .br
-  
-.br
 Other options will be passed to the filter if it accepts generic argument parsing (as is the case for ffmpeg).
+.br
+The shortcut syntax c=TYPE (e.g. c=aac:opts) is also supported.
+.br
+
 .br
 Example
 .br
-src=dump.yuv:size=320x240:fps=25 enc:c=avc:b=150000:g=50:cgop=true:fast=true dst=raw.264
+gpac -i dump.yuv:size=320x240:fps=25 enc:c=avc:b=150000:g=50:cgop=true:fast=true -o raw.264
 .br
 
 .br
@@ -1369,13 +1380,15 @@ The inverse operation (forcing a decode to happen) is possible using the reframe
 .br
 Example
 .br
-src=file.mp4 reframer:raw=av @ -o null
+gpac -i file.mp4 reframer:raw=av -o null
 .br
 
 .br
 This will force decoding media from file.mp4 and trash (send to null) the result (doing a decoder benchmark for example).
 .br
 
+.br
+.SS Escaping option separators
 .br
 When a filter uses an option defined as a string using the same separator character as gpac, you can either modify the set of separators, or escape the separator by duplicating it. The options enclosed by duplicated separator are not parsed. This is mostly used for meta filters, such as ffmpeg, to pass options to sub-filters such as libx264 (cf x264opts parameter).
 .br
@@ -1403,20 +1416,148 @@ f:a=foo::b=bar:c::d=fun
 .br
 This will set option a to foo, b to bar:c and the option d to fun on the filter.
 .br
-.SH Explicit links between filters [LINK]
+
+.br
+.SH Filter linking [LINK]
 .LP
 .br
 
 .br
-.P
-.B
-Quick links
+Each filter exposes one or more sets of capabilities, called capability bundle, which are property type and values that must be matched or excluded by connecting PIDs.
 .br
-Link between filters may be manually specified. The syntax is an @ character optionally followed by an integer (0 if omitted). This indicates that the following filter specified at prompt should be linked only to a previous listed filter.
+To check the possible sources and destination for a filter FNAME, use gpac -h links FNAME
+.br
+
+.br
+The filter graph resolver uses this information together with the PID properties to link the different filters.
+.br
+
+.br
+Link directives, when provided, specify which source a filter can accept connections from.
+.br
+They do not specify which destination a filter can connect to.
+.br
+
+.br
+.SS Default filter linking
+.br
+When no link instructions are given (see below), the default linking strategy used is either implicit mode (default in gpac) or complete mode (if .I -cl is set).
+.br
+Each PID is checked for possible connection to all defined filters, in their declaration order.
+.br
+For each filter DST accepting a connection from the PID, directly or with intermediate filters:
+.br
+- if DST filter has link directives, use them to allow or reject PID connection.
+.br
+- otherwise, if complete mode is enabled, allow connection.
+.br
+- otherwise (implicit mode):
+.br
+ - if DST is not a sink and is the first matching filter with no link directive, allow connection.
+.br
+ - otherwise, if DST is not a sink and is not the first matching filter with no link directive, reject connection.
+.br
+ - otherwise (DST is a sink) and no previous connections to a non-sink filter, allow connection.
+.br
+
+.br
+Example
+.br
+gpac -i file.mp4 c=avc -o output
+.br
+
+.br
+With this setup in implicit mode:
+.br
+- if the file has a video PID, it will connect to enc but not to output. The output PID of enc will connect to output.
+.br
+- if the file has other PIDs than video, they will connect to output, since this enc filter accepts only video.
+.br
+
+.br
+Example
+.br
+gpac -cl -i file.mp4 c=avc -o output
+.br
+
+.br
+With this setup in complete mode:
+.br
+- if the file has a video PID, it will connect both to enc and to output, and the output PID of enc will connect to output.
+.br
+- if the file has other PIDs than video, they will connect to output.
+.br
+
+.br
+Furthermore in implicit mode, filter connections are restricted to filters defined between the last source and the sink(s).
+.br
+Example
+.br
+gpac -i video1 reframer:saps=1 -i video2 ffsws:osize=128x72 -o output
+.br
+
+.br
+This will connect:
+.br
+- video1 to reframer then reframer to output but will prevent reframer to ffsws connection.
+.br
+- video2 to ffsws then ffsws to output but will prevent video2 to reframer connection.
+.br
+
+.br
+Example
+.br
+gpac -i video1 -i video2 reframer:saps=1 ffsws:osize=128x72 -o output
+.br
+
+.br
+This will connect video1 AND video2 to reframer->ffsws->output
+.br
+
+.br
+The implicit mode allows specifying linear processing chains (no PID fan-out except for final output(s)) without link directives, simplifying command lines for common cases.
+.br
+Warning: Argument order really matters in implicit mode!
+.br
+
+.br
+Example
+.br
+gpac -i file.mp4 c=avc c=aac -o output
+.br
+
+.br
+If the file has a video PID, it will connect to c=avc but not to output. The output PID of c=avc will connect to output.
+.br
+If the file has an audio PID, it will connect to c=aac but not to output. The output PID of c=aac will connect to output.
+.br
+If the file has other PIDs than audio or video, they will connect to output.
+.br
+
+.br
+Example
+.br
+gpac -i file.mp4 ffswf=osize:128x72 c=avc resample=osr=48k c=aac -o output
+.br
+
+.br
+This will force:
+.br
+- SRC(video)->ffsws->enc(video)->output and prevent SRC(video)->output, SRC(video)->enc(video) and ffsws->output connections which would happen in complete mode.
+.br
+- SRC(audio)->resample->enc(audio)->output and prevent SRC(audio)->output, SRC(audio)->enc(audio) and resample->output connections which would happen in complete mode.
+.br
+
+.br
+.SS Quick links
+.br
+Link between filters may be manually specified. The syntax is an @ character optionally followed by an integer (0 if omitted).
+.br
+This indicates that the following filter specified at prompt should be linked only to a previous listed filter.
 .br
 The optional integer is a 0-based index to the previous filter declarations, 0 indicating the previous filter declaration, 1 the one before the previous declaration, ...).
 .br
-If @@ is used instead of @, the optional integer gives the filter index starting from the first filter specified in command line.
+If @@ is used instead of @, the optional integer gives the filter index starting from the first filter (index 0) specified in command line.
 .br
 Several link directives can be given for a filter.
 .br
@@ -1446,21 +1587,13 @@ This indicates that fZ only accepts inputs from fB.
 .br
 
 .br
-If no link directives are given, the links will be dynamically solved to fulfill as many connections as possible (see below).
+.SS Complex links
 .br
-Warning: This means that fA fB fC and fA fB @ fC will likely not give the same result.
+The @ link directive is just a quick shortcut to set the following filter arguments:
 .br
-
+* FID=name: assigns an identifier to the filter
 .br
-.P
-.B
-Complex links
-.br
-The link directive is just a quick shortcut to set the following arguments:
-.br
-- FID=name, which assigns an identifier to the filter
-.br
-- SID=name1[,name2...], which set a list of filter identifiers , or sourceIDs, restricting the list of possible inputs for a filter.
+* SID=name1[,name2...]: sets a list of filter identifiers, or sourceIDs, restricting the list of possible inputs for a filter.
 .br
 
 .br
@@ -1471,8 +1604,6 @@ fA fB @1 fC
 
 .br
 This is equivalent to fA:FID=1 fB fC:SID=1.
-.br
-Link directives specify which source a filter can accept connections from. They do not specify which destination a filter can connect to.
 .br
 Example
 .br
@@ -1492,17 +1623,19 @@ This indicates that fD only accepts input from fA and fB and fC only from fA
 .br
 Note: A filter with sourceID set cannot get input from filters with no IDs.
 .br
+
+.br
 A sourceID name can be further extended using fragment identifier (# by default):
 .br
 * name#PIDNAME: accepts only PID(s) with name PIDNAME
 .br
 * name#TYPE: accepts only PIDs of matching media type. TYPE can be audio, video, scene, text, font, meta
 .br
-* name#TYPEN: accepts only N (1-based index) PID of matching type from source (eg video2 to only accept second video PID)
+* name#TYPEN: accepts only N (1-based index) PID of matching type from source (e.g. video2 to only accept second video PID)
 .br
 * name#TAG=VAL: accepts the PID if its parent filter has no tag or a tag matching VAL
 .br
-* name#P4CC=VAL: accepts only PIDs with property matching VAL.
+* name#P4CC=VAL: accepts only PIDs with builtin property of type P4CC and value VAL.
 .br
 * name#PName=VAL: same as above, using the builtin name corresponding to the property.
 .br
@@ -1548,7 +1681,7 @@ This indicates that fC only accepts inputs from fA, and of type video.
 .br
 Example
 .br
-src=img.heif @#ItemID=200 vout
+gpac -i img.heif @#ItemID=200 vout
 .br
 
 .br
@@ -1556,7 +1689,7 @@ This indicates to connect to vout only PIDs with ItemID property equal to 200.
 .br
 Example
 .br
-src=vid.mp4 @#PID=1 vout
+gpac -i vid.mp4 @#PID=1 vout
 .br
 
 .br
@@ -1564,7 +1697,7 @@ This indicates to connect to vout only PIDs with ID property equal to 1.
 .br
 Example
 .br
-src=vid.mp4 @#Width=640 vout
+gpac -i vid.mp4 @#Width=640 vout
 .br
 
 .br
@@ -1572,7 +1705,7 @@ This indicates to connect to vout only PIDs with Width property equal to 640.
 .br
 Example
 .br
-src=vid.mp4 @#Width-640 vout
+gpac -i vid.mp4 @#Width-640 vout
 .br
 
 .br
@@ -1580,7 +1713,7 @@ This indicates to connect to vout only PIDs with Width property less than 640
 .br
 Example
 .br
-src=vid.mp4 @#ID=ItemID#ItemNumber=1 vout
+gpac -i vid.mp4 @#ID=ItemID#ItemNumber=1 vout
 .br
 
 .br
@@ -1592,7 +1725,7 @@ Multiple fragment can be specified to check for multiple PID properties.
 .br
 Example
 .br
-src=vid.mp4 @#Width=640#Height+380 vout
+gpac -i vid.mp4 @#Width=640#Height+380 vout
 .br
 
 .br
@@ -1600,27 +1733,83 @@ This indicates to connect to vout only PIDs with Width property equal to 640 and
 .br
 
 .br
-Warning: If a filter PID gets connected to an explicitly loaded filter, no further dynamic link resolution will be done to connect it to other filters, unless sourceIDs are set. Link directives should be carefully setup.
+Warning: If a PID directly connects to one or more explicitly loaded filters, no further dynamic link resolution will be done to connect it to other filters with no sourceID set. Link directives should be carefully setup.
 .br
 Example
 .br
-src=video.264.mp4 @ reframer dst=dump.mp4
+fA @ reframer fB
 .br
 
 .br
-This will link src file.mp4 PID (type file) to dst dump.mp4 filter (type file) because dst has no sourceID and therefore will accept input from src. Since the PID is connected, the filter engine will not try to solve a link between src and reframer. The result is a direct copy of the source file, reframer being unused.
+If fB accepts inputs provided by fA but reframer does not, this will link fA PID to fB filter since fB has no sourceID.
+.br
+Since the PID is connected, the filter engine will not try to solve a link between fA and reframer.
+.br
+
+.br
+An exception is made for local files: by default, a local file destination will force a remultiplex of input PIDs from a local file.
 .br
 Example
 .br
-src=file.mp4 reframer @ dst=dump.mp4
+gpac -i file.mp4 -o dump.mp4
 .br
 
 .br
-This will force dst to accept only from reframer, a muxer will be loaded to solve this link, and src PID will be linked to reframer (no source ID), loading a demuxer to solve the link. The result is a complete remultiplexing of the source file.
+This will prevent direct connection of PID of type file to dst file.mp4, remultiplexing the file.
 .br
 
 .br
-Note: the linker will prevent cycles in the graph, and a given filter can never have the same PID connected twice as an input, whether directly or through a filter chain.
+The special option nomux is used to allow direct connections (ignored for non-sink filters).
+.br
+Example
+.br
+gpac -i file.mp4 -o dump.mp4:nomux
+.br
+
+.br
+This will result in a direct file copy.
+.br
+
+.br
+This only applies to local files destination. For pipes, sockets or other file outputs (HTTP, ROUTE):
+.br
+- direct copy is enabled by default
+.br
+- nomux=0 can be used to force remultiplex
+.br
+
+.br
+.SS Sub-session tagging
+.br
+Filters may be assigned to a sub-session using :FS=N, with N a positive integer.
+.br
+Filters belonging to different sub-sessions may only link to each-other:
+.br
+- if explicitly allowed through sourceID directives (@ or SID)
+.br
+- or if they have the same sub-session identifier
+.br
+
+.br
+This is mostly used for implicit mode in gpac: each first source filter specified after a sink filter will trigger a new sub-session.
+.br
+Example
+.br
+gpac -i in1.mp4 -i in2.mp4 -o out1.mp4 -o out2.mp4
+.br
+
+.br
+This will result in both inputs multiplexed in both outputs.
+.br
+Example
+.br
+gpac -i in1.mp4 -o out1.mp4 -i in2.mp4 -o out2.mp4
+.br
+
+.br
+This will result in in1 mixed to out1 and in2 mixed to out2, these last two filters belonging to a different sub-session.
+.br
+
 .br
 .SH Arguments inheriting
 .LP
@@ -1629,7 +1818,7 @@ Unless explicitly disabled (see .I -max-chain), the filter engine will resolve i
 .br
 Example
 .br
-src=file.mp4:OPT dst=file.aac dst=file.264
+gpac -i file.mp4:OPT -o file.aac -o file.264
 .br
 
 .br
@@ -1637,7 +1826,7 @@ This will pass the :OPT to all filters loaded between the source and the two des
 .br
 Example
 .br
-src=file.mp4 dst=file.aac:OPT dst=file.264
+gpac -i file.mp4 -o file.aac:OPT -o file.264
 .br
 
 .br
@@ -1647,7 +1836,7 @@ Note: the destination arguments inherited are the arguments placed AFTER the dst
 .br
 Example
 .br
-src=file.mp4 fout:OPTFOO:dst=file.aac:OPTBAR
+gpac -i file.mp4 fout:OPTFOO:dst=file.aac:OPTBAR
 .br
 
 .br
@@ -1657,7 +1846,7 @@ Arguments inheriting can be stopped by using the keyword gfloc: arguments after 
 .br
 Example
 .br
-src=file.mp4 dst=file.aac:OPTFOO:gfloc:OPTBAR dst=file.264
+gpac -i file.mp4 -o file.aac:OPTFOO:gfloc:OPTBAR -o file.264
 .br
 
 .br
@@ -1669,16 +1858,26 @@ It may be useful to specify arguments which may not be consumed depending on the
 .br
 Example
 .br
-src=file.mp4 dst=file.aac:OPTFOO:gfopt:OPTBAR dst=file.264
+gpac -i file.mp4 -o file.aac:OPTFOO:gfopt:OPTBAR -o file.264
 .br
 
 .br
 This will warn if OPTFOO is not consumed, but will not track OPTBAR.
 .br
+  
+.br
+A filter may be assigned a name (for inspection purposes, not inherited) using :N=name option. This name is not used in link resolution and may be changed at runtime by the filter instance.
+.br
+  
+.br
+A filter may be assigned a tag (any string) using :TAG=name option. This tag does not need to be unique, and can be used to exclude filter in link resolution. Tags are not inherited, therefore dynamically loaded filters never have a tag.
+.br
+  
+.br
 .SH URL templating
 .LP
 .br
-Destination URLs can be templated using the same mechanism as MPEG-DASH, where $KEYWORD$ is replaced in the template with the resolved value and $KEYWORD%%0Nd$ is replaced in the template with the resolved integer, padded with up to N zeros if needed.
+Destination URLs can be dynamically constructed using templates. Pattern $KEYWORD$ is replaced in the template with the resolved value and $KEYWORD%%0Nd$ is replaced in the template with the resolved integer, padded with up to N zeros if needed.
 .br
 KEYWORD is case sensitive, and may be present multiple times in the string. Supported KEYWORD:
 .br
@@ -1708,7 +1907,7 @@ Templating can be useful when encoding several qualities in one pass.
 .br
 Example
 .br
-src=dump.yuv:size=640x360 vcrop:wnd=0x0x320x180 enc:c=avc:b=1M @2 enc:c=avc:b=750k dst=dump_$CropOrigin$x$Width$x$Height$.264:clone
+gpac -i dump.yuv:size=640x360 vcrop:wnd=0x0x320x180 c=avc:b=1M @2 c=avc:b=750k -o dump_$CropOrigin$x$Width$x$Height$.264:clone
 .br
 
 .br
@@ -1721,7 +1920,7 @@ When a filter accepts a single connection and has a connected input, it is no lo
 .br
 Example
 .br
-src=img.heif dst=dump_$ItemID$.jpg
+gpac -i img.heif -o dump_$ItemID$.jpg
 .br
 
 .br
@@ -1733,7 +1932,7 @@ There is a special option clone allowing filters to be cloned with the same argu
 .br
 Example
 .br
-src=img.heif dst=dump_$ItemID$.jpg:clone
+gpac -i img.heif -o dump_$ItemID$.jpg:clone
 .br
 
 .br
@@ -1741,16 +1940,40 @@ In this case, the destination will be cloned for each item, and all will be expo
 .br
 Example
 .br
-src=vid.mpd enc:c=avc:FID=1:clone dst=transcode.mpd:SID=1
+gpac -i vid.mpd c=avc:FID=1:clone -o transcode.mpd:SID=1
 .br
 
 .br
 In this case, the encoder will be cloned for each video PIDs in the source, and the destination will only use PIDs coming from the encoders.
 .br
+
+.br
+When implicit linking is enabled, all filters are by default clonable. This allows duplicating the processing for each PIDs of the same type.
+.br
+Example
+.br
+gpac -i dual_audio resample:osr=48k c=aac -o dst
+.br
+
+.br
+The resampler filter will be cloned for each audio PID, and the encoder will be cloned for each resampler output.
+.br
+You can explicitly deactivate the cloning instructions:
+.br
+Example
+.br
+gpac -i dual_audio resample:osr=48k:clone=0 c=aac -o dst
+.br
+
+.br
+The first audio will connect to the resample filter, the second to the enc filter and the resample output will connect to a clone of the enc filter.
+.br
+
+.br
 .SH Templating filter chains
 .LP
 .br
-There can be cases where the number of desired outputs depends on the source content, for example dumping a multiplex of N services into N files. When the destination involves multiplexing the input PIDs, the :clone option is not enough since the muxer will always accept the input PIDs.
+There can be cases where the number of desired outputs depends on the source content, for example dumping a multiplex of N services into N files. When the destination involves multiplexing the input PIDs, the :clone option is not enough since the multiplexer will always accept the input PIDs.
 .br
 To handle this, it is possible to use a PID property name in the sourceID of a filter with the value * or an empty value. In this case, whenever a new PID with a new value for the property is found, the filter with such sourceID will be dynamically cloned.
 .br
@@ -1758,20 +1981,34 @@ Warning: This feature should only be called with a single property set to * (or 
 .br
 Example
 .br
-src=source.ts dst=file_$ServiceID$.mp4:SID=*#ServiceID=*
+gpac -i source.ts -o file_$ServiceID$.mp4:SID=*#ServiceID=*
 .br
-src=source.ts dst=file_$ServiceID$.mp4:SID=#ServiceID=
+gpac -i source.ts -o file_$ServiceID$.mp4:SID=#ServiceID=
 .br
 
 .br
 In this case, each new ServiceID value found when connecting PIDs to the destination will create a new destination file.
 .br
+
+.br
+Cloning in implicit linking mode applies to output as well:
+.br
+Example
+.br
+gpac -i dual_audio -o dst_$PID$.aac
+.br
+
+.br
+Each audio track will be dumped to aac (potentially reencoding if needed).
+.br
+
+.br
 .SH Assigning PID properties
 .LP
 .br
-It is possible to define properties on output PIDs that will be declared by a filter. This allows tagging parts of the graph with different properties than other parts (for example ServiceID). The syntax is the same as filter option, and uses the fragment separator to identify properties, eg #Name=Value.
+It is possible to define properties on output PIDs that will be declared by a filter. This allows tagging parts of the graph with different properties than other parts (for example ServiceID). The syntax is the same as filter option, and uses the fragment separator to identify properties, e.g. #Name=Value.
 .br
-This sets output PIDs property (4cc, built-in name or any name) to the given value. Value can be omitted for boolean (defaults to true, eg :#Alpha).
+This sets output PIDs property (4cc, built-in name or any name) to the given value. Value can be omitted for boolean (defaults to true, e.g. :#Alpha).
 .br
 Non built-in properties are parsed as follows:
 .br
@@ -1795,11 +2032,11 @@ Warning: Properties are not filtered and override the properties of the filter's
 .br
 Example
 .br
--i v1.mp4:#ServiceID=4 -i v2.mp4:#ServiceID=2 -o dump.ts
+gpac -i v1.mp4:#ServiceID=4 -i v2.mp4:#ServiceID=2 -o dump.ts
 .br
 
 .br
-This will mux the streams in dump.ts, using ServiceID 4 for PIDs from v1.mp4 and ServiceID 2 for PIDs from v2.mp4.
+This will multiplex the streams in dump.ts, using ServiceID 4 for PIDs from v1.mp4 and ServiceID 2 for PIDs from v2.mp4.
 .br
 
 .br
@@ -1866,7 +2103,7 @@ An option file declaration (filter:myopts.txt) follows the same inheritance rule
 .br
 Example
 .br
-src=source.mp4:myopts.txt:foo=bar dst
+gpac -i source.mp4:myopts.txt:foo=bar -o dst
 .br
 
 .br
@@ -1902,6 +2139,34 @@ gpac -i source.ts tssplit @#ServiceID= -o dump_$GINC(10,2).ts
 
 .br
 This will dump first service in dump_10.ts, second service in dump_12.ts, etc...
+.br
+
+.br
+As seen previously, the following options may be set on any filter, but are not visible in individual filter help:
+.br
+* FID: filter identifier
+.br
+* SID: filter source(s)
+.br
+* N: filter name
+.br
+* FS: sub-session identifier
+.br
+* TAG: filter tag
+.br
+* clone: filter cloning flag
+.br
+* nomux: enable/disable direct file copy
+.br
+* gfreg: preferred filter registry names for link solving
+.br
+* gfloc: following options are local to filter declaration (not inherited)
+.br
+* gfopt: following options are not tracked
+.br
+* gpac: argument separator for URLs
+.br
+
 .br
 .SH External filters
 .LP
@@ -2062,11 +2327,9 @@ color matrix coefficients, string or int value from ISO/IEC 23091-2
 .br
 
 .br
-
-.br
 Built-in properties for PIDs and packets listed as Name (4CC type FLAGS): description
 .br
-FLAGS can be D (droppable - see GSF mux filter help), P (packet property)
+FLAGS can be D (droppable - see GSF multiplexer filter help), P (packet property)
 .br
 .TP
 .B ID (PIDI,uint,  )
@@ -2076,7 +2339,7 @@ Stream ID
 .TP
 .B ESID (ESID,uint,D )
 .br
-MPEG-4 ESID of pid
+MPEG-4 ESID of PID
 .br
 .TP
 .B ItemID (ITID,uint,  )
@@ -2101,17 +2364,17 @@ ID of parent service
 .TP
 .B ClockID (CKID,uint,D )
 .br
-ID of clock reference pid
+ID of clock reference PID
 .br
 .TP
 .B DependencyID (DPID,uint,  )
 .br
-ID of layer dependended on
+ID of layer depended on
 .br
 .TP
 .B SubLayer (DPSL,bool,  )
 .br
-pid is a sublayer of the stream depended on rather than an enhancement layer
+PID is a sublayer of the stream depended on rather than an enhancement layer
 .br
 .TP
 .B PlaybackMode (PBKM,uint,D )
@@ -2184,27 +2447,27 @@ Codec ID (MPEG-4 OTI or ISOBMFF 4CC)
 .TP
 .B InitialObjectDescriptor (PIOD,bool,  )
 .br
-Indicates if pid is declared in the IOD for MPEG-4
+PID is declared in the IOD for MPEG-4
 .br
 .TP
 .B Unframed (PFRM,bool,  )
 .br
-Indicates that the media data is not framed, i.e. each packet is not a complete AU/frame or is not in internal format (eg annexB for avc/hevc, adts for aac)
+The media data is not framed, i.e. each packet is not a complete AU/frame or is not in internal format (e.g. annexB for avc/hevc, adts for aac)
 .br
 .TP
 .B UnframedAU (PFRF,bool,  )
 .br
-Indicates that the unframed media still has correct AU boundaries: one packet is one full AU, but the packet format might not be the internal one (eg annexB for avc/hevc, adts for aac)
+The unframed media still has correct AU boundaries: one packet is one full AU, but the packet format might not be the internal one (e.g. annexB for avc/hevc, adts for aac)
 .br
 .TP
 .B LATM (LATM,bool,  )
 .br
-Indicates media is unframed AAC in LATM format
+Media is unframed AAC in LATM format
 .br
 .TP
 .B Duration (PDUR,lfrac,  )
 .br
-Media duration
+Media duration (a negative value means an estimated duration based on rate)
 .br
 .TP
 .B NumFrames (NFRM,uint,D )
@@ -2229,12 +2492,12 @@ Depth of the timeshift buffer
 .TP
 .B TimeshiftTime (PTST,dbl,D )
 .br
-Time in the timeshift buffer in seconds - changes are signaled through pid info (no reconfigure)
+Time in the timeshift buffer in seconds - changes are signaled through PID info (no reconfigure)
 .br
 .TP
 .B TimeshiftState (PTSS,uint,D )
 .br
-State of timeshift buffer: 0 is OK, 1 is underflow, 2 is overflow - changes are signaled through pid info (no reconfigure)
+State of timeshift buffer: 0 is OK, 1 is underflow, 2 is overflow - changes are signaled through PID info (no reconfigure)
 .br
 .TP
 .B Timescale (TIMS,uint,  )
@@ -2309,7 +2572,7 @@ CTS offset to apply in case of negative ctts
 .TP
 .B SkipPriming (ASKP,bool,  )
 .br
-Indicate audio priming is not to be removed when initializing decoding
+Audio priming shall not to be removed when initializing decoding
 .br
 .TP
 .B Width (WIDT,uint,  )
@@ -2364,7 +2627,7 @@ Video is interlaced
 .TP
 .B SAR (PSAR,frac,  )
 .br
-Sample (ie pixel) aspect ratio
+Sample (i.e. pixel) aspect ratio
 .br
 .TP
 .B PAR (VPAR,frac,D )
@@ -2389,17 +2652,27 @@ Z-order of the video, from 0 (first) to max int (last)
 .TP
 .B TransX (VTRX,sint,  )
 .br
-Horizontal translation of the video
+Horizontal translation of the video (positive towards right)
 .br
 .TP
 .B TransY (VTRY,sint,  )
 .br
-Vertical translation of the video
+Vertical translation of the video (positive towards up)
+.br
+.TP
+.B TransXRight (VTRx,sint,  )
+.br
+Horizontal offset of the video from right (positive towards right), for cases where reference width is unknown
+.br
+.TP
+.B TransYTop (VTRy,sint,  )
+.br
+Vertical translation of the video (0 is top, positive towards down), for cases where reference height is unknown
 .br
 .TP
 .B Hidden (HIDE,bool,  )
 .br
-Indicates the PID is hidden in visual/audio rendering
+PID is hidden in visual/audio rendering
 .br
 .TP
 .B CropOrigin (VCXY,v2di,  )
@@ -2433,17 +2706,17 @@ Mapping of input videos in reconstructed video, expressed as {Ox,Oy,Ow,Oh,Dx,Dy,
 .TP
 .B Alpha (VALP,bool,  )
 .br
-Indicates the video in this pid is an alpha map
+Video in this PID is an alpha map
 .br
 .TP
 .B Mirror (VMIR,uint,  )
 .br
-Indicates a mirror mode (0: no mirror, 1: along Y-axis, 2: along X-axis)
+Mirror mode (0: no mirror, 1: along Y-axis, 2: along X-axis)
 .br
 .TP
 .B Rotate (VROT,uint,  )
 .br
-Indicates the video rotation as value*90 degree anti-clockwise
+Video rotation as value*90 degree anti-clockwise
 .br
 .TP
 .B ClapW (CLPW,frac,  )
@@ -2468,7 +2741,7 @@ Vertical offset of clean aperture center in luma pixels, 0 at image center
 .TP
 .B NumViews (PNBV,uint,  )
 .br
-Indicates the number of views packed in a frame (top-to-bottom only)
+Number of views packed in a frame (top-to-bottom only)
 .br
 .TP
 .B Bitrate (RATE,uint,  )
@@ -2533,12 +2806,12 @@ File extension of source
 .TP
 .B Cached (CACH,bool,D )
 .br
-indicates the file is completely cached
+File is completely cached
 .br
 .TP
 .B DownloadRate (DLBW,uint,D )
 .br
-Download rate of resource in bits per second - changes are signaled through pid info (no reconfigure)
+Download rate of resource in bits per second - changes are signaled through PID info (no reconfigure)
 .br
 .TP
 .B DownloadSize (DLSZ,luint,D )
@@ -2548,7 +2821,7 @@ Size of resource in bytes
 .TP
 .B DownBytes (DLBD,luint,D )
 .br
-Number of bytes downloaded - changes are signaled through pid info (no reconfigure)
+Number of bytes downloaded - changes are signaled through PID info (no reconfigure)
 .br
 .TP
 .B ByteRange (FBRA,lfrac,D )
@@ -2558,27 +2831,27 @@ Byte range of resource
 .TP
 .B DisableProgressive (NPRG,uint,  )
 .br
-indicates that some blocks in file need patching (replace or insertion) upon closing, potentially disabling progressive upload
+Some blocks in file need patching (replace or insertion) upon closing, potentially disabling progressive upload
 .br
 .TP
 .B IsoAltBrands (ABRD,4ccl,D )
 .br
-indicates ISOBMFF brands associated with PID/file
+ISOBMFF brands associated with PID/file
 .br
 .TP
 .B IsoBrand (MBRD,4cc,D )
 .br
-indicates ISOBMFF major brand associated with PID/file
+ISOBMFF major brand associated with PID/file
 .br
 .TP
 .B MovieTime (MHTS,lfrac,D )
 .br
-indicates ISOBMFF movie header duration and timescale
+ISOBMFF movie header duration and timescale
 .br
 .TP
 .B HasSync (PSYN,bool,D )
 .br
-indicates ISOBMFF track has sync points
+PID has sync points
 .br
 .TP
 .B ServiceWidth (DWDT,uint,D )
@@ -2594,16 +2867,6 @@ Display height of service
 .B CarouselRate (CARA,uint,D )
 .br
 Repeat rate in ms for systems carousel data
-.br
-.TP
-.B UTC (UTCD,luint,D )
-.br
-UTC date and time of PID
-.br
-.TP
-.B UTCTimestamp (UTCT,luint,D )
-.br
-Timestamp corresponding to UTC date and time
 .br
 .TP
 .B AudioVolume (AVOL,uint,D )
@@ -2643,7 +2906,7 @@ URI for key management system
 .TP
 .B SelectiveEncryption (ISSE,bool,  )
 .br
-Indicates if ISMA/OMA selective encryption is used
+ISMA/OMA selective encryption is used
 .br
 .TP
 .B IVLength (ISIV,uint,  )
@@ -2678,27 +2941,32 @@ OMA size of plaintext data
 .TP
 .B CryptInfo (ECRI,str,D )
 .br
-URL (local file only) of crypt info file for this pid
+URL (local file only) of crypt info file for this PID, use clear to force passthrough
 .br
 .TP
 .B DecryptInfo (EDRI,str,D )
 .br
-URL (local file only) of crypt info file for this pid - see decrypter help
+URL (local file only) of crypt info file for this PID - see decrypter help
 .br
 .TP
 .B SenderNTP (NTPS,luint,DP)
 .br
-NTP time at sender side or grabber side
+NTP 64 bits timestamp at sender side or grabber side
 .br
 .TP
 .B ReceiverNTP (NTPR,luint,DP)
 .br
-Receiver NTP time (usually associated with the sender NTP property)
+Receiver NTP (64 bits timestamp) usually associated with the sender NTP property
+.br
+.TP
+.B UTC (UTCD,luint,DP)
+.br
+UTC timestamp (in milliseconds) of parent packet
 .br
 .TP
 .B Encrypted (EPCK,bool,  )
 .br
-Packets for the stream are by default encrypted (however the encryption state is carried in packet crypt flags) - changes are signaled through pid_set_info (no reconfigure)
+Packets for the stream are by default encrypted (however the encryption state is carried in packet crypt flags) - changes are signaled through PID info change (no reconfigure)
 .br
 .TP
 .B OMAPreview (ODPR,luint,  )
@@ -2776,7 +3044,7 @@ Binary blob describing N subsamples of the sample, formatted as N [(u32)flags(u3
 .TP
 .B NALUMaxSize (NALS,uint,  )
 .br
-Max size of NAL units in stream - changes are signaled through pid_set_info (no reconfigure)
+Max size of NAL units in stream - changes are signaled through PID info change (no reconfigure)
 .br
 .TP
 .B FileNumber (FNUM,uint, P)
@@ -2809,49 +3077,54 @@ End of DASH segment
 Set on packets marking the beginning of a DASH/HLS segment for cue-driven segmentation - see dasher help
 .br
 .TP
+.B MediaTime (MTIM,dbl,D )
+.br
+Corresponding media time of the parent packet (0 being the origin)
+.br
+.TP
 .B MaxFrameSize (MFRS,uint,D )
 .br
-Max size of frame in stream - changes are signaled through pid_set_info (no reconfigure)
+Max size of frame in stream - changes are signaled through PID info change (no reconfigure)
 .br
 .TP
 .B AvgFrameSize (AFRS,uint,D )
 .br
-Average size of frame in stream (isobmff only, static property)
+Average size of frame in stream (ISOBMFF only, static property)
 .br
 .TP
 .B MaxTSDelta (MTSD,uint,D )
 .br
-Maximum DTS delta between frames (isobmff only, static property)
+Maximum DTS delta between frames (ISOBMFF only, static property)
 .br
 .TP
 .B MaxCTSOffset (MCTO,uint,D )
 .br
-Maximum absolute CTS offset (isobmff only, static property)
+Maximum absolute CTS offset (ISOBMFF only, static property)
 .br
 .TP
 .B ConstantDuration (SCTD,uint,D )
 .br
-Constant duration of samples, 0 means variable duration (isobmff only, static property)
+Constant duration of samples, 0 means variable duration (ISOBMFF only, static property)
 .br
 .TP
 .B TrackTemplate (ITKT,mem,D )
 .br
-ISOBMFF serialized track box for this PID, without any sample info (empty stbl and empty dref) - used by isomuxer to re-inject specific boxes of input ISOBMFF track
+ISOBMFF serialized track box for this PID, without any sample info (empty stbl and empty dref)
 .br
 .TP
 .B TrexTemplate (ITXT,mem,D )
 .br
-ISOBMFF serialized trex box for this PID - used by isomuxer to remux empty init segments
+ISOBMFF serialized trex box for this PID
 .br
 .TP
 .B STSDTemplate (ISTD,mem,D )
 .br
-ISOBMFF serialized sample description box (stsd entry) for this PID - used by isomuxer to re-inject specific boxes of input ISOBMFF track
+ISOBMFF serialized sample description box (stsd entry) for this PID
 .br
 .TP
 .B MovieUserData (IMUD,mem,D )
 .br
-ISOBMFF serialized moov UDTA and other moov-level boxes (list) for this PID - used by isomuxer to re-inject specific boxes of input ISOBMFF moov
+ISOBMFF serialized moov UDTA and other moov-level boxes (list) for this PID
 .br
 .TP
 .B HandlerName (IHDL,str,D )
@@ -2872,6 +3145,11 @@ ISOBMFF track header matrix
 .B AltGroup (IALG,uint,D )
 .br
 ISOBMFF alt group ID
+.br
+.TP
+.B ForceNCTTS (IFNC,bool,D )
+.br
+ISOBMFF force negative CTS offsets
 .br
 .TP
 .B Disable (ITKD,bool,D )
@@ -2911,7 +3189,7 @@ Name of mux source(s), set by dasher to direct its outputs
 .TP
 .B DashMode (DMOD,uint,D )
 .br
-DASH mode to be used by muxer if any, set by dasher. 0 is no DASH, 1 is regular DASH, 2 is VoD
+DASH mode to be used by multiplexer if any, set by dasher. 0 is no DASH, 1 is regular DASH, 2 is VoD
 .br
 .TP
 .B DashDur (DDUR,frac,D )
@@ -2921,42 +3199,42 @@ DASH target segment duration in seconds
 .TP
 .B Role (ROLE,strl,D )
 .br
-List of roles for this pid
+List of roles for this PID, where each role string can be a DASH role, a URN:role-value or any other string (this will throw a warning and use a custom URI for the role)
 .br
 .TP
 .B PDesc (PDES,strl,D )
 .br
-List of descriptors for the DASH period containing this pid
+List of descriptors for the DASH period containing this PID
 .br
 .TP
 .B ASDesc (ACDS,strl,D )
 .br
-List of conditional descriptors for the DASH AdaptationSet containing this pid. If a pid with the same property type but different value is found, the pids will be in different AdaptationSets
+List of conditional descriptors for the DASH AdaptationSet containing this PID. If a PID with the same property type but different value is found, the PIDs will be in different AdaptationSets
 .br
 .TP
 .B ASCDesc (AADS,strl,D )
 .br
-List of common descriptors for the DASH AdaptationSet containing this pid
+List of common descriptors for the DASH AdaptationSet containing this PID
 .br
 .TP
 .B RDesc (RDES,strl,D )
 .br
-List of descriptors for the DASH Representation containing this pid
+List of descriptors for the DASH Representation containing this PID
 .br
 .TP
 .B BUrl (BURL,strl,D )
 .br
-List of base URLs for this pid
+List of base URLs for this PID
 .br
 .TP
 .B Template (DTPL,str,  )
 .br
-Template to use for DASH generation for this pid
+Template to use for DASH generation for this PID
 .br
 .TP
 .B StartNumber (DRSN,uint,  )
 .br
-Start number to use for this pid - cf dasher help
+Start number to use for this PID - cf dasher help
 .br
 .TP
 .B xlink (XLNK,str,D )
@@ -2966,7 +3244,7 @@ Remote period URL for DASH - cf dasher help
 .TP
 .B ClampDur (DCMD,lfrac,D )
 .br
-Max media duration to process from pid in DASH mode
+Max media duration to process from PID in DASH mode
 .br
 .TP
 .B HLSPL (HLVP,str,D )
@@ -2979,9 +3257,19 @@ Name of the HLS variant playlist for this media
 Name of HLS Group of a stream
 .br
 .TP
+.B HLSMExt (HLMX,strl,D )
+.br
+List of extensions to add to the master playlist for this PID
+.br
+.TP
+.B HLSVExt (HLVX,strl,D )
+.br
+List of extensions to add to the variant playlist for this PID
+.br
+.TP
 .B DCue (DCUE,str,D )
 .br
-Name of a cue list file for this pid - see dasher help
+Name of a cue list file for this PID - see dasher help
 .br
 .TP
 .B DSegs (DCNS,uint,D )
@@ -2991,27 +3279,27 @@ Number of DASH segments defined by the DASH cue info
 .TP
 .B Codec (CODS,str,D )
 .br
-codec parameter string to force. If starting with '.', appended to ISOBMF code point; otherwise replace the codec string
+codec parameter string to force. If starting with '.', appended to ISOBMFF code point; otherwise replace the codec string
 .br
 .TP
 .B SingleScale (DSTS,bool,D )
 .br
-Indicates the movie header should use the media timescale of the first track added
+Movie header should use the media timescale of the first track added
 .br
 .TP
 .B RequireReorder (PUDP,bool,D )
 .br
-Indicates the PID packets come from source with losses and reordering happening (UDP)
+PID packets come from source with losses and reordering happening (UDP)
 .br
 .TP
 .B Primary (PITM,bool,D )
 .br
-Indicates this is a primary item in isobmf
+Primary item in ISOBMFF
 .br
 .TP
 .B DFMode (DFWD,uint,D )
 .br
-Indicates that forward mode is used for this PID. If 2, indicates the manifest is also carried in packet propery
+DASH forward mode is used for this PID. If 2, the manifest is also carried in packet propery
 .br
 .TP
 .B DFManifest (DMPD,str,D )
@@ -3036,7 +3324,7 @@ Value of active period start time in forward mode
 .TP
 .B HLSKey (HLSK,str,  )
 .br
-URI, KEYFORMAT and KEYFORMATVERSIONS for HLS creation, Key URI for decoding
+URI, KEYFORMAT and KEYFORMATVERSIONS for HLS full segment encryption creation, Key URI otherwise ( decoding and sample-AES)
 .br
 .TP
 .B HLSIV (HLSI,mem,  )
@@ -3046,62 +3334,77 @@ Init Vector for HLS decode
 .TP
 .B ColorPrimaries (CPRM,cprm,D )
 .br
-Indicate color primaries for a visual pid
+Color primaries
 .br
 .TP
 .B ColorTransfer (CTRC,ctfc,D )
 .br
-Indicate color transfer characteristics for a visual pid
+Color transfer characteristics
 .br
 .TP
 .B ColorMatrix (CMXC,cmxc,D )
 .br
-Indicate color matrix coefficient for a visual pid 
+Color matrix coefficient
 .br
 .TP
 .B FullRange (CFRA,bool,D )
 .br
-Indicate color full range flag for a visual pid
+Color full range flag
+.br
+.TP
+.B Chroma (CFMT,uint,D )
+.br
+Chroma format (see ISO/IEC 23001-8 / 23091-2)
 .br
 .TP
 .B ChromaLoc (CLOC,uint,D )
 .br
-Indicate chroma location for a visual pid (see ISO/IEC 23001-8 / 23091-2)
+Chroma location (see ISO/IEC 23001-8 / 23091-2)
+.br
+.TP
+.B ContentLightLevel (CLLI,mem,D )
+.br
+Content light level, payload of clli box (see ISO/IEC 14496-12), can be set as a list of 2 integers in fragment declaration (e.g. "=max_cll,max_pic_avg_ll")
+.br
+.TP
+.B MasterDisplayColour (MDCV,mem,D )
+.br
+Master display colour info, payload of mdcv box (see ISO/IEC 14496-12), can be set as a list of 10 integers in fragment declaration (e.g. "=dpx0,dpy0,dpx1,dpy1,dpx2,dpy2,wpx,wpy,max,min")
 .br
 .TP
 .B SrcMagic (PSMG,luint,D )
 .br
-Indicate a magic number to store in the track, only used by importers
+Magic number to store in the track, only used by importers
 .br
 .TP
 .B MuxIndex (TIDX,luint,D )
 .br
-Indicate target track index in destination file, stored by lowest value first (not set by demuxers)
+Target track index in destination file, stored by lowest value first (not set by demultiplexers)
 .br
 .TP
 .B NoTSLoop (NTSL,bool,  )
 .br
-Indicate the timestamps on this PID are adjusted in case of loops (used by TS muxer output)
+Timestamps on this PID are adjusted in case of loops (used by TS multiplexer output)
 .br
 .TP
 .B MHAProfiles (MHCP,uintl,D )
 .br
-Indicate a list of compatible profiles for this MPEG-H Audio object
+List of compatible profiles for this MPEG-H Audio object
 .br
 .TP
 .B FragStart (PFRB,uint,DP)
 .br
-Indicate if packet is a fragment start (value 1) or a segment start (value 2)
+Packet is a fragment start (value 1) or a segment start (value 2)
 .br
 .TP
 .B FragRange (PFRR,lfrac,DP)
 .br
-Indicate start and end position in bytes of fragment if packet is a fragment or segment start
+Start and end position in bytes of fragment if packet is a fragment or segment start
 .br
 .TP
 .B SIDXRange (PFSR,lfrac,DP)
 .br
-Indicate start and end position in bytes of sidx if packet is a fragment or segment start
+Start and end position in bytes of sidx if packet is a fragment or segment start
 .br
 .TP
 .B MoofTemplate (MFTP,mem,DP)
@@ -3116,52 +3419,52 @@ Set to true if packet is a complete DASH init segment file
 .TP
 .B RawGrab (PGRB,bool,D )
 .br
-Indicate PID is a raw media grabber (webcam, microphone, etc...)
+PID is a raw media grabber (webcam, microphone, etc...)
 .br
 .TP
 .B KeepAfterEOS (PKAE,bool,D )
 .br
-Indicate the PID must be kept alive after EOS (LASeR and BIFS)
+PID must be kept alive after EOS (LASeR and BIFS)
 .br
 .TP
 .B CoverArt (PCOV,mem,D )
 .br
-Indicate PID cover art image data. If associated data is NULL, the data is carried in the PID
+PID cover art image data. If associated data is NULL, the data is carried in the PID
 .br
 .TP
 .B BufferLength (PBPL,uint,D )
 .br
-Indicate playout buffer in ms
+Playout buffer in ms
 .br
 .TP
 .B MaxBuffer (PBMX,uint,D )
 .br
-Indicate maximum buffer occupancy in ms
+Maximum buffer occupancy in ms
 .br
 .TP
 .B ReBuffer (PBRE,uint,D )
 .br
-Indicate rebuffer threshold in ms, 0 disable rebuffering
+Rebuffer threshold in ms, 0 disable rebuffering
 .br
 .TP
 .B ViewIdx (VIDX,uint,D )
 .br
-Indicate view index for multiview (1 being left)
+View index for multiview (1 being left)
 .br
 .TP
 .B FragURL (OFRA,str,D )
 .br
-Indicate fragment URL (without '#') of original URL (used by dash demux to set the property on media PIDs)
+Fragment URL (without '#') of original URL (used by some filters to set the property on media PIDs)
 .br
 .TP
 .B ROUTEIP (RSIP,str,D )
 .br
-Indicate ROUTE session IP address
+ROUTE session IP address
 .br
 .TP
 .B ROUTEPort (RSPN,uint,D )
 .br
-Indicate ROUTE session port number
+ROUTE session port number
 .br
 .TP
 .B ROUTEName (RSFN,str,D )
@@ -3206,22 +3509,37 @@ Clamping of frame for EQR as 0.32 fixed point (x is top, y is bottom, z is left 
 .TP
 .B SceneNode (PSND,bool,  )
 .br
-Indicate the PID is a scene node decoder (AFX BitWrapper in BIFS)
+PID is a scene node decoder (AFX BitWrapper in BIFS)
 .br
 .TP
 .B OrigCryptoScheme (POCS,uint,  )
 .br
-Indicate the original cryptor scheme on a decrypted PID
+Original crypto scheme on a decrypted PID
+.br
+.TP
+.B TSBSegs (PTSN,uint,D )
+.br
+Time shift in number of segments for HAS streams, only set by dashin and dasher filters
+.br
+.TP
+.B IsManifest (PHSM,bool,D )
+.br
+PID is a HAS manifest
+.br
+.TP
+.B Sparse (PSPA,bool,D )
+.br
+PID has potentially empty times between packets
 .br
 .TP
 .B SkipBegin (PCKS,uint, P)
 .br
-Amount of media to skip from begining of packet in PID timescale
+Amount of media to skip from beginning of packet in PID timescale
 .br
 .TP
 .B SkipPres (PCKD,bool, P)
 .br
-Indicate the packet and any following with CTS greater than this packet shall not be presented (used by reframer to create edit lists)
+Packet and any following with CTS greater than this packet shall not be presented (used by reframer to create edit lists)
 .br
 .TP
 .B HLSRef (HPLR,luint,DP)
@@ -3344,7 +3662,7 @@ Semi-planar YUV 420 8 bit, Y plane and UV packed plane
 .TP
 .B nv21 (ext *.nv21)
 .br
-Semi-planar YUV 420 8 bit, Y plane and VU packed plane
+Semi-planar YVU 420 8 bit, Y plane and VU packed plane
 .br
 .TP
 .B nv1l (ext *.nv1l)
@@ -3354,7 +3672,7 @@ Semi-planar YUV 420 10 bit, Y plane and UV plane
 .TP
 .B nv2l (ext *.nv2l)
 .br
-Semi-planar YUV 420 8 bit, Y plane and VU plane
+Semi-planar YVU 420 8 bit, Y plane and VU plane
 .br
 .TP
 .B yuva (ext *.yuva)
@@ -3377,14 +3695,29 @@ Planar YUV+alpha 444 8 bit
 Packed YUV 444 8 bit
 .br
 .TP
+.B v308 (ext *.v308)
+.br
+Packed VYU 444 8 bit
+.br
+.TP
 .B yuv444ap (ext *.y4ap)
 .br
 Packed YUV+alpha 444 8 bit
 .br
 .TP
-.B yuv444p_10 (ext *.y4lp)
+.B v408 (ext *.v408)
 .br
-Packed YUV 444 10 bit
+Packed UYV+alpha 444 8 bit
+.br
+.TP
+.B v410 (ext *.v410)
+.br
+Packed UYV 444 10 bit LE
+.br
+.TP
+.B v210 (ext *.v210)
+.br
+Packed UYVY 422 10 bit LE
 .br
 .TP
 .B grey (ext *.grey)
@@ -3509,6 +3842,11 @@ External OpenGL texture of unknown format, to be used with samplerExternalOES
 .B s16 (ext *.pcm)
 .br
 16 bit PCM Little Endian
+.br
+.TP
+.B s16b (ext *.pcmb)
+.br
+16 bit PCM Big Endian
 .br
 .TP
 .B s24 (ext *.s24)
@@ -3812,9 +4150,14 @@ MPEG-2 AAC Audio Scalable Sampling Rate
 MPEG-1 Audio
 .br
 .TP
-.B mp3|m2a
+.B mp2
 .br
 MPEG-2 Audio
+.br
+.TP
+.B mp1
+.br
+MPEG-1 Audio Layer 1
 .br
 .TP
 .B h263
@@ -3975,6 +4318,11 @@ Subtitle XML Stream
 .B tx3g
 .br
 Subtitle/text 3GPP/Apple Stream
+.br
+.TP
+.B ssa
+.br
+SSA /ASS Subtitles
 .br
 .TP
 .B theo|theora
@@ -4162,14 +4510,29 @@ QT TimeCode
 VVC Video
 .br
 .TP
+.B vvs1
+.br
+VVC Subpicture Video
+.br
+.TP
 .B usac|xheaac
 .br
 xHEAAC / USAC Audio
 .br
 .TP
-.B v210
+.B ffv1
 .br
-v210 YUV 422 10 bits
+FFMPEG Video Codec 1
+.br
+.TP
+.B dvbs
+.br
+DVB Subtitles
+.br
+.TP
+.B dvbs
+.br
+DVB-TeleText
 .br
 .SH Stream types
 .LP
@@ -4283,9 +4646,9 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 1.1.0-DEV-rev1257-g37afe8641-master
+build: 2.1-DEV-rev112-g275394b43-master
 .br
-Copyright: (c) 2000-2021 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
+Copyright: (c) 2000-2022 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br
 .SH SEE ALSO
 .LP

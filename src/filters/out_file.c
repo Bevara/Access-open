@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2020
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / generic FILE output filter
@@ -43,6 +43,7 @@ typedef struct
 	Bool append, dynext, ow, redund, noinitraw;
 	u32 cat;
 	u32 mvbk;
+	s32 max_cache_segs;
 
 	//only one input pid
 	GF_FilterPid *pid;
@@ -64,6 +65,9 @@ typedef struct
 	GF_FileIO *gfio_ref;
 
 	FILE *hls_chunk;
+
+	u32 max_segs;
+	GF_List *past_files;
 } GF_FileOutCtx;
 
 #ifdef WIN32
@@ -157,7 +161,7 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 		}
 
 		GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileOut] opening output file %s\n", szFinalName));
-		ctx->file = gf_fopen_ex(szFinalName, ctx->original_url, append ? "a+b" : "w+b");
+		ctx->file = gf_fopen_ex(szFinalName, ctx->original_url, append ? "a+b" : "w+b", GF_FALSE);
 
 		if (!strcmp(szFinalName, ctx->szFileName) && !append && ctx->nb_write && !explicit_overwrite) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[FileOut] re-opening in write mode output file %s, content overwrite (use `cat` option to enable append)\n", szFinalName));
@@ -240,6 +244,18 @@ static GF_Err fileout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DASH_MODE);
 	if (p && p->value.uint) ctx->dash_mode = 1;
+
+	ctx->max_segs = 0;
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESHIFT_SEGS);
+	if (ctx->max_cache_segs<0) {
+		ctx->max_segs = (u32) -ctx->max_cache_segs;
+	} else if (ctx->max_cache_segs>0) {
+		ctx->max_segs = (u32) ctx->max_cache_segs;
+		if (p && (p->value.uint > (u32) ctx->max_cache_segs))
+			ctx->max_segs = p->value.uint;
+	}
+	if (ctx->max_segs && !ctx->past_files)
+		ctx->past_files = gf_list_new();
 
 	ctx->error = GF_OK;
 	return GF_OK;
@@ -335,6 +351,14 @@ static void fileout_finalize(GF_Filter *filter)
 	fileout_open_close(ctx, NULL, NULL, 0, GF_FALSE, NULL);
 	if (ctx->gfio_ref)
 		gf_fileio_open_url((GF_FileIO *)ctx->gfio_ref, NULL, "unref", &e);
+
+	if (ctx->past_files) {
+		while (gf_list_count(ctx->past_files)) {
+			char *url = gf_list_pop_back(ctx->past_files);
+			gf_free(url);
+		}
+		gf_list_del(ctx->past_files);
+	}
 }
 
 static GF_Err fileout_process(GF_Filter *filter)
@@ -473,6 +497,18 @@ static GF_Err fileout_process(GF_Filter *filter)
 		} else if (!ctx->file && !ctx->noinitraw) {
 			fileout_setup_file(ctx, explicit_overwrite);
 		}
+
+		if (ctx->max_segs) {
+			while (gf_list_count(ctx->past_files)>ctx->max_segs) {
+				char *url = gf_list_pop_front(ctx->past_files);
+				gf_file_delete(url);
+				gf_free(url);
+			}
+			p = gf_filter_pck_get_property(pck, GF_PROP_PCK_INIT);
+			if (!p || !p->value.boolean) {
+				gf_list_add(ctx->past_files, gf_strdup(ctx->szFileName));
+			}
+		}
 	}
 
 	p = gf_filter_pck_get_property(pck, GF_PROP_PCK_HLS_FRAG_NUM);
@@ -480,7 +516,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 		char szHLSChunk[GF_MAX_PATH+21];
 		snprintf(szHLSChunk, GF_MAX_PATH+20, "%s.%d", ctx->szFileName, p->value.uint);
 		if (ctx->hls_chunk) gf_fclose(ctx->hls_chunk);
-		ctx->hls_chunk = gf_fopen_ex(szHLSChunk, ctx->original_url, "w+b");
+		ctx->hls_chunk = gf_fopen_ex(szHLSChunk, ctx->original_url, "w+b", GF_FALSE);
 	}
 
 	pck_data = gf_filter_pck_get_data(pck, &pck_size);
@@ -631,6 +667,7 @@ static Bool fileout_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		if (ctx->is_null) {
 			GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileOut] null delete (file name was %s)\n", evt->file_del.url));
 		} else {
+			GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileOut] delete file %s\n", evt->file_del.url));
 			gf_file_delete(evt->file_del.url);
 		}
 		return GF_TRUE;
@@ -657,14 +694,14 @@ static GF_FilterProbeScore fileout_probe_url(const char *url, const char *mime)
 
 static const GF_FilterArgs FileOutArgs[] =
 {
-	{ OFFS(dst), "location of destination file - see filter help ", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(dst), "location of destination file", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(append), "open in append mode", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(dynext), "indicate the file extension is set by filter chain, not dst", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(start), "set playback start offset. Negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, 0},
-	{ OFFS(speed), "set playback speed when vsync is on. If speed is negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
+	{ OFFS(start), "set playback start offset. A negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, 0},
+	{ OFFS(speed), "set playback speed when vsync is on. If negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, 0},
 	{ OFFS(ext), "set extension for graph resolution, regardless of file extension", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(mime), "set mime type for graph resolution", GF_PROP_NAME, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(cat), "cat each file of input pid rather than creating one file per filename\n"
+	{ OFFS(cat), "cat each file of input PID rather than creating one file per filename\n"
 			"- none: never cat files\n"
 			"- auto: only cat if files have same names\n"
 			"- all: always cat regardless of file names"
@@ -673,7 +710,7 @@ static const GF_FilterArgs FileOutArgs[] =
 	{ OFFS(mvbk), "block size used when moving parts of the file around in patch mode", GF_PROP_UINT, "8192", NULL, 0},
 	{ OFFS(redund), "keep redundant packet in output file", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(noinitraw), "do not produce initial segment", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_HIDE},
-
+	{ OFFS(max_cache_segs), "maximum number of segments cached per HAS quality when recording live sessions (0 means no limit)", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -687,15 +724,29 @@ static const GF_FilterCapability FileOutCaps[] =
 GF_FilterRegister FileOutRegister = {
 	.name = "fout",
 	GF_FS_SET_DESCRIPTION("File output")
-	GF_FS_SET_HELP("The file output filter is used to write output to disk, and does not produce any output PID.\n"
-		"It can work as a null sink when its destination is `null`, dropping all input packets. In this case it accepts ANY type of input pid, not just file ones.\n"
-		"In regular mode, the filter only accept pid of type file. It will dump to file incomming packets (stream type file), starting a new file for each packet having a __frame_start__ flag set, unless operating in [-cat]() mode.\n"
+	GF_FS_SET_HELP("This filter is used to write data to disk, and does not produce any output PID.\n"
+		"In regular mode, the filter only accept PID of type file. It will dump to file incoming packets (stream type file), starting a new file for each packet having a __frame_start__ flag set, unless operating in [-cat]() mode.\n"
 		"If the output file name is `std` or `stdout`, writes to stdout.\n"
-		"The ouput file name can use gpac templating mechanism, see `gpac -h doc`."
+		"The output file name can use gpac templating mechanism, see `gpac -h doc`."
 		"The filter watches the property `FileNumber` on incoming packets to create new files.\n"
+		"\n"
+		"# Discard sink mode\n"
+		"When the destination is `null`, the filter is a sink dropping all input packets.\n"
+		"In this case it accepts ANY type of input PID, not just file ones.\n"
+		"\n"
+		"# HTTP streaming recording\n"
+		"When recording a DASH or HLS session, the number of segments to keep per quality can be set using [-max_cache_segs]().\n"
+		"- value `0`  keeps everything (default behaviour)\n"
+		"- a negative value `N` will keep `-N` files regardless of the time-shift buffer value\n"
+		"- a positive value `N` will keep `MAX(N, time-shift buffer)` files\n"
+		"\n"
+		"EX gpac -i LIVE_MPD dashin:forward=file -o rec/$File$:max_cache_segs=3\n"
+		"This will force keeping a maximum of 3 media segments while recording the DASH session.\n"
+		""
 	)
 	.private_size = sizeof(GF_FileOutCtx),
 	.args = FileOutArgs,
+	.flags = GF_FS_REG_FORCE_REMUX,
 	SETCAPS(FileOutCaps),
 	.probe_url = fileout_probe_url,
 	.initialize = fileout_initialize,

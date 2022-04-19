@@ -12838,7 +12838,8 @@ static GF_Err Script_get_field(GF_Node *node, GF_FieldInfo *info)
 	}
 }
 
-
+//unused
+#if 0
 static s32 Script_get_field_index_by_name(char *name)
 {
 	if (!strcmp("url", name)) return 0;
@@ -12846,6 +12847,7 @@ static s32 Script_get_field_index_by_name(char *name)
 	if (!strcmp("mustEvaluate", name)) return 2;
 	return -1;
 }
+#endif
 static Bool Script_get_aq_info(GF_Node *n, u32 FieldIndex, u8 *QType, u8 *AType, Fixed *b_min, Fixed *b_max, u32 *QT13_bits)
 {
 	switch (FieldIndex) {
@@ -28000,7 +28002,7 @@ static GF_Err SBBone_get_field(GF_Node *node, GF_FieldInfo *info)
 		info->name = "addChildren";
 		info->eventType = GF_SG_EVENT_IN;
 		info->on_event_in = ((M_SBBone *)node)->on_addChildren;
-		info->fieldType = GF_SG_VRML_SFNODE;
+		info->fieldType = GF_SG_VRML_MFNODE;
 		info->NDTtype = NDT_SF3DNode;
 		info->far_ptr = & ((M_SBBone *)node)->addChildren;
 		return GF_OK;
@@ -28008,7 +28010,7 @@ static GF_Err SBBone_get_field(GF_Node *node, GF_FieldInfo *info)
 		info->name = "removeChildren";
 		info->eventType = GF_SG_EVENT_IN;
 		info->on_event_in = ((M_SBBone *)node)->on_removeChildren;
-		info->fieldType = GF_SG_VRML_SFNODE;
+		info->fieldType = GF_SG_VRML_MFNODE;
 		info->NDTtype = NDT_SF3DNode;
 		info->far_ptr = & ((M_SBBone *)node)->removeChildren;
 		return GF_OK;
@@ -35920,7 +35922,7 @@ static GF_Err Shadow_get_field(GF_Node *node, GF_FieldInfo *info)
 		info->name = "addChildren";
 		info->eventType = GF_SG_EVENT_IN;
 		info->on_event_in = ((M_Shadow *)node)->on_addChildren;
-		info->fieldType = GF_SG_VRML_SFNODE;
+		info->fieldType = GF_SG_VRML_MFNODE;
 		info->NDTtype = NDT_SF3DNode;
 		info->far_ptr = & ((M_Shadow *)node)->addChildren;
 		return GF_OK;
@@ -35928,7 +35930,7 @@ static GF_Err Shadow_get_field(GF_Node *node, GF_FieldInfo *info)
 		info->name = "removeChildren";
 		info->eventType = GF_SG_EVENT_IN;
 		info->on_event_in = ((M_Shadow *)node)->on_removeChildren;
-		info->fieldType = GF_SG_VRML_SFNODE;
+		info->fieldType = GF_SG_VRML_MFNODE;
 		info->NDTtype = NDT_SF3DNode;
 		info->far_ptr = & ((M_Shadow *)node)->removeChildren;
 		return GF_OK;
@@ -40169,8 +40171,11 @@ s32 gf_sg_mpeg4_node_get_field_index_by_name(GF_Node *node, char *name)
 		return Rectangle_get_field_index_by_name(name);
 	case TAG_MPEG4_ScalarInterpolator:
 		return ScalarInterpolator_get_field_index_by_name(name);
+//unused
+#if 0
 	case TAG_MPEG4_Script:
 		return Script_get_field_index_by_name(name);
+#endif
 	case TAG_MPEG4_Shape:
 		return Shape_get_field_index_by_name(name);
 	case TAG_MPEG4_Sound:

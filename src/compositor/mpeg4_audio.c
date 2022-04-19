@@ -46,6 +46,7 @@ static void audioclip_activate(AudioClipStack *st, M_AudioClip *ac)
 static void audioclip_deactivate(AudioClipStack *st, M_AudioClip *ac)
 {
 	gf_sc_audio_stop(&st->input);
+	gf_sc_audio_unregister(&st->input);
 	ac->isActive = 0;
 	gf_node_event_out((GF_Node *)ac, 7/*"isActive"*/);
 
@@ -536,6 +537,7 @@ static Bool audiobuffer_get_config(GF_AudioInterface *aifc, Bool for_reconf)
 			aifc->afmt = GF_AUDIO_FMT_U8;
 			break;
 		case GF_AUDIO_FMT_S16P:
+		case GF_AUDIO_FMT_S16_BE:
 			aifc->afmt = GF_AUDIO_FMT_S16;
 			break;
 		case GF_AUDIO_FMT_S24P:

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2017
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / RTP/RTSP input filter
@@ -54,6 +54,7 @@ typedef struct
 	Bool disable_rtcp;
 	u32 default_port;
 	u32 rtsp_timeout, udp_timeout, rtcp_timeout, stats;
+	Bool forceagg;
 	/*transport mode. 0 is udp, 1 is tcp, 3 is tcp if unreliable media */
 	u32 interleave;
 	s32 max_sleep;
@@ -153,8 +154,6 @@ void rtpin_rtsp_del(GF_RTPInRTSP *sess);
 GF_RTPInRTSP *rtpin_rtsp_check(GF_RTPIn *rtp, char *control);
 
 void rtpin_rtsp_process_commands(GF_RTPInRTSP *sess);
-
-void rtpin_send_message(GF_RTPIn *ctx, GF_Err e, const char *message);
 
 /*RTP channel state*/
 enum
@@ -265,26 +264,25 @@ struct __rtpin_stream
 	u32 mid;
 
 	u32 prev_stream;
-	u32 next_stream;
 	u32 base_stream;
 
 	u32 rtcp_check_start;
 	u32 first_rtp_ts;
 	s64 ts_adjust;
-	//source NTP of first packet received, ercomputed at first RTCP sender report
+	//source NTP of first packet received, recomputed at first RTCP sender report
 	u64 init_ntp_us;
 
 	u32 min_dur_us, min_dur_rtp;
 	u32 prev_cts;
 
 	u32 sr, nb_ch;
+	Bool map_utc, map_media_time;
 };
 
 /*creates new RTP stream from SDP info*/
 GF_RTPInStream *rtpin_stream_new(GF_RTPIn *rtp, GF_SDPMedia *media, GF_SDPInfo *sdp, GF_RTPInStream *input_stream);
-/*creates new SAT>IP stream*/
-GF_RTPInStream *rtpin_stream_new_satip(GF_RTPIn *rtp, const char *server_ip);
-GF_RTPInStream *rtpin_stream_new_standalone(GF_RTPIn *rtp, const char *flow_ip, u32 port);
+/*creates new standalone RTP stream, or new SAT>IP stream*/
+GF_RTPInStream *rtpin_stream_new_standalone(GF_RTPIn *rtp, const char *flow_ip, u32 port, Bool for_satip);
 
 /*destroys RTP stream */
 void rtpin_stream_del(GF_RTPInStream *stream);
@@ -353,6 +351,8 @@ void rtpin_rtsp_teardown(GF_RTPInRTSP *sess, GF_RTPInStream *stream);
 
 
 void rtpin_stream_on_rtp_pck(GF_RTPInStream *stream, char *pck, u32 size);
+
+void rtpin_satip_get_server_ip(const char *sURL, char *Server);
 
 #endif /*GPAC_DISABLE_STREAMING*/
 

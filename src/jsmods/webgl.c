@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019
+ *			Copyright (c) Telecom ParisTech 2019-2022
  *			All rights reserved
  *
  *  This file is part of GPAC / JavaScript WebGL bindings
@@ -845,7 +845,7 @@ static JSValue wgl_getUniform(JSContext *ctx, JSValueConst this_val, int argc, J
 	WGL_GET_GLID(program_shader, argv[0], WebGLProgram_class_id);
 	WGL_GET_GLID(location, argv[1], WebGLUniformLocation_class_id);
 
-	//openGL doesn't provide a way to get a uniform type from its location
+	//OpenGL doesn't provide a way to get a uniform type from its location
 	//we need to browse all active uniforms by name in the program
 	//then look for the location of each uniform and check against the desired location
 
@@ -1265,9 +1265,21 @@ JSValue wgl_named_texture_upload(JSContext *c, JSValueConst pck_obj, void *_name
 			if (!data)
 				return js_throw_err_msg(c, WGL_INVALID_VALUE, "[WebGL] Unable to fetch packet data, cannot setup NamedTexture\n");
 		} else {
-			js_evg_get_texture_info(c, pck_obj, NULL, NULL, NULL, (u8 **) &data, NULL, NULL, NULL, NULL, NULL);
+			u32 pix_fmt=0, width=0, height=0, stride=0, uv_stride=0;
+			js_evg_get_texture_info(c, pck_obj, &width, &height, &pix_fmt, (u8 **) &data, &stride, NULL, NULL, &uv_stride, NULL);
 			if (!data)
 				return js_throw_err_msg(c, WGL_INVALID_VALUE, "[WebGL] Unable to fetch EVG texture data, cannot setup NamedTexture\n");
+
+			if (pix_fmt != named_tx->tx.pix_fmt)
+				return js_throw_err_msg(c, WGL_INVALID_VALUE, "[WebGL] EVG texture pixel format changed, shader must be recomputed\n");
+
+			//optim for EVG texture if change of res but not pixel format, resetup texture
+			if ((width != named_tx->tx.width) || (height != named_tx->tx.height)) {
+				gf_gl_txw_reset(&named_tx->tx);
+				if (!gf_gl_txw_setup(&named_tx->tx, pix_fmt, width, height, stride, uv_stride, GF_FALSE, NULL, named_tx->tx.fullrange, named_tx->tx.mx_cicp)) {
+					return js_throw_err_msg(c, WGL_INVALID_VALUE, "[WebGL] Pixel format %s unknown, cannot setup NamedTexture\n", gf_4cc_to_str(pix_fmt));
+				}
+			}
 		}
 	}
 
@@ -1577,18 +1589,27 @@ static JSValue wgl_createTexture(JSContext *ctx, JSValueConst this_val, int argc
 	GF_WebGLContext *glc = JS_GetOpaque(this_val, WebGLRenderingContextBase_class_id);
 	if (!glc) return js_throw_err(ctx, WGL_INVALID_VALUE);
 
-	if (argc && JS_IsString(argv[0])) {
+	if (argc && (JS_IsString(argv[0]) || JS_IsNull(argv[0]))) {
 		GF_WebGLNamedTexture *named_tx;
-		const char *tx_name;
-		tx_name = JS_ToCString(ctx, argv[0]);
-		if (!tx_name) return js_throw_err(ctx, WGL_INVALID_VALUE);
+		const char *tx_name = NULL;
+
+		if (!JS_IsNull(argv[0])) {
+			tx_name = JS_ToCString(ctx, argv[0]);
+			if (!tx_name) return js_throw_err(ctx, WGL_INVALID_VALUE);
+		}
 
 		GF_SAFEALLOC(named_tx, GF_WebGLNamedTexture);
 		if (!named_tx) return js_throw_err(ctx, WGL_OUT_OF_MEMORY);
+		if (!tx_name) {
+			char szName[100];
+			sprintf(szName, "_gfnt_%p", named_tx);
+			named_tx->tx_name = gf_strdup(szName);
+		} else {
+			named_tx->tx_name = gf_strdup(tx_name);
+			JS_FreeCString(ctx, tx_name);
+		}
 		named_tx->par_ctx = glc;
-		named_tx->tx_name = gf_strdup(tx_name);
 		named_tx->tx.mx_cicp = -1;
-		JS_FreeCString(ctx, tx_name);
 		ret_val_js = JS_NewObjectClass(ctx, NamedTexture_class_id);
 		JS_SetOpaque(ret_val_js, named_tx);
 		gf_list_add(glc->named_textures, named_tx);
@@ -2114,6 +2135,20 @@ static JSValue webgl_constructor(JSContext *ctx, JSValueConst new_target, int ar
 
 	return v;
 }
+static JSValue wgl_texture_name(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	GF_WebGLNamedTexture *named_tx = NULL;
+	GF_WebGLContext *glc = JS_GetOpaque(this_val, WebGLRenderingContextBase_class_id);
+	if (!glc || !argc) return js_throw_err(ctx, WGL_INVALID_VALUE);
+
+	named_tx = JS_GetOpaque(argv[0], NamedTexture_class_id);
+	if (!named_tx) {
+		GF_WebGLObject *tx = JS_GetOpaque(argv[0], WebGLTexture_class_id);
+		if (tx) return JS_NULL;
+		return GF_JS_EXCEPTION(ctx);
+	}
+	return JS_NewString(ctx, named_tx->tx_name);
+}
 
 static JSValue wgl_activate_gl(JSContext *ctx, GF_WebGLContext *glc, Bool activate)
 {
@@ -2230,6 +2265,7 @@ static const JSCFunctionListEntry webgl_funcs[] =
 {
 	JS_CFUNC_DEF("activate", 0, wgl_activate),
 	JS_CFUNC_DEF("resize", 0, wgl_resize),
+	JS_CFUNC_DEF("textureName", 0, wgl_texture_name),
 };
 
 enum

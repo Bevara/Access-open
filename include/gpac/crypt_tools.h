@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Media Tools sub-project
@@ -67,6 +67,9 @@ enum
 	GF_CRYPT_TYPE_ADOBE	= GF_4CC('a','d','k','m'),
 	/*! PIFF CTR-128 encryption*/
 	GF_CRYPT_TYPE_PIFF	= GF_4CC('p','i','f','f'),
+	/*! HLS Sample encryption*/
+	GF_CRYPT_TYPE_SAES	= GF_4CC('s','a','e','s'),
+
 };
 
 /*! Selective encryption modes */
@@ -95,20 +98,34 @@ enum
 /*! Key info structure, one per defined key in the DRM XML doc*/
 typedef struct
 {
+	//keep first 3 bin128 at the beginning for data alignment
 	/*! KEY ID*/
 	bin128 KID;
 	/*! key value*/
 	bin128 key;
+	/*! constant IV or initial IV if not constant*/
+	u8 IV[16];
+
 	/*! hls_info defined*/
 	char *hls_info;
 	/*!IV size */
 	u8 IV_size;
 	/*! constant IV size */
 	u8 constant_IV_size;
-	/*! constant IV or initial IV if not constant*/
-	unsigned char IV[16];
 } GF_CryptKeyInfo;
 
+/*! key roll modes*/
+typedef enum
+{
+	/*! change keys every keyRoll AUs*/
+	GF_KEYROLL_SAMPLES = 0,
+	/*! roll keys at each SAP type 1 or 2 for streams with SAPs*/
+	GF_KEYROLL_SAPS,
+	/*! change keys every keyRoll DASH segments*/
+	GF_KEYROLL_SEGMENTS,
+	/*! change keys every keyRoll periods*/
+	GF_KEYROLL_PERIODS,
+} GF_KeyRollType;
 
 /*! Crypto information for one media stream*/
 typedef struct
@@ -155,10 +172,10 @@ typedef struct
 
 	/*! default key index to use*/
 	u32 defaultKeyIdx;
-	/*! roll period of keys (change keys every keyRoll AUs)*/
+	/*! roll period of keys*/
 	u32 keyRoll;
-	/*! roll keys at each SAP type 1 or 2 for streams with SAPs*/
-	Bool roll_rap;
+	/*! roll type */
+	GF_KeyRollType roll_type;
 	/*! number of bytes to leave in the clear for non NAL-based tracks. Only used in cbcs mode*/
 	u32 clear_bytes;
 
@@ -181,6 +198,9 @@ typedef struct
 
 	/*! force using type set in XML rather than type indicated in file when decrypting*/
 	Bool force_type;
+
+	/*! generate random keys and key values*/
+	Bool rand_keys;
 
 	/*! randomly encrypts subsample if rand() % subs_rand is 0*/
 	u32 subs_rand;

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / audio output filter
@@ -51,6 +51,7 @@ typedef struct
 
 	u32 pck_offset;
 	u64 first_cts;
+	u64 last_cts;
 	Bool aborted;
 	u32 speed_set;
 	GF_Filter *filter;
@@ -64,6 +65,7 @@ typedef struct
 
 	u64 rebuffer;
 	Bool do_seek;
+	u64 last_clock;
 } GF_AudioOutCtx;
 
 
@@ -202,6 +204,7 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 		ctx->buffer_done = GF_FALSE;
 		ctx->do_seek = GF_FALSE;
 		ctx->pck_offset = 0;
+		ctx->last_cts = 0;
 		return 0;
 	}
 
@@ -295,6 +298,20 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 			cts -= (u64) -delay;
 		}
 
+		if (ctx->last_cts && (cts != GF_FILTER_NO_TS) && (cts>ctx->last_cts)) {
+			u64 now = gf_sys_clock_high_res();
+			u64 diff = cts - ctx->last_cts;
+			//diff too high and no discontinuity, wait
+			if ((diff > ctx->timescale/5) && (gf_filter_pid_get_clock_info(ctx->pid, NULL, NULL) != GF_FILTER_CLOCK_PCR_DISC) ) {
+				diff = gf_timestamp_rescale(diff, ctx->timescale, 1000000);
+				if (now < ctx->last_clock + diff) {
+					GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[AudioOut] Frame too early by "LLU" us\n", ctx->last_clock + diff - now));
+					return 0;
+				}
+			}
+		}
+
+
 		if (ctx->dur.num>0) {
 			if (!ctx->first_cts) ctx->first_cts = cts+1;
 
@@ -331,9 +348,8 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[AudioOut] At %d ms audio frame CTS "LLU" (compensated time %g s, HW delay "LLU" us)\n", gf_sys_clock(), cts, ((Double)timestamp.num)/timestamp.den, ctx->hwdelay_us ));
 		}
 		
-		if (data && !ctx->wait_recfg) {
+		if (data && !ctx->wait_recfg && (size >= ctx->pck_offset)) {
 			u32 nb_copy;
-			assert(size >= ctx->pck_offset);
 			
 			nb_copy = (size - ctx->pck_offset);
 			if (nb_copy + done > buffer_size) nb_copy = buffer_size - done;
@@ -346,6 +362,8 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 				gf_filter_update_status(ctx->filter, -1, szStatus);
 			}
 
+			ctx->last_cts = cts;
+			ctx->last_clock = gf_sys_clock_high_res();
 
 			done += nb_copy;
 			ctx->first_write_done = GF_TRUE;
@@ -419,6 +437,8 @@ static GF_Err aout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ctx->first_cts-=1;
 		gf_timestamp_rescale(ctx->first_cts, ctx->timescale, timescale);
 		ctx->first_cts+=1;
+
+		gf_timestamp_rescale(ctx->last_cts, ctx->timescale, timescale);
 	}
 	ctx->timescale = timescale;
 
@@ -658,21 +678,21 @@ GF_Err aout_update_arg(GF_Filter *filter, const char *arg_name, const GF_Propert
 static const GF_FilterArgs AudioOutArgs[] =
 {
 	{ OFFS(drv), "audio driver name", GF_PROP_NAME, NULL, NULL, 0},
-	{ OFFS(bnum), "number of audio buffers - 0 for auto", GF_PROP_UINT, "2", NULL, 0},
-	{ OFFS(bdur), "total duration of all buffers in ms - 0 for auto. The longer the audio buffer is, the longer the audio latency will be (pause/resume). The quality of fast forward audio playback will also be degradated when using large audio buffers", GF_PROP_UINT, "100", NULL, 0},
+	{ OFFS(bnum), "number of audio buffers (0 for auto)", GF_PROP_UINT, "2", NULL, 0},
+	{ OFFS(bdur), "total duration of all buffers in ms (0 for auto)", GF_PROP_UINT, "100", NULL, 0},
 	{ OFFS(threaded), "force dedicated thread creation if sound card driver is not threaded", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(dur), "only play the specified duration", GF_PROP_FRACTION, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(clock), "hint audio clock for this stream (reports system time and CTS), for other filters to use", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(clock), "hint audio clock for this stream", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(speed), "set playback speed. If speed is negative and start is 0, start is set to -1", GF_PROP_DOUBLE, "1.0", NULL, GF_FS_ARG_UPDATE},
-	{ OFFS(start), "set playback start offset. Negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(start), "set playback start offset. A negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(vol), "set default audio volume, as a percentage between 0 and 100", GF_PROP_UINT, "100", "0-100", GF_FS_ARG_UPDATE},
 	{ OFFS(pan), "set stereo pan, as a percentage between 0 and 100, 50 being centered", GF_PROP_UINT, "50", "0-100", GF_FS_ARG_UPDATE},
 	{ OFFS(buffer), "set playout buffer in ms", GF_PROP_UINT, "200", NULL, 0},
-	{ OFFS(mbuffer), "set max buffer occupancy in ms (if less than buffer, use buffer)", GF_PROP_UINT, "0", NULL, 0},
-	{ OFFS(rbuffer), "rebuffer trigger in ms (if 0 or more than buffer, disable rebuffering", GF_PROP_UINT, "0", NULL, GF_FS_ARG_UPDATE},
+	{ OFFS(mbuffer), "set max buffer occupancy in ms. If less than buffer, use buffer", GF_PROP_UINT, "0", NULL, 0},
+	{ OFFS(rbuffer), "rebuffer trigger in ms. If 0 or more than buffer, disable rebuffering", GF_PROP_UINT, "0", NULL, GF_FS_ARG_UPDATE},
 	{ OFFS(adelay), "set audio delay in sec", GF_PROP_FRACTION, "0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
-	{ OFFS(buffer_done), "buffer done indication (readonly)", GF_PROP_BOOL, NULL, NULL, GF_ARG_HINT_EXPERT},
-	{ OFFS(rebuffer), "time at which rebuffer started, 0 if not rebuffering (readonly)", GF_PROP_LUINT, NULL, NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(buffer_done), "buffer done indication (readonly, for user app)", GF_PROP_BOOL, NULL, NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(rebuffer), "system time in us at which last rebuffer started, 0 if not rebuffering (readonly, for user app)", GF_PROP_LUINT, NULL, NULL, GF_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -687,7 +707,11 @@ static const GF_FilterCapability AudioOutCaps[] =
 GF_FilterRegister AudioOutRegister = {
 	.name = "aout",
 	GF_FS_SET_DESCRIPTION("Audio output")
-	GF_FS_SET_HELP("This filter outputs a single uncompressed audio PID to a sound card or other audio output device.")
+	GF_FS_SET_HELP("This filter writes a single uncompressed audio input PID to a sound card or other audio output device.\n"
+	"\n"
+	"The longer the audio buffering [-bdur]() is, the longer the audio latency will be (pause/resume). The quality of fast forward audio playback will also be degraded when using large audio buffers.\n"
+	"\n"
+	"If [-clock]() is set, the filter will report system time (in us) and corresponding packet CTS for other filters to use for AV sync.\n")
 	.private_size = sizeof(GF_AudioOutCtx),
 	.args = AudioOutArgs,
 	SETCAPS(AudioOutCaps),

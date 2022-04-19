@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre, Cyril Concolato, Romain Bouqueau
- *			Copyright (c) Telecom ParisTech 2006-2019
+ *			Copyright (c) Telecom ParisTech 2006-2022
  *
  *  This file is part of GPAC / MPEG2-TS sub-project
  *
@@ -97,6 +97,8 @@ enum
 	/* ... */
 	GF_M2TS_MPEG4_ODUPDATE_DESCRIPTOR			= 0x35,
 
+	GF_M2TS_HEVC_VIDEO_DESCRIPTOR			= 0x38,
+
 	/* 0x2D - 0x3F - ISO/IEC 13818-6 values */
 	/* 0x40 - 0xFF - User Private values */
 	GF_M2TS_DVB_NETWORK_NAME_DESCRIPTOR			= 0x40,
@@ -137,6 +139,8 @@ enum
 	/* ... */
 	GF_M2TS_DVB_EAC3_DESCRIPTOR				= 0x7A,
 	GF_M2TS_DVB_LOGICAL_CHANNEL_DESCRIPTOR = 0x83,
+
+	GF_M2TS_DOLBY_VISION_DESCRIPTOR = 0xB0
 };
 
 /*! Reserved PID values */
@@ -284,7 +288,8 @@ typedef enum
 	GF_M2TS_MPE_SECTIONS            = 0x90,
 	GF_M2TS_SUBTITLE_DVB			= 0x100,
 	GF_M2TS_AUDIO_OPUS				= 0x101,
-	
+	GF_M2TS_VIDEO_AV1				= 0x102,
+
 	GF_M2TS_DVB_TELETEXT			= 0x152,
 	GF_M2TS_DVB_VBI					= 0x153,
 	GF_M2TS_DVB_SUBTITLE			= 0x154,
@@ -304,7 +309,8 @@ enum
 	GF_M2TS_RA_STREAM_DTS2	= GF_4CC('D','T','S','2'),
 	GF_M2TS_RA_STREAM_DTS3	= GF_4CC('D','T','S','3'),
 	GF_M2TS_RA_STREAM_OPUS	= GF_4CC('O','p','u','s'),
-
+	GF_M2TS_RA_STREAM_DOVI	= GF_4CC('D','O','V','I'),
+	GF_M2TS_RA_STREAM_AV1	= GF_4CC('A','V','0','1'),
 
 	GF_M2TS_RA_STREAM_GPAC	= GF_4CC('G','P','A','C')
 };
@@ -717,7 +723,11 @@ enum
 	/*! flag used by importers/readers to mark streams that have been seen already in PMT process (update/found)*/
 	GF_M2TS_ES_ALREADY_DECLARED = 1<<18,
 	/*! flag indicates TEMI info is declared on this stream*/
-	GF_M2TS_ES_TEMI_INFO = 1<<19
+	GF_M2TS_ES_TEMI_INFO = 1<<19,
+	/*! flag indicates each PES is a full AU*/
+	GF_M2TS_ES_FULL_AU = 1<<20,
+	/*! flag indicates ES is not sparse (AV), used to check discontinuity - set by user*/
+	GF_M2TS_CHECK_DISC = 1<<21,
 };
 
 /*! macro for abstract Section/PES stream object, only used for type casting*/
@@ -874,6 +884,10 @@ typedef struct tag_m2ts_pes
 	Bool temi_pending;
 	/*! flag set to indicate the last PES packet was not flushed (HLS) to avoid warning on same PTS/DTS used*/
 	Bool is_resume;
+	/*! DolbiVison info, last byte set to 1 if non-compatible signaling*/
+	u8 dv_info[25];
+
+	u64 map_utc, map_utc_pcr, map_pcr;
 } GF_M2TS_PES;
 
 /*! reserved streamID for PES headers*/
@@ -918,11 +932,17 @@ typedef struct
 /*! TDT/TOT (Time and Date table) information*/
 typedef struct
 {
+	/*! year*/
 	u16 year;
+	/*! month, from 0 to 11*/
 	u8 month;
+	/*! day, from 1 to 31*/
 	u8 day;
+	/*! hour*/
 	u8 hour;
+	/*! minute*/
 	u8 minute;
+	/*! second*/
 	u8 second;
 } GF_M2TS_TDT_TOT;
 
@@ -1384,6 +1404,12 @@ enum
 	GF_ESI_STREAM_WITHOUT_MPEG4_SYSTEMS =	1<<3,
 	/*! stream is not signaled through MPEG-4 Systems (OD stream) */
 	GF_ESI_AAC_USE_LATM =	1<<4,
+	/*! temporrary end of stream (flush of segment)*/
+	GF_ESI_STREAM_FLUSH	=	1<<5,
+	/*! stream uses HLS SAES encryption*/
+	GF_ESI_STREAM_HLS_SAES	=	1<<6,
+	/*! stream uses non-backward DolbyVision signaling*/
+	GF_ESI_FORCE_DOLBY_VISION = 1<<7,
 };
 
 /*! elementary stream information*/
@@ -1426,6 +1452,12 @@ typedef struct __elementary_stream_ifce
 	void *output_udta;
 	/*! stream dependency ID*/
 	u32 depends_on_stream;
+
+	/*! dv info, not valid if first byte not 1*/
+	u8 dv_info[24];
+
+	/*! registration authority code to use, 0 if not applicable*/
+	u32 ra_code;
 } GF_ESInterface;
 
 /*! @} */
@@ -1635,6 +1667,9 @@ typedef struct __m2ts_mux_stream {
 	u32 pck_sap_type;
 	/*! packet SAP time (=PTS) when segmenting the TS*/
 	u64 pck_sap_time;
+
+	/*! last process result*/
+	u32 process_res;
 } GF_M2TS_Mux_Stream;
 
 /*! MPEG-4 systems signaling mode*/
@@ -1907,7 +1942,7 @@ typedef enum
 \return packet produced or NULL if error or idle
 */
 const u8 *gf_m2ts_mux_process(GF_M2TS_Mux *muxer, GF_M2TSMuxState *status, u32 *usec_till_next);
-/*! gets the system clock of the multiplexer (time ellapsed since start)
+/*! gets the system clock of the multiplexer (time elapsed since start)
 \param muxer the target MPEG-2 TS multiplexer
 \return system clock of the multiplexer in milliseconds
 */

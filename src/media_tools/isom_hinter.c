@@ -333,7 +333,9 @@ GF_RTPHinter *gf_hinter_track_new(GF_ISOFile *file, u32 TrackNum,
 					required_rate = sample_rate;
 				}
 				/*MPEG1/2 audio*/
-				else if ((streamType==GF_STREAM_AUDIO) && ((codecid==GF_CODECID_MPEG2_PART3) || (codecid==GF_CODECID_MPEG_AUDIO))) {
+				else if ((streamType==GF_STREAM_AUDIO)
+					&& ((codecid==GF_CODECID_MPEG2_PART3) || (codecid==GF_CODECID_MPEG_AUDIO) || (codecid==GF_CODECID_MPEG_AUDIO_L1))
+				) {
 					GF_ISOSample *samp = NULL;
 					if (!is_crypted)
 						 samp = gf_isom_get_sample(file, TrackNum, 1, NULL);
@@ -480,6 +482,26 @@ GF_RTPHinter *gf_hinter_track_new(GF_ISOFile *file, u32 TrackNum,
 			break;
 		}
 		break;
+		case GF_ISOM_SUBTYPE_VVC1:
+		case GF_ISOM_SUBTYPE_VVI1:
+		case GF_ISOM_SUBTYPE_VVS1:
+		{
+			GF_VVCConfig *vvcc = gf_isom_vvc_config_get(file, TrackNum, 1);
+			if (!vvcc) {
+				*e = GF_NON_COMPLIANT_BITSTREAM;
+				return NULL;
+			}
+			required_rate = 90000;	/* "90 kHz clock rate MUST be used"*/
+			hintType = GF_RTP_PAYT_VVC;
+			streamType = GF_STREAM_VISUAL;
+			avc_nalu_size = vvcc->nal_unit_size;
+			codecid = GF_CODECID_VVC;
+			PL_ID = 0x0F;
+			flags |= GP_RTP_PCK_USE_MULTI;
+			gf_odf_vvc_cfg_del(vvcc);
+			break;
+		}
+		break;
 		case GF_ISOM_SUBTYPE_3GP_QCELP:
 			required_rate = 8000;
 			hintType = GF_RTP_PAYT_QCELP;
@@ -507,6 +529,16 @@ GF_RTPHinter *gf_hinter_track_new(GF_ISOFile *file, u32 TrackNum,
 			break;
 		case GF_ISOM_SUBTYPE_AC3:
 			hintType = GF_RTP_PAYT_AC3;
+			streamType = GF_STREAM_AUDIO;
+			gf_isom_get_audio_info(file, TrackNum, 1, NULL, &nb_ch, NULL);
+			break;
+		case GF_ISOM_SUBTYPE_EC3:
+			hintType = GF_RTP_PAYT_EAC3;
+			streamType = GF_STREAM_AUDIO;
+			gf_isom_get_audio_info(file, TrackNum, 1, NULL, &nb_ch, NULL);
+			break;
+		case GF_ISOM_SUBTYPE_OPUS:
+			hintType = GF_RTP_PAYT_OPUS;
 			streamType = GF_STREAM_AUDIO;
 			gf_isom_get_audio_info(file, TrackNum, 1, NULL, &nb_ch, NULL);
 			break;
@@ -1266,10 +1298,13 @@ GF_Err gf_hinter_finalize(GF_ISOFile *file, GF_SDP_IODProfile IOD_Profile, u32 b
 			}
 			gf_isom_sample_del(&samp);
 		}
-		if (remove_ocr) esd->OCRESID = 0;
-		else if (esd->OCRESID == esd->ESID) esd->OCRESID = 0;
 
-		gf_list_add(iod->ESDescriptors, esd);
+		if (esd) {
+			if (remove_ocr) esd->OCRESID = 0;
+			else if (esd->OCRESID == esd->ESID) esd->OCRESID = 0;
+
+			gf_list_add(iod->ESDescriptors, esd);
+		}
 
 		if (is_ok) {
 			u32 has_a, has_v, has_i_a, has_i_v;

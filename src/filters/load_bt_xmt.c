@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Context loader filter
@@ -34,7 +34,6 @@
 typedef struct
 {
 	//opts
-	Bool progressive;
 	u32 sax_dur;
 
 	//internal
@@ -398,6 +397,7 @@ static GF_Err ctxload_process(GF_Filter *filter)
 		}
 		//init clocks
 		gf_odm_check_buffering(priv->scene->root_od, priv->in_pid);
+		gf_clock_set_time(priv->scene->root_od->ck, 0);
 		gf_filter_pck_get_framing(pck, &is_start, &is_end);
 		gf_filter_pid_drop_packet(priv->in_pid);
 	}
@@ -424,7 +424,7 @@ static GF_Err ctxload_process(GF_Filter *filter)
 
 	if (priv->load_flags != 2) {
 
-		if (priv->progressive) {
+		if (priv->sax_dur) {
 			u32 entry_time;
 			char file_buf[4096+1];
 			if (!priv->src) {
@@ -498,7 +498,7 @@ static GF_Err ctxload_process(GF_Filter *filter)
 			gf_sm_del(priv->ctx);
 			priv->ctx = NULL;
 			priv->load_flags = 3;
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[CtxLoad] Failed to load context for file %s: %s\n", priv->file_name, gf_error_to_string(e) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[CtxLoad] Failed to load context for file %s: %s\n", priv->file_name, gf_error_to_string(e) ));
 			if (priv->out_pid)
 				gf_filter_pid_set_eos(priv->out_pid);
 			return e;
@@ -581,7 +581,7 @@ static GF_Err ctxload_process(GF_Filter *filter)
 				gf_sc_sys_frame_pending(priv->scene->compositor, ts_offset, stream_time, filter);
 				break;
 			}
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[CtxLoad] %s applying AU time %d\n", priv->file_name, au_time ));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[CtxLoad] %s applying AU time %d\n", priv->file_name, au_time ));
 
 			if (sc->streamType == GF_STREAM_SCENE) {
 				GF_Command *com;
@@ -787,7 +787,8 @@ static const char *ctxload_probe_data(const u8 *probe_data, u32 size, GF_FilterP
 {
 	const char *mime_type = NULL;
 	char *dst = NULL;
-	u8 *res;
+	GF_Err e;
+	char *res=NULL;
 
 	/* check gzip magic header */
 	if ((size>2) && (probe_data[0] == 0x1f) && (probe_data[1] == 0x8b)) {
@@ -795,8 +796,8 @@ static const char *ctxload_probe_data(const u8 *probe_data, u32 size, GF_FilterP
 		return "btz|bt.gz|xmt.gz|xmtz|wrl.gz|x3dv.gz|x3dvz|x3d.gz|x3dz";
 	}
 
-	res = gf_utf_get_utf8_string_from_bom((char *)probe_data, size, &dst);
-	if (res) probe_data = res;
+	e = gf_utf_get_utf8_string_from_bom(probe_data, size, &dst, &res);
+	if (e) return NULL;
 
 	//strip all spaces and \r\n
 	while (probe_data[0] && strchr("\n\r\t ", (char) probe_data[0]))
@@ -831,9 +832,11 @@ static const char *ctxload_probe_data(const u8 *probe_data, u32 size, GF_FilterP
 		}
 	}
 	//probe_data is now the first element of the document, if XML
-	//we should refin by getting the xmlns attribute value rather than searching for its value...
+	//we should refine by getting the xmlns attribute value rather than searching for its value...
 
-	if (!strncmp(probe_data, "<XMT-A", strlen("<XMT-A"))
+	if (strstr(probe_data, "http://www.w3.org/1999/XSL/Transform")
+	) {
+	} else if (!strncmp(probe_data, "<XMT-A", strlen("<XMT-A"))
 		|| strstr(probe_data, "urn:mpeg:mpeg4:xmta:schema:2002")
 	) {
 		mime_type = "application/x-xmt";
@@ -932,15 +935,16 @@ static const GF_FilterCapability CTXLoadCaps[] =
 
 static const GF_FilterArgs CTXLoadArgs[] =
 {
-	{ OFFS(progressive), "enable progressive loading", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(sax_dur), "loading duration for SAX parsing (XMT), 0 disables SAX parsing", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(sax_dur), "duration for SAX parsing (XMT), 0 disables SAX parsing", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{0}
 };
 
 GF_FilterRegister CTXLoadRegister = {
 	.name = "btplay",
 	GF_FS_SET_DESCRIPTION("BT/XMT/X3D loader")
-	GF_FS_SET_HELP("This filter parses MPEG-4 BIFS (BT and XMT), VRML97 and X3D (wrl and XML) files directly into the scene graph of the compositor.")
+	GF_FS_SET_HELP("This filter parses MPEG-4 BIFS (BT and XMT), VRML97 and X3D (wrl and XML) files directly into the scene graph of the compositor.\n"
+	"\n"
+	"When [-sax_dur=N]() is set, the filter will do a progressive load of the source and cancel current loading when processing time is higher than `N`.\n")
 	.private_size = sizeof(CTXLoadPriv),
 	.flags = GF_FS_REG_MAIN_THREAD,
 	.args = CTXLoadArgs,

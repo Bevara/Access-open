@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -727,7 +727,7 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 			goto exit;
 		}
 
-		//openGL, force redraw of complete scene but signal we shoud only draw the background, not clear the canvas (nothing to redraw except GL textures)
+		//OpenGL, force redraw of complete scene but signal we shoud only draw the background, not clear the canvas (nothing to redraw except GL textures)
 		if (hyb_force_redraw) { 
 			hyb_force_background = 2;
 			ra_add(&visual->to_redraw, &visual->surf_rect);
@@ -761,7 +761,7 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 		bck_ctx->next = visual->context;
 		bck_ctx->flags |= CTX_BACKROUND_NOT_LAYER;
 
-		//for hybrid openGL, only redraw background but do not erase canvas
+		//for hybrid OpenGL, only redraw background but do not erase canvas
 		if (hyb_force_background==2)
 			bck_ctx->flags |= CTX_BACKROUND_NO_CLEAR;
 
@@ -774,13 +774,13 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 	{
 
 #ifndef GPAC_DISABLE_3D
-		//cleanup openGL screen
+		//cleanup OpenGL screen
 		if (visual->compositor->hybrid_opengl) {
 			compositor_2d_hybgl_clear_surface(tr_state->visual, NULL, 0, GF_FALSE);
 		}
 #endif
 
-		//and clean dirty rect - for hybrid openGL this will clear the canvas, otherwise the 2D backbuffer
+		//and clean dirty rect - for hybrid OpenGL this will clear the canvas, otherwise the 2D backbuffer
 		count = visual->to_redraw.count;
 		for (k=0; k<count; k++) {
 			GF_IRect rc;
@@ -807,7 +807,7 @@ skip_background:
 
 #ifndef GPAC_DISABLE_LOG
 	if (gf_log_tool_level_on(GF_LOG_COMPOSE, GF_LOG_DEBUG)) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] Redraw %d / %d nodes (all: %s - %d dirty rects\n)", num_changed, num_nodes, redraw_all ? "yes" : "no", visual->to_redraw.count));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] Redraw %d / %d nodes (all: %s - %d dirty rects)\n", num_changed, num_nodes, redraw_all ? "yes" : "no", visual->to_redraw.count));
 		if (visual->to_redraw.count>1) GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("\n"));
 
 		for (i=0; i<visual->to_redraw.count; i++) {
@@ -827,12 +827,7 @@ skip_background:
 
 		/*if overlay we cannot remove the context and cannot draw directly*/
 		if (! visual_2d_overlaps_overlay(tr_state->visual, ctx, tr_state)) {
-
-			if (ctx->drawable->flags & DRAWABLE_USE_TRAVERSE_DRAW) {
-				gf_node_traverse(ctx->drawable->node, tr_state);
-			} else {
-				drawable_draw(ctx->drawable, tr_state);
-			}
+			call_drawable_draw(ctx, tr_state, GF_FALSE);
 		}
 		ctx = ctx->next;
 	}

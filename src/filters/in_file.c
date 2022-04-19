@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / generic FILE input filter
@@ -133,7 +133,7 @@ static GF_Err filein_initialize(GF_Filter *filter)
 	}
 
 	if (!ctx->file) {
-		ctx->file = gf_fopen_ex(src, prev_url, "rb");
+		ctx->file = gf_fopen_ex(src, prev_url, "rb", GF_FALSE);
 	}
 
 	if (old_file) {
@@ -587,13 +587,14 @@ GF_FilterRegister FileInRegister = {
 	"Note: Unless disabled at session level (see [-no-probe](CORE) ), file extensions are usually ignored and format probing is done on the first data block.\n"
 	"The special file name `null` is used for creating a file with no data, needed by some filters such as [dasher](dasher).\n"
 	"The special file name `rand` is used to generate random data.\n"
-	"The special file name `randsc` is used to generate random data with fake start-codes (0x000001).\n"
+	"The special file name `randsc` is used to generate random data with `0x000001` start-code prefix.\n"
 	"\n"
 	"The filter handles both files and GF_FileIO objects as input URL.\n"
 	)
 	.private_size = sizeof(GF_FileInCtx),
 	.args = FileInArgs,
 	.initialize = filein_initialize,
+	.flags = GF_FS_REG_FORCE_REMUX,
 	SETCAPS(FileInCaps),
 	.finalize = filein_finalize,
 	.process = filein_process,

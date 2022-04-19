@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2021
+ *			Copyright (c) Telecom ParisTech 2022
  *					All rights reserved
  *
  *  This file is part of GPAC / TrueHD reframer filter
@@ -77,6 +77,7 @@ typedef struct
 
 	TrueHDIdx *indexes;
 	u32 index_alloc_size, index_size;
+	Bool copy_props;
 } GF_TrueHDDmxCtx;
 
 
@@ -107,12 +108,21 @@ GF_Err truehd_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	}
+	if (ctx->timescale) ctx->copy_props = GF_TRUE;
 	return GF_OK;
 }
 
 static GF_Err truehd_parse_frame(GF_BitStream *bs, TrueHDHdr *hdr)
 {
 	memset(hdr, 0, sizeof(TrueHDHdr));
+
+	u32 avail = (u32) gf_bs_available(bs);
+	//we need 8 bytes for base header (up to sync marker)
+	if (avail<8) {
+		hdr->frame_size = 0;
+		return GF_OK;
+	}
+
 	/*u8 nibble = */gf_bs_read_int(bs, 4);
 	hdr->frame_size = 2 * gf_bs_read_int(bs, 12);
 	hdr->time = gf_bs_read_u16(bs);
@@ -121,6 +131,13 @@ static GF_Err truehd_parse_frame(GF_BitStream *bs, TrueHDHdr *hdr)
 		hdr->sync = 0;
 		return GF_OK;
 	}
+	avail-=8;
+	//we need 12 bytes until peak rate - to update if we decide to parse more
+	if (avail < 12) {
+		hdr->frame_size = 0;
+		return GF_OK;
+	}
+
 	hdr->format = gf_bs_peek_bits(bs, 32, 0);
 	u8 sr_idx = gf_bs_read_int(bs, 4);
 	switch (sr_idx) {
@@ -143,14 +160,14 @@ static GF_Err truehd_parse_frame(GF_BitStream *bs, TrueHDHdr *hdr)
 	hdr->ch_8_assign = gf_bs_read_int(bs, 13);
 
 	u16 sig = gf_bs_read_u16(bs);
-	if (sig != 0xB752)
+	if (sig != 0xB752) {
 		return GF_NON_COMPLIANT_BITSTREAM;
+	}
 
 	gf_bs_read_u16(bs);
 	gf_bs_read_u16(bs);
 	gf_bs_read_int(bs, 1);
 	hdr->peak_rate = gf_bs_read_int(bs, 15);
-
 
 	return GF_OK;
 }
@@ -194,8 +211,12 @@ static void truehd_check_dur(GF_Filter *filter, GF_TrueHDDmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->index_size = 0;
 
@@ -249,7 +270,6 @@ static void truehd_check_dur(GF_Filter *filter, GF_TrueHDDmxCtx *ctx)
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 }
 
 static void truehd_check_pid(GF_Filter *filter, GF_TrueHDDmxCtx *ctx, TrueHDHdr *hdr)
@@ -261,10 +281,11 @@ static void truehd_check_pid(GF_Filter *filter, GF_TrueHDDmxCtx *ctx, TrueHDHdr 
 		ctx->opid = gf_filter_pid_new(filter);
 		truehd_check_dur(filter, ctx);
 	}
-	if ((ctx->sample_rate == hdr->sample_rate) && (ctx->format == hdr->format)	)
+	if ((ctx->sample_rate == hdr->sample_rate) && (ctx->format == hdr->format) && !ctx->copy_props)
 		return;
 
 	ctx->frame_dur = truehd_frame_dur(hdr->sample_rate);
+	ctx->copy_props = GF_FALSE;
 
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
@@ -274,6 +295,8 @@ static void truehd_check_pid(GF_Filter *filter, GF_TrueHDDmxCtx *ctx, TrueHDHdr 
 
 	if (ctx->duration.num)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 
 	if (hdr->ch_2_modif==1) {
 		ctx->nb_ch = 1;
@@ -312,6 +335,7 @@ static void truehd_check_pid(GF_Filter *filter, GF_TrueHDDmxCtx *ctx, TrueHDHdr 
 		}
 	}
 	ctx->sample_rate = hdr->sample_rate;
+	ctx->format = hdr->format;
 
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->timescale ? ctx->timescale : ctx->sample_rate));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAMPLE_RATE, & PROP_UINT(ctx->sample_rate));
@@ -386,6 +410,7 @@ static Bool truehd_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	case GF_FEVT_STOP:
 		//don't cancel event
 		ctx->is_playing = GF_FALSE;
+		ctx->cts = 0;
 		return GF_FALSE;
 
 	case GF_FEVT_SET_SPEED:
@@ -474,6 +499,9 @@ GF_Err truehd_process(GF_Filter *filter)
 	//input pid sets some timescale - we flushed pending data , update cts
 	if (ctx->timescale && pck) {
 		cts = gf_filter_pck_get_cts(pck);
+		//init cts at first packet
+		if (!ctx->cts && (cts != GF_FILTER_NO_TS))
+			ctx->cts = cts;
 	}
 
 	if (cts == GF_FILTER_NO_TS) {
@@ -563,7 +591,7 @@ GF_Err truehd_process(GF_Filter *filter)
 
 		//truncated last frame
 		if (bytes_to_drop > remain) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TrueHDDmx] truncated TrueHD frame!\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[TrueHDDmx] truncated TrueHD frame!\n"));
 			bytes_to_drop = remain;
 		}
 

@@ -288,6 +288,7 @@ enum
 	TAG_SVG_ATT_overlay,
 	TAG_SVG_ATT_fullscreen,
 	TAG_SVG_ATT_motionTransform,
+	TAG_SVG_ATT_clip_path,
 
 	TAG_SVG_ATT_filter_transfer_type,
 	TAG_SVG_ATT_filter_table_values,
@@ -666,7 +667,9 @@ event list when destructed.*/
 	/* JavaScript context in which the listener is applicable */ \
 	struct js_handler_context *js_data;\
 	/* text content of the callback */ \
-	char *callback;
+	char *callback; \
+	/* parent timed elt */ \
+	GF_Node *timed_elt;
 
 /*! DOM Event handler*/
 typedef struct __xml_ev_handler

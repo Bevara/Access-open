@@ -531,7 +531,7 @@ static void gray_hline(EVGRasterCtx *raster, TCoord  x, TCoord  y, TPos area, in
 		coverage = -coverage;
 
 	if (fill_rule) {
-		/* non-zero winding rule */
+		/* odd / even winding rule */
 		if ( coverage >= 256 ) {
 			coverage &= 511;
 
@@ -543,6 +543,7 @@ static void gray_hline(EVGRasterCtx *raster, TCoord  x, TCoord  y, TPos area, in
 			if (coverage!=255)
 				odd_flag = 0;
 
+			/* even only fill */
 			if (fill_rule==2) {
 				coverage = odd_flag ? 0 : (255-coverage);
 			} else {
@@ -553,11 +554,8 @@ static void gray_hline(EVGRasterCtx *raster, TCoord  x, TCoord  y, TPos area, in
 			coverage = 255-coverage;
 		}
 	} else {
-		coverage &= 511;
-
-		if ( coverage > 256 )
-			coverage = 512 - coverage;
-		else if ( coverage == 256 )
+		// normal non-zero winding rule
+		if ( coverage >= 256 )
 			coverage = 255;
 	}
 
@@ -650,6 +648,7 @@ static Bool th_fetch_lines(EVGRasterCtx *rctx)
 {
 	gf_mx_p(rctx->surf->raster_mutex);
 	if (!rctx->surf->last_dispatch_line) {
+		rctx->first_line = rctx->last_line = 0;
 		gf_mx_v(rctx->surf->raster_mutex);
 		return GF_FALSE;
 	}
@@ -675,15 +674,20 @@ u32 th_sweep_lines(void *par)
 
 		//only for threads, wait for start raster event
 		if (rctx->th) {
+			//we are active, don't grab sema (final flush of sweep)
+			if (rctx->active) {
+				gf_sleep(0);
+				continue;
+			}
 			gf_sema_wait(rctx->surf->raster_sem);
 			if (!rctx->th_state) break;
+			rctx->active = GF_TRUE;
 		}
 
 		first_patch = 0xFFFFFFFF;
 		last_patch = 0;
 
 		while (1) {
-
 			/* sort each scanline and render it*/
 			for (i=rctx->first_line; i<rctx->last_line; i++) {
 				AAScanline *sl = &rctx->surf->scanlines[i];
@@ -807,6 +811,12 @@ GF_Err evg_sweep_lines(GF_EVGSurface *surf, u32 size_y, u32 fill_rule, Bool is_t
 		gf_sleep(0);
 	}
 
+	//move all threads to inactive so that they grab the sema
+	for (i=0; i<surf->nb_threads; i++) {
+		EVGRasterCtx *rctx = &surf->th_raster_ctx[i];
+		rctx->active = GF_FALSE;
+	}
+
 	if (fparam && surf->frag_shader_init) {
 		surf->frag_shader_init(surf->frag_shader_udta, &surf->raster_ctx.frag_param, 0, GF_TRUE);
 		for (i=0; i<surf->nb_threads; i++) {
@@ -853,7 +863,11 @@ GF_Err evg_raster_render(GF_EVGSurface *surf)
 	if (outline->flags & GF_PATH_FILL_ZERO_NONZERO) fill_rule = 1;
 	else if (outline->flags & GF_PATH_FILL_EVEN) fill_rule = 2;
 
-	surf->render_span  = (EVG_SpanFunc) surf->fill_spans;
+	if (surf->mask_mode == GF_EVGMASK_RECORD) {
+		surf->render_span = evg_fill_span_mask;
+	} else {
+		surf->render_span = (EVG_SpanFunc) surf->fill_spans;
+	}
 
 	if ((void *) surf->sten == (void *) &surf->shader_sten) {
 		GF_EVGFragmentParam fparam;

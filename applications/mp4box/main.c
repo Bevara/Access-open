@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / mp4box application
@@ -102,9 +102,10 @@ typedef struct
 	Bool root_meta, use_dref;
 	GF_ISOTrackID trackID;
 	u32 meta_4cc;
-	char *szPath, *szName, *mime_type, *enc_type;
+	char *szPath, *szName, *mime_type, *enc_type, *keep_props;
 	u32 item_id;
 	Bool primary;
+	Bool replace;
 	u32 item_type;
 	u32 ref_item_id;
 	GF_List *item_refs;
@@ -194,7 +195,10 @@ GF_FileType get_file_type_by_ext(char *inName);
 
 
 char outfile[GF_MAX_PATH];
+#ifndef GPAC_DISABLE_SCENE_ENCODER
 GF_SMEncodeOptions smenc_opts;
+u32 swf_flags = GF_SM_SWF_SPLIT_TIMELINE;
+#endif
 GF_Fraction import_fps;
 
 //things to free upon cleanup
@@ -212,8 +216,6 @@ u32 nb_dash_inputs = 0;
 
 
 //all other options values - keep options with assignment other than 0 on a single line
-
-u32 swf_flags = GF_SM_SWF_SPLIT_TIMELINE;
 
 FILE *helpout = NULL;
 u32 help_flags = 0;
@@ -236,7 +238,7 @@ Bool align_cat=GF_TRUE;
 
 Double mpd_live_duration=0;
 Bool do_hint=0, do_save=0, full_interleave=0, do_frag=0, hint_interleave=0, dump_rtp=0, regular_iod=0, remove_sys_tracks=0, remove_hint=0, remove_root_od=0;
-Bool print_sdp=0, open_edit=0, dump_cr=0, force_ocr=0, encode=0, do_scene_log=0, dump_srt=0, dump_ttxt=0, do_saf=0, dump_m2ts=0, dump_cart=0, dump_chunk=0;
+Bool print_sdp=0, open_edit=0, dump_cr=0, force_ocr=0, encode=0, do_scene_log=0, dump_srt=0, dump_ttxt=0, do_saf=0, dump_m2ts=0, dump_cart=0, dump_chunk=0, dump_check_xml=0;
 Bool do_hash=0, verbose=0, force_cat=0, pack_wgt=0, single_group=0, clean_groups=0, dash_live=0, no_fragments_defaults=0;
 Bool single_traf_per_moof=0, tfdt_per_traf=0, hls_clock=0, do_mpd_rip=0, merge_vtt_cues=0, get_nb_tracks=0;
 u32 compress_moov=0;
@@ -397,7 +399,7 @@ MP4BoxArg m4b_gen_args[] =
  			"- n, d: numerator, denominator\n"
 	        "- W, H, HO, VO: clap width, clap height, clap horizontal offset, clap vertical offset\n"
  			, GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_SET_CLAP, ARG_IS_FUN),
- 	MP4BOX_ARG_S("mx", "tkID=MX", "set track matrix, with MX is M1:M2:M3:M4:M5:M6:M7:M8:M9 in 16.16 fixed point intergers or hexa"
+ 	MP4BOX_ARG_S("mx", "tkID=MX", "set track matrix, with MX is M1:M2:M3:M4:M5:M6:M7:M8:M9 in 16.16 fixed point integers or hexa"
  			, GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_SET_MX, ARG_IS_FUN),
 	MP4BOX_ARG_S("kind", "tkID=schemeURI=value", "set kind for the track or for all tracks using `all=schemeURI=value`", 0, parse_track_action, TRACK_ACTION_SET_KIND, ARG_IS_FUN),
 	MP4BOX_ARG_S("kind-rem", "tkID=schemeURI=value", "remove kind if given schemeID for the track or for all tracks with `all=schemeURI=value`", 0, parse_track_action, TRACK_ACTION_REM_KIND, ARG_IS_FUN),
@@ -443,7 +445,7 @@ MP4BoxArg m4b_gen_args[] =
 				, 0, parse_track_action, TRACK_ACTION_SET_EDITS, ARG_IS_FUN),
  	MP4BOX_ARG("moovpad", "specify amount of padding to keep after moov box for later inplace editing - if 0, moov padding is disabled", GF_ARG_INT, GF_ARG_HINT_EXPERT, &moov_pading, 0, ARG_NEED_SAVE),
  	MP4BOX_ARG("no-inplace", "disable inplace rewrite", GF_ARG_BOOL, GF_ARG_HINT_EXPERT, &no_inplace, 0, 0),
- 	MP4BOX_ARG("hdr", "update HDR information based on given XML", GF_ARG_STRING, GF_ARG_HINT_EXPERT, &high_dynamc_range_filename, 0, ARG_OPEN_EDIT),
+ 	MP4BOX_ARG("hdr", "update HDR information based on given XML, 'none' removes HDR info", GF_ARG_STRING, GF_ARG_HINT_EXPERT, &high_dynamc_range_filename, 0, ARG_OPEN_EDIT),
  	MP4BOX_ARG_S("time", "[tkID=]DAY/MONTH/YEAR-H:M:S", "set movie or track creation time", GF_ARG_HINT_EXPERT, parse_track_action, TRACK_ACTION_SET_TIME, ARG_IS_FUN),
  	MP4BOX_ARG_S("mtime", "tkID=DAY/MONTH/YEAR-H:M:S", "set media creation time", GF_ARG_HINT_EXPERT, parse_track_action, TRACK_ACTION_SET_MEDIA_TIME, ARG_IS_FUN),
 	{0}
@@ -492,11 +494,11 @@ MP4BoxArg m4b_split_args[] =
 		, GF_ARG_STRING, 0, parse_split, 3, ARG_IS_FUN),
 	MP4BOX_ARG("splitz", "extract the specified time range so that ranges `A:B` and `B:C` share exactly the same boundary `B`:\n"
 	"- the start time is moved to the RAP sample at or after the specified start time\n"
-	"- the end time is moved to the frame preceeding the RAP sample at or following the specified end time"
+	"- the end time is moved to the frame preceding the RAP sample at or following the specified end time"
 		, GF_ARG_STRING, 0, parse_split, 4, ARG_IS_FUN),
 	MP4BOX_ARG("splitg", "extract the specified time range as follows:\n"
 	"- the start time is moved to the RAP sample at or before the specified start time\n"
-	"- the end time is moved to the frame preceeding the RAP sample at or following the specified end time"
+	"- the end time is moved to the frame preceding the RAP sample at or following the specified end time"
 		, GF_ARG_STRING, 0, parse_split, 5, ARG_IS_FUN),
 	MP4BOX_ARG("splitf", "extract the specified time range and insert edits such that the extracted output is exactly the specified range\n", GF_ARG_STRING, 0, parse_split, 6, ARG_IS_FUN),
 	{0}
@@ -521,14 +523,14 @@ static void PrintSplitUsage()
 		"  \n"
 		"MP4Box splitting runs a filter session using the `reframer` filter as follows:\n"
 		"- `splitrange` option of the reframer is always set\n"
-		"- source is demuxed with `alltk` option set\n"
+		"- source is demultiplexed with `alltk` option set\n"
 		"- start and end ranges are passed to `xs` and `xe` options of the reframer\n"
 		"- for `-splitz`, options `xadjust` and `xround=after` are enforced\n"
 		"- for `-splitg`, options `xadjust` and `xround=before` are enforced\n"
 		"- for `-splitf`, option `xround=seek` is enforced and `propbe_ref`set if not specified at prompt\n"
 		"- for `-splitx`, option `xround=closest` and `propbe_ref` are enforced if not specified at prompt\n"
 		"  \n"
-		"The default output storage mode is to full interleave and will require a temp file for each output. This behaviour can be modified using `-flat`, `-newfs`, `-inter` and `-frag`.\n"
+		"The default output storage mode is to full interleave and will require a temp file for each output. This behavior can be modified using `-flat`, `-newfs`, `-inter` and `-frag`.\n"
 		"The output file name(s) can be specified using `-out` and templates (e.g. `-out split$num%%04d$.mp4` produces split0001.mp4, split0002.mp4, ...).\n"
 		"  \n"
 	);
@@ -590,7 +592,8 @@ MP4BoxArg m4b_dash_args[] =
 	"- f: movie fragments\n"
 	"- m: MPD\n"
 	"- mv, vm: in initial movie and MPD\n"
-	"- mf, fm: in movie fragments and MPD", GF_ARG_INT, 0, parse_pssh, 0, ARG_IS_FUN),
+	"- mf, fm: in movie fragments and MPD\n"
+	"- n: remove PSSH from MPD, initial movie and movie fragments", GF_ARG_INT, 0, parse_pssh, 0, ARG_IS_FUN),
 	MP4BOX_ARG("sample-groups-traf", "store sample group descriptions in traf (duplicated for each traf). If not set, sample group descriptions are stored in the initial movie", GF_ARG_BOOL, 0, &samplegroups_in_traf, 0, 0),
 	MP4BOX_ARG("mvex-after-traks", "store `mvex` box after `trak` boxes within the moov box. If not set, `mvex` is before", GF_ARG_BOOL, 0, &mvex_after_traks, 0, 0),
 	MP4BOX_ARG("sdtp-traf", "use `sdtp` box in `traf` (Smooth-like)\n"
@@ -616,6 +619,7 @@ MP4BoxArg m4b_dash_args[] =
 	"- merge: try to merge param sets in a single sample description, fallback to `no`\n"
 	"- multi: use several sample description, one per quality\n"
 	"- no: use one init segment per quality\n"
+	"- pps: use out of band VPS,SPS,DCI, inband for PPS,APS and a single init segment\n"
 	"- single: to test with single input", "inband", "inband|merge|multi|no|single", GF_ARG_STRING, GF_ARG_HINT_EXPERT, parse_bs_switch, 0, ARG_IS_FUN},
 	MP4BOX_ARG("moof-sn", "set sequence number of first moof to given value", GF_ARG_INT, GF_ARG_HINT_EXPERT, &initial_moof_sn, 0, 0),
 	MP4BOX_ARG("tfdt", "set TFDT of first traf to given value in SCALE units (cf -dash-scale)", GF_ARG_INT, GF_ARG_HINT_EXPERT, &initial_tfdt, 0, ARG_64BITS),
@@ -628,7 +632,7 @@ MP4BoxArg m4b_dash_args[] =
 	        "- as: sets ContentProtection in AdaptationSet element\n"
 	        "- rep: sets ContentProtection in Representation element\n"
 	        "- both: sets ContentProtection in both elements", GF_ARG_STRING, GF_ARG_HINT_EXPERT, parse_cp_loc, 0, ARG_IS_FUN),
-	MP4BOX_ARG("start-date", "for live mode, set start date (as xs:date, eg YYYY-MM-DDTHH:MM:SSZ). Default is current UTC\n"
+	MP4BOX_ARG("start-date", "for live mode, set start date (as xs:date, e.g. YYYY-MM-DDTHH:MM:SSZ). Default is current UTC\n"
 	"Warning: Do not use with multiple periods, nor when DASH duration is not a multiple of GOP size", GF_ARG_STRING, GF_ARG_HINT_EXPERT, &dash_start_date, 0, 0),
 	MP4BOX_ARG("cues", "ignore dash duration and segment according to cue times in given XML file (tests/media/dash_cues for examples)", GF_ARG_STRING, GF_ARG_HINT_EXPERT, &dash_cues, 0, 0),
 	MP4BOX_ARG("strict-cues", "throw error if something is wrong while parsing cues or applying cue-based segmentation", GF_ARG_BOOL, GF_ARG_HINT_EXPERT, &strict_cues, 0, 0),
@@ -650,12 +654,12 @@ void PrintDASHUsage()
 		"- #N: only use the track ID N from the source file (mapped to [-tkid](mp4dmx))\n"
 		"- #video: only use the first video track from the source file\n"
 		"- #audio: only use the first audio track from the source file\n"
-		"- :id=NAME: set the representation ID to NAME. Reserved value `NULL` disables representation ID for multiplexed inputs. If not set, a default value is computed and all selected tracks from the source will be in the same output mux.\n"
+		"- :id=NAME: set the representation ID to NAME. Reserved value `NULL` disables representation ID for multiplexed inputs. If not set, a default value is computed and all selected tracks from the source will be in the same output multiplex.\n"
 		"- :dur=VALUE: process VALUE seconds (fraction) from the media. If VALUE is longer than media duration, last sample duration is extended.\n"
 		"- :period=NAME: set the representation's period to NAME. Multiple periods may be used. Periods appear in the MPD in the same order as specified with this option\n"
 		"- :BaseURL=NAME: set the BaseURL. Set multiple times for multiple BaseURLs\nWarning: This does not modify generated files location (see segment template).\n"
 		"- :bandwidth=VALUE: set the representation's bandwidth to a given value\n"
-		"- :pdur=VALUE: sets the duration of the associated period to VALUE seconds (fraction) (alias for period_duration:VALUE). This is only used when no input media is specified (remote period insertion), eg `:period=X:xlink=Z:pdur=Y`\n"
+		"- :pdur=VALUE: sets the duration of the associated period to VALUE seconds (fraction) (alias for period_duration:VALUE). This is only used when no input media is specified (remote period insertion), e.g. `:period=X:xlink=Z:pdur=Y`\n"
 		"- :ddur=VALUE: override target DASH segment duration to VALUE seconds (fraction) for this input (alias for duration:VALUE)\n"
 		"- :xlink=VALUE: set the xlink value for the period containing this element. Only the xlink declared on the first rep of a period will be used\n"
 		"- :asID=VALUE: set the AdaptationSet ID to NAME\n"
@@ -669,9 +673,9 @@ void PrintDASHUsage()
 		"- @f1[:args][@fN:args][@@fK:args]: set a filter chain to insert between the source and the dasher. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](filters_general). If several filters are set:\n"
 		"  - they will be chained in the given order if separated by a single `@`\n"
 		"  - a new filter chain will be created if separated by a double `@@`. In this case, no representation ID is assigned to the source.\n"
-		"EX source.mp4:@enc:c=avc:b=1M@@enc:c=avc:b=500k\n"
+		"EX source.mp4:@c=avc:b=1M@@c=avc:b=500k\n"
 		"This will load a filter chain with two encoders connected to the source and to the dasher.\n"
-		"EX source.mp4:@enc:c=avc:b=1M@enc:c=avc:b=500k\n"
+		"EX source.mp4:@c=avc:b=1M@c=avc:b=500k\n"
 		"This will load a filter chain with the second encoder connected to the output of the first (!!).\n"
 		"\n"
 		"Note: `@f` must be placed after all other options.\n"
@@ -690,14 +694,14 @@ void PrintDASHUsage()
 
 MP4BoxArg m4b_imp_args[] =
 {
- 	MP4BOX_ARG("add", "add given file tracks to file. Multiple inputs can be specified using `+`, eg `-add url1+url2`", GF_ARG_STRING, 0, &nb_add, 0, ARG_INT_INC),
- 	MP4BOX_ARG("cat", "concatenate given file samples to file, creating tracks if needed. Multiple inputs can be specified using `+`, eg `-cat url1+url2`.  \nNote: This aligns initial timestamp of the file to be concatenated", GF_ARG_STRING, 0, &nb_cat, 0, ARG_INT_INC),
+	MP4BOX_ARG("add", "add given file tracks to file. Multiple inputs can be specified using `+`, e.g. `-add url1+url2`", GF_ARG_STRING, 0, &nb_add, 0, ARG_INT_INC),
+	MP4BOX_ARG("cat", "concatenate given file samples to file, creating tracks if needed. Multiple inputs can be specified using `+`, e.g/ `-cat url1+url2`.  \nNote: This aligns initial timestamp of the file to be concatenated", GF_ARG_STRING, 0, &nb_cat, 0, ARG_INT_INC),
  	MP4BOX_ARG("catx", "same as [-cat]() but new tracks can be imported before concatenation by specifying `+ADD_COMMAND` where `ADD_COMMAND` is a regular [-add]() syntax", GF_ARG_STRING, 0, &nb_cat, 0, ARG_INT_INC),
  	MP4BOX_ARG("catpl", "concatenate files listed in the given playlist file (one file per line, lines starting with # are comments).  \nNote: Each listed file is concatenated as if called with -cat", GF_ARG_STRING, 0, &nb_cat, 0, ARG_INT_INC),
  	MP4BOX_ARG("unalign-cat", "do not attempt to align timestamps of samples in-between tracks", GF_ARG_BOOL, 0, &align_cat, 0, ARG_BOOL_REV),
  	MP4BOX_ARG("force-cat", "skip media configuration check when concatenating file.  \nWarning: THIS MAY BREAK THE CONCATENATED TRACK(S)", GF_ARG_BOOL, 0, &force_cat, 0, 0),
  	MP4BOX_ARG("keep-sys", "keep all MPEG-4 Systems info when using [-add]() and [-cat]() (only used when adding IsoMedia files)", GF_ARG_BOOL, 0, &keep_sys_tracks, 0, 0),
- 	MP4BOX_ARG("dref", "keep media data in original file using `data referencing`. The resulting file only contains the meta-data of the presentation (frame sizes, timing, etc...) and references media data in the original file. This is extremely useful when developing content, since importing and storage of the MP4 file is much faster and the resulting file much smaller.  \nNote: Data referencing may fail on some files because it requires the framed data (eg an IsoMedia sample) to be continuous in the original file, which is not always the case depending on the original interleaving or bitstream format (__AVC__ or __HEVC__ cannot use this option)", GF_ARG_BOOL, 0, &import_flags, GF_IMPORT_USE_DATAREF, ARG_BIT_MASK),
+	MP4BOX_ARG("dref", "keep media data in original file using `data referencing`. The resulting file only contains the meta-data of the presentation (frame sizes, timing, etc...) and references media data in the original file. This is extremely useful when developing content, since importing and storage of the MP4 file is much faster and the resulting file much smaller.  \nNote: Data referencing may fail on some files because it requires the framed data (e.g. an IsoMedia sample) to be continuous in the original file, which is not always the case depending on the original interleaving or bitstream format (__AVC__ or __HEVC__ cannot use this option)", GF_ARG_BOOL, 0, &import_flags, GF_IMPORT_USE_DATAREF, ARG_BIT_MASK),
  	MP4BOX_ARG_ALT("no-drop", "nodrop", "force constant FPS when importing AVI video", GF_ARG_BOOL, 0, &import_flags, GF_IMPORT_NO_FRAME_DROP, ARG_BIT_MASK),
  	MP4BOX_ARG("packed", "force packed bitstream when importing raw MPEG-4 part 2 Advanced Simple Profile", GF_ARG_BOOL, 0, &import_flags, GF_IMPORT_FORCE_PACKED, ARG_BIT_MASK),
  	MP4BOX_ARG("sbr", "backward compatible signaling of AAC-SBR", GF_ARG_BOOL, 0, &import_flags, GF_IMPORT_SBR_IMPLICIT, ARG_BIT_MASK),
@@ -726,7 +730,8 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 	GF_DEF_ARG("name", NULL, "`S` set track handler name", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("ext", NULL, "override file extension when importing", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("hdlr", NULL, "`S` set track handler type to the given code point (4CC)", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("tkhd", NULL, "`S` set track header flags has hex integer. Use `tkhd+=FLAGS` to add flags and `tkhd-=FLAGS` to remove flags", NULL, NULL, GF_ARG_INT, 0),
+	GF_DEF_ARG("stype", NULL, "`S` force sample description type to given code point (4CC), may likely break the file", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("tkhd", NULL, "`S` set track header flags has hex integer or as comma-separated list of `enable`, `movie`, `preview`, `size_ar` keywords (use `tkhd+=FLAGS` to add and `tkhd-=FLAGS` to remove)", NULL, NULL, GF_ARG_INT, 0),
 	GF_DEF_ARG("disable", NULL, "`S` disable imported track(s), use `disable=no` to force enabling a disabled track", NULL, NULL, GF_ARG_BOOL, 0),
 	GF_DEF_ARG("group", NULL, "`S` add the track as part of the G alternate group. If G is 0, the first available GroupID will be picked", NULL, NULL, GF_ARG_INT, 0),
 	GF_DEF_ARG("fps", NULL, "same as [-fps]()", NULL, NULL, GF_ARG_STRING, 0),
@@ -820,8 +825,14 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 		"  - nclc,p,t,m: with p colour primary (int or string), t transfer characteristics (int or string) and m matrix coef (int or string)\n"
 		"  - nclx,p,t,m,r: same as `nclx` with r full range flag (`yes`, `on` or `no`, `off`)\n"
 		"  - prof,path: with path indicating the file containing the ICC color profile\n"
-		"  - rICC,path: with path indicating the file containing the restricted ICC color profile", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("dv-profile", NULL, "`S` set the Dolby Vision profile", NULL, NULL, GF_ARG_INT, 0),
+		"  - rICC,path: with path indicating the file containing the restricted ICC color profile\n"
+		"  - 'none': removes color info", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("hdr", NULL, "`S` set HDR info on track (see [-hdr](MP4B_GEN) ), 'none' removes HDR info", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("dv-profile", NULL, "`S` set the Dolby Vision profile on imported track\n"
+	"- Profile is an integer, or `none` to remove DV signaling\n"
+	"- Profile can be suffixed with compatibility ID, e.g. `5.hdr10`\n"
+	"- Allowed compatibility ID are `none`, `hdr10`, `bt709`, `hlg709`, `hlg2100`, `bt2020`, `brd`, or integer value as per DV spec\n"
+	"- Profile can be prefixed with 'f' to force DV codec type signaling, e.g. `f8.2`", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("fullrange", NULL, "`S` force the video fullrange type in VUI for the AVC|H264 content (value `yes`, `on` or `no`, `off`)", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("videofmt", NULL, "`S` force the video format in VUI for AVC|H264 and HEVC content, value can be `component`, `pal`, `ntsc`, `secam`, `mac`, `undef`", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("colorprim", NULL, "`S` force the colour primaries in VUI for AVC|H264 and HEVC (int or string, cf `-h cicp`)", NULL, NULL, GF_ARG_STRING, 0),
@@ -836,11 +847,16 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 		"  - no value: use the previous sample duration\n"
 		"  - integer: indicate the duration in milliseconds\n"
 		"  - N/D: indicate the duration as fractional second", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("ID", NULL, "`S` set target ID\n"
+		"  - a value of 0 (default) will try to keep source track ID\n"
+		"  - a value of -1 will ignore source track ID\n"
+		"  - other value will try to set track ID to this value if no other track with same ID is present"
+		"", NULL, NULL, GF_ARG_INT, 0),
 	GF_DEF_ARG("stats", "fstat", "`C` print filter session stats after import", NULL, NULL, GF_ARG_BOOL, 0),
 	GF_DEF_ARG("graph", "fgraph", "`C` print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
 	{"sopt:[OPTS]", NULL, "set `OPTS` as additional arguments to source filter. `OPTS` can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
 	{"dopt:[OPTS]", NULL, "`X` set `OPTS` as additional arguments to [destination filter](mp4mx). OPTS can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
-	{"@f1[:args][@fN:args]", NULL, "set a filter chain to insert before the muxer. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](Filters). A `@@` separator starts a new chain (see DASH help). The last filter in each chain shall not have any ID specified"},
+	{"@f1[:args][@fN:args]", NULL, "set a filter chain to insert before the multiplexer. Each filter in the chain is formatted as a regular filter, see [filter doc `gpac -h doc`](Filters). A `@@` separator starts a new chain (see DASH help). The last filter in each chain shall not have any ID specified"},
 	{0}
 };
 
@@ -866,9 +882,9 @@ void PrintImportUsage()
 		"  \n"
 		"By default all imports are performed sequentially, and final interleaving is done at the end; this however requires a temporary file holding original ISOBMF file (if any) and added files before creating the final output. Since this can become quite large, it is possible to add media to a new file without temporary storage, using [-flat](MP4B_GEN) option, but this disables media interleaving.\n"
 		"  \n"
-		"If you wish to create an interleaved new file with no temporary storage, use the [-newfs](MP4B_GEN) option. The interleaving might not be as precise as when using [-new]() since it is dependent on muxer input scheduling (each execution might lead to a slightly different result). Additionally in this mode: \n"
-		" - Some muxing options (marked with `X` below) will be activated for all inputs (e.g it is not possible to import one AVC track with `xps_inband` and another without).\n"
-		" - Some muxing options (marked as `D` below) cannot be used as they require temporary storage for file edition.\n"
+		"If you wish to create an interleaved new file with no temporary storage, use the [-newfs](MP4B_GEN) option. The interleaving might not be as precise as when using [-new]() since it is dependent on multiplexer input scheduling (each execution might lead to a slightly different result). Additionally in this mode: \n"
+		" - Some multiplexing options (marked with `X` below) will be activated for all inputs (e.g. it is not possible to import one AVC track with `xps_inband` and another without).\n"
+		" - Some multiplexing options (marked as `D` below) cannot be used as they require temporary storage for file edition.\n"
 		" - Usage of [-cat]() is possible, but concatenated sources will not be interleaved in the output. If you wish to perform more complex cat/add operations without temp file, use a [playlist](flist).\n"
 		"  \n"
 		"Source URL can be any URL supported by GPAC, not limited to local files.\n"
@@ -938,6 +954,7 @@ Bool mp4box_check_isom_fileopt(char *opt)
 
 MP4BoxArg m4b_senc_args[] =
 {
+#ifndef GPAC_DISABLE_SCENE_ENCODER
  	MP4BOX_ARG("mp4", "specify input file is for BIFS/LASeR encoding", GF_ARG_BOOL, 0, &encode, 0, ARG_OPEN_EDIT),
  	MP4BOX_ARG("def", "encode DEF names in BIFS", GF_ARG_BOOL, 0, &smenc_opts.flags, GF_SM_ENCODE_USE_NAMES, ARG_BIT_MASK),
  	MP4BOX_ARG("sync", "force BIFS sync sample generation every given time in ms (cannot be used with [-shadow]() or [-carousel]() )", GF_ARG_INT, 0, parse_senc_param, 0, ARG_IS_FUN),
@@ -951,8 +968,9 @@ MP4BoxArg m4b_senc_args[] =
  	MP4BOX_ARG("resolution", "resolution factor (-8 to 7, default 0) for LASeR encoding, and all coordinates are multiplied by `2^res` before truncation (LASeR encoding)", GF_ARG_INT, 0, &smenc_opts.resolution, 0, 0),
  	MP4BOX_ARG("coord-bits", "number of bits used for encoding truncated coordinates (0 to 31, default 12) (LASeR encoding)", GF_ARG_INT, 0, &smenc_opts.coord_bits, 0, 0),
  	MP4BOX_ARG("scale-bits", "extra bits used for encoding truncated scales (0 to 4, default 0) (LASeR encoding)", GF_ARG_INT, 0, &smenc_opts.scale_bits, 0, 0),
- 	MP4BOX_ARG("auto-quant", "resolution is given as if using [-resolution]() but coord-bits and scale-bits are infered (LASeR encoding)", GF_ARG_INT, 0, parse_senc_param, 3, ARG_IS_FUN),
+ 	MP4BOX_ARG("auto-quant", "resolution is given as if using [-resolution]() but coord-bits and scale-bits are inferred (LASeR encoding)", GF_ARG_INT, 0, parse_senc_param, 3, ARG_IS_FUN),
  	MP4BOX_ARG("global-quant", "resolution is given as if using [-resolution]() but the res is inferred (BIFS encoding)", GF_ARG_INT, 0, parse_senc_param, 4, ARG_IS_FUN),
+#endif
  	{0}
 };
 
@@ -968,7 +986,7 @@ void PrintEncodeUsage()
 		"## Scene Random Access\n"
 		"MP4Box can encode BIFS or LASeR streams and insert random access points at a given frequency. This is useful when packaging content for broadcast, where users will not turn in the scene at the same time. In MPEG-4 terminology, this is called the __scene carousel__."
 		"## BIFS Chunk Processing\n"
-		"The BIFS chunk encoding mode alows encoding single BIFS access units from an initial context and a set of commands.\n"
+		"The BIFS chunk encoding mode allows encoding single BIFS access units from an initial context and a set of commands.\n"
 		"The generated AUs are raw BIFS (not SL-packetized), in files called FILE-ESID-AUIDX.bifs, with FILE the basename of the input file.\n"
 		"Commands with a timing of 0 in the input will modify the carousel version only (i.e. output context).\n"
 		"Commands with a timing different from 0 in the input will generate new AUs.\n"
@@ -1010,6 +1028,7 @@ void PrintEncryptUsage()
 
 MP4BoxArg m4b_hint_args[] =
 {
+#ifndef GPAC_DISABLE_STREAMING
  	MP4BOX_ARG("hint", "hint the file for RTP/RTSP", GF_ARG_BOOL, 0, &do_hint, 0, ARG_OPEN_EDIT),
  	{"mtu", NULL, "specify RTP MTU (max size) in bytes (this includes 12 bytes RTP header)", "1450", NULL, GF_ARG_INT, 0, &MTUSize, 0, 0},
  	MP4BOX_ARG("copy", "copy media data to hint track rather than reference (speeds up server but takes much more space)", GF_ARG_BOOL, 0, &HintCopy, 0, 0),
@@ -1018,7 +1037,7 @@ MP4BoxArg m4b_hint_args[] =
  	MP4BOX_ARG("mpeg4", "force MPEG-4 generic payload whenever possible", GF_ARG_BOOL, 0, &import_flags, GF_IMPORT_FORCE_MPEG4, ARG_BIT_MASK),
  	MP4BOX_ARG("latm", "force MPG4-LATM transport for AAC streams", GF_ARG_BOOL, 0, &hint_flags, GP_RTP_PCK_USE_LATM_AAC, ARG_BIT_MASK),
  	MP4BOX_ARG("static", "enable static RTP payload IDs whenever possible (by default, dynamic payloads are always used)", GF_ARG_BOOL, 0, &hint_flags, GP_RTP_PCK_USE_STATIC_ID, ARG_BIT_MASK),
- 	MP4BOX_ARG("add-sdp", "add given SDP string to hint track (`tkID:string`) or movie (`string`)", GF_ARG_STRING, 0, parse_sdp_ext, 0, ARG_IS_FUN),
+ 	MP4BOX_ARG("add-sdp", "add given SDP string to movie (`string`) or track (`tkID:string`), `tkID` being the track ID or the hint track ID", GF_ARG_STRING, 0, parse_sdp_ext, 0, ARG_IS_FUN),
  	MP4BOX_ARG("no-offset", "signal no random offset for sequence number and timestamp (support will depend on server)", GF_ARG_BOOL, 0, &hint_no_offset, 0, 0),
  	MP4BOX_ARG("unhint", "remove all hinting information from file", GF_ARG_BOOL, 0, &remove_hint, 0, ARG_OPEN_EDIT),
  	MP4BOX_ARG("group-single", "put all tracks in a single hint group", GF_ARG_BOOL, 0, &single_group, 0, 0),
@@ -1028,6 +1047,7 @@ MP4BoxArg m4b_hint_args[] =
 	MP4BOX_ARG("size", "signal AU size in RTP packets (MPEG-4 Systems)", GF_ARG_BOOL, 0, &hint_flags, GP_RTP_PCK_SIGNAL_SIZE, ARG_BIT_MASK),
  	MP4BOX_ARG("idx", "signal AU sequence numbers in RTP packets (MPEG-4 Systems)", GF_ARG_BOOL, 0, &hint_flags, GP_RTP_PCK_SIGNAL_AU_IDX, ARG_BIT_MASK),
  	MP4BOX_ARG("iod", "prevent systems tracks embedding in IOD (MPEG-4 Systems), not compatible with [-isma]()", GF_ARG_BOOL, 0, &regular_iod, 0, 0),
+#endif
  	{0}
 };
 
@@ -1059,10 +1079,10 @@ MP4BoxArg m4b_extr_args[] =
  	MP4BOX_ARG("webvtt-raw", "extract given track as raw media in WebVTT as metadata. Use `tkID:embedded` to include media data in the WebVTT file", GF_ARG_STRING, 0, parse_track_dump, GF_EXPORT_WEBVTT_META, ARG_IS_FUN),
  	MP4BOX_ARG("single", "extract given track to a new mp4 file", GF_ARG_INT, 0, parse_track_dump, GF_EXPORT_MP4, ARG_IS_FUN),
  	MP4BOX_ARG("six", "extract given track as raw media in **experimental** XML streaming instructions", GF_ARG_INT, 0, parse_track_dump, GF_EXPORT_SIX, ARG_IS_FUN),
- 	MP4BOX_ARG("mux", "mux input to given destination", GF_ARG_STRING, 0, &mux_name, 0, 0),
+ 	MP4BOX_ARG("mux", "multiplex input file to given destination", GF_ARG_STRING, 0, &mux_name, 0, 0),
  	MP4BOX_ARG("qcp", "same as [-raw]() but defaults to QCP file for EVRC/SMV", GF_ARG_INT, 0, parse_track_dump, GF_EXPORT_NATIVE | GF_EXPORT_USE_QCP, ARG_IS_FUN),
- 	MP4BOX_ARG("saf", "remux file to SAF multiplex", GF_ARG_BOOL, 0, &do_saf, 0, 0),
- 	MP4BOX_ARG("dvbhdemux", "demux DVB-H file into IP Datagrams sent on the network", GF_ARG_BOOL, 0, &dvbhdemux, 0, 0),
+ 	MP4BOX_ARG("saf", "multiplex input file to SAF multiplex", GF_ARG_BOOL, 0, &do_saf, 0, 0),
+ 	MP4BOX_ARG("dvbhdemux", "demultiplex DVB-H file into IP Datagrams sent on the network", GF_ARG_BOOL, 0, &dvbhdemux, 0, 0),
  	MP4BOX_ARG("raw-layer", "same as [-raw]() but skips SVC/MVC/LHVC extractors when extracting", GF_ARG_INT, 0, parse_track_dump, GF_EXPORT_NATIVE | GF_EXPORT_SVC_LAYER, ARG_IS_FUN),
  	MP4BOX_ARG("diod", "extract file IOD in raw format", GF_ARG_BOOL, 0, &dump_iod, 0, 0),
  	MP4BOX_ARG("mpd", "convert given HLS or smooth manifest (local or remote http) to MPD.  \nWarning: This is not compatible with other DASH options and does not convert associated segments", GF_ARG_STRING, 0, &do_mpd_conv, 0, 0),
@@ -1096,6 +1116,7 @@ MP4BoxArg m4b_dump_args[] =
  	MP4BOX_ARG("dxml", "dump IsoMedia file boxes and known track samples in XML output", GF_ARG_BOOL, 0, &dump_isom, 2, 0),
  	MP4BOX_ARG("disox", "dump IsoMedia file boxes except sample tables in XML output", GF_ARG_BOOL, 0, &dump_isom, 3, 0),
  	MP4BOX_ARG("keep-ods", "do not translate ISOM ODs and ESDs tags (debug purpose only)", GF_ARG_BOOL, 0, &no_odf_conf, 0, 0),
+#ifndef GPAC_DISABLE_SCENE_DUMP
  	MP4BOX_ARG("bt", "dump scene to BT format", GF_ARG_BOOL, 0, &dump_mode, GF_SM_DUMP_BT, ARG_HAS_VALUE),
  	MP4BOX_ARG("xmt", "dump scene to XMT format", GF_ARG_BOOL, 0, &dump_mode, GF_SM_DUMP_XMTA, 0),
  	MP4BOX_ARG("wrl", "dump scene to VRML format", GF_ARG_BOOL, 0, &dump_mode, GF_SM_DUMP_VRML, 0),
@@ -1103,6 +1124,7 @@ MP4BoxArg m4b_dump_args[] =
  	MP4BOX_ARG("x3dv", "dump scene to X3D VRML format", GF_ARG_BOOL, 0, &dump_mode, GF_SM_DUMP_X3D_VRML, 0),
  	MP4BOX_ARG("lsr", "dump scene to LASeR XML (XSR) format", GF_ARG_BOOL, 0, &dump_mode, GF_SM_DUMP_LASER, 0),
  	MP4BOX_ARG("svg", "dump scene to SVG", GF_ARG_BOOL, 0, &dump_mode, GF_SM_DUMP_SVG, 0),
+#endif
  	MP4BOX_ARG("drtp", "dump rtp hint samples structure to XML output", GF_ARG_BOOL, 0, &dump_rtp, 0, 0),
  	MP4BOX_ARG("dts", "print sample timing, size and position in file to text output", GF_ARG_BOOL, 0, parse_dump_ts, 0, ARG_IS_FUN),
  	MP4BOX_ARG("dtsx", "same as [-dts]() but does not print offset", GF_ARG_BOOL, 0, &dump_timestamps, 2, 0),
@@ -1137,10 +1159,12 @@ MP4BoxArg m4b_dump_args[] =
  	MP4BOX_ARG("topsize", "print to stdout the number of bytes of top-level boxes matching types given as parameter, formatted as `4cc_1,4cc_2N` or `all` for all boxes", GF_ARG_STRING, 0, parse_comp_box, 1, ARG_IS_FUN),
  	MP4BOX_ARG("bin", "convert input XML file using NHML bitstream syntax to binary", GF_ARG_BOOL, 0, &do_bin_xml, 0, 0),
  	MP4BOX_ARG("mpd-rip", "fetch MPD and segment to disk", GF_ARG_BOOL, 0, &do_mpd_rip, 0, 0),
- 	MP4BOX_ARG_S("udp-write", "IP[:port]", "write input name to UDP (default port 2345)", GF_FS_ARG_HINT_EXPERT, &udp_dest, 0, 0),
+ 	//MP4BOX_ARG_S("udp-write", "IP[:port]", "write input name to UDP (default port 2345)", GF_FS_ARG_HINT_EXPERT, &udp_dest, 0, GF_ARG_STRING),
+	{"udp-write", NULL, "write input name to UDP (default port 2345)", "IP[:port]", NULL, GF_ARG_STRING, GF_FS_ARG_HINT_EXPERT, &udp_dest, 0, 0},
  	MP4BOX_ARG("raw-cat", "raw concatenation of given file with input file", GF_ARG_STRING, GF_FS_ARG_HINT_EXPERT, &raw_cat, 0, 0),
  	MP4BOX_ARG("wget", "fetch resource from http(s) URL", GF_ARG_STRING, GF_FS_ARG_HINT_EXPERT, &do_wget, 0, 0),
  	MP4BOX_ARG("dm2ts", "dump timing of an input MPEG-2 TS stream sample timing", GF_ARG_BOOL, 0, &dump_m2ts, 0, 0),
+ 	MP4BOX_ARG("check-xml", "check XML output format for -dnal*, -diso* and -dxml options", GF_ARG_BOOL, 0, &dump_check_xml, 0, 0),
  	{0}
 };
 
@@ -1169,13 +1193,14 @@ MP4BoxArg m4b_meta_args[] =
  	MP4BOX_ARG("add-item", "add resource to meta, with parameter syntax `file_path[:opt1:optN]`\n"
 		"- file_path `this` or `self`: item is the file itself\n"
 		"- tk=tkID: meta location (file, moov, track)\n"
-		"- name=str: item name\n"
+		"- name=str: item name, none if not set\n"
 		"- type=itype: item 4cc type (not needed if mime is provided)\n"
-		"- mime=mtype: item mime type\n"
-		"- encoding=enctype: item content-encoding type\n"
+		"- mime=mtype: item mime type, none if not set\n"
+		"- encoding=enctype: item content-encoding type, none if not set\n"
 		"- id=ID: item ID\n"
 		"- ref=4cc,id: reference of type 4cc to an other item (can be set multiple times)\n"
-		"- group=id,type: indicate the id and type of an alternate group for this item"
+		"- group=id,type: indicate the id and type of an alternate group for this item\n"
+		"- replace: replace existing item by new item"
 		, GF_ARG_STRING, 0, parse_meta_args, META_ACTION_ADD_ITEM, ARG_IS_FUN),
 	MP4BOX_ARG("add-image", "add the given file as HEIF image item, with parameter syntax `file_path[:opt1:optN]`. If `filepath` is omitted, source is the input MP4 file\n"
 		"- name, id, ref: see [-add-item]()\n"
@@ -1201,6 +1226,10 @@ MP4BoxArg m4b_meta_args[] =
 		"- ref: do not copy the data but refer to the final sample/item location, ignored if `filepath` is set\n"
 		"- agrid[=AR]: creates an automatic grid from the image items present in the file, in their declaration order. The grid will **try to** have `AR` aspect ratio if specified (float), or the aspect ratio of the source otherwise. The grid will be the primary item and all other images will be hidden\n"
 		"- av1_op_index: select the AV1 operating point to use via a1op box\n"
+		"- replace: replace existing image by new image, keeping props listed in `keep_props`\n"
+		"- keep_props=4CCs: coma-separated list of properties types to keep when replacing the image, e.g. `keep_props=auxC`\n"
+		"- auxt=URN: mark image as auxiliary using given `URN`\n"
+		"- auxd=FILE: use data from `FILE` as auxiliary extensions (cf `auxC` box)\n"
 		"- any other options will be passed as options to the media importer, see [-add]()"
 		, GF_ARG_STRING, 0, parse_meta_args, META_ACTION_ADD_IMAGE_ITEM, ARG_IS_FUN),
 	MP4BOX_ARG("add-derived-image", "create an image grid, overlay or identity item, with parameter syntax `:type=(grid|iovl|iden)[:opt1:optN]`\n"
@@ -1236,6 +1265,7 @@ void PrintMetaUsage()
 
 MP4BoxArg m4b_swf_args[] =
 {
+#ifndef GPAC_DISABLE_SCENE_ENCODER
  	MP4BOX_ARG("global", "all SWF defines are placed in first scene replace rather than when needed", GF_ARG_BOOL, 0, &swf_flags, GF_SM_SWF_STATIC_DICT, ARG_BIT_MASK),
  	MP4BOX_ARG("no-ctrl", "use a single stream for movie control and dictionary (this will disable ActionScript)", GF_ARG_BOOL, 0, &swf_flags, GF_SM_SWF_SPLIT_TIMELINE, ARG_BIT_MASK_REM),
  	MP4BOX_ARG("no-text", "remove all SWF text", GF_ARG_BOOL, 0, &swf_flags, GF_SM_SWF_NO_TEXT, ARG_BIT_MASK),
@@ -1247,6 +1277,7 @@ MP4BoxArg m4b_swf_args[] =
 	MP4BOX_ARG("ic2d", "use indexed curve 2D hardcoded proto", GF_ARG_BOOL, 0, &swf_flags, GF_SM_SWF_USE_IC2D, ARG_BIT_MASK),
 	MP4BOX_ARG("same-app", "appearance nodes are reused", GF_ARG_BOOL, 0, &swf_flags, GF_SM_SWF_REUSE_APPEARANCE, ARG_BIT_MASK),
  	MP4BOX_ARG("flatten", "complementary angle below which 2 lines are merged, value `0` means no flattening", GF_ARG_DOUBLE, 0, &swf_flatten_angle, 0, 0),
+#endif
 	{0}
 };
 
@@ -1287,7 +1318,7 @@ void PrintLiveUsage()
 {
 	u32 i=0;
 	gf_sys_format_help(helpout, help_flags, "# Live Scene Encoder Options\n"
-	        "The options shall be specified as òpt_name=opt_val.\n"
+	        "The options shall be specified as `opt_name=opt_val.\n"
 	        "Options:\n"
 	        "\n"
 	);
@@ -1378,7 +1409,7 @@ void PrintCICP()
 	gf_sys_format_help(helpout, help_flags, "CICP Color Primaries:\n");
 	for (i=0; i<GF_CICP_PRIM_LAST; i++) {
 		const char *name = gf_cicp_color_primaries_name(i);
-		if (!name || !strcmp(name, "unknwon")) continue;
+		if (!name || !strcmp(name, "unknown")) continue;
 		gf_sys_format_help(helpout, help_flags, " - `%s` (value %d)\n", name, i);
 	}
 	gf_sys_format_help(helpout, help_flags, "  \nCICP Color Transfer Characteristics:\n");
@@ -1403,7 +1434,7 @@ MP4BoxArg m4b_usage_args[] =
 		"- dash: DASH segmenter help\n"
 		"- split: split options help\n"
 		"- import: import options help\n"
-		"- encode: scene descrription encoding options help\n"
+		"- encode: scene description encoding options help\n"
 		"- meta: meta (HEIF, MPEG-21) handling options help\n"
 		"- extract: extraction options help\n"
 		"- dump: dump options help\n"
@@ -1418,7 +1449,7 @@ MP4BoxArg m4b_usage_args[] =
 		"- cicp: print various CICP code points\n"
 		"- VAL: search for option named `VAL` (without `-` or `--`) in MP4Box, libgpac core and all filters\n"
 		, GF_ARG_STRING, 0, parse_help, 0, ARG_IS_FUN | ARG_EMPTY | ARG_PUSH_SYSARGS),
- 	MP4BOX_ARG("hx", "look for given string in all possible options"
+ 	MP4BOX_ARG("hx", "look for given string in name and descriptions of all MP4Box and filters options"
 		, GF_ARG_STRING, 0, parse_help, 1, ARG_IS_FUN),
  	MP4BOX_ARG("nodes", "list supported MPEG4 nodes", GF_ARG_BOOL, 0, PrintBuiltInNodes, 0, ARG_IS_FUN),
  	MP4BOX_ARG("nodex", "list supported MPEG4 nodes and print nodes", GF_ARG_BOOL, 0, PrintBuiltInNodes, 1, ARG_IS_FUN),
@@ -1436,7 +1467,7 @@ MP4BoxArg m4b_usage_args[] =
  	MP4BOX_ARG("version", "get build version", GF_ARG_BOOL, 0, print_version, 0, ARG_IS_FUN),
  	MP4BOX_ARG("genmd", "generate MD doc", GF_ARG_BOOL, GF_ARG_HINT_HIDE, parse_gendoc, 0, ARG_IS_FUN),
  	MP4BOX_ARG("genman", "generate man doc", GF_ARG_BOOL, GF_ARG_HINT_HIDE, parse_gendoc, 1, ARG_IS_FUN),
- 	MP4BOX_ARG_S("--", "INPUT", "escape option if INPUT starts with `-` character", 0, NULL, 0, 0),
+ 	MP4BOX_ARG_S("-", "INPUT", "escape option if INPUT starts with `-` character", 0, NULL, 0, 0),
  	{0}
 };
 
@@ -1466,27 +1497,14 @@ enum
 	SEARCH_DESC,
 };
 
-static Bool strstr_nocase(const char *text, const char *subtext, u32 subtext_len)
+static u32 PrintHelpForArgs(char *arg_name, MP4BoxArg *args, GF_GPACArg *_args, u32 search_type, char *class_name)
 {
-	if (!*text || !subtext || !subtext_len)
-		return GF_FALSE;
-
-	while (*text) {
-		if (tolower(*text) == *subtext) {
-			if (!strnicmp(text, subtext, subtext_len))
-				return GF_TRUE;
-
-		}
-		text++;
-	}
-	return GF_FALSE;
-}
-
-static u32 PrintHelpForArgs(char *arg_name, MP4BoxArg *args, GF_GPACArg *_args, u32 search_type)
-{
+	char szDesc[100];
 	u32 res=0;
 	u32 i=0;
 	u32 alen = (u32) strlen(arg_name);
+
+	sprintf(szDesc, "see MP4Box -h %s", class_name);
 
 	while (1) {
 		u32 flags=0;
@@ -1524,17 +1542,23 @@ static u32 PrintHelpForArgs(char *arg_name, MP4BoxArg *args, GF_GPACArg *_args, 
 			i++;
 			continue;
 		}
-		if ((search_type==SEARCH_DESC) && !strstr_nocase(arg->description, arg_name, alen)) {
+		if ((search_type==SEARCH_DESC) && strcmp(arg->name, arg_name) && !gf_strnistr(arg->description, arg_name, alen)) {
 			i++;
 			continue;
 		}
 
 		an_arg = *arg;
 		if (search_type!=SEARCH_ARG_EXACT) {
-			an_arg.description = NULL;
+			if (search_type == SEARCH_DESC)
+				an_arg.description = szDesc;
+			else
+				an_arg.description = NULL;
 			an_arg.type = GF_ARG_BOOL;
+			gf_sys_print_arg(helpout, flags, (GF_GPACArg *) &an_arg, "");
+
+		} else {
+			gf_sys_print_arg(helpout, flags, (GF_GPACArg *) &an_arg, "");
 		}
-		gf_sys_print_arg(helpout, flags, (GF_GPACArg *) &an_arg, "");
 		res++;
 		i++;
 	}
@@ -1542,26 +1566,27 @@ static u32 PrintHelpForArgs(char *arg_name, MP4BoxArg *args, GF_GPACArg *_args, 
 }
 static Bool PrintHelpArg(char *arg_name, u32 search_type, GF_FilterSession *fs)
 {
+	char szDesc[100];
 	Bool first=GF_TRUE;
 	GF_GPACArg an_arg;
 	u32 i, count;
 	u32 res = 0;
 	u32 alen = (u32) strlen(arg_name);
-	res += PrintHelpForArgs(arg_name, m4b_gen_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_split_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_dash_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_imp_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_imp_fileopt_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_senc_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_crypt_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_hint_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_extr_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_dump_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_meta_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_swf_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_liveenc_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, m4b_usage_args, NULL, search_type);
-	res += PrintHelpForArgs(arg_name, NULL, (GF_GPACArg *) gf_sys_get_options(), search_type);
+	res += PrintHelpForArgs(arg_name, m4b_gen_args, NULL, search_type, "general");
+	res += PrintHelpForArgs(arg_name, m4b_split_args, NULL, search_type, "split");
+	res += PrintHelpForArgs(arg_name, m4b_dash_args, NULL, search_type, "dash");
+	res += PrintHelpForArgs(arg_name, m4b_imp_args, NULL, search_type, "import");
+	res += PrintHelpForArgs(arg_name, m4b_imp_fileopt_args, NULL, search_type, "import (per-file option)");
+	res += PrintHelpForArgs(arg_name, m4b_senc_args, NULL, search_type, "encode");
+	res += PrintHelpForArgs(arg_name, m4b_crypt_args, NULL, search_type, "crypt");
+	res += PrintHelpForArgs(arg_name, m4b_hint_args, NULL, search_type, "hint");
+	res += PrintHelpForArgs(arg_name, m4b_extr_args, NULL, search_type, "extract");
+	res += PrintHelpForArgs(arg_name, m4b_dump_args, NULL, search_type, "dump");
+	res += PrintHelpForArgs(arg_name, m4b_meta_args, NULL, search_type, "meta");
+	res += PrintHelpForArgs(arg_name, m4b_swf_args, NULL, search_type, "swf");
+	res += PrintHelpForArgs(arg_name, m4b_liveenc_args, NULL, search_type, "live");
+	res += PrintHelpForArgs(arg_name, m4b_usage_args, NULL, search_type, "");
+	res += PrintHelpForArgs(arg_name, NULL, (GF_GPACArg *) gf_sys_get_options(), search_type, "core");
 
 	if (!fs) return res;
 
@@ -1581,7 +1606,7 @@ static Bool PrintHelpArg(char *arg_name, u32 search_type, GF_FilterSession *fs)
 			if ((search_type==SEARCH_ARG_CLOSE) && !gf_sys_word_match(arg->arg_name, arg_name)) continue;
 
 			if (search_type==SEARCH_DESC) {
-				if (!strstr_nocase(arg->arg_desc, arg_name, alen)) continue;
+				if (stricmp(arg->arg_name, arg_name) && !gf_strnistr(arg->arg_desc, arg_name, alen)) continue;
 			}
 
 			an_arg.name = arg->arg_name;
@@ -1616,7 +1641,8 @@ static Bool PrintHelpArg(char *arg_name, u32 search_type, GF_FilterSession *fs)
 				}
 				if (first) {
 					first = GF_FALSE;
-					gf_sys_format_help(helpout, 0, "\nGlobal filter session arguments. Syntax is `--arg` or `--arg=VAL`. `[F]` indicates filter name. See `gpac -h` and `gpac -h F` for more info.\n");
+					gf_sys_format_help(helpout, 0, "\nGlobal filter session arguments matching %s:\n", arg_name);
+					//. Syntax is `--arg` or `--arg=VAL`. `[F]` indicates filter name. See `gpac -h` and `gpac -h F` for more info.\n");
 				}
 				fprintf(helpout, "[%s]", reg->name);
 				len = (u32)strlen(reg->name);
@@ -1625,6 +1651,9 @@ static Bool PrintHelpArg(char *arg_name, u32 search_type, GF_FilterSession *fs)
 					fprintf(helpout, " ");
 				}
 				fprintf(helpout, " ");
+			} else if (search_type==SEARCH_DESC) {
+				sprintf(szDesc, "see filter %s", reg->name);
+				an_arg.description = szDesc;
 			}
 
 			gf_sys_print_arg(helpout, GF_PRINTARG_ADD_DASH, &an_arg, "TEST");
@@ -1648,7 +1677,7 @@ static void PrintHelp(char *arg_name, Bool search_desc, Bool no_match)
 	if (search_desc) {
 		char *_arg_name = gf_strdup(arg_name);
 		strlwr(_arg_name);
-		GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("Possible options mentionning `%s`:\n", arg_name));
+		GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("Possible options mentioning `%s`:\n", arg_name));
 		PrintHelpArg(_arg_name, SEARCH_DESC, fs);
 		gf_free(_arg_name);
 	} else {
@@ -1673,7 +1702,7 @@ u32 parse_sdp_ext(char *arg_val, u32 param)
 	id = strchr(arg_val, ':');
 	if (id) {
 		id[0] = 0;
-		if (sscanf(arg_val, "%u", &sdp_lines[0].trackID) == 1) {
+		if (sscanf(arg_val, "%u", &sdp_lines[nb_sdp_ex].trackID) == 1) {
 			id[0] = ':';
 			sdp_lines[nb_sdp_ex].line = id + 1;
 		}
@@ -1727,8 +1756,19 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 		if (opts[0]==':') opts += 1;
 
 		szSlot = opts;
-		next = gf_url_colon_suffix(opts);
+		next = gf_url_colon_suffix(opts, '=');
 		if (next) next[0] = 0;
+		if (next && !strncmp(szSlot, "auxt", 4)) {
+			next[0] = ':';
+			char *sep = strchr(next, '=');
+			if (sep) {
+				next = sep;
+				while (next[0] != ':')
+					next--;
+
+				next[0] = 0;
+			}
+		}
 
 		if (!strnicmp(szSlot, "tk=", 3)) {
 			sscanf(szSlot, "tk=%u", &meta->trackID);
@@ -1786,33 +1826,33 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 			u32 comma_count = 0;
 			u32 offset_index = 0;
 			char *prev = szSlot+position;
-			char *next = strchr(szSlot+position, ',');
-			while (next != NULL) {
+			char *sub_next = strchr(szSlot+position, ',');
+			while (sub_next != NULL) {
 				comma_count++;
-				next++;
-				next = strchr(next, ',');
+				sub_next++;
+				sub_next = strchr(sub_next, ',');
 			}
 			meta->image_props->overlay_count = comma_count/2+1;
 			meta->image_props->overlay_offsets = (GF_ImageItemOverlayOffset *)gf_malloc(meta->image_props->overlay_count*sizeof(GF_ImageItemOverlayOffset));
 			if (!meta->image_props->overlay_offsets) {
 				return 0;
 			}
-			next = strchr(szSlot+position, ',');
-			while (next != NULL) {
-				*next = 0;
+			sub_next = strchr(szSlot+position, ',');
+			while (sub_next != NULL) {
+				*sub_next = 0;
 				meta->image_props->overlay_offsets[offset_index].horizontal = atoi(prev);
-				*next = ',';
-				next++;
-				prev = next;
-				if (next) {
-					next = strchr(next, ',');
-					if (next) *next = 0;
+				*sub_next = ',';
+				sub_next++;
+				prev = sub_next;
+				if (sub_next) {
+					sub_next = strchr(sub_next, ',');
+					if (sub_next) *sub_next = 0;
 					meta->image_props->overlay_offsets[offset_index].vertical = atoi(prev);
-					if (next) {
-						*next = ',';
-						next++;
-						prev = next;
-						next = strchr(next, ',');
+					if (sub_next) {
+						*sub_next = ',';
+						sub_next++;
+						prev = sub_next;
+						sub_next = strchr(sub_next, ',');
 					}
 				} else {
 					meta->image_props->overlay_offsets[offset_index].vertical = 0;
@@ -1933,6 +1973,25 @@ static u32 parse_meta_args(char *opts, MetaActionType act_type)
 			CHECK_IMGPROP
 			meta->image_props->av1_op_index = atoi(szSlot+13);
 		}
+		else if (!stricmp(szSlot, "replace")) {
+			meta->replace = GF_TRUE;
+		}
+		else if (!strnicmp(szSlot, "keep_props=", 11)) {
+			CHECK_IMGPROP
+			meta->keep_props = gf_strdup(szSlot+11);
+		}
+		else if (!strnicmp(szSlot, "auxt=", 5)) {
+			CHECK_IMGPROP
+			meta->image_props->aux_urn = gf_strdup(szSlot+5);
+		}
+		else if (!strnicmp(szSlot, "auxd=", 5)) {
+			CHECK_IMGPROP
+			GF_Err e = gf_file_load_data(szSlot+5, (u8 **) &meta->image_props->aux_data, &meta->image_props->aux_data_len);
+			if (e) {
+				M4_LOG(GF_LOG_ERROR, ("Failed to load auxiliary data file %s: %s\n", szSlot+5, gf_error_to_string(e) ));
+				return 1;
+			}
+		}
 		else if (!strchr(szSlot, '=')) {
 			switch (meta->act_type) {
 			case META_ACTION_SET_TYPE:
@@ -1988,7 +2047,7 @@ static Bool parse_tsel_args(char *opts, TSELActionType act)
 		if (!opts || !opts[0]) return 0;
 		if (opts[0]==':') opts += 1;
 		strcpy(szSlot, opts);
-		next = gf_url_colon_suffix(szSlot);
+		next = gf_url_colon_suffix(szSlot, '=');
 		if (next) next[0] = 0;
 
 
@@ -2048,7 +2107,7 @@ GF_DashSegmenterInput *set_dash_input(GF_DashSegmenterInput *dash_inputs, char *
 	GF_DashSegmenterInput *di;
 	Bool skip_rep_id = GF_FALSE;
 	char *other_opts = NULL;
-	char *sep = gf_url_colon_suffix(name);
+	char *sep = gf_url_colon_suffix(name, '=');
 
 	dash_inputs = gf_realloc(dash_inputs, sizeof(GF_DashSegmenterInput) * (*nb_dash_inputs + 1) );
 	memset(&dash_inputs[*nb_dash_inputs], 0, sizeof(GF_DashSegmenterInput) );
@@ -2060,8 +2119,17 @@ GF_DashSegmenterInput *set_dash_input(GF_DashSegmenterInput *dash_inputs, char *
 		first_opt = sep;
 		opts = sep+1;
 		while (opts) {
-			sep = gf_url_colon_suffix(opts);
-			if (sep && !strncmp(sep, "://", 3) && strncmp(sep, ":@", 2)) sep = gf_url_colon_suffix(sep+3);
+			char *xml_start = strchr(opts, '<');
+			//none of our options use filenames, so don't check for '='
+			sep = gf_url_colon_suffix(opts, 0);
+			//escape XML
+			if (xml_start && (xml_start<sep)) {
+				char *xml_end = strstr(opts, ">:");
+				if (xml_end) sep = xml_end+1;
+				else sep = NULL;
+			}
+
+			if (sep && !strncmp(sep, "://", 3) && strncmp(sep, ":@", 2)) sep = gf_url_colon_suffix(sep+3, 0);
 			if (sep) sep[0] = 0;
 
 			if (!strnicmp(opts, "id=", 3)) {
@@ -2409,7 +2477,7 @@ static Bool create_new_track_action(char *arg_val, u32 act_type, u32 dump_type)
 	}
 
 	while (param) {
-		param = gf_url_colon_suffix(param);
+		param = gf_url_colon_suffix(param, '=');
 		if (param) {
 			*param = 0;
 			param++;
@@ -2501,6 +2569,7 @@ u32 parse_bs_switch(char *arg_val, u32 opt)
 	else if (!stricmp(arg_val, "multi"))  bitstream_switching_mode = GF_DASH_BSMODE_MULTIPLE_ENTRIES;
 	else if (!stricmp(arg_val, "single"))  bitstream_switching_mode = GF_DASH_BSMODE_SINGLE;
 	else if (!stricmp(arg_val, "inband"))  bitstream_switching_mode = GF_DASH_BSMODE_INBAND;
+	else if (!stricmp(arg_val, "pps"))  bitstream_switching_mode = GF_DASH_BSMODE_INBAND_PPS;
 	else {
 		M4_LOG(GF_LOG_ERROR, ("Unrecognized bitstream switching mode \"%s\" - please check usage\n", arg_val));
 		return 2;
@@ -2527,6 +2596,7 @@ u32 parse_pssh(char *arg_val, u32 opt)
 	else if (!strcmp(arg_val, "m")) pssh_mode = GF_DASH_PSSH_MPD;
 	else if (!strcmp(arg_val, "mf") || !strcmp(arg_val, "fm")) pssh_mode = GF_DASH_PSSH_MOOF_MPD;
 	else if (!strcmp(arg_val, "mv") || !strcmp(arg_val, "vm")) pssh_mode = GF_DASH_PSSH_MOOV_MPD;
+	else if (!strcmp(arg_val, "n")) pssh_mode = GF_DASH_PSSH_NONE;
 	else pssh_mode = GF_DASH_PSSH_MOOV;
 	return 0;
 }
@@ -2545,7 +2615,9 @@ u32 parse_rap_ref(char *arg_val, u32 opt)
 			parse_track_action(arg_val, opt ? TRACK_ACTION_REM_NON_REFS : TRACK_ACTION_REM_NON_RAP);
 		}
 	}
+#ifndef GPAC_DISABLE_STREAMING
 	hint_flags |= GP_RTP_PCK_SIGNAL_RAP;
+#endif
 	seg_at_rap = 1;
 	return 0;
 }
@@ -2578,7 +2650,9 @@ u32 parse_base_url(char *arg_val, u32 opt)
 }
 u32 parse_multi_rtp(char *arg_val, u32 opt)
 {
+#ifndef GPAC_DISABLE_STREAMING
 	hint_flags |= GP_RTP_PCK_USE_MULTI;
+#endif
 	if (arg_val)
 		max_ptime = atoi(arg_val);
 	return 0;
@@ -2587,6 +2661,7 @@ u32 parse_multi_rtp(char *arg_val, u32 opt)
 
 u32 parse_senc_param(char *arg_val, u32 opt)
 {
+#ifndef GPAC_DISABLE_SCENE_ENCODER
 	switch (opt) {
 	case 0: //-sync
 		smenc_opts.flags |= GF_SM_ENCODE_RAP_INBAND;
@@ -2613,6 +2688,7 @@ u32 parse_senc_param(char *arg_val, u32 opt)
 		chunk_mode = GF_TRUE;
 		input_ctx = arg_val;
 	}
+#endif
 	return 0;
 }
 u32 parse_cryp(char *arg_val, u32 opt)
@@ -3312,6 +3388,11 @@ u32 mp4box_parse_args(int argc, char **argv)
 		else if (!strncmp(arg, "-p=", 3)) {
 			continue;
 		}
+#ifndef GPAC_MEMORY_TRACKING
+		else if (!strcmp(arg, "-mem-track") || !strcmp(arg, "-mem-track-stack")) {
+			continue;
+		}
+#endif
 
 		//parse argument
 		else if (mp4box_parse_single_arg(argc, argv, arg, &i)) {
@@ -3983,6 +4064,7 @@ static u32 do_raw_cat()
 static u32 do_write_udp()
 {
 	GF_Err e;
+	u32 res = 0;
 	GF_Socket *sock = gf_sk_new(GF_SOCK_TYPE_UDP);
 	u16 port = 2345;
 	char *sep = strrchr(udp_dest, ':');
@@ -3990,17 +4072,20 @@ static u32 do_write_udp()
 		sep[0] = 0;
 		port = atoi(sep+1);
 	}
-	e = gf_sk_bind( sock, "127.0.0.1", 0, udp_dest, port, 0);
+	e = gf_sk_bind( sock, NULL, port, udp_dest, port, 0);
 	if (sep) sep[0] = ':';
 	if (e) {
 		M4_LOG(GF_LOG_ERROR, ("Failed to bind socket to %s: %s\n", udp_dest, gf_error_to_string(e) ));
+		res = 1;
 	} else {
 		e = gf_sk_send(sock, (u8 *) inName, (u32)strlen(inName));
-		if (e)
+		if (e) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to send datagram: %s\n", gf_error_to_string(e) ));
+			res = 1;
+		}
 	}
 	gf_sk_del(sock);
-	return 0;
+	return res;
 }
 
 #ifndef GPAC_DISABLE_MPD
@@ -4152,6 +4237,7 @@ static u32 do_add_cat(int argc, char **argv)
 	GF_Err e;
 	u32 i, ipass, nb_pass = 1;
 	char *mux_args=NULL;
+	char *mux_sid=NULL;
 	GF_FilterSession *fs = NULL;
 	if (nb_add) {
 
@@ -4224,6 +4310,7 @@ static u32 do_add_cat(int argc, char **argv)
 		u32 tk_idx = 1;
 		for (i=0; i<(u32) argc; i++) {
 			char *margs=NULL;
+			char *msid = NULL;
 			if (!strcmp(argv[i], "-add")) {
 				char *src = argv[i+1];
 
@@ -4239,7 +4326,7 @@ static u32 do_add_cat(int argc, char **argv)
 						if (strstr(src, "://"))
 							break;
 
-						opt_sep = gf_url_colon_suffix(src);
+						opt_sep = gf_url_colon_suffix(src, '=');
 						if (opt_sep)
 							opt_sep[0] = 0;
 						if (gf_file_exists(src)) {
@@ -4253,13 +4340,20 @@ static u32 do_add_cat(int argc, char **argv)
 						sep[0] = '+';
 						loc_src = sep+1;
 					}
-
-					e = import_file(file, src, import_flags, import_fps, agg_samples, fs, (fs && (ipass==0)) ? &margs : NULL, tk_idx);
+					if (fs && (ipass==0)) {
+						e = import_file(file, src, import_flags, import_fps, agg_samples, fs, &margs, &msid, tk_idx);
+					} else {
+						e = import_file(file, src, import_flags, import_fps, agg_samples, fs, NULL, NULL, tk_idx);
+					}
 					tk_idx++;
 
 					if (margs) {
 						gf_dynstrcat(&mux_args, margs, ":");
 						gf_free(margs);
+					}
+					if (msid) {
+						gf_dynstrcat(&mux_sid, msid, ",");
+						gf_free(msid);
 					}
 
 					if (e) {
@@ -4313,6 +4407,10 @@ static u32 do_add_cat(int argc, char **argv)
 			}
 		}
 		if ((nb_pass == 2) && !ipass) {
+			if (mux_sid) {
+				gf_dynstrcat(&mux_args, "SID=", ":");
+				gf_dynstrcat(&mux_args, mux_sid, NULL);
+			}
 			GF_Filter *mux_filter = gf_fs_load_filter(fs, mux_args, NULL);
 			gf_free(mux_args);
 			if (!mux_filter) {
@@ -4756,6 +4854,17 @@ static GF_Err do_meta_act()
 			do_save = GF_TRUE;
 			break;
 		case META_ACTION_ADD_ITEM:
+
+			if (meta->replace) {
+				if (!gf_isom_get_meta_item_by_id(file, meta->root_meta, tk, meta->item_id)) {
+					M4_LOG(GF_LOG_WARNING, ("No item with ID %d, ignoring replace\n", meta->item_id));
+					meta->item_id = 0;
+				} else {
+					e = gf_isom_remove_meta_item(file, meta->root_meta, tk, meta->item_id, GF_TRUE, meta->keep_props);
+					if (e) break;
+				}
+			}
+
 			self_ref = !stricmp(meta->szPath, "NULL") || !stricmp(meta->szPath, "this") || !stricmp(meta->szPath, "self");
 			e = gf_isom_add_meta_item(file, meta->root_meta, tk, self_ref, self_ref ? NULL : meta->szPath,
 			                          meta->szName,
@@ -4798,7 +4907,9 @@ static GF_Err do_meta_act()
 					if (meta->image_props->item_ref_id)
 						src_tk_id = 0;
 				} else {
-					e = import_file(file, meta->szPath, 0, _frac, 0, NULL, NULL, 0);
+					gf_isom_disable_brand_rewrite(file, GF_TRUE);
+					e = import_file(file, meta->szPath, 0, _frac, 0, NULL, NULL, NULL, 0);
+					gf_isom_disable_brand_rewrite(file, GF_FALSE);
 				}
 			} else {
 				M4_LOG(GF_LOG_ERROR, ("Missing file name to import\n"));
@@ -4831,11 +4942,20 @@ static GF_Err do_meta_act()
 							if (!src_tk_id) {
 								M4_LOG(GF_LOG_ERROR, ("No video track in file, cannot add image from track\n"));
 								e = GF_BAD_PARAM;
-								break;
 							}
 						}
 
-						e = gf_isom_iff_create_image_item_from_track(file, meta->root_meta, tk, src_tk_id, meta->szName, meta->item_id, meta->image_props, NULL);
+						if (e == GF_OK && meta->replace) {
+							if (!gf_isom_get_meta_item_by_id(file, meta->root_meta, tk, meta->item_id)) {
+								M4_LOG(GF_LOG_WARNING, ("No item with ID %d, ignoring replace\n", meta->item_id));
+								meta->item_id = 0;
+							} else {
+								e = gf_isom_remove_meta_item(file, meta->root_meta, tk, meta->item_id, GF_TRUE, meta->keep_props);
+							}
+						}
+						if (e==GF_OK)
+							e = gf_isom_iff_create_image_item_from_track(file, meta->root_meta, tk, src_tk_id, meta->szName, meta->item_id, meta->image_props, NULL);
+
 						if (e == GF_OK && meta->primary) {
 							e = gf_isom_set_meta_primary_item(file, meta->root_meta, tk, meta->item_id);
 						}
@@ -4877,38 +4997,40 @@ static GF_Err do_meta_act()
 					e = GF_BAD_PARAM;
 				}
 			}
-			if (e == GF_OK) {
-				if (!meta->item_id) {
-					e = gf_isom_meta_get_next_item_id(file, meta->root_meta, tk, &meta->item_id);
+			if (e) break;
+			if (!meta->item_id) {
+				e = gf_isom_meta_get_next_item_id(file, meta->root_meta, tk, &meta->item_id);
+			}
+			if (e == GF_OK && meta->item_type) {
+				if (meta->item_type == GF_4CC('g','r','i','d')) {
+					e = gf_isom_iff_create_image_grid_item(file, meta->root_meta, tk,
+							meta->szName && strlen(meta->szName) ? meta->szName : NULL,
+							meta->item_id,
+							meta->image_props);
+				} else if (meta->item_type == GF_4CC('i','o','v','l')) {
+					e = gf_isom_iff_create_image_overlay_item(file, meta->root_meta, tk,
+							meta->szName && strlen(meta->szName) ? meta->szName : NULL,
+							meta->item_id,
+							meta->image_props);
+				} else if (meta->item_type == GF_4CC('i','d','e','n')) {
+					e = gf_isom_iff_create_image_identity_item(file, meta->root_meta, tk,
+							meta->szName && strlen(meta->szName) ? meta->szName : NULL,
+							meta->item_id,
+							meta->image_props);
+				} else {
+					e = GF_NOT_SUPPORTED;
 				}
-				if (e == GF_OK && meta->item_type) {
-					if (meta->item_type == GF_4CC('g','r','i','d')) {
-						e = gf_isom_iff_create_image_grid_item(file, meta->root_meta, tk,
-								meta->szName && strlen(meta->szName) ? meta->szName : NULL,
-								meta->item_id,
-								meta->image_props);
-					} else if (meta->item_type == GF_4CC('i','o','v','l')) {
-						e = gf_isom_iff_create_image_overlay_item(file, meta->root_meta, tk,
-								meta->szName && strlen(meta->szName) ? meta->szName : NULL,
-								meta->item_id,
-								meta->image_props);
-					} else if (meta->item_type == GF_4CC('i','d','e','n')) {
-						e = gf_isom_iff_create_image_identity_item(file, meta->root_meta, tk,
-								meta->szName && strlen(meta->szName) ? meta->szName : NULL,
-								meta->item_id,
-								meta->image_props);
-					} else {
-						e = GF_NOT_SUPPORTED;
-					}
-					if (e == GF_OK && meta->primary) {
-						e = gf_isom_set_meta_primary_item(file, meta->root_meta, tk, meta->item_id);
-					}
-					if (e == GF_OK && meta->item_refs && gf_list_count(meta->item_refs)) {
-						u32 ref_i;
-						for (ref_i = 0; ref_i < gf_list_count(meta->item_refs); ref_i++) {
-							MetaRef	*ref_entry = gf_list_get(meta->item_refs, ref_i);
-							e = gf_isom_meta_add_item_ref(file, meta->root_meta, tk, meta->item_id, ref_entry->ref_item_id, ref_entry->ref_type, NULL);
-						}
+				if (e) break;
+				if (meta->primary) {
+					e = gf_isom_set_meta_primary_item(file, meta->root_meta, tk, meta->item_id);
+					if (e) break;
+				}
+				if (meta->item_refs && gf_list_count(meta->item_refs)) {
+					u32 ref_i;
+					for (ref_i = 0; ref_i < gf_list_count(meta->item_refs); ref_i++) {
+						MetaRef	*ref_entry = gf_list_get(meta->item_refs, ref_i);
+						e = gf_isom_meta_add_item_ref(file, meta->root_meta, tk, meta->item_id, ref_entry->ref_item_id, ref_entry->ref_type, NULL);
+						if (e) break;
 					}
 				}
 			}
@@ -4916,7 +5038,7 @@ static GF_Err do_meta_act()
 		}
 			break;
 		case META_ACTION_REM_ITEM:
-			e = gf_isom_remove_meta_item(file, meta->root_meta, tk, meta->item_id);
+			e = gf_isom_remove_meta_item(file, meta->root_meta, tk, meta->item_id, GF_FALSE, NULL);
 			do_save = GF_TRUE;
 			break;
 		case META_ACTION_SET_PRIMARY_ITEM:
@@ -5290,20 +5412,32 @@ static GF_Err do_itunes_tag()
 		Bool is_wma = GF_FALSE;
 		u32 tlen, tagtype=0, itag = 0;
 		s32 tag_idx=-1;
-		char *sep = itunes_data ? strchr(tags, '\n') : gf_url_colon_suffix(tags);
+		char *sep = itunes_data ? strchr(tags, '\n') : gf_url_colon_suffix(tags, '=');
 		while (sep) {
 			char *eq = strchr(sep+1, '=');
 			if (eq) eq[0] = 0;
 			s32 next_tag_idx = gf_itags_find_by_name(sep+1);
-			if ((next_tag_idx<0) && strlen(sep+1)==4)
-				next_tag_idx = 0;
+			if (next_tag_idx<0) {
+				//4CC tag
+				if ( strlen(sep+1)==4) {
+					next_tag_idx = 0;
+				}
+				//3CC tag, changed to @tag
+				if ( strlen(sep+1)==3) {
+					next_tag_idx = 0;
+				}
+				//unrecognized tag tag
+				else if (strlen(sep+1)) {
+					M4_LOG(GF_LOG_WARNING, ("Unrecognize tag \"%s\", assuming part of previous tag\n", sep+1));
+				}
+			}
 
 			if (eq) eq[0] = '=';
 			if (next_tag_idx>=0) {
 				sep[0] = 0;
 				break;
 			}
-			sep = itunes_data ? strchr(sep+1, '\n') : gf_url_colon_suffix(sep+1);
+			sep = itunes_data ? strchr(sep+1, '\n') : gf_url_colon_suffix(sep+1, '=');
 		}
 		val = strchr(tags, '=');
 		if (val) val[0] = 0;
@@ -5337,7 +5471,15 @@ static GF_Err do_itunes_tag()
 		}
 		if (!val || (val[0]==':') || !val[0] || !stricmp(val, "NULL") ) val = NULL;
 
-		tlen = val ? (u32) strlen(val) : 0;
+		//if val is NULL, use tlen=1 to force removal of tag
+		if (val) {
+			tlen = (u32) strlen(val);
+			while (tlen && ( (val[tlen-1]=='\n') || (val[tlen-1]=='\r')))
+				tlen--;
+		} else {
+			tlen = 1;
+		}
+
 		if (clear) {
 			e = gf_isom_apple_set_tag(file, GF_ISOM_ITUNE_RESET, NULL, 0, 0, 0);
 		}
@@ -5440,9 +5582,12 @@ static u32 mp4box_cleanup(u32 ret_code) {
 			if (metas[i].mime_type) gf_free(metas[i].mime_type);
 			if (metas[i].szName) gf_free(metas[i].szName);
 			if (metas[i].szPath) gf_free(metas[i].szPath);
+			if (metas[i].keep_props) gf_free(metas[i].keep_props);
 			if (metas[i].image_props) {
 				GF_ImageItemProperties *iprops = metas[i].image_props;
 				if (iprops->overlay_offsets) gf_free(iprops->overlay_offsets);
+				if (iprops->aux_urn) gf_free((char *) iprops->aux_urn);
+				if (iprops->aux_data) gf_free((char *) iprops->aux_data);
 				gf_free(iprops);
 			}
 		}
@@ -5609,8 +5754,10 @@ int mp4boxMain(int argc, char **argv)
 
 	if (do_mpd_conv) inName = do_mpd_conv;
 
+#ifndef GPAC_DISABLE_STREAMING
 	if (import_flags & GF_IMPORT_FORCE_MPEG4)
 		hint_flags |= GP_RTP_PCK_FORCE_MPEG4;
+#endif
 
 	if (!inName && dump_std)
 		inName = "std";
@@ -5660,7 +5807,7 @@ int mp4boxMain(int argc, char **argv)
 	gf_log_set_tool_level(GF_LOG_CONTAINER, level);
 	gf_log_set_tool_level(GF_LOG_SCENE, level);
 	gf_log_set_tool_level(GF_LOG_PARSER, level);
-	gf_log_set_tool_level(GF_LOG_AUTHOR, level);
+	gf_log_set_tool_level(GF_LOG_MEDIA, level);
 	gf_log_set_tool_level(GF_LOG_CODING, level);
 	gf_log_set_tool_level(GF_LOG_DASH, level);
 #ifdef GPAC_MEMORY_TRACKING
@@ -5772,7 +5919,8 @@ int mp4boxMain(int argc, char **argv)
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 	else if (pack_file) {
-		char *fileName = gf_url_colon_suffix(pack_file);
+		//don't use any check for ':', the first word must be the four CC
+		char *fileName = gf_url_colon_suffix(pack_file, 0);
 		if (fileName && ((fileName - pack_file)==4)) {
 			fileName[0] = 0;
 			file = package_file(fileName + 1, pack_file, pack_wgt);
@@ -5953,7 +6101,7 @@ int mp4boxMain(int argc, char **argv)
 	}
 
 	if (high_dynamc_range_filename) {
-		e = parse_high_dynamc_range_xml_desc(file, high_dynamc_range_filename);
+		e = parse_high_dynamc_range_xml_desc(file, 0, high_dynamc_range_filename);
 		if (e) goto err_exit;
 	}
 
@@ -6053,7 +6201,10 @@ int mp4boxMain(int argc, char **argv)
 #endif
 
 	if (dump_timestamps) dump_isom_timestamps(file, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE, dump_timestamps);
-	if (dump_nal) dump_isom_nal(file, dump_nal, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE, dump_nal_type);
+	if (dump_nal) {
+		e = dump_isom_nal(file, dump_nal, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE, dump_nal_type);
+		if (e) goto err_exit;
+	}
 	if (dump_saps) dump_isom_saps(file, dump_saps, dump_saps_mode, dump_std ? NULL : (outName ? outName : outfile), outName ? GF_TRUE : GF_FALSE);
 
 	if (do_hash) {

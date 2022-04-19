@@ -83,14 +83,16 @@ void rmt_send(DOMString command);
 void set_rmt_fun(function callback);
 
 /*! inserts a filter in graph
+
 \param filter_to_add string describin the filter to add, can be in the form "src=" for sources, "dst=" for sinks or regular string for filters.
 \param link_from filter used as source for the created filters - see \ref gf_filter_set_source
 \param link_args arguments for the link (used to assign new filter SID - see \ref gf_filter_set_source
+\param relative_to_script if false, URLs for source and sinks filters are relative to the current working directory, if true they are relative to the script path
 \return new filter created
 */
-JSFSFilter add_filter(DOMString filter_to_add, optional JSFSFilter link_from=null, optional DOMString link_args=null);
+JSFSFilter add_filter(DOMString filter_to_add, optional JSFSFilter link_from=null, optional DOMString link_args=null, optional boolean relative_to_script=false);
 
-/*! sets callback function to get notifications upon each new filter creation. 
+/*! sets callback function to get notifications upon each new filter creation.
 \param callback callback function - it is passed a single parameter, the filter object
 */
 void set_new_filter_fun(function callback);
@@ -139,6 +141,14 @@ readonly attribute unsigned long http_bitrate;
 /*! set to true if no PID initialization task (connections) is pending*/
 readonly attribute boolean connected;
 
+/*! last process error, cf gf_fs_get_last_process_error*/
+readonly attribute boolean last_process_error;
+/*! last connection error, cf gf_fs_get_last_connect_error*/
+readonly attribute boolean last_connect_error;
+
+/*! File path of source script*/
+readonly attribute DOMString jspath;
+
 };
 
 
@@ -164,7 +174,7 @@ attribute readonly DOMString status;
 attribute readonly boolean alias;
 /*! set to the arguments passed to the filter, null if none*/
 attribute readonly DOMString args;
-/*! set to true if filter was dynamically loaded during graph resolution, false if filter was explicetly loaded by user/app*/
+/*! set to true if filter was dynamically loaded during graph resolution, false if filter was explicitly loaded by user/app*/
 attribute readonly boolean dynamic;
 /*! set to true if filter is done processing and will soon be removed*/
 attribute readonly boolean done;

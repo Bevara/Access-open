@@ -211,6 +211,17 @@ GF_Err gf_bifs_decoder_remove_stream(GF_BifsDecoder *codec, u16 ESID)
 #endif
 
 
+void command_buffers_del(GF_List *command_buffers)
+{
+	while (gf_list_count(command_buffers)) {
+		CommandBufferItem *cbi = (CommandBufferItem *)gf_list_get(command_buffers, 0);
+		gf_node_unregister(cbi->node, NULL);
+		gf_free(cbi);
+		gf_list_rem(command_buffers, 0);
+	}
+	gf_list_del(command_buffers);
+}
+
 GF_EXPORT
 void gf_bifs_decoder_del(GF_BifsDecoder *codec)
 {
@@ -225,19 +236,15 @@ void gf_bifs_decoder_del(GF_BifsDecoder *codec)
 	}
 	gf_list_del(codec->streamInfo);
 
-	while (gf_list_count(codec->command_buffers)) {
-		CommandBufferItem *cbi = (CommandBufferItem *)gf_list_get(codec->command_buffers, 0);
-		gf_free(cbi);
-		gf_list_rem(codec->command_buffers, 0);
-	}
-	gf_list_del(codec->command_buffers);
+	command_buffers_del(codec->command_buffers);
+
 	gf_free(codec);
 }
 
 
 void BD_EndOfStream(void *co)
 {
-	((GF_BifsDecoder *) co)->LastError = GF_IO_ERR;
+	((GF_BifsDecoder *) co)->LastError = GF_NON_COMPLIANT_BITSTREAM;
 }
 
 void gf_bs_set_eos_callback(GF_BitStream *bs, void (*EndOfStream)(void *par), void *par);
@@ -511,6 +518,8 @@ GF_Err gf_bifs_get_field_index(GF_Node *Node, u32 inField, u8 IndexMode, u32 *al
 #endif
 		return gf_sg_script_get_field_index(Node, inField, IndexMode, allField);
 	default:
+		if (inField >= gf_sg_mpeg4_node_get_field_count(Node, IndexMode))
+			return GF_NON_COMPLIANT_BITSTREAM;
 		return gf_sg_mpeg4_node_get_field_index(Node, inField, IndexMode, allField);
 	}
 }
@@ -520,6 +529,9 @@ GF_Err gf_bifs_get_field_index(GF_Node *Node, u32 inField, u8 IndexMode, u32 *al
 GF_EXPORT
 Bool gf_bifs_get_aq_info(GF_Node *Node, u32 FieldIndex, u8 *QType, u8 *AType, Fixed *b_min, Fixed *b_max, u32 *QT13_bits)
 {
+	*b_min = 0;
+	*b_max = 0;
+	*QT13_bits = 0;
 	switch (Node->sgprivate->tag) {
 	case TAG_ProtoNode:
 		return gf_sg_proto_get_aq_info(Node, FieldIndex, QType, AType, b_min, b_max, QT13_bits);

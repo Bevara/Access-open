@@ -137,14 +137,14 @@ unsigned long long get_utc();
 
 /*! gets UTC timestamp for a given date - see \ref gf_net_get_utc_ts
 \param year date's year
-\param month date's month of the year
-\param day date's day of the week
+\param month date's month of the year, 0 to 11
+\param day date's day of the week, 1 to 31
 \param hour date's hours
 \param min date's minutes
 \param sec date's seconds
 \return UTC 64 bit timestamp
 */
-unsigned long long get_utc();
+unsigned long long get_utc(unsigned long year, unsigned long month, unsigned long day, unsigned long hour, unsigned long min, unsigned long sec);
 
 
 /*! gets UTC clock from a date - see \ref gf_net_parse_date
@@ -171,6 +171,12 @@ Fraction ntp_shift(Fraction ntp, long microseconds);
 \return CRC32 of the data
 */
 unsigned long crc32(ArrayBuffer abuf);
+
+/*! gets CRC32 of a string - see \ref gf_crc_32
+\param str string buffer
+\return CRC32 of the string
+*/
+unsigned long crc32(DOMString str);
 
 /*! gets SHA1 digest of an arraybuffer - see \ref gf_sha1_file
 \param fname name of file to hash
@@ -254,7 +260,7 @@ void del(DOMString filename);
 */
 unsigned long long mod_time(DOMString filename);
 
-/*! get file modification time - cf \ref gf_file_modification_time
+/*! rename/move file - cf \ref gf_file_move
 \param filename name of file
 \param newname new name of the file
 */
@@ -330,6 +336,24 @@ unsigned long ntohs(unsigned long value);
 */
 unsigned long pixfmt_size(DOMString pix_fmt, unsigned long width, unsigned long height);
 
+/*! checks if pixel format is potentially transparent (uses alpha)
+\param pix_fmt pixel format name
+\return true if transparent, false otherwise
+*/
+boolean pixfmt_transparent(DOMString pix_fmt);
+
+/*! checks if pixel format is YUV
+\param pix_fmt pixel format name
+\return true if YUV, false otherwise
+*/
+boolean pixfmt_yuv(DOMString pix_fmt);
+
+/*! checks bit depth of component in pixel format
+\param pix_fmt pixel format name
+\return number of bits per component
+*/
+boolean pixfmt_depth(DOMString pix_fmt);
+
 /*! gets size in bytes of an audio sample in the given format
 \param pcm_fmt PCM format name
 \return size in bytes
@@ -351,6 +375,27 @@ DOMString color_lerp(double interp, DOMString color1, DOMString color2);
 \return the component value normalized between 0 and 1
 */
 double color_component(DOMString color, unsigned long comp_idx);
+
+/*! concatenates URLs
+\param parent parent URL
+\param URL URL to concatenate
+\return the resolved URL
+*/
+DOMString url_cat(DOMString parent, DOMString URL);
+
+/*! gets union of two rectangles
+\param r1 first rectangle
+\param r2 second rectangle
+\return union rectangle
+*/
+Rect rect_union(Rect r1, Rect r2);
+
+/*! gets intersection of two rectangles
+\param r1 first rectangle
+\param r2 second rectangle
+\return intersection rectangle
+*/
+Rect rect_intersect(Rect r1, Rect r2);
 
 
 /*! number of cores */
@@ -492,7 +537,7 @@ interface FileInformation {
 	boolean system;
 	/*! file size in bytes*/
 	unsigned long long size;
-	/*! last modification UTC time*/
+	/*! last modification UTC time in microseconds*/
 	unsigned long long last_modified;
 };
 
@@ -535,6 +580,14 @@ void close();
 \return the number of bytes read
 */
 unsigned long read(ArrayBuffer buf, optional unsigned long nb_bytes=0);
+
+
+/*! seek into file - see \ref gf_fseek
+\param offset offset in file
+\param whence seek origin
+\return -1 if error, 0 otherwise
+*/
+long seek(unsigned long long offset, long whence);
 
 /*! get a string from a file, stopping at first new line character found - see \ref gf_fgets
 \return string read
@@ -810,13 +863,60 @@ attribute readonly unsigned long long refreshed_size;
 
 }
 
-/*! FILE object*/
+/*! fraction object*/
 interface Fraction {
 /*! numerator*/
 long n;
 /*! denumerator*/
 unsigned long d;
 };
+
+
+/*! FileIO object
+
+A FileIO object wraps calls to file IO, allowing the script to feed GPAC files not present on disk, or have GPAC create files in JS memory.
+
+Whenever a file is opened, a new JS object of type FileIO is created and passed as "this" in the specified open, close, read, write, seek, tell, eof callbacks.
+
+Any URL relative to the reference URL provided will be solved against the parent FileIO, resulting in additionnals open() calls.
+
+Warning: this is work in progress
+*/
+interface FileIO {
+
+/*! constructor for a FileIO
+\param reference_url the base URL this FileIO wraps
+\param open the open function callback, shall not be NULL. The callback is "boolean open(DOMString url, DOMString mode); ", with mode a fopen mode and the return value true indicates success
+\param close the close function callback, shall not be NULL. The callback is "close();"
+\param write the write function callback, shall not be NULL if read is NULL. The callback is "unsigned long write(ArrayBuffer ab);", where ab is the buffer to write and the return value the number of bytes written
+\param read the read function callback, shall not be NULL if write is NULL. The callback is "unsigned long read(ArrayBuffer ab);", where ab is the buffer to fill and the return value the number of bytes read
+\param seek the seek function callback, shall not be NULL. The callback is "unsigned long seek(unsigned long long pos, unsigned long whence);", as in \ref gf_fseek
+\param tell the seek function callback, shall not be NULL. The callback is "unsigned long long tell();", as in \ref gf_ftell
+\param eof the end of file function callback, shall not be NULL. The callback is "boolean eof();", as in \ref gf_feof
+\param exists the file existence probing function callback, shall not be NULL. The callback is "boolean exists(DOMString URL);", returns true if file exists (for read access). The "this" object is the constructed FileIO on this callback.
+*/
+File(DOMString reference_url, function open, function close, function write, function read, function seek, function tell, function eof, function exists);
+
+/*! protects the FileIO factory, preventing it to be deleted until destroy is called
+This is needded in case a FileIO URL is used several time in a session (re-injecting a source), as libgpac will otherwise destroy the
+underlying FileIO factory when no more files are associated with it
+*/
+void protect();
+
+/*! destroy the underlying FileIO, if not already destroyed. If \ref protect is used, this function MUST be called before exiting gpac*/
+void destroy();
+
+/*! get the gfio:// URL associated with the fileIO object */
+attribute readonly DOMString url;
+
+/*! get the underlying resource URL associated with the fileIO object */
+attribute readonly DOMString resource_url;
+
+/*! the parent FileIO object (the one constructed by the script) for this FileIO instance*/
+attribute readonly FileIO parent;
+
+};
+
 
 
 /*! @} */

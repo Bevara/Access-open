@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2021
+ *			Copyright (c) Telecom ParisTech 2005-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / LASeR decoder filter
@@ -230,6 +230,17 @@ static GF_Err lsrdec_process(GF_Filter *filter)
 	return GF_OK;
 }
 
+static GF_Err lsrdec_initialize(GF_Filter *filter)
+{
+#ifdef GPAC_ENABLE_COVERAGE
+	if (gf_sys_is_cov_mode()) {
+		gf_svg_get_system_paint_server_type("");
+		gf_svg_get_system_paint_server_name(0);
+	}
+#endif
+	return GF_OK;
+}
+
 static void lsrdec_finalize(GF_Filter *filter)
 {
 	GF_LSRDecCtx *ctx = gf_filter_get_udta(filter);
@@ -250,11 +261,13 @@ static const GF_FilterCapability LSRDecCaps[] =
 GF_FilterRegister LSRDecRegister = {
 	.name = "lsrdec",
 	GF_FS_SET_DESCRIPTION("MPEG-4 LASeR decoder")
-	GF_FS_SET_HELP("This filter decodes MPEG-4 LASeR frames directly into the scene graph of the compositor. It cannot be used to dump LASeR content.")
+	GF_FS_SET_HELP("This filter decodes MPEG-4 LASeR binary frames directly into the scene graph of the compositor.\n"
+	"Note: This filter cannot be used to dump LASeR content to text or xml, use `MP4Box` for that.")
 	.private_size = sizeof(GF_LSRDecCtx),
 	.flags = GF_FS_REG_MAIN_THREAD,
 	.priority = 1,
 	SETCAPS(LSRDecCaps),
+	.initialize = lsrdec_initialize,
 	.finalize = lsrdec_finalize,
 	.process = lsrdec_process,
 	.configure_pid = lsrdec_configure_pid,

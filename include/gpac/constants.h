@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / exported constants
@@ -171,7 +171,7 @@ typedef enum
 
 	/*!32 bit ARGB. Component ordering in bytes is A-R-G-B.*/
 	GF_PIXEL_ARGB		=	GF_4CC('A','R','G','B'),
-	/*!32 bit RGBA (openGL like). Component ordering in bytes is R-G-B-A.*/
+	/*!32 bit RGBA (OpenGL like). Component ordering in bytes is R-G-B-A.*/
 	GF_PIXEL_RGBA		=	GF_4CC('R','G','B', 'A'),
 	/*!32 bit BGRA. Component ordering in bytes is B-G-R-A.*/
 	GF_PIXEL_BGRA		=	GF_4CC('B','G','R','A'),
@@ -237,13 +237,19 @@ typedef enum
 	/*!444 YUV, 10 bits, little endian*/
 	GF_PIXEL_YUV444_10	=	GF_4CC('Y','4','1','0'),
 	/*!444 YUV packed*/
-	GF_PIXEL_YUV444_PACK	=	GF_4CC('Y','4','4','p'),
+	GF_PIXEL_YUV444_PACK	=	GF_4CC('Y','U','V','4'),
+	/*!444 VYU packed (v308) */
+	GF_PIXEL_VYU444_PACK	=	GF_4CC('V','Y','U','4'),
 	/*!444 YUV+Alpha packed*/
 	GF_PIXEL_YUVA444_PACK	=	GF_4CC('Y','A','4','p'),
-	/*!444 YUV 10 bit packed*/
+	/*!444 UYVA packed (v408) */
+	GF_PIXEL_UYVA444_PACK	=	GF_4CC('U','Y','V','A'),
+	/*!444 YUV 10 bit packed little endian (v410)*/
 	GF_PIXEL_YUV444_10_PACK	=	GF_4CC('Y','4','1','p'),
+	/*!422 YUV 10 bit packed in v210 format*/
+	GF_PIXEL_V210			= GF_4CC('v','2','1','0'),
 
-	/*!Unknown format exposed a single openGL texture to be consumed using samplerExternalOES*/
+	/*!Unknown format exposed a single OpenGL texture to be consumed using samplerExternalOES*/
 	GF_PIXEL_GL_EXTERNAL	=	GF_4CC('E','X','G','L')
 } GF_PixelFormat;
 
@@ -260,9 +266,16 @@ GF_PixelFormat gf_pixel_fmt_parse(const char *pf_name);
 */
 const char *gf_pixel_fmt_name(GF_PixelFormat pfmt);
 
+/*! checks if pixel format is known, does not throw error message
+\param pf_4cc pixel format code or 0
+\param pf_name pixel format name or short name or NULL
+\return GF_TRUE is format is known, GF_FALSE otherwise
+*/
+Bool gf_pixel_fmt_probe(GF_PixelFormat pf_4cc, const char *pf_name);
+
 /*! gets short name of pixel formats, as used for file extensions
 \param pfmt pixel format code
-\return pixel format short name
+\return pixel format short name, "unknown" if not found
 */
 const char *gf_pixel_fmt_sname(GF_PixelFormat pfmt);
 
@@ -316,6 +329,12 @@ u32 gf_pixel_is_wide_depth(GF_PixelFormat pixfmt);
 */
 u32 gf_pixel_get_nb_comp(GF_PixelFormat pixfmt);
 
+/*! Checks if  pixel format is transparent
+\param pixfmt  pixel format code
+\return GF_TRUE if alpha channel is present, GF_FALSE otherwise
+*/
+Bool gf_pixel_fmt_is_transparent(GF_PixelFormat pixfmt);
+
 /*! Checks if format is YUV
 \param pixfmt  pixel format code
 \return GF_TRUE is YUV format, GF_FALSE otherwise (greyscale or RGB)
@@ -336,7 +355,13 @@ u32 gf_pixel_fmt_to_qt_type(GF_PixelFormat pixfmt);
 /*!
 \brief Codec IDs
 
-Codec ID identifies the stream coding type. The enum is devided into values less than 255, which are equivalent to MPEG-4 systems ObjectTypeIndication. Other values are 4CCs, usually matching ISOMEDIA sample entry types*/
+Codec ID identifies the stream coding type. The enum is divided into values less than 255, which are equivalent to MPEG-4 systems ObjectTypeIndication. Other values are 4CCs, usually matching ISOMEDIA sample entry types.
+
+Unless specified otherwise the decoder configuration is:
+- the one specified in MPEG-4 systems if any
+- or the one defined in ISOBMFF and derived specs (3GPP, dolby, etc) if any
+- or NULL
+*/
 typedef enum
 {
 	/*!Never used by PID declarations, but used by filters caps*/
@@ -404,7 +429,7 @@ typedef enum
 	GF_CODECID_MPEG2_PART3 = 0x69,
 	/*! codecid for MPEG-1 Video streams*/
 	GF_CODECID_MPEG1 = 0x6A,
-	/*! codecid for MPEG-1 Audio streams*/
+	/*! codecid for MPEG-1 Audio streams, layer 3*/
 	GF_CODECID_MPEG_AUDIO = 0x6B,
 	/*! codecid for JPEG streams*/
 	GF_CODECID_JPEG = 0x6C,
@@ -486,10 +511,15 @@ typedef enum
 	/*! codecid for subtitle/text streams in tx3g / apple text format*/
 	GF_CODECID_TX3G = GF_4CC( 't', 'x', '3', 'g' ),
 
+	/*! codecid for SSA / ASS text streams (only demux -> tx3f conv)*/
+	GF_CODECID_SUBS_SSA = GF_4CC( 'a', 's', 's', 'a' ),
+
+	GF_CODECID_DVB_SUBS = GF_4CC( 'd', 'v', 'b', 's' ),
+	GF_CODECID_DVB_TELETEXT = GF_4CC( 'd', 'v', 'b', 't' ),
 	/*!
 		\brief OGG DecoderConfig
 
-	 The DecoderConfig for theora, vorbis, flac and opus contains all intitialization ogg packets for the codec
+	 The DecoderConfig for theora, vorbis and speek contains all intitialization ogg packets for the codec
 	  and is formatted as follows:\n
 	 \code
 	  while (dsi_size) {
@@ -498,6 +528,11 @@ typedef enum
 			dsi_size -= packet_size;
 		}
 	 \endcode
+
+	 The DecoderConfig for FLAC is the full flac header without "fLaC" magic
+
+	 The DecoderConfig for OPUS is the full opus header without "OpusHead" magic
+
 	*/
 	/*! codecid for theora video streams*/
 	GF_CODECID_THEORA = GF_4CC('t','h','e','u'),
@@ -563,16 +598,20 @@ typedef enum
 
 	GF_CODECID_TMCD = GF_4CC('t','m','c','d'),
 
+	/*! codecid for FFV1*/
+	GF_CODECID_FFV1 = GF_4CC('f','f','v','1'),
 
 	GF_CODECID_FFMPEG = GF_4CC('F','F','I','D'),
 
 	/*! codecid for VVC video */
 	GF_CODECID_VVC = GF_4CC('v','v','c',' '),
+	GF_CODECID_VVC_SUBPIC = GF_4CC('v','v','c','s'),
 
 	/*! codecid for USAC / xHE-AACv2 audio */
 	GF_CODECID_USAC = GF_4CC('u','s','a','c'),
 
-	GF_CODECID_V210 = GF_4CC('v','2','1','0'),
+	/*! codecid for MPEG-1 Audio streams, layer 1*/
+	GF_CODECID_MPEG_AUDIO_L1 = GF_4CC('m','p','a','1'),
 
 	//fake codec IDs for RTP
 	GF_CODECID_FAKE_MP2T = GF_4CC('M','P','2','T')
@@ -783,6 +822,8 @@ typedef enum
 	GF_AUDIO_FMT_U8 = 1,
 	/*! sample = signed short Little Endian, interleaved channels*/
 	GF_AUDIO_FMT_S16,
+	/*! sample = signed short Big Endian, interleaved channels*/
+	GF_AUDIO_FMT_S16_BE,
 	/*! sample = signed integer, interleaved channels*/
 	GF_AUDIO_FMT_S32,
 	/*! sample = 1 float, interleaved channels*/
@@ -920,18 +961,6 @@ u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout);
 \return dolby chanmap
 */
 u16 gf_audio_fmt_get_dolby_chanmap(u32 cicp_layout);
-
-/*! get channel CICP code  from name
-\param name channel layout name
-\return channel CICP code
-*/
-u32 gf_audio_fmt_get_cicp_from_name(const char *name);
-
-/*! get channel CICP code  from name
-\param cicp_code channel cicp code
-\return channel CICP name
-*/
-const char *gf_audio_fmt_get_cicp_name(u32 cicp_code);
 
 /*! enumerates CICP channel layout
 \param idx index of cicp layout value to query
@@ -1090,6 +1119,11 @@ enum
 	GF_AVC_NALU_DV_RPU = 28,
 	/*! Dolby Vision EL */
 	GF_AVC_NALU_DV_EL = 30,
+
+	/*! NALU-FF extractor */
+	GF_AVC_NALU_FF_AGGREGATOR=30,
+	/*! NALU-FF aggregator */
+	GF_AVC_NALU_FF_EXTRACTOR=31,
 };
 
 
@@ -1119,7 +1153,7 @@ enum
 };
 
 /*! Scheme Type only used internally to signal HLS sample AES in TS */
-#define GF_HLS_SAMPLE_AES_SCHEME	GF_4CC('H','S','A','E')
+#define GF_HLS_SAMPLE_AES_SCHEME	GF_4CC('s','a','e','s')
 
 
 /*! HEVC NAL unit types */
@@ -1183,6 +1217,12 @@ enum
 	GF_HEVC_NALU_SEI_PREFIX = 39,
 	/*! suffix SEI message*/
 	GF_HEVC_NALU_SEI_SUFFIX = 40,
+
+	/*! NALU-FF aggregator */
+	GF_HEVC_NALU_FF_AGGREGATOR=48,
+	/*! NALU-FF extractor */
+	GF_HEVC_NALU_FF_EXTRACTOR=49,
+
 	/*! Dolby Vision RPU */
 	GF_HEVC_NALU_DV_RPU = 62,
 	/*! Dolby Vision EL */

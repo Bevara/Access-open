@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2020-2021
+ *			Copyright (c) Telecom ParisTech 2020-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / MHAS reframer filter
@@ -83,6 +83,7 @@ typedef struct
 
 	u32 nb_unknown_pck;
 	u32 bitrate;
+	Bool copy_props;
 } GF_MHASDmxCtx;
 
 
@@ -124,6 +125,7 @@ GF_Err mhas_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	}
+	if (ctx->timescale) ctx->copy_props = GF_TRUE;
 	return GF_OK;
 }
 
@@ -151,8 +153,12 @@ static void mhas_dmx_check_dur(GF_Filter *filter, GF_MHASDmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->index_size = 0;
 
@@ -252,7 +258,6 @@ static void mhas_dmx_check_dur(GF_Filter *filter, GF_MHASDmxCtx *ctx)
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 }
 
 static void mhas_dmx_check_pid(GF_Filter *filter, GF_MHASDmxCtx *ctx, u32 PL, u32 sample_rate, u32 frame_len, s32 CICPspeakerLayoutIdx, s32 numSpeakers, u8 *dsi, u32 dsi_size)
@@ -268,6 +273,7 @@ static void mhas_dmx_check_pid(GF_Filter *filter, GF_MHASDmxCtx *ctx, u32 PL, u3
 			&& (ctx->sample_rate == sample_rate)
 			&& (ctx->cicp_layout_idx == CICPspeakerLayoutIdx)
 			&& (ctx->num_speakers == numSpeakers)
+			&& !ctx->copy_props
 		) {
 			return;
 		}
@@ -277,6 +283,7 @@ static void mhas_dmx_check_pid(GF_Filter *filter, GF_MHASDmxCtx *ctx, u32 PL, u3
 	ctx->sample_rate = sample_rate;
 	ctx->cicp_layout_idx = CICPspeakerLayoutIdx;
 	ctx->num_speakers = numSpeakers;
+	ctx->copy_props = GF_FALSE;
 
 	chan_layout = 0;
 	nb_channels = 0;
@@ -296,6 +303,8 @@ static void mhas_dmx_check_pid(GF_Filter *filter, GF_MHASDmxCtx *ctx, u32 PL, u3
 	}
 	if (ctx->duration.num)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 
 	if (!ctx->timescale) gf_filter_pid_set_name(ctx->opid, "audio");
 
@@ -381,6 +390,7 @@ static Bool mhas_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		ctx->is_playing = GF_FALSE;
 		if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 		ctx->src_pck = NULL;
+		ctx->cts = 0;
 		//don't cancel event
 		return GF_FALSE;
 
@@ -504,6 +514,9 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 	//input pid sets some timescale - we flushed pending data , update cts
 	if (ctx->timescale && in_pck) {
 		cts = gf_filter_pck_get_cts(in_pck);
+		//init cts at first packet
+		if (!ctx->cts && (cts != GF_FILTER_NO_TS))
+			ctx->cts = cts;
 	}
 
 	if (cts == GF_FILTER_NO_TS) {
@@ -528,11 +541,11 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 			break;
 		}
 		if ((hdr_start[1]==0x01) && (hdr_start[2]==0xA5)) {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[MHASDmx] Sync found !\n"));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[MHASDmx] Sync found !\n"));
 			ctx->nosync = GF_FALSE;
 			break;
 		}
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[MHASDmx] not sync, skipping byte\n"));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[MHASDmx] not sync, skipping byte\n"));
 		start++;
 		remain--;
 	}
@@ -564,14 +577,14 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 		if (mhas_type>18) {
 			ctx->nb_unknown_pck++;
 			if (ctx->nb_unknown_pck > ctx->pcksync) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[MHASDmx] %d packets of unknwon type, considering sync was lost\n"));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[MHASDmx] %d packets of unknown type, considering sync was lost\n"));
 				consumed = 0;
 				ctx->nosync = GF_TRUE;
 				ctx->nb_unknown_pck = 0;
 				break;
 			}
 		} else if (!mhas_size) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[MHASDmx] MHAS packet with 0 payload size, considering sync was lost\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[MHASDmx] MHAS packet with 0 payload size, considering sync was lost\n"));
 			consumed = 0;
 			ctx->nosync = GF_TRUE;
 			ctx->nb_unknown_pck = 0;
@@ -583,7 +596,7 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 		if (ctx->buffer_too_small) break;
 		if (mhas_size > gf_bs_available(ctx->bs)) {
 			//incomplete frame, keep in buffer
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[MHASDmx] incomplete packet type %d %s label "LLU" size "LLU" - keeping in buffer\n", mhas_type, mhas_pck_name(mhas_type), mhas_label, mhas_size));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[MHASDmx] incomplete packet type %d %s label "LLU" size "LLU" - keeping in buffer\n", mhas_type, mhas_pck_name(mhas_type), mhas_label, mhas_size));
 			break;
 		}
 		//frame
@@ -656,7 +669,7 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 		//remaining of packet payload
 		gf_bs_skip_bytes(ctx->bs, mhas_size - parse_end);
 
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[MHASDmx] MHAS Packet type %d %s label "LLU" size "LLU"\n", mhas_type, mhas_pck_name(mhas_type), mhas_label, mhas_size));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[MHASDmx] MHAS Packet type %d %s label "LLU" size "LLU"\n", mhas_type, mhas_pck_name(mhas_type), mhas_label, mhas_size));
 
 		if (ctx->timescale && !prev_pck_size && (cts != GF_FILTER_NO_TS) ) {
 			ctx->cts = cts;
@@ -717,7 +730,7 @@ GF_Err mhas_dmx_process(GF_Filter *filter)
 				offset += ctx->byte_offset + au_start;
 				gf_filter_pck_set_byte_offset(dst, offset);
 			}
- 			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[MHASDmx] Send AU CTS "LLU" size %d dur %d sap %d\n", ctx->cts, au_size, (u32) pck_dur, mhas_sap));
+ 			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[MHASDmx] Send AU CTS "LLU" size %d dur %d sap %d\n", ctx->cts, au_size, (u32) pck_dur, mhas_sap));
 			gf_filter_pck_send(dst);
 
 			au_start += au_size;
@@ -868,9 +881,9 @@ static const GF_FilterCapability MHASDmxCaps[] =
 static const GF_FilterArgs MHASDmxArgs[] =
 {
 	{ OFFS(index), "indexing window length", GF_PROP_DOUBLE, "1.0", NULL, 0},
-	{ OFFS(mpha), "demux MHAS and only forward audio frames", GF_PROP_BOOL, "false", NULL, 0},
-	{ OFFS(pcksync), "number of unknwon packets to tolerate before considering sync is lost", GF_PROP_UINT, "4", NULL, 0},
-	{ OFFS(nosync), "initial sync state - see filter help", GF_PROP_BOOL, "true", NULL, 0},
+	{ OFFS(mpha), "demultiplex MHAS and only forward audio frames", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(pcksync), "number of unknown packets to tolerate before considering sync is lost", GF_PROP_UINT, "4", NULL, 0},
+	{ OFFS(nosync), "initial sync state", GF_PROP_BOOL, "true", NULL, 0},
 
 	{0}
 };

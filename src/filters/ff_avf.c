@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom Paris 2019
+ *			Copyright (c) Telecom Paris 2019-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ffmpeg avfilter filter
@@ -176,7 +176,6 @@ static GF_Err ffavf_setup_outputs(GF_Filter *filter, GF_FFAVFilterCtx *ctx)
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_SAR, NULL);
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_COLR_MX, NULL);
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_COLR_RANGE, NULL);
-				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_COLR_SPACE, NULL);
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_COLR_TRANSFER, NULL);
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_COLR_PRIMARIES, NULL);
 			}
@@ -204,7 +203,7 @@ static GF_Err ffavf_setup_outputs(GF_Filter *filter, GF_FFAVFilterCtx *ctx)
 		}
 		if (opid->is_video) {
 			if (ctx->pfmt) {
-				enum AVPixelFormat pfmt = ffmpeg_pixfmt_from_gpac(ctx->pfmt);
+				enum AVPixelFormat pfmt = ffmpeg_pixfmt_from_gpac(ctx->pfmt, GF_FALSE);
 				ret = av_opt_set_bin(opid->io_filter_ctx, "pix_fmts", (uint8_t*)&pfmt, sizeof(pfmt), AV_OPT_SEARCH_CHILDREN);
 				if (ret < 0) {
 					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[FFAVF] Fail to set %s pixel format: %s\n", avf->name, av_err2str(ret) ));
@@ -285,7 +284,7 @@ static GF_Err ffavf_initialize(GF_Filter *filter)
 	ctx->opids = gf_list_new();
 	ctx->frame = av_frame_alloc();
 
-	ffmpeg_setup_logs(GF_LOG_AUTHOR);
+	ffmpeg_setup_logs(GF_LOG_MEDIA);
 
 	ctx->filter_graph = avfilter_graph_alloc();
 	ret = avfilter_graph_parse2(ctx->filter_graph, ctx->filter_desc, &inputs, &outputs);
@@ -617,7 +616,7 @@ static GF_Err ffavf_process(GF_Filter *filter)
 			if (update_props) {
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_WIDTH, &PROP_UINT(frame->width));
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_HEIGHT, &PROP_UINT(frame->height));
-				opid->gf_pfmt = ffmpeg_pixfmt_to_gpac(frame->format);
+				opid->gf_pfmt = ffmpeg_pixfmt_to_gpac(frame->format, GF_FALSE);
 				if (ffmpeg_pixfmt_is_fullrange(frame->format)) {
 					gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_TRUE));
 				} else {
@@ -787,7 +786,7 @@ static GF_Err ffavf_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_PIXFMT);
 		if (!p) return GF_OK; //not ready yet
 		gf_pfmt = p->value.uint;
-		pix_fmt = ffmpeg_pixfmt_from_gpac(gf_pfmt);
+		pix_fmt = ffmpeg_pixfmt_from_gpac(gf_pfmt, GF_FALSE);
 
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
 		if (p && p->value.frac.num && p->value.frac.den) sar = p->value.frac;
@@ -888,13 +887,13 @@ static void ffavf_finalize(GF_Filter *filter)
 	ffavf_reset_graph(ctx);
 	while (gf_list_count(ctx->ipids)) {
 		GF_FFAVPid *ipid = gf_list_pop_back(ctx->ipids);
-		//io_filter_ctx is destroyed while reseting the graph
+		//io_filter_ctx is destroyed while resetting the graph
 		gf_free(ipid);
 	}
 	gf_list_del(ctx->ipids);
 	while (gf_list_count(ctx->opids)) {
 		GF_FFAVPid *opid = gf_list_pop_back(ctx->opids);
-		//io_filter_ctx is destroyed while reseting the graph
+		//io_filter_ctx is destroyed while resetting the graph
 		gf_free(opid);
 	}
 	gf_list_del(ctx->opids);
@@ -992,14 +991,14 @@ GF_FilterRegister FFAVFilterRegister = {
 		"For simple filter graphs with only one input and one output, the input PID is assigned the avfilter name `in` and the output PID is assigned the avfilter name `out`\n"
 		"\n"
 		"When a graph has several inputs, input PID names shall be assigned by the user using the `ffid` property, and mapping must be done in the filter.\n"
-		"EX src=video:#ffid=a src=logo:#ffid=b ffavf::f=[a][b]overlay=main_w-overlay_w-10:main_h-overlay_h-10\n"
+		"EX gpac -i video:#ffid=a -i logo:#ffid=b ffavf::f=[a][b]overlay=main_w-overlay_w-10:main_h-overlay_h-10 vout\n"
 		"In this example:\n"
 		"- the video source is identified as `a`\n"
 		"- the logo source is identified as `b`\n"
 		"- the filter declaration maps `a` to its first input (in this case, main video) and `b` to its second input (in this case the overlay)\n"
 	   "\n"
 		"When a graph has several outputs, output PIDs will be identified using the `ffid` property set to the output avfilter name.\n"
-		"EX src=source ffavf::f=split inspect:SID=#ffid=out0 vout#SID=out1\n"
+		"EX gpac -i source ffavf::f=split inspect:SID=#ffid=out0 vout#SID=out1\n"
 		"In this example:\n"
 		"- the splitter produces 2 video streams `out0` and `out1`\n"
 		"- the inspector only process stream with ffid `out0`\n"
@@ -1027,13 +1026,13 @@ GF_FilterRegister FFAVFilterRegister = {
 
 static const GF_FilterArgs FFAVFilterArgs[] =
 {
-	{ "f", -1, "filter or filter chain description - see filter help", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
+	{ "f", -1, "filter or filter chain description", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
 	{ OFFS(pfmt), "pixel format of output. If not set, let AVFilter decide", GF_PROP_PIXFMT, "none", NULL, 0},
 	{ OFFS(afmt), "audio format of output. If not set, let AVFilter decide", GF_PROP_PCMFMT, "none", NULL, 0},
 	{ OFFS(sr), "sample rate of output. If not set, let AVFilter decide", GF_PROP_UINT, "0", NULL, 0},
 	{ OFFS(ch), "number of channels of output. If not set, let AVFilter decide", GF_PROP_UINT, "0", NULL, 0},
 	{ OFFS(dump), "dump graph as log media@info or stderr if not set", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
-	{ "*", -1, "any possible options defined for AVFilter and sub-classes. See `gpac -hx ffavf` and `gpac -hx ffavf:*`", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
+	{ "*", -1, "any possible options defined for AVFilter and sub-classes (see `gpac -hx ffavf` and `gpac -hx ffavf:*`)", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
 	{0}
 };
 

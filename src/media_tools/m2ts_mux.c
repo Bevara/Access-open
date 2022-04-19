@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre , Cyril Concolato, Romain Bouqueau
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG2-TS multiplexer sub-project
@@ -717,6 +717,7 @@ u32 gf_m2ts_stream_process_pat(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 }
 
 static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream);
+static s32 gf_m2ts_find_stream(GF_M2TS_Mux_Program *program, u32 pid, u32 stream_id, GF_M2TS_Mux_Stream **out_stream);
 
 u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 {
@@ -807,27 +808,70 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 		}
 		es = stream->program->streams;
 		while (es) {
+			u32 force_reg = 0;
 			Bool has_lang = GF_FALSE;
 			u32 es_info_length = 0;
 			u8 type = es->mpeg2_stream_type;
 			nb_streams++;
+			GF_AVCConfig *avcc = NULL;
+			GF_HEVCConfig *hvcc = NULL;
 
 			switch (es->mpeg2_stream_type) {
 			case GF_M2TS_AUDIO_AC3:
-			case GF_M2TS_VIDEO_VC1:
-				es_info_length += 2 + 4;
-				type = GF_M2TS_PRIVATE_DATA;
-				break;
 			case GF_M2TS_AUDIO_EC3:
+				//reg desc
+				es_info_length += 2 + 4;
+				//AC3/EC3 desc
 				es_info_length += 2;
 				type = GF_M2TS_PRIVATE_DATA;
 				break;
+			case GF_M2TS_VIDEO_VC1:
+			case GF_M2TS_AUDIO_DTS:
+			case GF_M2TS_AUDIO_OPUS:
+			case GF_M2TS_VIDEO_AV1:
+				//reg desc
+				es_info_length += 2 + 4;
+				type = GF_M2TS_PRIVATE_DATA;
+				break;
+			case GF_M2TS_VIDEO_HEVC:
+			case GF_M2TS_VIDEO_H264:
+				//check dv
+				if (es->ifce->caps & GF_ESI_FORCE_DOLBY_VISION) {
+					type = GF_M2TS_PRIVATE_DATA;
+					force_reg = GF_M2TS_RA_STREAM_DOVI;
+					//reg desc
+					es_info_length += 2 + 4;
+				}
+
+				if (es->ifce->dv_info[0]) {
+					u32 dv_len = 5;
+					if (! (es->ifce->dv_info[3] & 0x1)) dv_len+=2;
+					es_info_length += 2 + dv_len;
+				}
+				break;
 			default:
-				if (es->force_reg_desc) {
-					es_info_length += 2 + 4 + 4;
+				if (es->ifce->codecid==GF_CODECID_DVB_SUBS) {
+					es_info_length += 2 + 5+3;
+				}
+				else if (es->ifce->codecid==GF_CODECID_DVB_TELETEXT) {
+					es_info_length += 2 + 2+3;
+				}
+				else if (es->force_reg_desc) {
+					es_info_length += 2 + 4;
+					if (!es->ifce->ra_code)
+						es_info_length += 4;
 					type = GF_M2TS_PRIVATE_DATA;
 				}
 				break;
+			}
+
+			if (es->ifce->decoder_config && (es->mpeg2_stream_type==GF_M2TS_VIDEO_H264)) {
+				avcc = gf_odf_avc_cfg_read(es->ifce->decoder_config, es->ifce->decoder_config_size);
+				if (avcc) es_info_length += 6;
+			}
+			if (es->ifce->decoder_config && (es->mpeg2_stream_type==GF_M2TS_VIDEO_HEVC) && !es->ifce->depends_on_stream) {
+				hvcc = gf_odf_hevc_cfg_read(es->ifce->decoder_config, es->ifce->decoder_config_size, GF_FALSE);
+				if (hvcc) es_info_length += 15;
 			}
 
 			gf_bs_write_int(bs,	type, 8);
@@ -870,36 +914,155 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 				gf_bs_write_int(bs,	es->ifce->lang & 0xFF, 8);
 			}
 
+			//AVC descriptor
+			if (avcc) {
+				gf_bs_write_int(bs,	GF_M2TS_AVC_VIDEO_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	4, 8);
+				gf_bs_write_u8(bs, avcc->AVCProfileIndication);
+				gf_bs_write_u8(bs, avcc->profile_compatibility);
+				gf_bs_write_u8(bs, avcc->AVCLevelIndication);
+				gf_bs_write_u8(bs, 0);
+				gf_odf_avc_cfg_del(avcc);
+			}
+			//HEVC descriptor
+			if (hvcc) {
+				gf_bs_write_int(bs,	GF_M2TS_HEVC_VIDEO_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	13, 8);
+				gf_bs_write_int(bs, hvcc->profile_space, 2);
+				gf_bs_write_int(bs, hvcc->tier_flag, 1);
+				gf_bs_write_int(bs, hvcc->profile_idc, 5);
+				gf_bs_write_u32(bs, hvcc->general_profile_compatibility_flags);
+				gf_bs_write_int(bs, hvcc->progressive_source_flag, 1);
+				gf_bs_write_int(bs, hvcc->interlaced_source_flag, 1);
+				gf_bs_write_int(bs, hvcc->non_packed_constraint_flag, 1);
+				gf_bs_write_int(bs, hvcc->frame_only_constraint_flag, 1);
+				gf_bs_write_long_int(bs, hvcc->constraint_indicator_flags, 44);
+				gf_bs_write_int(bs, hvcc->level_idc, 8);
+				gf_bs_write_int(bs, 0, 1);//temporal subset
+				gf_bs_write_int(bs, 0, 1);//still present
+				gf_bs_write_int(bs, 0, 1);//24h present
+				gf_bs_write_int(bs, 1, 1);//sub_pic_hrd_params_not_present_flag: we don't know, set to 1
+				gf_bs_write_int(bs, 0, 2);//reserved
+				gf_bs_write_int(bs, 2, 2);//HDR_WCG_idc
+				gf_odf_hevc_cfg_del(hvcc);
+			}
+
 			switch (es->mpeg2_stream_type) {
 			case GF_M2TS_AUDIO_AC3:
+				gf_bs_write_int(bs,	GF_M2TS_DVB_AC3_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	0, 8); //todo
+				//also write reg desc
 				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
 				gf_bs_write_int(bs,	4, 8);
-				gf_bs_write_int(bs,	'A', 8);
-				gf_bs_write_int(bs,	'C', 8);
-				gf_bs_write_int(bs,	'-', 8);
-				gf_bs_write_int(bs,	'3', 8);
+				gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_AC3);
 				break;
 			case GF_M2TS_VIDEO_VC1:
 				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
 				gf_bs_write_int(bs,	4, 8);
-				gf_bs_write_int(bs,	'V', 8);
-				gf_bs_write_int(bs,	'C', 8);
-				gf_bs_write_int(bs,	'-', 8);
-				gf_bs_write_int(bs,	'1', 8);
+				gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_VC1);
 				break;
 			case GF_M2TS_AUDIO_EC3:
 				gf_bs_write_int(bs,	GF_M2TS_DVB_EAC3_DESCRIPTOR, 8);
-				gf_bs_write_int(bs,	0, 8); //check what is in this desc
+				gf_bs_write_int(bs,	0, 8);  //todo
+
+				//also write reg desc
+				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	4, 8);
+				gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_EAC3);
 				break;
+			case GF_M2TS_AUDIO_DTS:
+				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	4, 8);
+				gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_DTS3);
+				break;
+			case GF_M2TS_AUDIO_OPUS:
+				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	4, 8);
+				gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_OPUS);
+				break;
+			case GF_M2TS_VIDEO_AV1:
+				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	4, 8);
+				gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_AV1);
+				break;
+
 			default:
 				if (es->force_reg_desc && es->ifce && es->ifce->codecid) {
 					gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
-					gf_bs_write_int(bs,	8, 8);
-					gf_bs_write_int(bs,	GF_M2TS_RA_STREAM_GPAC, 32);
-					gf_bs_write_int(bs,	es->ifce->codecid, 32);
+					if (es->ifce->ra_code) {
+						gf_bs_write_int(bs,	4, 8);
+						gf_bs_write_int(bs,	es->ifce->ra_code, 32);
+					} else {
+						gf_bs_write_int(bs,	8, 8);
+						gf_bs_write_int(bs,	GF_M2TS_RA_STREAM_GPAC, 32);
+						gf_bs_write_int(bs,	es->ifce->codecid, 32);
+					}
 				}
 				break;
 			}
+
+			if (force_reg) {
+				//also write reg desc
+				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	4, 8);
+				gf_bs_write_u32(bs,	force_reg);
+			}
+
+			if (es->ifce->dv_info[0]) {
+				u32 len = 5;
+				if (! (es->ifce->dv_info[3] & 0x1)) len+=2;
+
+				gf_bs_write_int(bs,	GF_M2TS_DOLBY_VISION_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	len, 8);
+				gf_bs_write_u8(bs, es->ifce->dv_info[0]);
+				gf_bs_write_u8(bs, es->ifce->dv_info[1]);
+				gf_bs_write_u8(bs, es->ifce->dv_info[2]);
+				gf_bs_write_u8(bs, es->ifce->dv_info[3]);
+				//base later not present
+				if (! (es->ifce->dv_info[3] & 0x1)) {
+					GF_M2TS_Mux_Stream *base_st = NULL;
+					gf_m2ts_find_stream(es->program, 0, es->ifce->depends_on_stream, &base_st);
+					gf_bs_write_int(bs, base_st ? base_st->pid : 0, 13);
+					gf_bs_write_int(bs, 0, 3);
+				}
+				//4bits compatid + 4 bits 0
+				gf_bs_write_u8(bs, es->ifce->dv_info[4]);
+			}
+
+			if (es->ifce->codecid==GF_CODECID_DVB_SUBS) {
+				gf_bs_write_int(bs,	GF_M2TS_DVB_SUBTITLING_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	8, 8);
+				gf_bs_write_u8(bs, (es->ifce->lang>>16) & 0xFF);
+				gf_bs_write_u8(bs, (es->ifce->lang>>6) & 0xFF);
+				gf_bs_write_u8(bs, (es->ifce->lang) & 0xFF);
+				if (es->ifce->decoder_config && (es->ifce->decoder_config_size==5)) {
+					gf_bs_write_u8(bs, es->ifce->decoder_config[4]);
+					gf_bs_write_u8(bs, es->ifce->decoder_config[0]);
+					gf_bs_write_u8(bs, es->ifce->decoder_config[1]);
+					gf_bs_write_u8(bs, es->ifce->decoder_config[2]);
+					gf_bs_write_u8(bs, es->ifce->decoder_config[3]);
+				} else {
+					gf_bs_write_u8(bs, 0x10); //use normal type, we coud use for hard of hearing (0x20)
+					gf_bs_write_u16(bs, 0);
+					gf_bs_write_u16(bs, 0);
+				}
+			}
+			else if (es->ifce->codecid==GF_CODECID_DVB_TELETEXT) {
+				gf_bs_write_int(bs,	GF_M2TS_DVB_SUBTITLING_DESCRIPTOR, 8);
+				gf_bs_write_int(bs,	5, 8);
+				gf_bs_write_u8(bs, (es->ifce->lang>>16) & 0xFF);
+				gf_bs_write_u8(bs, (es->ifce->lang>>6) & 0xFF);
+				gf_bs_write_u8(bs, (es->ifce->lang) & 0xFF);
+				if (es->ifce->decoder_config && (es->ifce->decoder_config_size==2)) {
+					gf_bs_write_u8(bs, es->ifce->decoder_config[0]);
+					gf_bs_write_u8(bs, es->ifce->decoder_config[1]);
+				} else {
+					gf_bs_write_int(bs, 0x02, 5);
+					gf_bs_write_int(bs, 0, 3);
+					gf_bs_write_int(bs, 0, 8);
+				}
+			}
+
 
 			if (es->loop_descriptors)
 			{
@@ -937,7 +1100,7 @@ static void gf_m2ts_remap_timestamps_for_pes(GF_M2TS_Mux_Stream *stream, u32 pck
 	u64 pcr_offset;
 
 	if (*dts > *cts) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] PID %d: DTS "LLD" is greater than CTS "LLD" (like ISOBMF CTTSv1 input) - adjusting to CTS\n", stream->pid, *dts, *cts));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] PID %d: DTS "LLD" is greater than CTS "LLD" (like ISOBMFF CTTSv1 input) - adjusting to CTS\n", stream->pid, *dts, *cts));
 		*dts = *cts;
 	}
 
@@ -1058,6 +1221,8 @@ static Bool gf_m2ts_adjust_next_stream_time_for_pcr(GF_M2TS_Mux *muxer, GF_M2TS_
 	return 1;
 }
 
+
+
 static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 {
 	u64 time_inc;
@@ -1155,6 +1320,18 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 					stream->program->pcr_init_time = gf_rand();
 			}
 
+			if (stream->program->pcr_offset==(u64)-1) {
+				stream->program->pcr_offset = 0;
+				if (muxer->fixed_rate) {
+					//estimate frame send time in 90khz
+					u64 r = (stream->curr_pck.data_len * 8);
+					r *= 90000;
+					r /= muxer->bit_rate;
+					r *= 5; //assume 5 frames of offset
+					stream->program->pcr_offset = r;
+				}
+			}
+
 			if (stream->program->force_first_pts) {
 				u64 first_pts = stream->curr_pck.cts;
 				u64 first_dts = stream->curr_pck.dts;
@@ -1195,7 +1372,7 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 			stream->program->ts_time_at_pcr_init = muxer->time;
 			stream->program->num_pck_at_pcr_init = muxer->tot_pck_sent;
 
-			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] PID %d: Initializing PCR for program number %d: PCR %d - mux time %d:%09d\n", stream->pid, stream->program->number, stream->program->pcr_init_time, muxer->time.sec, muxer->time.nanosec));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] PID %d: Initializing PCR for program number %d: PCR %d - mux time %d:%09d\n", stream->pid, stream->program->number, stream->program->pcr_init_time, muxer->time.sec, muxer->time.nanosec));
 		} else {
 			/*PES has been sent, discard internal buffer*/
 			if (stream->discard_data) gf_free(stream->curr_pck.data);
@@ -1283,7 +1460,7 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 
 		/*same mux config = 0 (refresh aac config)*/
 		next_time = gf_sys_clock();
-		if (stream->ifce->decoder_config && (stream->latm_last_aac_time + stream->ifce->repeat_rate < next_time)) {
+		if (stream->ifce->decoder_config && (stream->latm_last_aac_time + stream->refresh_rate_ms < next_time)) {
 #ifndef GPAC_DISABLE_AV_PARSERS
 			GF_M4ADecSpecInfo cfg;
 #endif
@@ -1340,6 +1517,7 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 	break;
 	/*perform ADTS encapsulation*/
 	case GF_M2TS_AUDIO_AAC:
+	case GF_M2TS_HLS_AAC_CRYPT:
 		if (stream->ifce->decoder_config) {
 			GF_BitStream *bs;
 #ifndef GPAC_DISABLE_AV_PARSERS
@@ -1405,6 +1583,15 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 	}
 		break;
 	default:
+		if (stream->ifce->codecid==GF_CODECID_DVB_SUBS) {
+			GF_BitStream *bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+			gf_bs_write_u8(bs, 0x20);
+			gf_bs_write_u8(bs, 0);
+			gf_bs_write_data(bs, stream->curr_pck.data, stream->curr_pck.data_len);
+			gf_free(stream->curr_pck.data);
+			gf_bs_get_content(bs, &stream->curr_pck.data, &stream->curr_pck.data_len);
+			gf_bs_del(bs);
+		}
 		break;
 	}
 
@@ -1419,6 +1606,17 @@ static u32 gf_m2ts_stream_process_pes(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *st
 	/*compute next interesting time in TS unit: this will be DTS of next packet*/
 	stream->time = stream->program->ts_time_at_pcr_init;
 	time_inc = stream->curr_pck.dts - stream->program->pcr_init_time/300;
+
+	/* CBR, estimate number of packets required to send => time in mux rate, and offset send time*/
+	if (muxer->fixed_rate) {
+		u64 clock_diff = (stream->curr_pck.data_len * 188 / 184 + 188) * 8;
+		clock_diff *= 90000;
+		clock_diff /= muxer->bit_rate;
+		if (time_inc > clock_diff)
+			time_inc -= clock_diff;
+		else
+			time_inc = 0;
+	}
 
 	gf_m2ts_time_inc(&stream->time, time_inc, 90000);
 
@@ -1949,7 +2147,7 @@ void gf_m2ts_mux_pes_get_next_packet(GF_M2TS_Mux_Stream *stream, char *packet)
 				}
 			}
 
-			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[MPEG2-TS Muxer] Inserted PCR "LLD" (%d @90kHz) at mux time %d:%09d\n", pcr, (u32) (pcr/300), stream->program->mux->time.sec, stream->program->mux->time.nanosec ));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[MPEG2-TS Muxer] Inserted PCR "LLD" (%d @90kHz) at mux time %d:%09d\n", pcr, (u32) (pcr/300), stream->program->mux->time.sec, stream->program->mux->time.nanosec ));
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[MPEG2-TS Muxer] PCR diff to STB in ms %d - sys clock diff in ms %d - DTS diff %d\n", (u32) (pcr - stream->program->last_pcr) / 27000, now - stream->program->sys_clock_at_last_pcr, (stream->curr_pck.dts - stream->program->last_dts)/90));
 
 			stream->program->sys_clock_at_last_pcr = now;
@@ -1991,8 +2189,12 @@ void gf_m2ts_mux_pes_get_next_packet(GF_M2TS_Mux_Stream *stream, char *packet)
 	assert(stream->pes_data_remain >= payload_to_copy);
 	stream->pes_data_remain -= payload_to_copy;
 
-	/*update stream time, including headers*/
-	gf_m2ts_time_inc(&stream->time, 1504/*188*8*/, stream->program->mux->bit_rate);
+	/*update stream time, including headers
+	Note that we don't do that if mux is not operating in fixed rate because the rate can be wrong (way too low)
+	causing time to increase too fast on IDRs
+	*/
+	if (stream->program->mux->fixed_rate)
+		gf_m2ts_time_inc(&stream->time, 1504/*188*8*/, stream->program->mux->bit_rate);
 
 	if (stream->pck_offset == stream->curr_pck.data_len) {
 		u64 pcr = gf_m2ts_get_pcr(stream)/300;
@@ -2013,7 +2215,7 @@ void gf_m2ts_mux_pes_get_next_packet(GF_M2TS_Mux_Stream *stream, char *packet)
 			        stream->time.sec, stream->time.nanosec, stream->program->mux->time.sec, stream->program->mux->time.nanosec
 			                                         ));
 		} else {
-			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[MPEG2-TS Muxer] Sent PES: PID %d - DTS "LLD" - PCR "LLD" - stream time %d:%09d - mux time %d:%09d \n",
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[MPEG2-TS Muxer] Sent PES: PID %d - DTS "LLD" - PCR "LLD" - stream time %d:%09d - mux time %d:%09d \n",
 			                                       stream->pid, stream->curr_pck.dts, pcr,
 			                                       stream->time.sec, stream->time.nanosec, stream->program->mux->time.sec, stream->program->mux->time.nanosec
 			                                      ));
@@ -2340,7 +2542,10 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 			stream->mpeg2_stream_type = GF_M2TS_VIDEO_MPEG4;
 			break;
 		case GF_CODECID_AVC:
-			stream->mpeg2_stream_type = GF_M2TS_VIDEO_H264;
+			if (ifce->caps & GF_ESI_STREAM_HLS_SAES)
+				stream->mpeg2_stream_type = GF_M2TS_HLS_AVC_CRYPT;
+			else
+				stream->mpeg2_stream_type = GF_M2TS_VIDEO_H264;
 			/*make sure we send AU delim NALU in same PES as first VCL NAL: 6 bytes (start code + 1 nal hdr + AU delim)
 			+ 4 byte start code + first nal header*/
 			stream->min_bytes_copy_from_next = 11;
@@ -2356,9 +2561,11 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 			stream->mpeg2_stream_type = GF_M2TS_VIDEO_HEVC;
 			//this is a bit crude and will need refinement
 			if (ifce->depends_on_stream) {
-				GF_M2TS_Mux_Stream *base_st;
-				stream->mpeg2_stream_type = GF_M2TS_VIDEO_HEVC_TEMPORAL;
-				gf_m2ts_stream_add_hierarchy_descriptor(stream);
+				GF_M2TS_Mux_Stream *base_st=NULL;
+				if (! (stream->ifce->caps & GF_ESI_FORCE_DOLBY_VISION)) {
+					stream->mpeg2_stream_type = GF_M2TS_VIDEO_HEVC_TEMPORAL;
+					gf_m2ts_stream_add_hierarchy_descriptor(stream);
+				}
 				stream->force_single_au = GF_TRUE;
 				gf_m2ts_find_stream(stream->program, 0, ifce->depends_on_stream, &base_st);
 				if (base_st) base_st->force_single_au = GF_TRUE;
@@ -2406,8 +2613,15 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 		case GF_CODECID_SMPTE_VC1:
 			stream->mpeg2_stream_type = GF_M2TS_VIDEO_VC1;
 			break;
+		case GF_CODECID_AV1:
+			stream->mpeg2_stream_type = GF_M2TS_VIDEO_AV1;
+			stream->force_single_au = GF_TRUE;
+			break;
+
 		default:
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts video type for codec %s, signaling as PES private using codec 4CC in registration descriptor\n", gf_codecid_name(ifce->codecid) ));
+			if (!ifce->ra_code) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts video type for codec %s, signaling as PES private using codec 4CC %s in registration descriptor\n", gf_codecid_name(ifce->codecid), gf_4cc_to_str(ifce->codecid) ));
+			}
 
 			stream->mpeg2_stream_type = GF_M2TS_PRIVATE_DATA;
 			stream->force_single_au = GF_TRUE;
@@ -2422,6 +2636,7 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 		stream->force_single_au = (stream->program->mux->au_pes_mode == GF_M2TS_PACK_NONE) ? GF_TRUE : GF_FALSE;
 		switch (ifce->codecid) {
 		case GF_CODECID_MPEG_AUDIO:
+		case GF_CODECID_MPEG_AUDIO_L1:
 			stream->mpeg2_stream_type = GF_M2TS_AUDIO_MPEG1;
 			break;
 		case GF_CODECID_MPEG2_PART3:
@@ -2433,19 +2648,29 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 		case GF_CODECID_AAC_MPEG2_SSRP:
 			if (ifce->caps & GF_ESI_AAC_USE_LATM)
 				stream->mpeg2_stream_type = GF_M2TS_AUDIO_LATM_AAC;
+			else if (ifce->caps & GF_ESI_STREAM_HLS_SAES)
+				stream->mpeg2_stream_type = GF_M2TS_HLS_AAC_CRYPT;
 			else
 				stream->mpeg2_stream_type = GF_M2TS_AUDIO_AAC;
 
-			if (!ifce->repeat_rate) ifce->repeat_rate = 500;
+			stream->refresh_rate_ms = ifce->repeat_rate ? ifce->repeat_rate : 500;
 			break;
 		case GF_CODECID_AC3:
-			stream->mpeg2_stream_type = GF_M2TS_AUDIO_AC3;
+			if (ifce->caps & GF_ESI_STREAM_HLS_SAES)
+				stream->mpeg2_stream_type = GF_M2TS_HLS_AC3_CRYPT;
+			else
+				stream->mpeg2_stream_type = GF_M2TS_AUDIO_AC3;
 			break;
 		case GF_CODECID_EAC3:
-			stream->mpeg2_stream_type = GF_M2TS_AUDIO_EC3;
+			if (ifce->caps & GF_ESI_STREAM_HLS_SAES)
+				stream->mpeg2_stream_type = GF_M2TS_HLS_EC3_CRYPT;
+			else
+				stream->mpeg2_stream_type = GF_M2TS_AUDIO_EC3;
 			break;
 		default:
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts audio type for codec %s, signaling as PES private using codec 4CC in registration descriptor\n", gf_codecid_name(ifce->codecid) ));
+			if (!ifce->ra_code) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts audio type for codec %s, signaling as PES private using codec 4CC in registration descriptor\n", gf_codecid_name(ifce->codecid) ));
+			}
 			stream->mpeg2_stream_type = GF_M2TS_PRIVATE_DATA;
 			stream->force_single_au = GF_TRUE;
 			stream->force_reg_desc = GF_TRUE;
@@ -2479,9 +2704,20 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 		break;
 	case GF_STREAM_TEXT:
 		stream->mpeg2_stream_id = 0xBD;
-		stream->mpeg2_stream_type = GF_M2TS_METADATA_PES;
-		gf_m2ts_stream_add_metadata_pointer_descriptor(stream->program);
-		gf_m2ts_stream_add_metadata_descriptor(stream);
+		stream->force_single_au = GF_TRUE;
+		switch (ifce->codecid) {
+		case GF_CODECID_DVB_SUBS:
+			stream->mpeg2_stream_type = GF_M2TS_PRIVATE_DATA;
+			break;
+		case GF_CODECID_DVB_TELETEXT:
+			stream->mpeg2_stream_type = GF_M2TS_PRIVATE_DATA;
+			break;
+		default:
+			stream->mpeg2_stream_type = GF_M2TS_METADATA_PES;
+			gf_m2ts_stream_add_metadata_pointer_descriptor(stream->program);
+			gf_m2ts_stream_add_metadata_descriptor(stream);
+			break;
+		}
 		break;
 	default:
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported codec %s, signaling as raw data\n", gf_codecid_name(ifce->codecid) ));
@@ -2763,6 +2999,11 @@ void gf_m2ts_program_stream_remove(GF_M2TS_Mux_Stream *stream)
 		}
 	}
 	stream->next = NULL;
+
+	//if we remove PCR, reassign to first stream
+	if (program->pcr == stream)
+		program->pcr = program->streams;
+
 	gf_m2ts_mux_stream_del(stream);
 	program->pmt->table_needs_update = GF_TRUE;
 }
@@ -2885,6 +3126,67 @@ GF_Err gf_m2ts_mux_enable_pcr_only_packets(GF_M2TS_Mux *muxer, Bool enable_force
 	return GF_OK;
 }
 
+/*
+The algo in gf_m2ts_mux_process elects the first stream with lowest time but uses +INF as initial time
+when no realtime nor fixed rate. Regulation is then needed because input may arrive at any time,
+so one stream S1 with input TS1 may be elected to be sent
+while other streams are still waiting for inputs with TSX < TS1. Not regulating would send S1 way too fast.
+This only applies for non real time VBR
+
+We therefore need to check if the stream time is not too ahead of the current mux time.
+However, since the mux time in this mode is set to the stream time of the last stream sent,
+we also need to check the PCR stream:
+- if over, flush everything
+- otherwise, if all non-PCR streams are done or have a stream time >= PCR stream time, the PCR stream can be sent
+- otherwise, the PCR will wait until all non-PCR streams clocks have reached the PCR stream clock
+
+*/
+static Bool gf_m2ts_stream_too_early(GF_M2TS_Mux_Stream *stream, GF_M2TS_Mux *muxer)
+{
+	GF_M2TS_Time t;
+	if (muxer->fixed_rate || muxer->real_time) return GF_FALSE;
+
+	//any stream behind the PCR is not too early
+	if (gf_m2ts_time_less(&stream->time, &stream->program->pcr->time))
+		return GF_FALSE;
+
+	//we consider sending a stream 100ms ahead of current mux time is too early
+	//this is independent of the mux type (realtime, fixed rate)
+	t = stream->time;
+	gf_m2ts_time_inc(&t, 100, 1000);
+	if (!gf_m2ts_time_less(&muxer->time, &t)) {
+		return GF_FALSE;
+	}
+	//if PCR stream is over, flush
+	if (stream->program->pcr->ifce) {
+		if (stream->program->pcr->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER))
+			return GF_FALSE;
+	}
+	//PCR is in pure pcr mode (no associated data), check is any stream is less than PCR
+	if (stream->program->pcr->pcr_only_mode)
+		stream = stream->program->pcr;
+	//if this is the PCR, wait only if some streams in program are behind us
+	if (stream->program->pcr == stream) {
+		GF_M2TS_Mux_Stream *a_stream = stream->program->streams;
+		while (a_stream) {
+			//a_stream time less than stream time, we must wait on stream to process a_stream
+			if ((a_stream != stream)
+				&& a_stream->ifce && !(a_stream->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER))
+				&& gf_m2ts_time_less(&a_stream->time, &stream->time)
+			) {
+				return GF_TRUE;
+			}
+			a_stream = a_stream->next;
+		}
+		return GF_FALSE;
+	}
+	//PCR done or flush, we're not too early
+	else if (stream->program->pcr->ifce && (stream->program->pcr->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER)))
+		return GF_FALSE;
+
+	//not PCR, we're too early
+	return GF_TRUE;
+}
 
 GF_EXPORT
 const u8 *gf_m2ts_mux_process(GF_M2TS_Mux *muxer, GF_M2TSMuxState *status, u32 *usec_till_next)
@@ -3045,6 +3347,21 @@ const u8 *gf_m2ts_mux_process(GF_M2TS_Mux *muxer, GF_M2TSMuxState *status, u32 *
 	program = muxer->programs;
 	while (program) {
 		stream = program->streams;
+
+		//first pass, process all PES and update stream clocks - this is needed for non realtime VBR because gf_m2ts_stream_too_early (below) assumes all
+		//stream times are up to date
+		while (stream) {
+			if (flush_all_pes && !stream->pes_data_remain) {
+				stream->process_res = 0;
+			} else {
+				stream->process_res = stream->process(muxer, stream);
+			}
+			stream = stream->next;
+			continue;
+		}
+
+		//second pass, get earliest PES packet
+		stream = program->streams;
 		while (stream) {
 #if FORCE_PCR_FIRST
 			if (stream != program->pcr)
@@ -3056,14 +3373,18 @@ const u8 *gf_m2ts_mux_process(GF_M2TS_Mux *muxer, GF_M2TSMuxState *status, u32 *
 					continue;
 				}
 
-				res = stream->process(muxer, stream);
+				res = stream->process_res;
+
 				/*next is rap on this stream, check flushing of other pes (we could use a goto)*/
 				if (!flush_all_pes && muxer->force_pat)
 					return gf_m2ts_mux_process(muxer, status, usec_till_next);
 
 				if (res) {
 					/*always schedule the earliest data*/
-					if (gf_m2ts_time_less(&stream->time, &time)) {
+					if (gf_m2ts_time_less(&stream->time, &time)
+						//we must regulate as input may arrive in burst
+						&& (flush_all_pes || !gf_m2ts_stream_too_early(stream, muxer))
+					) {
 						highest_priority = res;
 						time = stream->time;
 						stream_to_process = stream;
@@ -3145,7 +3466,7 @@ send_pck:
 			muxer->time = muxer->init_ts_time;
 			gf_m2ts_time_inc(&muxer->time, us_diff, 1000000);
 		}
-		/*if a stream was found, use it*/
+		/*if a stream was found, use it - regulation is done by gf_m2ts_stream_too_early*/
 		else if (stream_to_process) {
 			if (gf_m2ts_time_less_or_equal(&muxer->time, &time))
 				muxer->time = time;

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2021
+ *			Copyright (c) Telecom ParisTech 2005-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / MP3 libmad decoder filter
@@ -223,14 +223,18 @@ mad_resync:
 	mad_stream_buffer(&ctx->stream, ctx->buffer, ctx->len);
 
 	if (mad_frame_decode(&ctx->frame, &ctx->stream) == -1) {
-		if (!pck) return GF_OK;
+		if (!pck) {
+			if (ctx->flush_done) {
+				gf_filter_pid_set_eos(ctx->opid);
+				return GF_EOS;
+			}
+			return GF_OK;
+		}
 
 		if (ctx->stream.error==MAD_ERROR_BUFLEN) {
-			if (pck) {
-				ctx->last_cts = gf_filter_pck_get_cts(pck);
-				ctx->timescale = gf_filter_pck_get_timescale(pck);
-				gf_filter_pid_drop_packet(ctx->ipid);
-			}
+			ctx->last_cts = gf_filter_pck_get_cts(pck);
+			ctx->timescale = gf_filter_pck_get_timescale(pck);
+			gf_filter_pid_drop_packet(ctx->ipid);
 			return GF_OK;
 		}
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[MAD] Decoding failed error %s (%d)\n", mad_stream_errorstr(&ctx->stream), ctx->stream.error ) );
@@ -347,6 +351,7 @@ static const GF_FilterCapability MADCaps[] =
 	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_PART3),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG_AUDIO),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG_AUDIO_L1),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_RAW),
 };

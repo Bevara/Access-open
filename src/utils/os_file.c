@@ -1,7 +1,7 @@
 /*
  *			GPAC - Multimedia Framework C SDK
  *
- *			Authors: Jean Le Feuvre - Copyright (c) Telecom ParisTech 2000-2020
+ *			Authors: Jean Le Feuvre - Copyright (c) Telecom ParisTech 2000-2022
  *			         Romain Bouqueau - Copyright (c) Romain Bouqueau 2015
  *					All rights reserved
  *
@@ -252,7 +252,6 @@ Bool gf_file_exists_ex(const char *fileName, const char *par_name)
 
 	if (gfio_type) {
 		GF_FileIO *gfio_ref;
-		GF_FileIO *new_gfio;
 		GF_Err e;
 		Bool res = GF_TRUE;
 		if (gfio_type==1)
@@ -261,11 +260,9 @@ Bool gf_file_exists_ex(const char *fileName, const char *par_name)
 			gfio_ref = gf_fileio_from_url(par_name);
 
 		if (!gfio_ref) return GF_FALSE;
-		new_gfio = gf_fileio_open_url(gfio_ref, fileName, "probe", &e);
+		gf_fileio_open_url(gfio_ref, (gfio_type==1) ? gf_fileio_resource_url(gfio_ref) : fileName, "probe", &e);
 		if (e==GF_URL_ERROR)
 			res = GF_FALSE;
-		if (new_gfio)
-			gf_fileio_open_url(new_gfio, NULL, "r", &e);
 		return res;
 	}
 
@@ -384,35 +381,50 @@ u64 gf_file_modification_time(const char *filename)
 	WCHAR _file[GF_MAX_PATH];
 	WIN32_FIND_DATA FindData;
 	HANDLE fh;
-	ULARGE_INTEGER uli;
-	ULONGLONG time_ms;
+//	ULARGE_INTEGER uli;
+	ULONGLONG time_us;
 	BOOL ret;
 	CE_CharToWide((char *) filename, _file);
 	fh = FindFirstFile(_file, &FindData);
 	if (fh == INVALID_HANDLE_VALUE) return 0;
-	uli.LowPart = FindData.ftLastWriteTime.dwLowDateTime;
-	uli.HighPart = FindData.ftLastWriteTime.dwHighDateTime;
+//	uli.LowPart = FindData.ftLastWriteTime.dwLowDateTime;
+//	uli.HighPart = FindData.ftLastWriteTime.dwHighDateTime;
+	time_us = (u64) ((*(LONGLONG *) &FindData.ftLastWriteTime - TIMESPEC_TO_FILETIME_OFFSET) / 10);
 	ret = FindClose(fh);
 	if (!ret) {
 		DWORD err = GetLastError();
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[core] FindClose() in gf_file_modification_time() returned the following error code: %d\n", err));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[core] FindClose() in gf_file_modification_time() error: %d\n", err));
 	}
-	time_ms = uli.QuadPart/10000;
-	return time_ms;
+//	time_ms = uli.QuadPart/10000;
+	return time_us;
 #elif defined(WIN32) && !defined(__GNUC__)
-	struct _stat64 sb;
+	struct _stat64 st;
 	int op_result;
 	wchar_t* wcsFilename = gf_utf8_to_wcs(filename);
 	if (!wcsFilename)
 		return 0;
-	op_result = _wstat64(wcsFilename, &sb);
+	op_result = _wstat64(wcsFilename, &st);
 	gf_free(wcsFilename);
 	if (op_result != 0) return 0;
-	return sb.st_mtime;
+	u64 time_us = st.st_mtime * 1000000;
+#if defined(GPAC_HAS_MTIM_NSEC)
+	time_us += st.st_mtim.tv_nsec / 1000;
+#endif
+	return time_us;
 #else
-	struct stat sb;
-	if (stat(filename, &sb) != 0) return 0;
-	return sb.st_mtime;
+	struct stat st;
+	if (stat(filename, &st) != 0) return 0;
+	u64 time_us = st.st_mtime * 1000000;
+
+#if defined(__DARWIN__) || defined(__APPLE__) || defined(GPAC_CONFIG_IOS)
+	time_us += st.st_mtimespec.tv_nsec / 1000;
+#elif defined(GPAC_HAS_MTIM_NSEC)
+	time_us += st.st_mtim.tv_nsec / 1000;
+#elif defined(GPAC_CONFIG_ANDROID)
+	time_us += st.st_mtime_nsec / 1000;
+#endif
+
+	return time_us;
 #endif
 	return 0;
 }
@@ -602,7 +614,7 @@ FILE *gf_file_temp(char ** const fileName)
 			return NULL;
 		}
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] Opening new temp file %s\n", opath));
-		res = gf_fopen_ex(opath, "__temp_file", "w+b");
+		res = gf_fopen_ex(opath, "__temp_file", "w+b", GF_FALSE);
 		if (!res) {
 			gf_free(opath);
 			return NULL;
@@ -726,12 +738,12 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 	}
 
 	tmpdir = _path;
-	if (gf_utf8_mbstowcs(path, GF_MAX_PATH, &tmpdir) == (size_t)-1) {
+	if (gf_utf8_mbstowcs(path, GF_MAX_PATH, &tmpdir) == GF_UTF8_FAIL) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot convert %s to UTF16: broken string\n", dir));
 		return GF_BAD_PARAM;
 	}
 	tmpdir  = filter;
-	if (gf_utf8_mbstowcs(w_filter, sizeof(w_filter), &tmpdir) == (size_t)-1) {
+	if (gf_utf8_mbstowcs(w_filter, sizeof(w_filter), &tmpdir) == GF_UTF8_FAIL) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot convert %s to UTF16: broken string\n", filter));
 		return GF_BAD_PARAM;
 	}
@@ -832,7 +844,7 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 		file_info.size += 1;
 		file_info.size *= FindData.nFileSizeHigh;
 		file_info.size += FindData.nFileSizeLow;
-		file_info.last_modified = (u64) ((*(LONGLONG *) &FindData.ftLastWriteTime - TIMESPEC_TO_FILETIME_OFFSET) / 10000000);
+		file_info.last_modified = (u64) ((*(LONGLONG *) &FindData.ftLastWriteTime - TIMESPEC_TO_FILETIME_OFFSET) / 10);
 #endif
 
 #if defined (_WIN32_WCE)
@@ -856,10 +868,17 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 
 		file_info.size = st.st_size;
 
-		{
-			struct tm _t = * gf_gmtime(& st.st_mtime);
-			file_info.last_modified = mktime(&_t);
-		}
+		struct tm _t = * gf_gmtime(& st.st_mtime);
+		file_info.last_modified = mktime(&_t);
+		file_info.last_modified *= 1000000;
+#if defined(__DARWIN__) || defined(__APPLE__) || defined(GPAC_CONFIG_IOS)
+		file_info.last_modified += st.st_mtimespec.tv_nsec / 1000;
+#elif defined(GPAC_HAS_MTIM_NSEC)
+		file_info.last_modified += st.st_mtim.tv_nsec / 1000;
+#elif defined(GPAC_CONFIG_ANDROID)
+		file_info.last_modified += st.st_mtime_nsec / 1000;
+#endif
+
 		file = the_file->d_name;
 		if (file && file[0]=='.') file_info.hidden = GF_TRUE;
 
@@ -946,7 +965,7 @@ struct __gf_file_io
 	void *udta;
 
 	u64 bytes_done, file_size_plus_one;
-	Bool cache_complete;
+	Bool cache_complete, main_th;
 	u32 bytes_per_sec;
 
 	u32 printf_alloc;
@@ -1149,7 +1168,8 @@ GF_FileIO *gf_fileio_from_url(const char *url)
 	char szURL[100];
 	GF_FileIO *ptr=NULL;
 	if (!url) return NULL;
-	
+	if (strncmp(url, "gfio://", 7)) return NULL;
+
 	sscanf(url, "gfio://%p", &ptr);
 	sprintf(szURL, "gfio://%p", ptr);
 	if (strcmp(url, szURL))
@@ -1214,6 +1234,23 @@ Bool gf_fileio_get_stats(GF_FileIO *gfio, u64 *bytes_done, u64 *file_size, Bool 
 	if (bytes_per_sec) *bytes_per_sec = gfio->bytes_per_sec;
 	return GF_TRUE;
 }
+
+GF_EXPORT
+GF_Err gf_fileio_tag_main_thread(GF_FileIO *fileio)
+{
+	if (!fileio) return GF_BAD_PARAM;
+	fileio->main_th = GF_TRUE;
+	return GF_OK;
+}
+
+GF_EXPORT
+Bool gf_fileio_is_main_thread(const char *url)
+{
+	GF_FileIO *gfio = gf_fileio_from_url(url);
+	if (!gfio) return GF_FALSE;
+	return gfio->main_th;
+}
+
 
 GF_EXPORT
 u64 gf_ftell(FILE *fp)
@@ -1300,7 +1337,7 @@ static GF_FileIO *gf_fileio_from_blob(const char *file_name)
 	return gf_fileio_new((char *) file_name, gfio_blob, gfio_blob_open, gfio_blob_seek, gfio_blob_read, NULL, gfio_blob_tell, gfio_blob_eof, NULL);
 }
 GF_EXPORT
-FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mode)
+FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mode, Bool no_warn)
 {
 	FILE *res = NULL;
 	u32 gfio_type = 0;
@@ -1345,10 +1382,13 @@ FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mo
 		}
 		new_gfio = gf_fileio_open_url(gfio_ref, file_name, mode, &e);
 		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("FileIO %s open in mode %s failed: %s\n", file_name, mode, gf_error_to_string(e)));
+			if (!no_warn) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("FileIO %s open in mode %s failed: %s\n", file_name, mode, gf_error_to_string(e)));
+			}
 			return NULL;
 		}
-		gf_register_file_handle((char*)file_name, (FILE *) new_gfio, GF_FALSE);
+		if (new_gfio)
+			gf_register_file_handle((char*)file_name, (FILE *) new_gfio, GF_FALSE);
 		return (FILE *) new_gfio;
 	}
 
@@ -1409,7 +1449,7 @@ FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mo
 			gf_register_file_handle((char*)file_name, res, GF_FALSE);
 
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] file \"%s\" opened in mode \"%s\" - %d file handles\n", file_name, mode, gpac_file_handles));
-	} else {
+	} else if (!no_warn) {
 		if (strchr(mode, 'w') || strchr(mode, 'a')) {
 #if defined(WIN32)
 			u32 err = GetLastError();
@@ -1425,7 +1465,7 @@ FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mo
 GF_EXPORT
 FILE *gf_fopen(const char *file_name, const char *mode)
 {
-	return gf_fopen_ex(file_name, NULL, mode);
+	return gf_fopen_ex(file_name, NULL, mode, GF_FALSE);
 }
 
 GF_EXPORT
@@ -1438,7 +1478,7 @@ s32 gf_fclose(FILE *file)
 		return 0;
 	if (gf_fileio_check(file)) {
 		GF_Err e;
-		gf_fileio_open_url((GF_FileIO *) file, NULL, "deref", &e);
+		gf_fileio_open_url((GF_FileIO *) file, NULL, "close", &e);
 		if (e) return -1;
 		return 0;
 	}
@@ -1684,15 +1724,16 @@ char* gf_file_ext_start(const char* filename)
 	return NULL;
 }
 
+
 GF_EXPORT
-char* gf_url_colon_suffix(const char *path)
+char* gf_url_colon_suffix(const char *path, char assign_sep)
 {
 	char *sep = strchr(path, ':');
 	if (!sep) return NULL;
 
 	//handle Z:\ and Z:/
 	if ((path[1]==':') && ( (path[2]=='/') || (path[2]=='\\') ) )
-		return gf_url_colon_suffix(path+2);
+		return gf_url_colon_suffix(path+2, assign_sep);
 
 	if (!strncmp(path, "gfio://", 7) || !strncmp(path, "gmem://", 7)) {
 		return strchr(path+7, ':');
@@ -1711,7 +1752,7 @@ char* gf_url_colon_suffix(const char *path)
 			if sep[1]==':', then sep[2] is valid (0 or something else), no need to check for len
 		*/
 		if ((sep[1]==':') && ( (sep[2]=='/') || (sep[2]=='\\') ) ) {
-			return gf_url_colon_suffix(sep+2);
+			return gf_url_colon_suffix(sep+2, assign_sep);
 		}
 		//find closest : or /, if : is before / consider this is a port or an IPv6 address and check next : after /
 		next_colon = strchr(sep, ':');
@@ -1739,5 +1780,16 @@ char* gf_url_colon_suffix(const char *path)
 		}
 		return next_colon;
 	}
+
+	if (sep && assign_sep) {
+		char *file_ext = strchr(path, '.');
+		char *assign = strchr(path, assign_sep);
+		if (assign && assign>file_ext) assign = NULL;
+		if (assign) file_ext = NULL;
+		if (file_ext && (file_ext>sep)) {
+			sep = strchr(file_ext, ':');
+		}
+	}
 	return sep;
 }
+

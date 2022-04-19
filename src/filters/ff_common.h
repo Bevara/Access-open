@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common ffmpeg filters
@@ -36,9 +36,6 @@
 #include <libswscale/swscale.h>
 #include <libavutil/channel_layout.h>
 
-//can be pointer or uint
-#define GF_FFMPEG_DECODER_CONFIG GF_4CC('f','f','D','C')
-
 #if (LIBAVFORMAT_VERSION_MAJOR < 59)
 #define AVFMT_URL(_mux) _mux->filename
 #else
@@ -60,10 +57,6 @@
 #endif
 
 
-//rendering/translating to internal supported formats for text streams is not yet implemented
-//#define FF_SUB_SUPPORT
-
-
 GF_FilterArgs ffmpeg_arg_translate(const struct AVOption *opt);
 void ffmpeg_setup_logs(u32 log_class);
 
@@ -78,8 +71,8 @@ enum{
 
 void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_reg, const GF_FilterArgs *default_args, u32 nb_def_args, u32 reg_type);
 
-u32 ffmpeg_pixfmt_from_gpac(u32 pfmt);
-u32 ffmpeg_pixfmt_to_gpac(u32 pfmt);
+enum AVPixelFormat ffmpeg_pixfmt_from_gpac(u32 pfmt, Bool no_warn);
+u32 ffmpeg_pixfmt_to_gpac(enum AVPixelFormat pfmt, Bool no_warn);
 //return GPAC pix format from codec tag
 u32 ffmpeg_pixfmt_from_codec_tag(u32 codec_tag, Bool *is_full_range);
 //check if FF pixfmt is an old format fullrange
@@ -101,3 +94,13 @@ u64 ffmpeg_channel_layout_to_gpac(u64 ff_ch_layout);
 
 //this will destroy unknown_options if set
 void ffmpeg_report_options(GF_Filter *filter, AVDictionary *unknown_options, AVDictionary *all_options);
+
+void ffmpeg_register_set_dyn_help(GF_FilterRegister *reg);
+
+//output allocated with av_malloc
+GF_Err ffmpeg_extradata_from_gpac(u32 gpac_codec_id, const u8 *dsi_in, u32 dsi_in_size, u8 **dsi_out, u32 *dsi_out_size);
+//output allocated with gf_malloc
+GF_Err ffmpeg_extradata_to_gpac(u32 gpac_codec_id, const u8 *data, u32 size, u8 **dsi_out, u32 *dsi_out_size);
+
+void ffmpeg_tags_from_gpac(GF_FilterPid *pid, AVDictionary **metadata);
+void ffmpeg_tags_to_gpac(AVDictionary *metadata, GF_FilterPid *pid);

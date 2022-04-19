@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -265,7 +265,7 @@ GF_Err gf_dynstrcat(char **str, const char *to_append, const char *sep);
 Parse a 64 bit fraction from string
 \param str string to parse
 \param frac fraction to fill
-\return GF_TRUE if success, GF_FALSE otherwisen fraction being set to {0,0}
+\return GF_TRUE if success, GF_FALSE otherwise ( fraction being set to {0,0} )
  */
 Bool gf_parse_lfrac(const char *str, GF_Fraction64 *frac);
 
@@ -275,9 +275,21 @@ Bool gf_parse_lfrac(const char *str, GF_Fraction64 *frac);
 Parse a 32 bit fraction from string
 \param str string to parse
 \param frac fraction to fill
-\return GF_TRUE if success, GF_FALSE otherwisen fraction being set to {0,0}
+\return GF_TRUE if success, GF_FALSE otherwise ( fraction being set to {0,0} )
  */
 Bool gf_parse_frac(const char *str, GF_Fraction *frac);
+
+/*!
+\brief search string without case
+
+Search a aubstring in a string witout checking for case
+\param text text to search
+\param subtext string to find
+\param subtext_len length of string to find
+\return GF_TRUE if success, GF_FALSE otherwise
+ */
+Bool gf_strnistr(const char *text, const char *subtext, u32 subtext_len);
+
 
 /*!
 \brief safe timestamp rescale
@@ -660,15 +672,11 @@ typedef enum
 	GF_LOG_HTTP,
 	/*! Log message from the RTP/RTCP stack (TS info) and packet structure & hinting (debug)*/
 	GF_LOG_RTP,
-	/*! Log message from authoring subsystem (file manip, import/export)*/
-	GF_LOG_AUTHOR,
-	/*! Log message from the sync layer of the terminal*/
-	GF_LOG_SYNC,
 	/*! Log message from a codec*/
 	GF_LOG_CODEC,
-	/*! Log message from any XML parser (context loading, etc)*/
+	/*! Log message from any textual (XML, ...) parser (context loading, etc)*/
 	GF_LOG_PARSER,
-	/*! Log message from the terminal/compositor, indicating media object state*/
+	/*! Generic log message from a filter (not from filter core library)*/
 	GF_LOG_MEDIA,
 	/*! Log message from the scene graph/scene manager (handling of nodes and attribute modif, DOM core)*/
 	GF_LOG_SCENE,
@@ -678,14 +686,14 @@ typedef enum
 	GF_LOG_INTERACT,
 	/*! Log message from compositor*/
 	GF_LOG_COMPOSE,
+	/*! Log message from the terminal/compositor, indicating media object state*/
+	GF_LOG_COMPTIME,
 	/*! Log for video object cache */
 	GF_LOG_CACHE,
 	/*! Log message from multimedia I/O devices (audio/video input/output, ...)*/
 	GF_LOG_MMIO,
 	/*! Log for runtime info (times, memory, CPU usage)*/
 	GF_LOG_RTI,
-	/*! Log for SMIL timing and animation*/
-	GF_LOG_SMIL,
 	/*! Log for memory tracker*/
 	GF_LOG_MEMORY,
 	/*! Log for audio compositor*/
@@ -698,7 +706,7 @@ typedef enum
 	GF_LOG_CONDITION,
 	/*! Log for all HTTP streaming */
 	GF_LOG_DASH,
-	/*! Log for all messages coming from filters */
+	/*! Log for all messages from filter core library (not from a filter) */
 	GF_LOG_FILTER,
 	/*! Log for filter scheduler only */
 	GF_LOG_SCHEDULER,
@@ -1079,7 +1087,7 @@ u64 gf_net_parse_date(const char *date);
 /*!
 \brief returns 64-bit UTC timestamp from year, month, day, hour, min and sec
 \param year the year
-\param month the month
+\param month the month, from 0 to 11
 \param day the day
 \param hour the hour
 \param min the min
@@ -1421,10 +1429,11 @@ Opens a file, potentially using file IO if the parent URL is a File IO wrapper
 \param file_name same as fopen
 \param parent_url URL of parent file. If not a file io wrapper (gfio://), the function is equivalent to gf_fopen
 \param mode same as fopen
+\param no_warn if GF_TRUE, do not throw log message if failure
 \return stream handle of the file object
 \note You only need to call this function if you're suspecting the file to be a large one (usually only media files), otherwise use regular stdio.
 \return stream habdle of the file or file IO object*/
-FILE *gf_fopen_ex(const char *file_name, const char *parent_url, const char *mode);
+FILE *gf_fopen_ex(const char *file_name, const char *parent_url, const char *mode, Bool no_warn);
 
 /*!
 \brief file closing
@@ -1469,7 +1478,6 @@ char* gf_file_basename(const char* filename);
 \return a pointer to the start of a filepath extension or null
 */
 char* gf_file_ext_start(const char* filename);
-
 
 /*!\brief FileEnum info object
 
@@ -1550,7 +1558,7 @@ FILE *gf_file_temp(char ** const fileName);
 /*!
 \brief File Modification Time
 
-Gets the modification time of the given file. The exact meaning of this value is system dependent
+Gets the UTC modification time of the given file in microseconds
 \param filename file to check
 \return modification time of the file
  */
@@ -1580,11 +1588,12 @@ typedef struct __gf_file_io GF_FileIO;
 /*! open proc for memory file IO
 \param fileio_ref reference file_io. A file can be opened multiple times for the same reference, your code must handle this
 \param url target file name.
-\param mode opening mode of file, same as fopen mode. The following additionnal modes are defined:
+\param mode opening mode of file, same as fopen mode. The following additional modes are defined:
 	- "ref": indicates this FileIO object is used by some part of the code and must not be destroyed upon closing of the file. Associated URL is null
 	- "unref": indicates this FileIO object is not used by some part of the code and may be destroyed if no more references to this object are set. Associated URL is null
 	- "url": indicates to create a new FileIO object for the given URL without opening the output file. The resulting FileIO object must be garbage collected by the app in case its is never used by the callers
 	- "probe": checks if the file exists, but no need to open the file. The function should return NULL in this case. If file does not exist, set out_error to GF_URL_ERROR
+	- "close": indicates the fileIO object is being closed (fclose)
 \param out_error must be set to error code if any (never NULL)
 \return the opened GF_FileIO if success, or NULL otherwise
  */
@@ -1703,6 +1712,22 @@ Bool gf_fileio_get_stats(GF_FileIO *fileio, u64 *bytes_done, u64 *file_size, Boo
 */
 GF_FileIO *gf_fileio_open_url(GF_FileIO *fileio, const char *url, const char *mode, GF_Err *out_err);
 
+
+/*! Tags a FileIO object to be accessed from main thread only
+\param fileio target file IO object
+\return error if any
+*/
+GF_Err gf_fileio_tag_main_thread(GF_FileIO *fileio);
+
+/*! Check if a FileIO object is to be accessed from main thread only
+
+ \note Filters accessing FileIO objects by other means that a filter option must manually tag themselves as main thread, potentially rescheduling a configure call to next process. Not doing so can result in binding crashes in multi-threaded mode.
+
+\param url target url
+\return GF_TRUE if object is tagged for main thread, GF_FALSE otherwise
+*/
+Bool gf_fileio_is_main_thread(const char *url);
+
 /*! Gets GF_FileIO object from its URL
  The url uses the protocol scheme "gfio://"
 \param url the URL of  the File IO object
@@ -1711,7 +1736,7 @@ GF_FileIO *gf_fileio_open_url(GF_FileIO *fileio, const char *url, const char *mo
 GF_FileIO *gf_fileio_from_url(const char *url);
 
 /*! Constructs a new GF_FileIO object from a URL
- The url can be absolute or relative to the parent GF_FileIO. This is typcically needed by filters (dash input, dasher, NHML/NHNT writers...) generating or consuming additionnal files associated with the main file IO object but being written or read by other filters.
+ The url can be absolute or relative to the parent GF_FileIO. This is typcically needed by filters (dash input, dasher, NHML/NHNT writers...) generating or consuming additional files associated with the main file IO object but being written or read by other filters.
  The function will not open the associated resource, only create the file IO wrapper for later usage
  If you need to create a new fileIO to be opened immediately, use \ref gf_fopen_ex.
 
@@ -2063,8 +2088,8 @@ extern void gf_fm_request_set_callback(void *cbk_obj, fm_callback_func cbk_func)
 void gf_fm_request_call(u32 type, u32 param, int *value);
 #endif //GPAC_CONFIG_ANDROID
 
-/*to call whenever the OpenGL library is opened - this function is needed to bind openGL and remotery, and to load
-openGL extensions on windows
+/*to call whenever the OpenGL library is opened - this function is needed to bind OpenGL and remotery, and to load
+OpenGL extensions on windows
 not exported, and not included in src/compositor/gl_inc.h since it may be needed even when no OpenGL 
 calls are made by the caller*/
 void gf_opengl_init();
@@ -2108,6 +2133,8 @@ typedef struct _gl_texture_wrap
 	//YUV is full video range
 	Bool fullrange;
 	s32 mx_cicp;
+
+	u32 last_program;
 } GF_GLTextureWrapper;
 
 Bool gf_gl_txw_insert_fragment_shader(u32 pix_fmt, const char *tx_name, char **f_source, Bool y_flip);

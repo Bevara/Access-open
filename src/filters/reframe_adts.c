@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / AAC ADTS reframer filter
@@ -82,7 +82,7 @@ typedef struct
 	Bool is_playing;
 	Bool is_file, file_loaded;
 	Bool initial_play_done;
-
+	Bool copy_props;
 	GF_FilterPacket *src_pck;
 
 	ADTSIdx *indexes;
@@ -216,6 +216,7 @@ GF_Err adts_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 		//we don't update copy props on output for now - if we decide we need it, we will need to also force resengin the decoder config
 	}
+	if (ctx->timescale) ctx->copy_props = GF_TRUE;
 
 	return GF_OK;
 }
@@ -243,8 +244,12 @@ static void adts_dmx_check_dur(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->index_size = 0;
 
@@ -296,7 +301,6 @@ static void adts_dmx_check_dur(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 	
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 }
 
 static void adts_dmx_check_pid(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
@@ -308,14 +312,20 @@ static void adts_dmx_check_pid(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 
 	if (!ctx->opid) {
 		ctx->opid = gf_filter_pid_new(filter);
-		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		adts_dmx_check_dur(filter, ctx);
 	}
 
 	if ((ctx->sr_idx == ctx->hdr.sr_idx) && (ctx->nb_ch == ctx->hdr.nb_ch)
-		&& (ctx->is_mp2 == ctx->hdr.is_mp2) && (ctx->profile == ctx->hdr.profile) ) return;
+		&& (ctx->is_mp2 == ctx->hdr.is_mp2) && (ctx->profile == ctx->hdr.profile) && !ctx->copy_props) return;
 
 	//copy properties at init or reconfig
+	ctx->copy_props = GF_FALSE;
+	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
+
+	if (ctx->duration.num)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 
 	//don't change codec type if reframing an ES (for HLS SAES)
 	if (!ctx->timescale)
@@ -326,9 +336,6 @@ static void adts_dmx_check_pid(GF_Filter *filter, GF_ADTSDmxCtx *ctx)
 	if (ctx->is_file && ctx->index) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PLAYBACK_MODE, & PROP_UINT(GF_PLAYBACK_MODE_FASTFORWARD) );
 	}
-
-	if (ctx->duration.num)
-		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
 
 	ctx->is_mp2 = ctx->hdr.is_mp2;
@@ -514,6 +521,7 @@ static Bool adts_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	case GF_FEVT_STOP:
 		//don't cancel event
 		ctx->is_playing = GF_FALSE;
+		ctx->cts = 0;
 		return GF_FALSE;
 
 	case GF_FEVT_SET_SPEED:
@@ -602,6 +610,9 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 	//input pid sets some timescale - we flushed pending data , update cts
 	if (ctx->timescale && pck) {
 		cts = gf_filter_pck_get_cts(pck);
+		//init cts at first packet
+		if (!ctx->cts && (cts != GF_FILTER_NO_TS))
+			ctx->cts = cts;
 	}
 
 	if (cts == GF_FILTER_NO_TS) {
@@ -670,7 +681,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 
 		//not sync !
 		if ((sync[1] & 0xF0) != 0xF0) {
-			GF_LOG(ctx->nb_frames ? GF_LOG_WARNING : GF_LOG_DEBUG, GF_LOG_PARSER, ("[ADTSDmx] invalid ADTS sync bytes, resyncing\n"));
+			GF_LOG(ctx->nb_frames ? GF_LOG_WARNING : GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ADTSDmx] invalid ADTS sync bytes, resyncing\n"));
 			ctx->nb_frames = 0;
 			goto drop_byte;
 		}
@@ -715,12 +726,12 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 		}
 
 		if (!ctx->hdr.frame_size || !GF_M4ASampleRates[ctx->hdr.sr_idx]) {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[ADTSDmx] Invalid ADTS frame header, resyncing\n"));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ADTSDmx] Invalid ADTS frame header, resyncing\n"));
 			ctx->nb_frames = 0;
 			goto drop_byte;
 		}
 		if ((nb_blocks_per_frame>2) || (nb_blocks_per_frame && ctx->hdr.nb_ch)) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[ADTSDmx] Unsupported multi-block ADTS frame header - patch welcome\n"));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[ADTSDmx] Unsupported multi-block ADTS frame header - patch welcome\n"));
 			ctx->nb_frames = 0;
 			goto drop_byte;
 		} else if (!nb_blocks_per_frame) {
@@ -730,7 +741,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 				ctx->hdr.nb_ch = ctx->aacchcfg;
 
 			if (!ctx->hdr.nb_ch) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] Missing channel configuration in ADTS frame header, defaulting to stereo - use `--aacchcfg` to force config\n"));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ADTSDmx] Missing channel configuration in ADTS frame header, defaulting to stereo - use `--aacchcfg` to force config\n"));
 				ctx->hdr.nb_ch = ctx->aacchcfg = 2;
 			}
 		}
@@ -742,6 +753,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 				gf_bs_skip_bytes(ctx->bs, 2);  //per block CRC
 
 			ctx->hdr.hdr_size += (u32) gf_bs_get_position(ctx->bs) - pos;
+			ctx->hdr.nb_ch = ctx->acfg.nb_chan;
 		}
 		//value 1->6 match channel number, value 7 is 7.1
 		if (ctx->hdr.nb_ch==7)
@@ -754,7 +766,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 			u32 next_frame = ctx->hdr.frame_size;
 			//make sure we are sync!
 			if ((sync[next_frame] !=0xFF) || ((sync[next_frame+1] & 0xF0) !=0xF0) ) {
-				GF_LOG(ctx->nb_frames ? GF_LOG_WARNING : GF_LOG_DEBUG, GF_LOG_PARSER, ("[ADTSDmx] invalid next ADTS frame sync, resyncing\n"));
+				GF_LOG(ctx->nb_frames ? GF_LOG_WARNING : GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ADTSDmx] invalid next ADTS frame sync, resyncing\n"));
 				ctx->nb_frames = 0;
 				goto drop_byte;
 			}
@@ -768,7 +780,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 		}
 
 		if (ctx->hdr.frame_size < ctx->hdr.hdr_size) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] Corrupted ADTS frame header, resyncing\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ADTSDmx] Corrupted ADTS frame header, resyncing\n"));
 			ctx->nb_frames = 0;
 			goto drop_byte;
 		}
@@ -825,7 +837,7 @@ GF_Err adts_dmx_process(GF_Filter *filter)
 
 		//truncated last frame
 		if (bytes_to_drop>remain) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[ADTSDmx] truncated ADTS frame %d bytes but only %d left!\n", bytes_to_drop, remain));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ADTSDmx] truncated ADTS frame %d bytes but only %d left!\n", bytes_to_drop, remain));
 			bytes_to_drop=remain;
 		}
 
@@ -946,7 +958,7 @@ static const GF_FilterCapability ADTSDmxCaps[] =
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "aac|adts"),
 	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "audio/x-m4a|audio/aac|audio/aacp|audio/x-aac"),
-	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
+	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG4),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_MP),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_LCP),
@@ -954,14 +966,16 @@ static const GF_FilterCapability ADTSDmxCaps[] =
 	//we explitely set this one to prevent adts->latm reframer connection
 	CAP_BOOL(GF_CAPS_OUTPUT_STATIC_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	{0},
-	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG4),
 	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED,GF_PROP_PID_UNFRAMED_LATM, GF_TRUE),
 	{0},
-	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_ENCRYPTED),
-	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_ORIG_STREAM_TYPE, GF_STREAM_AUDIO),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_ENCRYPTED),
+	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_PROTECTION_SCHEME_TYPE, GF_HLS_SAMPLE_AES_SCHEME),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG4),
 	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED_LATM, GF_TRUE)
 };
 
 
@@ -972,17 +986,17 @@ static const GF_FilterArgs ADTSDmxArgs[] =
 	{ OFFS(index), "indexing window length", GF_PROP_DOUBLE, "1.0", NULL, 0},
 //	{ OFFS(mpeg4), "force signaling as MPEG-4 AAC", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ovsbr), "force oversampling SBR (does not multiply timescales by 2)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(sbr), "set SBR signaling\n"\
-				"- no: no SBR signaling at all\n"\
-				"- imp: backward-compatible SBR signaling (audio signaled as AAC-LC)\n"\
-				"- exp: explicit SBR signaling (audio signaled as AAC-SBR)"\
+	{ OFFS(sbr), "set SBR signaling\n"
+				"- no: no SBR signaling at all\n"
+				"- imp: backward-compatible SBR signaling (audio signaled as AAC-LC)\n"
+				"- exp: explicit SBR signaling (audio signaled as AAC-SBR)"
 				, GF_PROP_UINT, "no", "no|imp|exp", GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(ps), "set PS signaling\n"\
-				"- no: no PS signaling at all\n"\
-				"- imp: backward-compatible PS signaling (audio signaled as AAC-LC)\n"\
-				"- exp: explicit PS signaling (audio signaled as AAC-PS)"\
+	{ OFFS(ps), "set PS signaling\n"
+				"- no: no PS signaling at all\n"
+				"- imp: backward-compatible PS signaling (audio signaled as AAC-LC)\n"
+				"- exp: explicit PS signaling (audio signaled as AAC-PS)"
 				, GF_PROP_UINT, "no", "no|imp|exp", GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(expart), "expose pictures as a dedicated video pid", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(expart), "expose pictures as a dedicated video PID", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(aacchcfg), "set AAC channel configuration to this value if missing from ADTS header, use negative value to always override", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };

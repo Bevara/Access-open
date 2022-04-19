@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Romain Bouqueau, Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / AV1 IVF/OBU/annexB reframer filter
@@ -37,10 +37,16 @@ typedef struct
 } AV1Idx;
 
 typedef enum {
-	NOT_SET,   /*Section 5*/
-	OBUs,   /*Section 5*/
+	//input format not probed yet
+	NOT_SET,
+	//input is AV1 Section 5
+	OBUs,
+	//input is AV1 annexB
 	AnnexB,
+	//input is IVF (AV1, vpX ...)
 	IVF,
+	//input is raw VPX
+	RAW_VPX,
 	UNSUPPORTED
 } AV1BitstreamSyntax;
 
@@ -50,7 +56,7 @@ typedef struct
 	GF_Fraction fps;
 	Double index;
 	Bool importer;
-	Bool deps;
+	Bool deps, notime, temporal_delim;
 	
 	u32 bsdbg;
 
@@ -80,8 +86,8 @@ typedef struct
 
 	Bool is_av1;
 	Bool is_vp9;
-	Bool is_vpX;
 	u32 codecid;
+	u32 num_frames;
 	GF_VPConfig *vp_cfg;
 
 	Bool is_playing;
@@ -99,6 +105,9 @@ typedef struct
 	Bool pts_from_file;
 	u64 cumulated_dur, last_pts;
 	u32 bitrate;
+
+	u32 clli_crc, mdcv_crc;
+	Bool copy_props;
 } GF_AV1DmxCtx;
 
 
@@ -127,10 +136,16 @@ GF_Err av1dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	}
-	if (ctx->timescale) {
+
+	//if source has no timescale, recompute time
+	if (!ctx->timescale) {
+		ctx->notime = GF_TRUE;
+	} else {
 		//if we have a FPS prop, use it
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_FPS);
 		if (p) ctx->cur_fps = p->value.frac;
+
+		ctx->copy_props = GF_TRUE;
 	}
 	return GF_OK;
 }
@@ -138,6 +153,7 @@ GF_Err av1dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 GF_Err av1dmx_check_format(GF_Filter *filter, GF_AV1DmxCtx *ctx, GF_BitStream *bs, u32 *last_obu_end)
 {
 	GF_Err e;
+	const GF_PropertyValue *p;
 	if (last_obu_end) (*last_obu_end) = 0;
 	//probing av1 bs mode
 	if (ctx->bsmode != NOT_SET) return GF_OK;
@@ -146,7 +162,7 @@ GF_Err av1dmx_check_format(GF_Filter *filter, GF_AV1DmxCtx *ctx, GF_BitStream *b
 	if (!ctx->state.config)
 		ctx->state.config = gf_odf_av1_cfg_new();
 
-	ctx->is_av1 = ctx->is_vp9 = ctx->is_vpX = GF_FALSE;
+	ctx->is_av1 = ctx->is_vp9 = GF_FALSE;
 	ctx->codecid = 0;
 	if (ctx->vp_cfg) gf_odf_vp_cfg_del(ctx->vp_cfg);
 	ctx->vp_cfg = NULL;
@@ -182,15 +198,14 @@ GF_Err av1dmx_check_format(GF_Filter *filter, GF_AV1DmxCtx *ctx, GF_BitStream *b
 		case GF_4CC('V', 'P', '1', '0'):
 			ctx->codecid = GF_CODECID_VP10;
 			ctx->vp_cfg = gf_odf_vp_cfg_new();
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[IVF] %s parsing not implemented, import might be uncomplete or broken\n", gf_4cc_to_str(codec_fourcc) ));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[IVF] %s parsing not implemented, import might be uncomplete or broken\n", gf_4cc_to_str(codec_fourcc) ));
 			break;
 		default:
 			ctx->codecid = codec_fourcc;
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[IVF] Unsupported codec FourCC %s\n", gf_4cc_to_str(codec_fourcc) ));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[IVF] Unsupported codec FourCC %s\n", gf_4cc_to_str(codec_fourcc) ));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
 		if (ctx->vp_cfg && !ctx->is_vp9) {
-			ctx->is_vpX = GF_TRUE;
 			ctx->vp_cfg->profile = 1;
 			ctx->vp_cfg->level = 10;
 			ctx->vp_cfg->bit_depth = 8;
@@ -201,36 +216,72 @@ GF_Err av1dmx_check_format(GF_Filter *filter, GF_AV1DmxCtx *ctx, GF_BitStream *b
 		ctx->state.height = ctx->state.height < height ? height : ctx->state.height;
 		ctx->state.tb_num = timebase_num;
 		ctx->state.tb_den = timebase_den;
+		ctx->num_frames = num_frames;
 
 		if ((!ctx->fps.num || !ctx->fps.den) && ctx->state.tb_num && ctx->state.tb_den && ! ( (ctx->state.tb_num<=1) && (ctx->state.tb_den<=1) ) ) {
 			ctx->cur_fps.num = ctx->state.tb_num;
 			ctx->cur_fps.den = ctx->state.tb_den;
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[AV1Dmx] Detected IVF format FPS %d/%d\n", ctx->cur_fps.num, ctx->cur_fps.den));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[AV1Dmx] Detected IVF format FPS %d/%d\n", ctx->cur_fps.num, ctx->cur_fps.den));
 			ctx->pts_from_file = GF_TRUE;
 		} else {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[AV1Dmx] Detected IVF format\n"));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[AV1Dmx] Detected IVF format\n"));
 		}
 		ctx->file_hdr_size = (u32) gf_bs_get_position(bs);
 		if (last_obu_end) (*last_obu_end) = (u32) gf_bs_get_position(bs);
 		return GF_OK;
-	} else if (gf_media_aom_probe_annexb(bs)) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[AV1Dmx] Detected Annex B format\n"));
+	}
+
+	ctx->codecid = 0;
+	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_CODECID);
+	if (p && (p->value.uint!=GF_CODECID_AV1)) {
+		switch (p->value.uint) {
+		case GF_CODECID_VP9:
+			ctx->is_vp9 = GF_TRUE;
+		case GF_CODECID_VP8:
+		case GF_CODECID_VP10:
+			ctx->vp_cfg = gf_odf_vp_cfg_new();
+			ctx->codecid = p->value.uint;
+			if (ctx->vp_cfg && !ctx->is_vp9) {
+				ctx->vp_cfg->profile = 1;
+				ctx->vp_cfg->level = 10;
+				ctx->vp_cfg->bit_depth = 8;
+				//leave the rest as 0
+			}
+			break;
+		}
+	}
+
+	if (ctx->codecid) {
+		ctx->bsmode = RAW_VPX;
+		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_WIDTH);
+		if (p) ctx->state.width = p->value.uint;
+		if (p) ctx->state.height = p->value.uint;
+		return GF_OK;
+	}
+
+
+	if (gf_media_aom_probe_annexb(bs)) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[AV1Dmx] Detected Annex B format\n"));
 		ctx->bsmode = AnnexB;
 	} else {
 		gf_bs_seek(bs, 0);
 		e = aom_av1_parse_temporal_unit_from_section5(bs, &ctx->state);
 		if (e && !gf_list_count(ctx->state.frame_state.frame_obus) ) {
+			if (e==GF_BUFFER_TOO_SMALL) {
+				gf_av1_reset_state(&ctx->state, GF_FALSE);
+				return GF_BUFFER_TOO_SMALL;
+			}
 			gf_filter_setup_failure(filter, e);
 			ctx->bsmode = UNSUPPORTED;
 			return e;
 		}
-		if (ctx->state.obu_type != OBU_TEMPORAL_DELIMITER) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[AV1Dmx] Error OBU stream start with %s, not a temporal delimiter - NOT SUPPORTED\n", gf_av1_get_obu_name(ctx->state.obu_type) ));
+		if (!ctx->timescale && (ctx->state.obu_type != OBU_TEMPORAL_DELIMITER)) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[AV1Dmx] Error OBU stream start with %s, not a temporal delimiter - NOT SUPPORTED\n", gf_av1_get_obu_name(ctx->state.obu_type) ));
 			gf_filter_setup_failure(filter, e);
 			ctx->bsmode = UNSUPPORTED;
 			return e;
 		}
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[AV1Dmx] Detected OBUs Section 5 format\n"));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[AV1Dmx] Detected OBUs Section 5 format\n"));
 		ctx->bsmode = OBUs;
 
 		gf_av1_reset_state(&ctx->state, GF_FALSE);
@@ -248,7 +299,7 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	FILE *stream;
 	GF_Err e;
 	GF_BitStream *bs;
-	u64 duration, cur_dur, last_cdur, rate, max_pts, last_pts;
+	u64 duration, cur_dur, last_cdur, file_size, max_pts, last_pts, probe_size=0;
 	AV1State av1state;
 	const char *filepath=NULL;
 	const GF_PropertyValue *p;
@@ -272,17 +323,23 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 		} else {
 			p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_DOWN_SIZE);
 			if (!p || (p->value.longuint > 20000000)) {
-				GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("[AV1/VP9] Source file larger than 20M, skipping indexing\n"));
+				GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[AV1/VP9] Source file larger than 20M, skipping indexing\n"));
+				if (!gf_sys_is_test_mode())
+					probe_size = 20000000;
 			} else {
 				ctx->index = -ctx->index;
 			}
 		}
 	}
-	if (ctx->index<=0)
+	if ((ctx->index<=0 )&& !probe_size)
 		return;
 
-	stream = gf_fopen(filepath, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(filepath, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->index_size = 0;
 
@@ -291,6 +348,7 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	if (ctx->file_hdr_size) {
 		gf_bs_seek(bs, ctx->file_hdr_size);
 	}
+	file_size = gf_bs_available(bs);
 	gf_av1_init_state(&av1state);
 	av1state.skip_frames = GF_TRUE;
 	av1state.config = gf_odf_av1_cfg_new();
@@ -302,6 +360,10 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 		Bool is_sap=GF_FALSE;
 		u64 pts = GF_FILTER_NO_TS;
 		u64 frame_start = gf_bs_get_position(bs);
+
+		if (probe_size && (frame_start>probe_size))
+			break;
+
 		gf_av1_reset_state(&av1state, GF_FALSE);
 
 		/*we process each TU and extract only the necessary OBUs*/
@@ -320,6 +382,7 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 				e = gf_media_parse_ivf_frame_header(bs, &frame_size, &pts);
 				if (!e) gf_bs_skip_bytes(bs, frame_size);
 		 		is_sap = GF_TRUE;
+		 		pts *= ctx->cur_fps.den;
 			}
 			break;
 		default:
@@ -345,7 +408,7 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 		 	is_sap = GF_TRUE;
 
 		//only index at I-frame start
-		if (frame_start && is_sap && (cur_dur > ctx->index * ctx->cur_fps.num) ) {
+		if (!probe_size && frame_start && is_sap && (cur_dur > ctx->index * ctx->cur_fps.num) ) {
 			if (!ctx->index_alloc_size) ctx->index_alloc_size = 10;
 			else if (ctx->index_alloc_size == ctx->index_size) ctx->index_alloc_size *= 2;
 			ctx->indexes = gf_realloc(ctx->indexes, sizeof(AV1Idx)*ctx->index_alloc_size);
@@ -357,28 +420,29 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 			cur_dur = 0;
 		}
 	}
-	rate = gf_bs_get_position(bs);
+	if (probe_size)
+		probe_size = gf_bs_get_position(bs);
 	gf_bs_del(bs);
 	gf_fclose(stream);
 	gf_odf_av1_cfg_del(av1state.config);
 	gf_av1_reset_state(&av1state, GF_TRUE);
 
 	if (!ctx->duration.num || (ctx->duration.num  * ctx->cur_fps.num != duration * ctx->duration.den)) {
+		if (probe_size) {
+			duration *= file_size / probe_size;
+		}
 		ctx->duration.num = (s32) duration;
+		if (probe_size) ctx->duration.num = -ctx->duration.num;
 		ctx->duration.den = ctx->cur_fps.num;
 
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
-		if (duration && (!gf_sys_is_test_mode() || gf_opts_get_bool("temp", "force_indexing"))) {
-			rate *= 8 * ctx->duration.den;
-			rate /= ctx->duration.num;
-			ctx->bitrate = (u32) rate;
+		if (ctx->duration.num && (!gf_sys_is_test_mode() || gf_opts_get_bool("temp", "force_indexing"))) {
+			file_size *= 8 * ctx->duration.den;
+			file_size /= ctx->duration.num;
+			ctx->bitrate = (u32) file_size;
 		}
 	}
-
-	//currently not supported because of OBU size field rewrite - could work on some streams but we would
-	//need to analyse all OBUs in the stream for that
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_FALSE) );
 }
 
 
@@ -408,7 +472,7 @@ static Bool av1dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 				ctx->index = -ctx->index;
 				ctx->file_loaded = GF_FALSE;
 				ctx->duration.den = ctx->duration.num = 0;
-				GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("[AV1/VP9Demx] Play request from %d, building index\n", ctx->start_range));
+				GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[AV1/VP9Demx] Play request from %d, building index\n", ctx->start_range));
 				av1dmx_check_dur(filter, ctx);
 			}
 
@@ -441,6 +505,7 @@ static Bool av1dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	case GF_FEVT_STOP:
 		//don't cancel event
 		ctx->is_playing = GF_FALSE;
+		ctx->cts = 0;
 		return GF_FALSE;
 
 	case GF_FEVT_SET_SPEED:
@@ -458,7 +523,7 @@ static GFINLINE void av1dmx_update_cts(GF_AV1DmxCtx *ctx)
 	assert(ctx->cur_fps.num);
 	assert(ctx->cur_fps.den);
 
-	if (ctx->timescale) {
+	if (!ctx->notime) {
 		u64 inc = ctx->cur_fps.den;
 		inc *= ctx->timescale;
 		inc /= ctx->cur_fps.num;
@@ -468,6 +533,39 @@ static GFINLINE void av1dmx_update_cts(GF_AV1DmxCtx *ctx)
 	}
 }
 
+static void av1dmx_set_mdcv(GF_AV1DmxCtx *ctx, GF_FilterPid *pid, GF_FilterPacket *pck)
+{
+	u32 i;
+	u64 val;
+	u8 rw_mdcv[24];
+	GF_BitStream *bs_r = gf_bs_new(ctx->state.mdcv_data, 24, GF_BITSTREAM_READ);
+	GF_BitStream *bs_w = gf_bs_new(rw_mdcv, 24, GF_BITSTREAM_WRITE);
+
+	//3x{display_primaries_x, display_primaries_y} + whitePoint_x + whitePoint_y
+	//translate from AV1 representation 0.16 float to MPEG in increments of 0.00002 (1/50000)
+	for (i=0; i<8; i++) {
+		val = gf_bs_read_u16(bs_r);
+		val = (50000 * val) / 65536;
+		gf_bs_write_u16(bs_w, (u32) val);
+	}
+	//max_display_mastering_luminance: 24.8 fixed point in AV1 vs increments of 0.0001 (1/10000) candelas per square metre in MPEG
+	val = gf_bs_read_u32(bs_r);
+	val = (10000 * val) / 256;
+	gf_bs_write_u32(bs_w, (u32) val);
+
+	//min_display_mastering_luminance: 18.14 fixed point in AV1 vs increments of 0.0001 (1/10000) candelas per square metre in MPEG
+	val = gf_bs_read_u32(bs_r);
+	val = (10000 * val) / 16384;
+	gf_bs_write_u32(bs_w, (u32) val);
+	gf_bs_del(bs_r);
+	gf_bs_del(bs_w);
+
+	if (pid) {
+		gf_filter_pid_set_property(pid, GF_PROP_PID_MASTER_DISPLAY_COLOUR, &PROP_DATA(rw_mdcv, 24));
+	} else if (pck) {
+		gf_filter_pck_set_property(pck, GF_PROP_PID_MASTER_DISPLAY_COLOUR, &PROP_DATA(rw_mdcv, 24));
+	}
+}
 static void av1dmx_check_pid(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 {
 	u8 *dsi;
@@ -516,7 +614,7 @@ static void av1dmx_check_pid(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 		}
 	}
 
-	if (crc == ctx->dsi_crc) {
+	if ((crc == ctx->dsi_crc) && !ctx->copy_props) {
 		gf_free(dsi);
 		return;
 	}
@@ -524,11 +622,14 @@ static void av1dmx_check_pid(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
+	ctx->copy_props = GF_FALSE;
+
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT(GF_STREAM_VISUAL));
 
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(ctx->codecid));
-
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->cur_fps.num));
+	if (!ctx->timescale) {
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->cur_fps.num));
+	}
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FPS, & PROP_FRAC(ctx->cur_fps));
 	if (ctx->state.sequence_width && ctx->state.sequence_height) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_WIDTH, & PROP_UINT(ctx->state.sequence_width));
@@ -541,6 +642,10 @@ static void av1dmx_check_pid(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	if (ctx->duration.num)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
+	//currently not supported because of OBU size field rewrite - could work on some streams but we would
+	//need to analyse all OBUs in the stream for that
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, NULL );
+
 	if (ctx->bitrate) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_BITRATE, & PROP_UINT(ctx->bitrate));
 	}
@@ -551,12 +656,28 @@ static void av1dmx_check_pid(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	if (ctx->is_file && ctx->index) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PLAYBACK_MODE, & PROP_UINT(GF_PLAYBACK_MODE_FASTFORWARD) );
 	}
+	if (ctx->num_frames) {
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_NB_FRAMES, & PROP_UINT(ctx->num_frames) );
+	}
 
+	ctx->clli_crc = 0;
+	ctx->mdcv_crc = 0;
 	if (ctx->is_av1) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_PRIMARIES, & PROP_UINT(ctx->state.color_primaries) );
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_TRANSFER, & PROP_UINT(ctx->state.transfer_characteristics) );
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, & PROP_UINT(ctx->state.matrix_coefficients) );
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, & PROP_BOOL(ctx->state.color_range) );
+
+
+		if (ctx->state.clli_valid) {
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CONTENT_LIGHT_LEVEL, &PROP_DATA(ctx->state.clli_data, 4));
+			ctx->clli_crc = gf_crc_32(ctx->state.clli_data, 4);
+		}
+		if (ctx->state.mdcv_valid) {
+			av1dmx_set_mdcv(ctx, ctx->opid, NULL);
+			ctx->mdcv_crc = gf_crc_32(ctx->state.mdcv_data, 24);
+		}
+
 	}
 	//disabled for the time being, matchin `colr` box will be injected by mp43mx if needed
 	//check vpX specs to see if always needed
@@ -576,31 +697,37 @@ GF_Err av1dmx_parse_ivf(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	u32 pck_size;
 	u64 frame_size = 0, pts = GF_FILTER_NO_TS;
 	GF_FilterPacket *pck;
-	u64 pos, pos_ivf_hdr;
+	u64 pos=0, pos_ivf_hdr=0;
 	u8 *output;
 
-	pos_ivf_hdr = gf_bs_get_position(ctx->bs);
-	e = gf_media_parse_ivf_frame_header(ctx->bs, &frame_size, &pts);
-	if (e) return e;
+	if (ctx->bsmode==IVF) {
+		pos_ivf_hdr = gf_bs_get_position(ctx->bs);
+		e = gf_media_parse_ivf_frame_header(ctx->bs, &frame_size, &pts);
+		if (e) return e;
 
-	pos = gf_bs_get_position(ctx->bs);
-	if (gf_bs_available(ctx->bs) < frame_size) {
-		gf_bs_seek(ctx->bs, pos_ivf_hdr);
-		return GF_EOS;
-	}
-
-	if (ctx->pts_from_file) {
-		pts += ctx->cumulated_dur;
-		if (ctx->last_pts && (ctx->last_pts>pts)) {
-			pts -= ctx->cumulated_dur;
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[IVF/AV1] Corrupted timestamp "LLU" less than previous timestamp "LLU", assuming concatenation\n", pts, ctx->last_pts));
-			ctx->cumulated_dur = ctx->last_pts + ctx->cur_fps.den;
-			ctx->cumulated_dur -= pts;
-			pts = ctx->cumulated_dur;
+		pos = gf_bs_get_position(ctx->bs);
+		if (gf_bs_available(ctx->bs) < frame_size) {
+			gf_bs_seek(ctx->bs, pos_ivf_hdr);
+			return GF_EOS;
 		}
-		ctx->last_pts = pts;
+		if (ctx->pts_from_file) {
+			pts *= ctx->cur_fps.den;
+			pts += ctx->cumulated_dur;
+			if (ctx->last_pts && (ctx->last_pts>pts)) {
+				pts -= ctx->cumulated_dur;
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[IVF/AV1] Corrupted timestamp "LLU" less than previous timestamp "LLU", assuming concatenation\n", pts, ctx->last_pts));
+				ctx->cumulated_dur = ctx->last_pts + ctx->cur_fps.den;
+				ctx->cumulated_dur -= pts;
+				pts = ctx->cumulated_dur;
+			}
+			ctx->last_pts = pts;
+		}
+	} else {
+		//raw framed input, each packet is a frame
+		pts = ctx->src_pck ? gf_filter_pck_get_cts(ctx->src_pck) : 0;
+		pos = 0;
+		frame_size = gf_bs_available(ctx->bs);
 	}
-
 
 	//check pid state
 	av1dmx_check_pid(filter, ctx);
@@ -646,69 +773,77 @@ GF_Err av1dmx_parse_vp9(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 {
 	Bool key_frame = GF_FALSE;
 	u64 frame_size = 0, pts = 0;
-	u64 pos, pos_ivf_hdr;
+	u64 pos=0, pos_ivf_hdr=0;
 	u32 width = 0, height = 0, renderWidth, renderHeight;
 	u32 num_frames_in_superframe = 0, superframe_index_size = 0, i = 0;
 	u32 frame_sizes[VP9_MAX_FRAMES_IN_SUPERFRAME];
 	u8 *output;
 	GF_Err e;
 
-	pos_ivf_hdr = gf_bs_get_position(ctx->bs);
-	e = gf_media_parse_ivf_frame_header(ctx->bs, &frame_size, &pts);
-	if (e) return e;
-	if (!frame_size) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[IVF/VP9] Corrupted frame header !\n"));
-		return GF_NON_COMPLIANT_BITSTREAM;
-	}
-
-	pos = gf_bs_get_position(ctx->bs);
-	if (gf_bs_available(ctx->bs) < frame_size) {
-		gf_bs_seek(ctx->bs, pos_ivf_hdr);
-		return GF_EOS;
-	}
-
-	if (ctx->pts_from_file) {
-		pts += ctx->cumulated_dur;
-		if (ctx->last_pts && (ctx->last_pts>pts)) {
-			pts -= ctx->cumulated_dur;
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[IVF/VP9] Corrupted timestamp "LLU" less than previous timestamp "LLU", assuming concatenation\n", pts, ctx->last_pts));
-			ctx->cumulated_dur = ctx->last_pts + ctx->cur_fps.den;
-			ctx->cumulated_dur -= pts;
-			pts = ctx->cumulated_dur;
+	if (ctx->bsmode==IVF) {
+		pos_ivf_hdr = gf_bs_get_position(ctx->bs);
+		e = gf_media_parse_ivf_frame_header(ctx->bs, &frame_size, &pts);
+		if (e) return e;
+		if (!frame_size) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[IVF/VP9] Corrupted frame header !\n"));
+			return GF_NON_COMPLIANT_BITSTREAM;
 		}
-		ctx->last_pts = pts;
+
+		pos = gf_bs_get_position(ctx->bs);
+		if (gf_bs_available(ctx->bs) < frame_size) {
+			gf_bs_seek(ctx->bs, pos_ivf_hdr);
+			return GF_EOS;
+		}
+
+		if (ctx->pts_from_file) {
+			pts *= ctx->cur_fps.den;
+			pts += ctx->cumulated_dur;
+			if (ctx->last_pts && (ctx->last_pts-1>pts)) {
+				pts -= ctx->cumulated_dur;
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[IVF/VP9] Corrupted timestamp "LLU" less than previous timestamp "LLU", assuming concatenation\n", pts, ctx->last_pts-1));
+				ctx->cumulated_dur = ctx->last_pts-1 + ctx->cur_fps.den;
+				ctx->cumulated_dur -= pts;
+				pts = ctx->cumulated_dur;
+			}
+			ctx->last_pts = pts+1;
+		}
+	} else {
+		//raw framed input, each packet is a frame
+		pts = ctx->src_pck ? gf_filter_pck_get_cts(ctx->src_pck) : 0;
+		frame_size = gf_bs_available(ctx->bs);
+		pos = 0;
 	}
 
 	/*check if it is a superframe*/
-	e = gf_media_vp9_parse_superframe(ctx->bs, frame_size, &num_frames_in_superframe, frame_sizes, &superframe_index_size);
+	e = gf_vp9_parse_superframe(ctx->bs, frame_size, &num_frames_in_superframe, frame_sizes, &superframe_index_size);
 	if (e) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[VP9Dmx] Error parsing superframe structure\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[VP9Dmx] Error parsing superframe structure\n"));
 		return e;
 	}
 
 	for (i = 0; i < num_frames_in_superframe; ++i) {
 		u64 pos2 = gf_bs_get_position(ctx->bs);
-		if (gf_media_vp9_parse_sample(ctx->bs, ctx->vp_cfg, &key_frame, &width, &height, &renderWidth, &renderHeight) != GF_OK) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[VP9Dmx] Error parsing frame\n"));
+		if (gf_vp9_parse_sample(ctx->bs, ctx->vp_cfg, &key_frame, &width, &height, &renderWidth, &renderHeight) != GF_OK) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[VP9Dmx] Error parsing frame\n"));
 			return e;
 		}
 		e = gf_bs_seek(ctx->bs, pos2 + frame_sizes[i]);
 		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[VP9Dmx] Seek bad param (offset "LLU") (1)", pos2 + frame_sizes[i]));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[VP9Dmx] Seek bad param (offset "LLU") (1)", pos2 + frame_sizes[i]));
 			return e;
 		}
 	}
 	if (gf_bs_get_position(ctx->bs) + superframe_index_size != pos + frame_size) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[VP9Dmx] Inconsistent IVF frame size of "LLU" bytes.\n", frame_size));
-		GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("      Detected %d frames (+ %d bytes for the superframe index):\n", num_frames_in_superframe, superframe_index_size));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[VP9Dmx] Inconsistent IVF frame size of "LLU" bytes.\n", frame_size));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("      Detected %d frames (+ %d bytes for the superframe index):\n", num_frames_in_superframe, superframe_index_size));
 		for (i = 0; i < num_frames_in_superframe; ++i) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("         superframe %d, size is %u bytes\n", i, frame_sizes[i]));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("         superframe %d, size is %u bytes\n", i, frame_sizes[i]));
 		}
-		GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("\n"));
 	}
 	e = gf_bs_seek(ctx->bs, pos + frame_size);
 	if (e) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[VP9Dmx] Seek bad param (offset "LLU") (2)", pos + frame_size));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[VP9Dmx] Seek bad param (offset "LLU") (2)", pos + frame_size));
 		return e;
 	}
 
@@ -740,7 +875,6 @@ GF_Err av1dmx_parse_vp9(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 		gf_filter_pck_set_cts(pck, ctx->cts);
 	}
 
-
 	if (key_frame) {
 		gf_filter_pck_set_sap(pck, GF_FILTER_SAP_1);
 	}
@@ -768,9 +902,9 @@ GF_Err av1dmx_parse_vp9(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 
 static GF_Err av1dmx_parse_flush_sample(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 {
-	u32 pck_size;
-	GF_FilterPacket *pck;
-	u8 *output;
+	u32 pck_size = 0;
+	GF_FilterPacket *pck = NULL;
+	u8 *output = NULL;
 
 	if (!ctx->opid)
 		return GF_NON_COMPLIANT_BITSTREAM;
@@ -778,7 +912,7 @@ static GF_Err av1dmx_parse_flush_sample(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	gf_bs_get_content_no_truncate(ctx->state.bs, &ctx->state.frame_obus, &pck_size, &ctx->state.frame_obus_alloc);
 
 	if (!pck_size) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[AV1Dmx] no frame OBU, skipping OBU\n"));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[AV1Dmx] no frame OBU, skipping OBU\n"));
 		return GF_OK;
 	}
 
@@ -804,6 +938,19 @@ static GF_Err av1dmx_parse_flush_sample(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 		//hasRedundant
 	 	//flags |= ctx->has_redundant ? 1 : 2;
 	 	gf_filter_pck_set_dependency_flags(pck, flags);
+	}
+
+	if (ctx->state.clli_valid) {
+		u32 crc = gf_crc_32(ctx->state.clli_data, 4);
+		if (crc != ctx->clli_crc) {
+			gf_filter_pck_set_property(pck, GF_PROP_PID_CONTENT_LIGHT_LEVEL, &PROP_DATA(ctx->state.clli_data, 4));
+		}
+	}
+	if (ctx->state.mdcv_valid) {
+		u32 crc = gf_crc_32(ctx->state.mdcv_data, 24);
+		if (crc != ctx->mdcv_crc) {
+			av1dmx_set_mdcv(ctx, NULL, pck);
+		}
 	}
 
 	gf_filter_pck_send(pck);
@@ -861,12 +1008,16 @@ GF_Err av1dmx_parse_av1(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	//check pid state
 	av1dmx_check_pid(filter, ctx);
 
+	//fixme, we need to flush at each DFG start - for now we assume one PES = one DFG as we do in the muxer
+	if (ctx->timescale && (e==GF_BUFFER_TOO_SMALL))
+		e = GF_OK;
+
 	if (e) return e;
 
 
 	if (!ctx->opid) {
 		if (ctx->state.obu_type != OBU_TEMPORAL_DELIMITER) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[AV1Dmx] output pid not configured (no sequence header yet ?), skipping OBU\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[AV1Dmx] output pid not configured (no sequence header yet ?), skipping OBU\n"));
 		}
 		gf_av1_reset_state(&ctx->state, GF_FALSE);
 		return GF_OK;
@@ -886,21 +1037,21 @@ GF_Err gf_bs_set_logger(GF_BitStream *bs, void (*on_bs_log)(void *udta, const ch
 static void av1dmx_bs_log(void *udta, const char *field_name, u32 nb_bits, u64 field_val, s32 idx1, s32 idx2, s32 idx3)
 {
 	GF_AV1DmxCtx *ctx = (GF_AV1DmxCtx *) udta;
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, (" %s", field_name));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, (" %s", field_name));
 	if (idx1>=0) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("_%d", idx1));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx1));
 		if (idx2>=0) {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("_%d", idx2));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx2));
 			if (idx3>=0) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("_%d", idx3));
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx3));
 			}
 		}
 	}
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("=\""LLD, field_val));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("=\""LLD, field_val));
 	if ((ctx->bsdbg==2) && ((s32) nb_bits > 1) )
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("(%u)", nb_bits));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("(%u)", nb_bits));
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("\" "));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("\" "));
 }
 
 GF_Err av1dmx_process_buffer(GF_Filter *filter, GF_AV1DmxCtx *ctx, const char *data, u32 data_size, Bool is_copy)
@@ -912,13 +1063,14 @@ GF_Err av1dmx_process_buffer(GF_Filter *filter, GF_AV1DmxCtx *ctx, const char *d
 	else gf_bs_reassign_buffer(ctx->bs, data, data_size);
 
 #ifndef GPAC_DISABLE_LOG
-	if (ctx->bsdbg && gf_log_tool_level_on(GF_LOG_PARSER, GF_LOG_DEBUG))
+	if (ctx->bsdbg && gf_log_tool_level_on(GF_LOG_MEDIA, GF_LOG_DEBUG))
 		gf_bs_set_logger(ctx->bs, av1dmx_bs_log, ctx);
 #endif
 
 	//check ivf vs obu vs annexB
 	e = av1dmx_check_format(filter, ctx, ctx->bs, &last_obu_end);
-	if (e) return e;
+	if (e==GF_BUFFER_TOO_SMALL) return GF_OK;
+	else if (e) return e;
 
 	while (gf_bs_available(ctx->bs)) {
 
@@ -999,10 +1151,9 @@ GF_Err av1dmx_process(GF_Filter *filter)
 
 	data = (char *) gf_filter_pck_get_data(pck, &pck_size);
 
-	//input pid sets some timescale - we flushed pending data , update cts
+	//input pid is muxed - we flushed pending data , update cts unless recomputing all times
 	if (ctx->timescale) {
 		Bool start, end;
-		u64 cts;
 
 		e = GF_OK;
 
@@ -1032,9 +1183,11 @@ GF_Err av1dmx_process(GF_Filter *filter)
 		}
 
 		//beginning of a new frame
-		cts = gf_filter_pck_get_cts(pck);
-		if (cts != GF_FILTER_NO_TS)
-			ctx->cts = cts;
+		if (!ctx->notime) {
+			u64 cts = gf_filter_pck_get_cts(pck);
+			if (cts != GF_FILTER_NO_TS)
+				ctx->cts = cts;
+		}
 		if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 		ctx->src_pck = pck;
 		gf_filter_pck_ref_props(&ctx->src_pck);
@@ -1068,6 +1221,16 @@ GF_Err av1dmx_process(GF_Filter *filter)
 	e = av1dmx_process_buffer(filter, ctx, ctx->buffer, ctx->buf_size, GF_TRUE);
 	gf_filter_pid_drop_packet(ctx->ipid);
 	return e;
+}
+
+static GF_Err av1dmx_initialize(GF_Filter *filter)
+{
+	GF_AV1DmxCtx *ctx = gf_filter_get_udta(filter);
+	gf_av1_init_state(&ctx->state);
+	if (ctx->temporal_delim)
+		ctx->state.keep_temporal_delim = GF_TRUE;
+
+	return GF_OK;
 }
 
 static void av1dmx_finalize(GF_Filter *filter)
@@ -1122,12 +1285,20 @@ static const char * av1dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 							nb_units++;
 					} else {
 						//we got one frame + seq header without errors, assume maybe supported
-						if (nb_units && has_seq_header) {
+						if (has_seq_header) {
 							res = GF_TRUE;
 							*score = GF_FPROBE_MAYBE_SUPPORTED;
 						}
 						break;
 					}
+				}
+				//very large frame
+				else if (!nb_units && (e==GF_BUFFER_TOO_SMALL)) {
+					if (gf_list_count(state.frame_state.header_obus) && state.width && state.height) {
+						res = GF_TRUE;
+						*score = GF_FPROBE_MAYBE_SUPPORTED;
+					}
+					break;
 				} else {
 					break;
 				}
@@ -1174,12 +1345,15 @@ static const GF_FilterCapability AV1DmxCaps[] =
 static const GF_FilterArgs AV1DmxArgs[] =
 {
 	{ OFFS(fps), "import frame rate (0 default to FPS from bitstream or 25 Hz)", GF_PROP_FRACTION, "0/1000", NULL, 0},
-	{ OFFS(index), "indexing window length. If 0, bitstream is not probed for duration. A negative value skips the indexing if the source file is larger than 100M (slows down importers) unless a play with start range > 0 is issued, otherwise uses the positive value", GF_PROP_DOUBLE, "-1.0", NULL, 0},
+	{ OFFS(index), "indexing window length. If 0, bitstream is not probed for duration. A negative value skips the indexing if the source file is larger than 100M (slows down importers) unless a play with start range > 0 is issued", GF_PROP_DOUBLE, "-1.0", NULL, 0},
 
 	{ OFFS(importer), "compatibility with old importer", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(deps), "import samples dependencies information", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(deps), "import sample dependency information", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(notime), "ignore input timestamps, rebuild from 0", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(temporal_delim), "keep temporal delimiters in reconstructed frames", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 
-	{ OFFS(bsdbg), "debug NAL parsing in parser@debug logs\n"
+
+	{ OFFS(bsdbg), "debug NAL parsing in `parser@debug logs\n"
 		"- off: not enabled\n"
 		"- on: enabled\n"
 		"- full: enable with number of bits dumped", GF_PROP_UINT, "off", "off|on|full", GF_FS_ARG_HINT_EXPERT},
@@ -1193,6 +1367,7 @@ GF_FilterRegister AV1DmxRegister = {
 	GF_FS_SET_HELP("This filter parses AV1 OBU, AV1 AnnexB or IVF with AV1 or VP9 files/data and outputs corresponding visual PID and frames.")
 	.private_size = sizeof(GF_AV1DmxCtx),
 	.args = AV1DmxArgs,
+	.initialize = av1dmx_initialize,
 	.finalize = av1dmx_finalize,
 	SETCAPS(AV1DmxCaps),
 	.configure_pid = av1dmx_configure_pid,

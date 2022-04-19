@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2021
+ *			Copyright (c) Telecom ParisTech 2005-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / OD decoder filter
@@ -223,7 +223,7 @@ void ODS_SetupOD(GF_Scene *scene, GF_ObjectDescriptor *od)
 #endif
 			return;
 		} else if (!odm || !pid ) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_SCENE, ("Cannot match OD ID %d to any PID in the service, ignoring OD\n", od->objectDescriptorID));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("Cannot match OD ID %d to any PID in the service, ignoring OD\n", od->objectDescriptorID));
 			return;
 		}
 
@@ -512,7 +512,8 @@ static const GF_FilterCapability ODFDecCaps[] =
 GF_FilterRegister ODFDecRegister = {
 	.name = "odfdec",
 	GF_FS_SET_DESCRIPTION("MPEG-4 OD decoder")
-	GF_FS_SET_HELP("This filter decodes MPEG-4 OD frames directly into the scene manager of the compositor. It cannot be used to dump OD content.")
+	GF_FS_SET_HELP("This filter decodes MPEG-4 OD binary frames directly into the scene manager of the compositor.\n"
+	"Note: This filter cannot be used to dump OD content to text or xml, use `MP4Box` for that.")
 	.private_size = sizeof(GF_ODFDecCtx),
 	.flags = GF_FS_REG_MAIN_THREAD,
 	.priority = 1,

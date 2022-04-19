@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Management sub-project
@@ -240,6 +240,7 @@ static void gf_dump_setup(GF_SceneDumper *sdump, GF_Descriptor *root_od)
 			for (i=0; i<count; i++) {
 				GF_LASERConfig lsrcfg;
 				GF_ESD *esd = (GF_ESD *)gf_list_get(iod->ESDescriptors, i);
+				if (!esd || !esd->decoderConfig) continue;
 				if (esd->decoderConfig->streamType != GF_STREAM_SCENE) continue;
 				if (esd->decoderConfig->objectTypeIndication != 0x09) continue;
 				if (!esd->decoderConfig->decoderSpecificInfo || !esd->decoderConfig->decoderSpecificInfo->data) continue;
@@ -421,16 +422,14 @@ static void EndList(GF_SceneDumper *sdump, const char *name)
 
 static void scene_dump_utf_string(GF_SceneDumper *sdump, Bool escape_xml, char *str)
 {
-	size_t _len;
 	u32 len, i;
 	u16 *uniLine;
 	if (!str) return;
 	len = (u32) strlen(str);
 	if (!len) return;
 	uniLine = (u16*)gf_malloc(sizeof(u16) * len*4);
-	_len = gf_utf8_mbstowcs(uniLine, len, (const char **) &str);
-	if (_len != (size_t) (-1)) {
-		len = (u32) _len;
+	len = gf_utf8_mbstowcs(uniLine, len, (const char **) &str);
+	if (len != GF_UTF8_FAIL) {
 		for (i=0; i<len; i++) {
 			//if (uniLine[i] == (u16) '\"') gf_fprintf(sdump->trace, "\\");
 			switch (uniLine[i]) {
@@ -584,21 +583,24 @@ static void gf_dump_vrml_sffield(GF_SceneDumper *sdump, u32 type, void *ptr, Boo
 		u32 len, i;
 		char *str;
 		str = (char*)((SFScript *)ptr)->script_text;
+		if (!str) {
+			if (!sdump->XMLDump) {
+				gf_fprintf(sdump->trace, "\"\"");
+			}
+			break;
+		}
 		len = (u32)strlen(str);
 
 		if (!sdump->XMLDump) {
 			gf_fprintf(sdump->trace, "\"%s\"", str);
 		}
 		else {
-			size_t _len;
 			u16 *uniLine;
 
 			uniLine = (u16*)gf_malloc(sizeof(short) * (len + 1));
-			_len = gf_utf8_mbstowcs(uniLine, len, (const char **)&str);
+			len = gf_utf8_mbstowcs(uniLine, len, (const char **)&str);
 
-			if (_len != (size_t)-1) {
-				len = (u32)_len;
-
+			if (len != GF_UTF8_FAIL) {
 				for (i = 0; i<len; i++) {
 
 					switch (uniLine[i]) {
@@ -648,8 +650,8 @@ static void gf_dump_vrml_sffield(GF_SceneDumper *sdump, u32 type, void *ptr, Boo
 		str = ((SFString *)ptr)->buffer;
 
 		if (node && (gf_node_get_tag(node)==TAG_MPEG4_BitWrapper)) {
-			u32 bufsize = 50+ ((M_BitWrapper*)node)->buffer_len * 2;
-			str = gf_malloc(sizeof(char)* bufsize);
+			u32 bufsize = 37 + ((M_BitWrapper*)node)->buffer_len * 2 + 3;
+			str = gf_malloc(sizeof(char) * bufsize);
 			if (str) {
 				s32 res;
 				strcpy(str, "data:application/octet-string;base64,");
@@ -695,7 +697,7 @@ static void gf_dump_vrml_sffield(GF_SceneDumper *sdump, u32 type, void *ptr, Boo
 			short uniLine[5000];
 			str = ((SFURL *)ptr)->url;
 			len = gf_utf8_mbstowcs(uniLine, 5000, (const char **) &str);
-			if (len != (size_t) -1) {
+			if (len != GF_UTF8_FAIL) {
 				gf_fprintf(sdump->trace, sdump->XMLDump ? (sdump->X3DDump ?  "'" : "&quot;") : "\"");
 				fwprintf(sdump->trace, (unsigned short *) uniLine);
 				gf_fprintf(sdump->trace, sdump->XMLDump ? (sdump->X3DDump ?  "'" : "&quot;") : "\"");
@@ -753,8 +755,7 @@ static void gf_dump_vrml_simple_field(GF_SceneDumper *sdump, GF_FieldInfo field,
 
 	switch (field.fieldType) {
 	case GF_SG_VRML_SFNODE:
-		assert ( *(GF_Node **)field.far_ptr);
-		gf_dump_vrml_node(sdump, *(GF_Node **)field.far_ptr, 0, NULL);
+		gf_dump_vrml_node(sdump, field.far_ptr ? *(GF_Node **)field.far_ptr : NULL, 0, NULL);
 		return;
 	case GF_SG_VRML_MFNODE:
 		list = * ((GF_ChildNodeItem **) field.far_ptr);
@@ -937,10 +938,12 @@ static void gf_dump_vrml_field(GF_SceneDumper *sdump, GF_Node *node, GF_FieldInf
 		}
 
 		if (!sdump->XMLDump) gf_fprintf(sdump->trace, "[");
-		for (i=0; i<mffield->count; i++) {
-			if (i) gf_fprintf(sdump->trace, " ");
-			gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
-			gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, 1, node);
+		if (mffield) {
+			for (i=0; i<mffield->count; i++) {
+				if (i) gf_fprintf(sdump->trace, " ");
+				gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
+				gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, 1, node);
+			}
 		}
 		if (!sdump->XMLDump) gf_fprintf(sdump->trace, "]");
 
@@ -1104,7 +1107,8 @@ static void gf_dump_vrml_dyn_field(GF_SceneDumper *sdump, GF_Node *node, GF_Fiel
 					} else {
 						gf_fprintf(sdump->trace, " %s=\"", GetXMTFieldTypeValueName(field.fieldType));
 					}
-					gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, node);
+					if (field.far_ptr)
+						gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, node);
 					if (has_sublist)
 						gf_fprintf(sdump->trace, "\">\n");
 					else
@@ -1119,13 +1123,13 @@ static void gf_dump_vrml_dyn_field(GF_SceneDumper *sdump, GF_Node *node, GF_Fiel
 				gf_fprintf(sdump->trace, " ");
 				if (field.fieldType == GF_SG_VRML_SFNODE) {
 					gf_dump_vrml_node(sdump, field.far_ptr ? *(GF_Node **)field.far_ptr : NULL, 0, NULL);
-				} else {
+				} else if (field.far_ptr) {
 					gf_dump_vrml_simple_field(sdump, field, node);
 				}
 			}
 			gf_fprintf(sdump->trace, "\n");
 		}
-	} else {
+	} else if (field.far_ptr) {
 		GenMFField *mffield = (GenMFField *) field.far_ptr;
 		sf_type = gf_sg_vrml_get_sf_type(field.fieldType);
 
@@ -1258,11 +1262,13 @@ static void gf_dump_vrml_proto_field(GF_SceneDumper *sdump, GF_Node *node, GF_Fi
 				} else {
 					gf_fprintf(sdump->trace, " %s=\"", GetXMTFieldTypeValueName(field.fieldType));
 				}
-				for (i=0; i<mffield->count; i++) {
-					if (i) gf_fprintf(sdump->trace, " ");
-					if (field.fieldType != GF_SG_VRML_MFNODE) {
-						gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
-						gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, (mffield->count>1) ? 1 : 0, node);
+				if (mffield) {
+					for (i=0; i<mffield->count; i++) {
+						if (i) gf_fprintf(sdump->trace, " ");
+						if (field.fieldType != GF_SG_VRML_MFNODE) {
+							gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
+							gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, (mffield->count>1) ? 1 : 0, node);
+						}
 					}
 				}
 				gf_fprintf(sdump->trace, "\"/>\n");
@@ -2323,7 +2329,7 @@ static GF_Err DumpRouteReplace(GF_SceneDumper *sdump, GF_Command *com)
 
 static GF_Err gf_dump_vrml_route(GF_SceneDumper *sdump, GF_Route *r, u32 dump_type)
 {
-	char toNode[512], fromNode[512];
+	char toNodeBuf[100], fromNodeBuf[100], *to_node_p, *from_node_p;
 	const char *node_name;
 	u32 id;
 	if (!r->is_setup) {
@@ -2335,22 +2341,22 @@ static GF_Err gf_dump_vrml_route(GF_SceneDumper *sdump, GF_Route *r, u32 dump_ty
 
 	if (sdump->XMLDump || !dump_type) DUMP_IND(sdump);
 
+	to_node_p = toNodeBuf;
+	from_node_p = fromNodeBuf;
 	node_name = gf_node_get_name_and_id(r->FromNode, &id);
 	if (node_name) {
 		const char *to_name;
-		strcpy(fromNode, node_name);
+		from_node_p = (char *)node_name;
 		to_name = gf_node_get_name(r->ToNode);
 		if (to_name) {
-			strcpy(toNode, to_name);
+			to_node_p = (char *) to_name;
 		} else {
-			char str[100];
 			id = gf_node_get_id(r->ToNode);
-			sprintf(str, "node_%d", id);
-			strcpy(toNode, str);
+			sprintf(toNodeBuf, "node_%d", id);
 		}
 	} else {
-		sprintf(fromNode, "N%d", id-1);
-		sprintf(toNode, "N%d", gf_node_get_id(r->ToNode) - 1);
+		sprintf(fromNodeBuf, "N%d", id-1);
+		sprintf(toNodeBuf, "N%d", gf_node_get_id(r->ToNode) - 1);
 	}
 	if (sdump->XMLDump) {
 		gf_fprintf(sdump->trace, "<ROUTE");
@@ -2359,7 +2365,7 @@ static GF_Err gf_dump_vrml_route(GF_SceneDumper *sdump, GF_Route *r, u32 dump_ty
 			scene_dump_vrml_route_id(sdump, r->ID, r->name);
 			EndAttribute(sdump);
 		}
-		gf_fprintf(sdump->trace, " fromNode=\"%s\" fromField=\"%s\" toNode=\"%s\" toField=\"%s\"/>\n", fromNode, r->FromField.name, toNode, r->ToField.name);
+		gf_fprintf(sdump->trace, " fromNode=\"%s\" fromField=\"%s\" toNode=\"%s\" toField=\"%s\"/>\n", from_node_p, r->FromField.name, to_node_p, r->ToField.name);
 	} else {
 		if (dump_type==2) gf_fprintf(sdump->trace, "ROUTE ");
 		if (r->ID) {
@@ -2368,10 +2374,10 @@ static GF_Err gf_dump_vrml_route(GF_SceneDumper *sdump, GF_Route *r, u32 dump_ty
 			gf_fprintf(sdump->trace, " ");
 		}
 		if (dump_type==1) {
-			gf_fprintf(sdump->trace, "%s.%s TO %s.%s\n", fromNode, r->FromField.name, toNode, r->ToField.name);
+			gf_fprintf(sdump->trace, "%s.%s TO %s.%s\n", from_node_p, r->FromField.name, to_node_p, r->ToField.name);
 		} else {
 			if (dump_type!=2) gf_fprintf(sdump->trace, "ROUTE ");
-			gf_fprintf(sdump->trace, "%s.%s TO %s.%s\n", fromNode, r->FromField.name, toNode, r->ToField.name);
+			gf_fprintf(sdump->trace, "%s.%s TO %s.%s\n", from_node_p, r->FromField.name, to_node_p, r->ToField.name);
 		}
 	}
 	return GF_OK;
@@ -2662,7 +2668,10 @@ static GF_Err DumpLSRAddReplaceInsert(GF_SceneDumper *sdump, GF_Command *com)
 			else if (f->fieldType==SVG_Transform_Rotate_datatype) att_name = "rotation";
 			else if (f->fieldType==SVG_Transform_Translate_datatype) att_name = "translation";
 			else if (f->fieldIndex==(u32) -1) att_name = "textContent";
-			else att_name = (char*) gf_svg_get_attribute_name(com->node, f->fieldIndex);
+			else {
+				if (!com->node) return GF_NON_COMPLIANT_BITSTREAM;
+				att_name = (char*) gf_svg_get_attribute_name(com->node, f->fieldIndex);
+			}
 
 			gf_fprintf(sdump->trace, "attributeName=\"%s\" ", att_name);
 			if (f->field_ptr) {
@@ -3208,7 +3217,7 @@ static void dump_od_to_saf(GF_SceneDumper *dumper, GF_AUContext *au, u32 indent)
 			GF_ObjectDescriptor *od = (GF_ObjectDescriptor *)gf_list_get(com->objectDescriptors, j);
 			GF_ESD *esd = (GF_ESD *) gf_list_get(od->ESDescriptors, 0);
 			GF_MuxInfo *mux;
-			if (!esd) {
+			if (!esd || (esd->tag != GF_ODF_ESD_TAG)) {
 				if (od->URLString) {
 					gf_fprintf(dumper->trace, "<saf:RemoteStreamHeader streamID=\"stream%d\" url=\"%s\"", au->owner->ESID, od->URLString);
 					if (au->timing) gf_fprintf(dumper->trace, " time=\""LLD"\"", au->timing);
@@ -3221,7 +3230,9 @@ static void dump_od_to_saf(GF_SceneDumper *dumper, GF_AUContext *au, u32 indent)
 
 
 			gf_fprintf(dumper->trace, "<saf:mediaHeader streamID=\"stream%d\"", esd->ESID);
-			gf_fprintf(dumper->trace, " streamType=\"%d\" objectTypeIndication=\"%d\" timeStampResolution=\"%d\"", esd->decoderConfig->streamType, esd->decoderConfig->objectTypeIndication, au->owner->timeScale);
+			if (esd->decoderConfig) {
+				gf_fprintf(dumper->trace, " streamType=\"%d\" objectTypeIndication=\"%d\" timeStampResolution=\"%d\"", esd->decoderConfig->streamType, esd->decoderConfig->objectTypeIndication, au->owner->timeScale);
+			}
 			if (au->timing) gf_fprintf(dumper->trace, " time=\""LLD"\"", au->timing);
 			if (mux && mux->file_name) gf_fprintf(dumper->trace, " source=\"%s\"", mux->file_name);
 			gf_fprintf(dumper->trace, "/>\n");

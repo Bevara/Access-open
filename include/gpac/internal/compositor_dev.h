@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Rendering sub-project
@@ -251,7 +251,7 @@ struct __tag_compositor
 	GF_List *textures;
 	Bool texture_inserted;
 
-	/*all textures to be destroyed (needed for openGL context ...)*/
+	/*all textures to be destroyed (needed for OpenGL context ...)*/
 	GF_List *textures_gc;
 
 	/*event queue*/
@@ -279,6 +279,8 @@ struct __tag_compositor
 	Bool bench_mode;
 	//0: no frame pending, 1: frame pending, needs clock increase, 2: frames are pending but one frame has been decoded, do not increase clock
 	u32 force_bench_frame;
+	//number of audio frames sent in call to send_frame
+	u32 audio_frames_sent;
 
 	u32 frame_time[GF_SR_FPS_COMPUTE_SIZE];
 	u32 frame_dur[GF_SR_FPS_COMPUTE_SIZE];
@@ -302,6 +304,9 @@ struct __tag_compositor
 	u32 buffer, rbuffer, mbuffer, ntpsync;
 	
 	u32 ogl, mode2d;
+
+	s32 subtx, subty, subd, audd;
+	u32 subfs;
 
 	/*display size*/
 	u32 display_width, display_height;
@@ -367,6 +372,8 @@ struct __tag_compositor
 	/*count number of initialized sensors*/
 	u32 interaction_sensors;
 
+	//in player mode, exit if set
+	//in non player mode, check for eos
 	u32 check_eos_state;
 	u32 last_check_pass;
 
@@ -591,7 +598,7 @@ struct __tag_compositor
 	If not set video is written through glDrawPixels with bitmap (slow scaling), or converted to
 	po2 texture*/
 	Bool epow2;
-	/*use openGL for outline rather than vectorial ones*/
+	/*use OpenGL for outline rather than vectorial ones*/
 	Bool linegl;
 	/*disable RECT extensions (except for Bitmap...)*/
 	Bool rext;
@@ -1133,7 +1140,7 @@ struct _traversing_state
 
 	/*layer traversal state:
 		set to the first traversed layer3D when picking
-		set to the current layer3D traversed when rendering 3D to an offscreen bitmap. This alows other
+		set to the current layer3D traversed when rendering 3D to an offscreen bitmap. This allows other
 			nodes (typically bindables) seting the layer dirty flags to force a redraw
 	*/
 	GF_Node *layer3d;
@@ -1216,6 +1223,7 @@ u32 gf_mixer_get_block_align(GF_AudioMixer *am);
 Bool gf_mixer_must_reconfig(GF_AudioMixer *am);
 Bool gf_mixer_empty(GF_AudioMixer *am);
 Bool gf_mixer_buffering(GF_AudioMixer *am);
+Bool gf_mixer_is_eos(GF_AudioMixer *am);
 
 //#define ENABLE_AOUT
 
@@ -1319,6 +1327,7 @@ typedef struct
 	Bool need_release;
 	u32 is_open;
 	Bool is_muted;
+	Bool is_playing;
 	Bool register_with_renderer, register_with_parent;
 
 	GF_SoundInterface *snd;
@@ -1727,7 +1736,7 @@ struct _gf_scene
 	u32 selected_service_id;
 
 	/*URLs of current video, audio and subs (we can't store objects since they may be destroyed when seeking)*/
-	SFURL visual_url, audio_url, text_url, dims_url;
+	SFURL visual_url, audio_url, text_url, dims_url, subs_url;
 
 	Bool is_tiled_srd;
 	u32 srd_type;
@@ -1864,6 +1873,7 @@ void gf_inline_restart(GF_Scene *scene);
 Bool gf_mo_is_same_url(GF_MediaObject *obj, MFURL *an_url, Bool *keep_fragment, u32 obj_hint_type);
 
 void gf_mo_update_caps(GF_MediaObject *mo);
+void gf_mo_update_caps_ex(GF_MediaObject *mo, Bool check_unchanged);
 
 
 const char *gf_scene_get_fragment_uri(GF_Node *node);
@@ -1926,8 +1936,10 @@ struct _object_clock
 	u32 last_ts_rendered;
 	u32 service_id;
 
-	//media time in ms corresponding to the init tmiestamp of the clock
-	u32 media_time_at_init;
+	//media time in ms
+	u32 media_time_orig;
+	//media timestamp in ms corresponding to the media time
+	u32 media_ts_orig;
 	Bool has_media_time_shift;
 
 	u32 ocr_discontinuity_time;
@@ -2027,6 +2039,9 @@ enum
 	GF_ODM_TILED_SHARED_CLOCK = (1<<16),
 	/*flag indicates TEMI info is associated with PID*/
 	GF_ODM_HAS_TEMI = (1<<17),
+
+	/*flag indicates this visual pid is a text subtitle*/
+	GF_ODM_IS_SPARSE = (1<<18),
 };
 
 enum
@@ -2254,6 +2269,17 @@ enum
 /*! All Media Objects inserted through URLs and not MPEG-4 OD Framework use this ODID*/
 #define GF_MEDIA_EXTERNAL_ID		1050
 
+enum
+{
+	//no connection error, no frames seen in input pipeline
+	MO_CONNECT_OK=0,
+	//no connection error, frames seen in input pipeline but no frame yet available for object
+	MO_CONNECT_BUFFERING,
+	//explicit source setup failure
+	MO_CONNECT_FAILED,
+	//timeout of input pipeline (no frames seen after compositor->timeout ms)
+	MO_CONNECT_TIMEOUT
+};
 
 /*GF_MediaObject: link between real object manager and scene. although there is a one-to-one mapping between a
 MediaObject and an ObjectManager, we have to keep them separated in order to handle OD remove commands which destroy
@@ -2328,7 +2354,7 @@ struct _mediaobj
 	GF_FilterFrameInterface *frame_ifce;
 
 	Float c_x, c_y, c_w, c_h;
-	Bool connect_failure;
+	u32 connect_state;
 };
 
 GF_MediaObject *gf_mo_new();

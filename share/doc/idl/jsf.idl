@@ -372,7 +372,8 @@ void disable_inputs();
 /*! reset source identifier for the filter - see \ref gf_filter_reset_source*/
 void reset_source();
 
-/*! indicates if filter is likely blocking or note - see \ref gf_filter_set_blocking*/
+/*! indicates if filter is likely blocking or not - see \ref gf_filter_set_blocking
+\param is_blocking if true, indicates the filter is likely to block upon process*/
 void set_blocking(boolean is_blocking);
 
 /*! filter name*/
@@ -399,6 +400,8 @@ readonly attribute boolean eos_seen;
 readonly attribute boolean eos_received;
 /*! blocking state - see \ref gf_filter_pid_would_block*/
 readonly attribute boolean would_block;
+/*! sparse status - see \ref gf_filter_pid_is_sparse*/
+readonly attribute boolean sparse;
 /*! name of parent filter*/
 readonly attribute DOMString filter_name;
 /*! name of source filter*/
@@ -713,9 +716,12 @@ readonly attribute unsigned long size;
 	\warning This arraybuffer will be detached whenever the packet data is modified for a destination packet
 */
 readonly attribute ArrayBuffer data;
+
 /*! set to true if data of the packet is available through a GF_FilterFrameInterface object*/
 readonly attribute boolean frame_ifce;
 
+/*! set to true if packet has properties other than default ones - see gf_filter_pck_has_properties*/
+readonly attribute boolean has_properties;
 
 /*! sets packet readonly - see gf_filter_pck_set_readonly*/
 void set_readonly();
@@ -966,6 +972,8 @@ interface JSArgDesc {
     optional attribute DOMString def=null;
     /*! min/max or enum values of the argument*/
     optional attribute DOMString minmax_enum=null;
+    /*! argument hint type: "advanced", "expert", "hide" or null*/
+    optional attribute DOMString hint=null;
 };
 
 /*! interface used to describe filter capability*/

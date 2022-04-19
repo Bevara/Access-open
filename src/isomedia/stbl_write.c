@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -271,16 +271,27 @@ GF_Err stbl_AddCTS(GF_SampleTableBox *stbl, u32 sampleNumber, s32 offset)
 		ctts->nb_entries++;
 		ctts->w_LastSampleNumber++;
 		if (offset<0) ctts->version=1;
+		if (ABS(offset) >= ctts->max_cts_delta) {
+			ctts->max_cts_delta = ABS(offset);
+			//ctts->sample_num_max_cts_delta = ctts->w_LastSampleNumber;
+		}
 		return GF_OK;
 	}
 	//check if we're working in order...
 	if (ctts->w_LastSampleNumber < sampleNumber) {
+		GF_Err e;
 		//add some 0 till we get to the sample
 		while (ctts->w_LastSampleNumber + 1 != sampleNumber) {
-			GF_Err e = AddCompositionOffset(ctts, 0);
+			e = AddCompositionOffset(ctts, 0);
 			if (e) return e;
 		}
-		return AddCompositionOffset(ctts, offset);
+		e = AddCompositionOffset(ctts, offset);
+		if (e) return e;
+		if (ABS(offset) >= ctts->max_cts_delta) {
+			ctts->max_cts_delta = ABS(offset);
+			//ctts->sample_num_max_cts_delta = ctts->w_LastSampleNumber;
+		}
+		return GF_OK;
 	}
 
 	//NOPE we are inserting a sample...
@@ -297,6 +308,10 @@ GF_Err stbl_AddCTS(GF_SampleTableBox *stbl, u32 sampleNumber, s32 offset)
 			if (sampNum+1==sampleNumber) {
 				CTSs[sampNum] = offset;
 				sampNum ++;
+				if (ABS(offset) >= ctts->max_cts_delta) {
+					ctts->max_cts_delta = ABS(offset);
+					//ctts->sample_num_max_cts_delta = sampNum;
+				}
 			}
 			CTSs[sampNum] = ctts->entries[i].decodingOffset;
 			sampNum ++;
@@ -420,13 +435,13 @@ GF_Err stbl_AddSize(GF_SampleSizeBox *stsz, u32 sampleNumber, u32 size, u32 nb_p
 	//all samples have the same size
 	if (stsz->sizes == NULL) {
 		//1 first sample added in NON COMPACT MODE
-		if (! stsz->sampleCount && (stsz->type != GF_ISOM_BOX_TYPE_STZ2) ) {
+		if (! stsz->sampleCount && (stsz->type != GF_ISOM_BOX_TYPE_STZ2) && size) {
 			stsz->sampleCount = nb_pack;
 			stsz->sampleSize = size;
 			return GF_OK;
 		}
 		//2- sample has the same size
-		if (stsz->sampleSize == size) {
+		if ((stsz->sampleSize == size) && size) {
 			stsz->sampleCount += nb_pack;
 			return GF_OK;
 		}
@@ -1192,6 +1207,7 @@ GF_Err stbl_RemoveCTS(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples)
 
 	assert(ctts->unpack_mode);
 	if ((nb_samples>1) && (sampleNumber>1)) return GF_BAD_PARAM;
+	ctts->max_cts_delta = 0;
 
 	//last one...
 	if (stbl->SampleSize->sampleCount == 1) {
@@ -1633,7 +1649,7 @@ GF_Err stbl_AppendSize(GF_SampleTableBox *stbl, u32 size, u32 nb_pack)
 	u32 i;
 	CHECK_PACK(GF_ISOM_INVALID_FILE)
 
-	if (!stbl->SampleSize->sampleCount) {
+	if (!stbl->SampleSize->sampleCount && size) {
 		stbl->SampleSize->sampleSize = size;
 		stbl->SampleSize->sampleCount += nb_pack;
 		return GF_OK;
@@ -1789,7 +1805,7 @@ GF_Err stbl_AppendRAP(GF_SampleTableBox *stbl, u8 isRap)
 	return GF_OK;
 }
 
-GF_Err stbl_AppendTrafMap(GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end)
+GF_Err stbl_AppendTrafMap(GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end, u32 nb_pack_samples)
 {
 	GF_TrafToSampleMap *tmap;
 	GF_TrafMapEntry *tmap_ent;
@@ -1819,6 +1835,9 @@ GF_Err stbl_AppendTrafMap(GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_st
 
 	memset(tmap_ent, 0, sizeof(GF_TrafMapEntry));
 	tmap_ent->sample_num = stbl->SampleSize->sampleCount;
+	if (nb_pack_samples)
+		tmap_ent->sample_num -= tmap_ent->sample_num-1;
+
 	tmap_ent->moof_template = moof_template;
 	tmap_ent->moof_template_size = moof_template_size;
 	tmap_ent->moof_start = frag_start_offset;
@@ -1869,7 +1888,10 @@ GF_Err stbl_AppendCTSOffset(GF_SampleTableBox *stbl, s32 offset)
 	ctts->nb_entries++;
 	if (offset<0) ctts->version=1;
 
-	if (ABS(offset) > ctts->max_ts_delta) ctts->max_ts_delta = ABS(offset);
+	if (ABS(offset) >= ctts->max_cts_delta) {
+		ctts->max_cts_delta = ABS(offset);
+		//ctts->sample_num_max_cts_delta = ctts->w_LastSampleNumber;
+	}
 
 	return GF_OK;
 }

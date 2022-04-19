@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019
+ *			Copyright (c) Telecom ParisTech 2019-2022
  *			All rights reserved
  *
  *  This file is part of GPAC / JavaScript vector graphics bindings
@@ -63,6 +63,9 @@
 #define CLAMPCOLF(_name) if (_name<0) _name=0; else if (_name>1.0) _name=1.0;
 
 uint8_t *evg_get_array(JSContext *ctx, JSValueConst obj, u32 *size);
+
+//test code, unused
+//#define BUILTIN_SHADERS
 
 //not used, wau too slow - we kept the code for future testing
 //#define EVG_USE_JS_SHADER
@@ -229,9 +232,11 @@ typedef struct __evg_shader
 	Bool has_branches;
 	GF_List *vars_stack;
 
+#ifdef BUILTIN_SHADERS
 	//native shaders
 	Bool (*frag_shader)(void *udta, GF_EVGFragmentParam *frag);
 	Bool (*frag_shader_init)(void *udta, GF_EVGFragmentParam *frag, u32 th_id, Bool is_cleanup);
+#endif
 } EVGShader;
 
 typedef struct
@@ -364,6 +369,7 @@ enum
 	GF_EVG_ALPHA_FUN,
 	GF_EVG_IS_YUV,
 	GF_EVG_BIT_DEPTH,
+	GF_EVG_MASK_MODE,
 	GF_EVG_FRAG_SHADER,
 	GF_EVG_VERT_SHADER,
 	GF_EVG_CCW,
@@ -537,6 +543,8 @@ static JSValue canvas_getProperty(JSContext *c, JSValueConst obj, int magic)
 		return JS_FALSE;
 	case GF_EVG_BIT_DEPTH:
 		return JS_NewInt32(c, gf_pixel_is_wide_depth(canvas->pf));
+	case GF_EVG_MASK_MODE:
+		return JS_NewInt32(c, gf_evg_surface_get_mask_mode(canvas->surface) );
 	case GF_EVG_CLIPPER:
 		return gf_evg_surface_use_clipper(canvas->surface) ? JS_TRUE : JS_FALSE;
 	}
@@ -674,9 +682,12 @@ static JSValue canvas_setProperty(JSContext *ctx, JSValueConst obj, JSValueConst
 				return js_throw_err_msg(ctx, GF_BAD_PARAM, "Invalid fragment shader object");
 			canvas->frag_shader = JS_DupValue(ctx, value);
 
+#ifdef BUILTIN_SHADERS
 			if (canvas->frag->frag_shader) {
 				e = gf_evg_surface_set_fragment_shader(canvas->surface, canvas->frag->frag_shader, canvas->frag->frag_shader_init, canvas->frag);
-			} else {
+			} else
+#endif
+			{
 				e = gf_evg_surface_set_fragment_shader(canvas->surface, evg_frag_shader_ops, evg_frag_shader_ops_init, canvas);
 			}
 			if (!e) e = gf_evg_surface_disable_early_depth(canvas->surface, canvas->frag->disable_early_z);
@@ -774,6 +785,11 @@ static JSValue canvas_setProperty(JSContext *ctx, JSValueConst obj, JSValueConst
 		break;
 	case GF_EVG_WRITE_DEPTH:
 		e = gf_evg_surface_write_depth(canvas->surface, JS_ToBool(ctx, value) ? GF_TRUE : GF_FALSE);
+		break;
+	case GF_EVG_MASK_MODE:
+		if (JS_ToInt32(ctx, &ival, value))
+			return js_throw_err(ctx, GF_BAD_PARAM);
+		e = gf_evg_surface_set_mask_mode(canvas->surface, ival);
 		break;
 	}
 	if (e)
@@ -971,6 +987,19 @@ static JSValue canvas_fill(JSContext *c, JSValueConst obj, int argc, JSValueCons
 	if (JS_ToInt32(c, &operand, argv[0]))
 		return GF_JS_EXCEPTION(c);
 	if (JS_IsArray(c, argv[1])) {
+		JSValue v;
+		u32 i, nb_items;
+		v = JS_GetPropertyStr(c, argv[1], "length");
+		JS_ToInt32(c, &nb_items, v);
+		JS_FreeValue(c, v);
+		if (nb_items>4) nb_items=3;
+		for (i=0; i<nb_items; i++) {
+			Double d;
+			v = JS_GetPropertyUint32(c, argv[1], i);
+			JS_ToFloat64(c, &d, v);
+			JS_FreeValue(c, v);
+			op_params[i] = (Float) d;
+		}
 		sten_idx = 2;
 	}
 	else if (JS_IsNumber(argv[1])) {
@@ -1014,8 +1043,8 @@ static JSValue canvas_blit(JSContext *c, JSValueConst obj, int argc, JSValueCons
 	tx = JS_GetOpaque(argv[0], texture_class_id);
 	if (!tx) return GF_JS_EXCEPTION(c);
 
-	pf_src = ffmpeg_pixfmt_from_gpac(tx->pf);
-	pf_dst = ffmpeg_pixfmt_from_gpac(canvas->pf);
+	pf_src = ffmpeg_pixfmt_from_gpac(tx->pf, GF_FALSE);
+	pf_dst = ffmpeg_pixfmt_from_gpac(canvas->pf, GF_FALSE);
 	if ((pf_src==AV_PIX_FMT_NONE) || (pf_dst==AV_PIX_FMT_NONE))
 		return js_throw_err(c, GF_NOT_SUPPORTED);
 
@@ -1573,7 +1602,7 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 				if (op->uni_name) stack_idx = op->ival;
 
 				if (!stack_idx || (stack_idx > shader->nb_ops)) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[Shader] Invalid goto operation, stack index %d not in stack indices [1, %d]\n", op->left_value, shader->nb_ops));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Shader] Invalid goto operation, stack index %d not in stack indices [1, %d]\n", op->left_value, shader->nb_ops));
 					shader->invalid = GF_TRUE;
 					return GF_FALSE;
 				}
@@ -1737,7 +1766,7 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 						gf_mx_apply_vec_4x4(op->mx.mx, left_val);
 						continue;
 					}
-					GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[Shader] Invalid operation for right value matrix\n"));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Shader] Invalid operation for right value matrix\n"));
 					shader->invalid = GF_TRUE;
 					return GF_FALSE;
 				}
@@ -1804,7 +1833,7 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 			}
 		}
 		if (!right_val_type) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[Shader] Invalid right-value type in operation (stack index %d)\n", (u32) ((op - shader->ops) / sizeof(ShaderOp)) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Shader] Invalid right-value type in operation (stack index %d)\n", (u32) ((op - shader->ops) / sizeof(ShaderOp)) ));
 			shader->invalid = GF_TRUE;
 			return GF_FALSE;
 		}
@@ -2453,8 +2482,14 @@ static void shader_reset(JSRuntime *rt, EVGShader *shader)
 	}
 	shader->nb_ops = 0;
 	for (i=0; i<shader->nb_vars; i++) {
-		if (!shader->frag_shader && shader->vars[i].name)
+		if (
+#ifdef BUILTIN_SHADERS
+			!shader->frag_shader &&
+#endif
+			shader->vars[i].name
+		) {
 			gf_free(shader->vars[i].name);
+		}
 		shader->vars[i].name = NULL;
 	}
 	shader->nb_vars = 0;
@@ -2556,6 +2591,7 @@ static u8 get_value_type(const char *comp)
 	return COMP_V4;
 }
 
+#ifdef BUILTIN_SHADERS
 static JSValue shader_push_builtin(JSContext *ctx, EVGShader *shader, int argc, JSValueConst *argv)
 {
 	u32 i;
@@ -2587,6 +2623,7 @@ static JSValue shader_push_builtin(JSContext *ctx, EVGShader *shader, int argc, 
 	}
 	return JS_UNDEFINED;
 }
+#endif
 
 static JSValue shader_push(JSContext *ctx, JSValueConst obj, int argc, JSValueConst *argv)
 {
@@ -2603,8 +2640,10 @@ static JSValue shader_push(JSContext *ctx, JSValueConst obj, int argc, JSValueCo
 	EVGShader *shader = JS_GetOpaque(obj, shader_class_id);
 	if (!shader) return GF_JS_EXCEPTION(ctx);
 
+#ifdef BUILTIN_SHADERS
 	if (shader->frag_shader)
 		return shader_push_builtin(ctx, shader, argc, argv);
+#endif
 
 	shader->invalid = GF_FALSE;
 	if (!argc) {
@@ -3105,6 +3144,8 @@ static const JSCFunctionListEntry shader_funcs[] =
 	JS_CFUNC_DEF("update", 0, shader_update),
 };
 
+//test code
+#ifdef BUILTIN_SHADERS
 Bool rvideo_shader(void *udta, GF_EVGFragmentParam *frag)
 {
 	EVGShader *shader = udta;
@@ -3158,6 +3199,7 @@ EVGShader *load_builtin_shader(const char *sname, GF_Err *e)
 	}
 	return NULL;
 }
+#endif
 
 static JSValue canvas_new_shader(JSContext *ctx, JSValueConst obj, int argc, JSValueConst *argv)
 {
@@ -3168,6 +3210,7 @@ static JSValue canvas_new_shader(JSContext *ctx, JSValueConst obj, int argc, JSV
 	if (!canvas) return GF_JS_EXCEPTION(ctx);
 	if (!argc) return GF_JS_EXCEPTION(ctx);
 
+#ifdef BUILTIN_SHADERS
 	if (JS_IsString(argv[0])) {
 		GF_Err e = GF_OK;
 		const char *sname = JS_ToCString(ctx, argv[0]);
@@ -3179,17 +3222,24 @@ static JSValue canvas_new_shader(JSContext *ctx, JSValueConst obj, int argc, JSV
 		}
 		JS_FreeCString(ctx, sname);
 		shader->mode = GF_EVG_SHADER_FRAGMENT;
-	} else {
-		JS_ToInt32(ctx, &mode, argv[0]);
-		if ((mode != GF_EVG_SHADER_FRAGMENT) && (mode != GF_EVG_SHADER_VERTEX))
-			return GF_JS_EXCEPTION(ctx);
-		GF_SAFEALLOC(shader, EVGShader);
-		if (!shader) {
-			return js_throw_err(ctx, GF_OUT_OF_MEM);
-		}
-		shader->mode = mode;
-		shader->vars_stack = gf_list_new();
+
+		res = JS_NewObjectClass(ctx, shader_class_id);
+		JS_SetOpaque(res, shader);
+		return res;
 	}
+#endif
+
+	if (JS_ToInt32(ctx, &mode, argv[0]))
+		return GF_JS_EXCEPTION(ctx);
+
+	if ((mode != GF_EVG_SHADER_FRAGMENT) && (mode != GF_EVG_SHADER_VERTEX))
+		return GF_JS_EXCEPTION(ctx);
+	GF_SAFEALLOC(shader, EVGShader);
+	if (!shader) {
+		return js_throw_err(ctx, GF_OUT_OF_MEM);
+	}
+	shader->mode = mode;
+	shader->vars_stack = gf_list_new();
 
 	res = JS_NewObjectClass(ctx, shader_class_id);
 	JS_SetOpaque(res, shader);
@@ -3210,6 +3260,7 @@ static const JSCFunctionListEntry canvas_funcs[] =
 	JS_CGETSET_MAGIC_DEF("on_alpha", canvas_getProperty, canvas_setProperty, GF_EVG_ALPHA_FUN),
 	JS_CGETSET_MAGIC_DEF("is_yuv", canvas_getProperty, NULL, GF_EVG_IS_YUV),
 	JS_CGETSET_MAGIC_DEF("depth", canvas_getProperty, NULL, GF_EVG_BIT_DEPTH),
+	JS_CGETSET_MAGIC_DEF("mask_mode", canvas_getProperty, canvas_setProperty, GF_EVG_MASK_MODE),
 	JS_CFUNC_DEF("enable_threading", 0, canvas_enable_threading),
 	JS_CFUNC_DEF("enable_3d", 0, canvas_enable_3d),
 	JS_CFUNC_DEF("clear", 0, canvas_clear),
@@ -3779,6 +3830,7 @@ enum
 	MX2D_YY,
 	MX2D_TY,
 	MX2D_IDENTITY,
+	MX2D_3D,
 };
 
 static JSValue mx2d_getProperty(JSContext *c, JSValueConst obj, int magic)
@@ -3790,6 +3842,8 @@ static JSValue mx2d_getProperty(JSContext *c, JSValueConst obj, int magic)
 	}
 	if (magic==MX2D_IDENTITY)
 		return JS_NewBool(c, gf_mx2d_is_identity(*mx));
+	if (magic==MX2D_3D)
+		return JS_FALSE;
 	return JS_UNDEFINED;
 }
 static JSValue mx2d_setProperty(JSContext *c, JSValueConst obj, JSValueConst value, int magic)
@@ -3994,6 +4048,12 @@ static JSValue mx2d_copy(JSContext *c, JSValueConst obj, int argc, JSValueConst 
 	JSValue nobj;
 	GF_Matrix2D *mx = JS_GetOpaque(obj, mx2d_class_id);
 	if (!mx) return GF_JS_EXCEPTION(c);
+	if (argc) {
+		GF_Matrix2D *mx_from = JS_GetOpaque(argv[0], mx2d_class_id);
+		if (!mx_from) return GF_JS_EXCEPTION(c);
+		gf_mx2d_copy(*mx, *mx_from);
+		return JS_UNDEFINED;
+	}
 	GF_SAFEALLOC(nmx, GF_Matrix2D);
 	if (!nmx)
 		return js_throw_err(c, GF_OUT_OF_MEM);
@@ -4052,6 +4112,7 @@ static const JSCFunctionListEntry mx2d_funcs[] =
 	JS_CGETSET_MAGIC_DEF("yy", mx2d_getProperty, mx2d_setProperty, MX2D_YY),
 	JS_CGETSET_MAGIC_DEF("ty", mx2d_getProperty, mx2d_setProperty, MX2D_TY),
 	JS_CGETSET_MAGIC_DEF("identity", mx2d_getProperty, mx2d_setProperty, MX2D_IDENTITY),
+	JS_CGETSET_MAGIC_DEF("is3D", mx2d_getProperty, NULL, MX2D_3D),
 	JS_CFUNC_DEF("get_scale", 0, mx2d_get_scale),
 	JS_CFUNC_DEF("get_translate", 0, mx2d_get_translate),
 	JS_CFUNC_DEF("get_rotate", 0, mx2d_get_rotate),
@@ -4190,6 +4251,10 @@ static JSValue colmx_setProperty(JSContext *c, JSValueConst obj, JSValueConst va
 			return GF_JS_EXCEPTION(c);
 		cmx->m[magic] = FIX2FLT(d);
 		cmx->identity = GF_FALSE;
+		return JS_UNDEFINED;
+	}
+	if (magic==CMX_IDENTITY) {
+		gf_cmx_init(cmx);
 		return JS_UNDEFINED;
 	}
 	return JS_UNDEFINED;
@@ -4344,7 +4409,7 @@ static const JSCFunctionListEntry colmx_funcs[] =
 	JS_CGETSET_MAGIC_DEF("ab", colmx_getProperty, colmx_setProperty, CMX_MAB),
 	JS_CGETSET_MAGIC_DEF("aa", colmx_getProperty, colmx_setProperty, CMX_MAA),
 	JS_CGETSET_MAGIC_DEF("ta", colmx_getProperty, colmx_setProperty, CMX_TA),
-	JS_CGETSET_MAGIC_DEF("identity", colmx_getProperty, NULL, CMX_IDENTITY),
+	JS_CGETSET_MAGIC_DEF("identity", colmx_getProperty, colmx_setProperty, CMX_IDENTITY),
 
 	JS_CFUNC_DEF("multiply", 0, colmx_multiply),
 	JS_CFUNC_DEF("apply", 0, colmx_apply),
@@ -4678,7 +4743,7 @@ static JSValue path_point_over(JSContext *c, JSValueConst obj, int argc, JSValue
 	} else {
 		return GF_JS_EXCEPTION(c);
 	}
-	return JS_NewBool(c, gf_path_point_over(gp, FLT2FIX(x), FLT2FIX(y)));
+	return gf_path_point_over(gp, FLT2FIX(x), FLT2FIX(y)) ? JS_TRUE : JS_FALSE;
 }
 
 
@@ -4913,6 +4978,7 @@ enum
 	STENCIL_CMX,
 	STENCIL_MAT,
 	STENCIL_GRADMOD,
+	STENCIL_MAT_AUTO,
 };
 
 static JSValue stencil_set_linear(JSContext *c, GF_EVGStencil *stencil, int argc, JSValueConst *argv)
@@ -5042,6 +5108,8 @@ Bool get_color_from_args(JSContext *c, int argc, JSValueConst *argv, u32 idx, Do
 		*r = ((Double)GF_COL_R(col)) / 255;
 		*g = ((Double)GF_COL_G(col)) / 255;
 		*b = ((Double)GF_COL_B(col)) / 255;
+	} else if (JS_IsNull(argv[idx])) {
+		*a = *r = *g = *b = 0;
 	} else if (JS_IsObject(argv[idx])) {
 		if (!get_color(c, argv[idx], a, r, g, b)) {
 			return GF_FALSE;
@@ -5147,6 +5215,23 @@ static JSValue stencil_set_colorf(JSContext *c, JSValueConst obj, int argc, JSVa
 	return stencil_set_color_ex(c, obj, argc, argv, GF_FALSE);
 }
 
+
+static JSValue stencil_get_color(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv)
+{
+	GF_StencilType type;
+	GF_Color col;
+	char szCol[11];
+	GF_EVGStencil *stencil = JS_GetOpaque(obj, stencil_class_id);
+	if (!stencil) return GF_JS_EXCEPTION(c);
+	type = gf_evg_stencil_type(stencil);
+	if (type!=GF_STENCIL_SOLID) return GF_JS_EXCEPTION(c);
+
+	col = gf_evg_stencil_get_brush_color(stencil);
+	sprintf(szCol, "0x%02X%02X%02X%02X", GF_COL_A(col), GF_COL_R(col), GF_COL_G(col), GF_COL_B(col) );
+	return JS_NewString(c, szCol);
+}
+
+
 static JSValue stencil_set_alpha_ex(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv, Bool use_int)
 {
 	Double a=1.0;
@@ -5179,6 +5264,21 @@ static JSValue stencil_set_alphaf(JSContext *c, JSValueConst obj, int argc, JSVa
 	return stencil_set_alpha_ex(c, obj, argc, argv, GF_FALSE);
 }
 
+
+static JSValue stencil_get_alphaf(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv)
+{
+	GF_EVGStencil *stencil = JS_GetOpaque(obj, stencil_class_id);
+	if (!stencil) {
+		GF_JSTexture *tx = JS_GetOpaque(obj, texture_class_id);
+		if (!tx || !tx->stencil)
+			return GF_JS_EXCEPTION(c);
+		stencil = tx->stencil;
+	}
+	Double res = gf_evg_stencil_get_alpha(stencil);
+	return JS_NewFloat64(c, res/255.0);
+}
+
+
 static JSValue stencil_getProperty(JSContext *c, JSValueConst obj, int magic)
 {
 	GF_EVGStencil *stencil = JS_GetOpaque(obj, stencil_class_id);
@@ -5199,7 +5299,21 @@ static JSValue stencil_getProperty(JSContext *c, JSValueConst obj, int magic)
 		return res;
 	}
 		break;
+	case STENCIL_MAT_AUTO:
+		if (gf_evg_stencil_get_auto_matrix(stencil)) return JS_TRUE;
+		return JS_FALSE;
+	case STENCIL_CMX:
+	{
+		GF_ColorMatrix *cmx;
+		GF_SAFEALLOC(cmx, GF_ColorMatrix);
+		if (!cmx) return js_throw_err(c, GF_OUT_OF_MEM);
+		gf_evg_stencil_get_color_matrix(stencil, cmx);
+		obj = JS_NewObjectClass(c, colmx_class_id);
+		JS_SetOpaque(obj, cmx);
+		return obj;
 	}
+	}
+
 	return JS_UNDEFINED;
 }
 static JSValue stencil_setProperty(JSContext *c, JSValueConst obj, JSValueConst value, int magic)
@@ -5229,6 +5343,9 @@ static JSValue stencil_setProperty(JSContext *c, JSValueConst obj, JSValueConst 
 			gf_evg_stencil_set_matrix(stencil, mx);
 		}
 		return JS_UNDEFINED;
+	case STENCIL_MAT_AUTO:
+		gf_evg_stencil_set_auto_matrix(stencil, JS_ToBool(c, value) ? GF_TRUE : GF_FALSE);
+		return JS_UNDEFINED;
 	}
 	return JS_UNDEFINED;
 }
@@ -5237,12 +5354,15 @@ static const JSCFunctionListEntry stencil_funcs[] =
 {
 	JS_CGETSET_MAGIC_DEF("solid_brush", stencil_getProperty, NULL, STENCIL_SOLID),
 	JS_CGETSET_MAGIC_DEF("pad", NULL, stencil_setProperty, STENCIL_GRADMOD),
-	JS_CGETSET_MAGIC_DEF("cmx", NULL, stencil_setProperty, STENCIL_CMX),
+	JS_CGETSET_MAGIC_DEF("cmx", stencil_getProperty, stencil_setProperty, STENCIL_CMX),
 	JS_CGETSET_MAGIC_DEF("mx", stencil_getProperty, stencil_setProperty, STENCIL_MAT),
+	JS_CGETSET_MAGIC_DEF("auto_mx", stencil_getProperty, stencil_setProperty, STENCIL_MAT_AUTO),
 	JS_CFUNC_DEF("set_color", 0, stencil_set_color),
 	JS_CFUNC_DEF("set_colorf", 0, stencil_set_colorf),
 	JS_CFUNC_DEF("set_alpha", 0, stencil_set_alpha),
 	JS_CFUNC_DEF("set_alphaf", 0, stencil_set_alphaf),
+	JS_CFUNC_DEF("get_alphaf", 0, stencil_get_alphaf),
+	JS_CFUNC_DEF("get_color", 0, stencil_get_color),
 	JS_CFUNC_DEF("set_points", 0, stencil_set_points),
 	JS_CFUNC_DEF("set_stop", 0, stencil_set_stop),
 	JS_CFUNC_DEF("set_stopf", 0, stencil_set_stopf),
@@ -5330,6 +5450,7 @@ enum
 	TX_FLIP_X,
 	TX_FLIP_Y,
 	TX_MAT,
+	TX_MAT_AUTO,
 	TX_WIDTH,
 	TX_HEIGHT,
 	TX_NB_COMP,
@@ -5374,7 +5495,19 @@ static JSValue texture_getProperty(JSContext *c, JSValueConst obj, int magic)
 		JS_SetOpaque(res, mxp);
 		return res;
 	}
-
+	case TX_MAT_AUTO:
+		if (gf_evg_stencil_get_auto_matrix(tx->stencil)) return JS_TRUE;
+		return JS_FALSE;
+	case TX_CMX:
+	{
+		GF_ColorMatrix *cmx;
+		GF_SAFEALLOC(cmx, GF_ColorMatrix);
+		if (!cmx) return js_throw_err(c, GF_OUT_OF_MEM);
+		gf_evg_stencil_get_color_matrix(tx->stencil, cmx);
+		obj = JS_NewObjectClass(c, colmx_class_id);
+		JS_SetOpaque(obj, cmx);
+		return obj;
+	}
 	}
 	return JS_UNDEFINED;
 }
@@ -5424,6 +5557,9 @@ static JSValue texture_setProperty(JSContext *c, JSValueConst obj, JSValueConst 
 			GF_Matrix2D *mx = JS_GetOpaque(value, mx2d_class_id);
 			gf_evg_stencil_set_matrix(tx->stencil, mx);
 		}
+		return JS_UNDEFINED;
+	case TX_MAT_AUTO:
+		gf_evg_stencil_set_auto_matrix(tx->stencil, JS_ToBool(c, value) ? GF_TRUE : GF_FALSE);
 		return JS_UNDEFINED;
 	}
 	return JS_UNDEFINED;
@@ -6089,7 +6225,11 @@ static JSValue texture_set_pad_color(JSContext *c, JSValueConst obj, int argc, J
 		if (!get_color_from_args(c, argc, argv, 0, &a, &r, &g, &b))
 			return GF_JS_EXCEPTION(c);
 
-		color = GF_COL_ARGB(a*255, r*255, g*255, b*255);
+		a*=255;
+		r*=255;
+		g*=255;
+		b*=255;
+		color = GF_COL_ARGB(a, r, g, b);
 	}
 	e = gf_evg_stencil_set_pad_color(tx->stencil, color);
 	if (e) {
@@ -6106,17 +6246,201 @@ static JSValue texture_get_pad_color(JSContext *c, JSValueConst obj, int argc, J
 	if (!tx || !tx->stencil) return GF_JS_EXCEPTION(c);
 
 	color = gf_evg_stencil_get_pad_color(tx->stencil);
-	if (!color) return JS_NULL;
+	if (!color) return JS_NewString(c, "none");
 	sprintf(szCol, "0x%02X%02X%02X%02X", GF_COL_A(color), GF_COL_R(color), GF_COL_G(color), GF_COL_B(color) );
 	return JS_NewString(c, szCol);
 }
 
+u32 gf_evg_stencil_get_pixel_fast(GF_EVGStencil *st, s32 x, s32 y);
+
+static JSValue texture_diff_score(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv)
+{
+	u32 i, j;
+	Bool is_yuv=GF_FALSE;
+	Bool has_alpha=GF_FALSE;
+	Bool split_sums=GF_FALSE;
+	Bool do_mae = GF_FALSE, do_mse = GF_FALSE;
+	Double mae_r=0, mae_g=0, mae_b=0, mae_a=0;
+	Double mse_r=0, mse_g=0, mse_b=0, mse_a=0;
+	GF_JSTexture *tx = JS_GetOpaque(obj, texture_class_id);
+	if (!tx || !tx->stencil || !argc) return GF_JS_EXCEPTION(c);
+	GF_JSTexture *tx_with = JS_GetOpaque(argv[0], texture_class_id);
+	if (!tx_with || !tx_with->stencil) return GF_JS_EXCEPTION(c);
+
+	if (tx_with->width != tx->width) return GF_JS_EXCEPTION(c);
+	if (tx_with->height != tx->height) return GF_JS_EXCEPTION(c);
+	if (tx_with->pf != tx->pf) return GF_JS_EXCEPTION(c);
+
+	if (argc>1) {
+		u32 idx=1;
+		if (JS_IsString(argv[1])) {
+			const char * str = JS_ToCString(c, argv[1]);
+			if (strstr(str, "mae")) do_mae = GF_TRUE;
+			if (strstr(str, "mse")) do_mse = GF_TRUE;
+			idx++;
+			JS_FreeCString(c, str);
+		}
+		if ((argc>idx) && JS_ToBool(c, argv[idx])) {
+			split_sums = GF_TRUE;
+		}
+	}
+	if (!do_mae && !do_mse) do_mae = GF_TRUE;
+
+	if (!split_sums && gf_pixel_fmt_is_yuv(tx->pf)) {
+		is_yuv = GF_TRUE;
+	}
+
+	has_alpha = gf_pixel_fmt_is_transparent(tx->pf);
+
+	for (j=0; j<tx->height; j++) {
+		u64 mae_line_r=0, mae_line_g=0, mae_line_b=0, mae_line_a=0;
+		u64 mse_line_r=0, mse_line_g=0, mse_line_b=0, mse_line_a=0;
+		for (i=0; i<tx->width; i++) {
+			u32 pval, pval2;
+			if (is_yuv) {
+				pval = gf_evg_stencil_get_pixel_fast(tx->stencil, i, j);
+				pval2 = gf_evg_stencil_get_pixel_fast(tx_with->stencil, i, j);
+			} else {
+				pval = gf_evg_stencil_get_pixel_fast(tx->stencil, i, j);
+				pval2 = gf_evg_stencil_get_pixel_fast(tx_with->stencil, i, j);
+			}
+			s32 this_c = GF_COL_R(pval);
+			s32 prev_c = GF_COL_R(pval2);
+			if (do_mse) mse_line_r += (this_c-prev_c)*(this_c-prev_c);
+			if (do_mae) {
+				if (prev_c<this_c) mae_line_r += this_c-prev_c;
+				else mae_line_r += prev_c-this_c;
+			}
+
+			if (has_alpha) {
+				this_c = GF_COL_A(pval);
+				prev_c = GF_COL_A(pval2);
+				if (do_mse) mse_line_a += (this_c-prev_c)*(this_c-prev_c);
+				if (do_mae) {
+					if (prev_c<this_c) mae_line_a += this_c-prev_c;
+					else mae_line_a += prev_c-this_c;
+				}
+			}
+
+			if (is_yuv) continue;
+
+			this_c = GF_COL_G(pval);
+			prev_c = GF_COL_G(pval2);
+			if (do_mse) mse_line_g += (this_c-prev_c)*(this_c-prev_c);
+			if (do_mae) {
+				if (prev_c<this_c) mae_line_g += this_c-prev_c;
+				else mae_line_g += prev_c-this_c;
+			}
+
+			this_c = GF_COL_B(pval);
+			prev_c = GF_COL_B(pval2);
+			if (do_mse) mse_line_b += (this_c-prev_c)*(this_c-prev_c);
+			if (do_mae) {
+				if (prev_c<this_c) mae_line_b += this_c-prev_c;
+				else mae_line_b += prev_c-this_c;
+			}
+		}
+		mae_r += mae_line_r;
+		mae_g += mae_line_g;
+		mae_b += mae_line_b;
+		mae_a += mae_line_a;
+
+		mse_r += mse_line_r;
+		mse_g += mse_line_g;
+		mse_b += mse_line_b;
+		mse_a += mse_line_a;
+	}
+
+	u64 div = tx->height * tx->width * 255;
+	u64 div_mse = div * 255;
+
+	u32 nb_p=1;
+	Double mae = mae_r;
+	Double mse = mse_r;
+	mae_r /= div;
+	mse_r /= div_mse;
+	if (has_alpha) {
+		mae += mae_a;
+		mse += mse_a;
+		nb_p=2;
+		mae_a /= div;
+		mse_a /= div_mse;
+	}
+	if (!is_yuv) {
+		mae += mae_g + mae_b;
+		mse += mse_g + mse_b;
+		nb_p = 4;
+		mae_g /= div;
+		mae_b /= div;
+		mse_g /= div_mse;
+		mse_b /= div_mse;
+	}
+#define FCLAMP(_v)\
+		if (_v<0) _v = 0;\
+		else if (_v>1.0) _v = 1.0;\
+
+
+	if (!split_sums) {
+		JSValue ar = JS_NewArray(c);
+		if (JS_IsException(ar)) return GF_JS_EXCEPTION(c);
+		JSValue v = JS_NewObject(c);
+		if (JS_IsException(v)) return GF_JS_EXCEPTION(c);
+
+		mae /= div * nb_p;
+		mse /= div_mse * nb_p;
+		FCLAMP(mae)
+		FCLAMP(mse)
+		JS_SetPropertyStr(c, v, "mae", JS_NewFloat64(c, mae*100));
+		JS_SetPropertyStr(c, v, "mse", JS_NewFloat64(c, mse*100));
+		JS_SetPropertyUint32(c, ar, 0, v);
+		return ar;
+	}
+
+	JSValue ar = JS_NewArray(c);
+	if (JS_IsException(ar)) return GF_JS_EXCEPTION(c);
+	FCLAMP(mae_r)
+	FCLAMP(mae_g)
+	FCLAMP(mae_b)
+	FCLAMP(mae_a)
+	FCLAMP(mse_r)
+	FCLAMP(mse_g)
+	FCLAMP(mse_b)
+	FCLAMP(mse_a)
+
+	JSValue v = JS_NewObject(c);
+	if (JS_IsException(v)) return GF_JS_EXCEPTION(c);
+	JS_SetPropertyStr(c, v, "mae", JS_NewFloat64(c, mae_r*100));
+	JS_SetPropertyStr(c, v, "mse", JS_NewFloat64(c, mse_r*100));
+	JS_SetPropertyUint32(c, ar, 0, v);
+
+	v = JS_NewObject(c);
+	if (JS_IsException(v)) return GF_JS_EXCEPTION(c);
+	JS_SetPropertyStr(c, v, "mae", JS_NewFloat64(c, mae_g*100));
+	JS_SetPropertyStr(c, v, "mse", JS_NewFloat64(c, mse_g*100));
+	JS_SetPropertyUint32(c, ar, 1, v);
+
+	v = JS_NewObject(c);
+	if (JS_IsException(v)) return GF_JS_EXCEPTION(c);
+	JS_SetPropertyStr(c, v, "mae", JS_NewFloat64(c, mae_b*100));
+	JS_SetPropertyStr(c, v, "mse", JS_NewFloat64(c, mse_b*100));
+	JS_SetPropertyUint32(c, ar, 2, v);
+
+	if (has_alpha) {
+		v = JS_NewObject(c);
+		if (JS_IsException(v)) return GF_JS_EXCEPTION(c);
+		JS_SetPropertyStr(c, v, "mae", JS_NewFloat64(c, mae_a*100));
+		JS_SetPropertyStr(c, v, "mse", JS_NewFloat64(c, mse_a*100));
+		JS_SetPropertyUint32(c, ar, 3, v);
+	}
+	return  ar;
+}
 
 static const JSCFunctionListEntry texture_funcs[] =
 {
 	JS_CGETSET_MAGIC_DEF("filtering", NULL, texture_setProperty, TX_FILTER),
-	JS_CGETSET_MAGIC_DEF("cmx", NULL, texture_setProperty, TX_CMX),
+	JS_CGETSET_MAGIC_DEF("cmx", texture_getProperty, texture_setProperty, TX_CMX),
 	JS_CGETSET_MAGIC_DEF("mx", texture_getProperty, texture_setProperty, TX_MAT),
+	JS_CGETSET_MAGIC_DEF("auto_mx", texture_getProperty, texture_setProperty, TX_MAT_AUTO),
 	JS_CGETSET_MAGIC_DEF("repeat_s", texture_getProperty, texture_setProperty, TX_REPEAT_S),
 	JS_CGETSET_MAGIC_DEF("repeat_t", texture_getProperty, texture_setProperty, TX_REPEAT_T),
 	JS_CGETSET_MAGIC_DEF("flip_h", texture_getProperty, texture_setProperty, TX_FLIP_X),
@@ -6129,6 +6453,7 @@ static const JSCFunctionListEntry texture_funcs[] =
 
 	JS_CFUNC_DEF("set_alpha", 0, stencil_set_alpha),
 	JS_CFUNC_DEF("set_alphaf", 0, stencil_set_alphaf),
+	JS_CFUNC_DEF("get_alphaf", 0, stencil_get_alphaf),
 	JS_CFUNC_DEF("rgb2hsv", 0, texture_rgb2hsv),
 	JS_CFUNC_DEF("hsv2rgb", 0, texture_hsv2rgb),
 	JS_CFUNC_DEF("rgb2yuv", 0, texture_rgb2yuv),
@@ -6142,6 +6467,7 @@ static const JSCFunctionListEntry texture_funcs[] =
 	JS_CFUNC_DEF("set_named", 0, texture_set_named),
 	JS_CFUNC_DEF("set_pad_color", 0, texture_set_pad_color),
 	JS_CFUNC_DEF("get_pad_color", 0, texture_get_pad_color),
+	JS_CFUNC_DEF("diff_score", 0, texture_diff_score),
 };
 
 
@@ -6852,6 +7178,7 @@ static JSValue text_constructor(JSContext *c, JSValueConst new_target, int argc,
 enum
 {
 	MX_PROP_IDENTITY=0,
+	MX_PROP_3D,
 	MX_PROP_YAW,
 	MX_PROP_PITCH,
 	MX_PROP_ROLL,
@@ -6906,7 +7233,10 @@ static JSValue mx_getProperty(JSContext *ctx, JSValueConst this_val, int magic)
 	GF_Matrix *mx = JS_GetOpaque(this_val, matrix_class_id);
 	if (!mx) return GF_JS_EXCEPTION(ctx);
 	switch (magic) {
-	case MX_PROP_IDENTITY: return JS_NewBool(ctx, gf_mx2d_is_identity(*mx));
+	case MX_PROP_IDENTITY:
+		return JS_NewBool(ctx, gf_mx_is_identity(*mx));
+	case MX_PROP_3D:
+		return JS_TRUE;
 	case MX_PROP_YAW:
 		gf_mx_get_yaw_pitch_roll(mx, &yaw, &pitch, &roll);
 		return JS_NewFloat64(ctx, FIX2FLT(yaw));
@@ -6976,12 +7306,23 @@ static JSValue mx_setProperty(JSContext *ctx, JSValueConst this_val, JSValueCons
 
 static JSValue mx_copy(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+	GF_Matrix *mx2;
 	GF_Matrix *mx = JS_GetOpaque(this_val, matrix_class_id);
-	if (!mx || !argc) return GF_JS_EXCEPTION(ctx);
-	GF_Matrix *mx2 = JS_GetOpaque(argv[0], matrix_class_id);
+	if (!mx)
+		return GF_JS_EXCEPTION(ctx);
+	if (argc) {
+		mx2 = JS_GetOpaque(argv[0], matrix_class_id);
+		if (!mx2)
+			return GF_JS_EXCEPTION(ctx);
+		gf_mx_copy(*mx, *mx2);
+		return JS_DupValue(ctx, this_val);
+	}
+	GF_SAFEALLOC(mx2, GF_Matrix);
 	if (!mx2) return GF_JS_EXCEPTION(ctx);
-	gf_mx_copy(*mx, *mx2);
-	return JS_DupValue(ctx, this_val);
+	JSValue res = JS_NewObjectClass(ctx, matrix_class_id);
+	JS_SetOpaque(res, mx2);
+	gf_mx_copy(*mx2, *mx);
+	return res;
 }
 static JSValue mx_equal(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -7051,10 +7392,14 @@ static JSValue mx_translate(JSContext *ctx, JSValueConst this_val, int argc, JSV
 	GF_Matrix *mx = JS_GetOpaque(this_val, matrix_class_id);
 	if (!mx || !argc) return GF_JS_EXCEPTION(ctx);
 	if (!JS_IsObject(argv[0])) {
-		if (argc<3) return GF_JS_EXCEPTION(ctx);
+		if (argc<2) return GF_JS_EXCEPTION(ctx);
 		EVG_GET_FLOAT(vx, argv[0])
 		EVG_GET_FLOAT(vy, argv[1])
-		EVG_GET_FLOAT(vz, argv[2])
+		if (argc==3) {
+			EVG_GET_FLOAT(vz, argv[2])
+		} else {
+			vz = 0;
+		}
 	} else {
 		WGL_GET_VEC3(vx, vy, vz, argv[0])
 	}
@@ -7096,15 +7441,30 @@ static JSValue mx_rotate(JSContext *ctx, JSValueConst this_val, int argc, JSValu
 }
 static JSValue mx_add(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+	GF_Matrix *_mx2 = NULL;
 	GF_Matrix *mx = JS_GetOpaque(this_val, matrix_class_id);
-	if (!mx || !argc) return GF_JS_EXCEPTION(ctx);
+	if (!mx || !argc)
+		return GF_JS_EXCEPTION(ctx);
 	GF_Matrix *mx2 = JS_GetOpaque(argv[0], matrix_class_id);
-	if (!mx2) return GF_JS_EXCEPTION(ctx);
+
+	if (!mx2) {
+		GF_Matrix2D *mx2_2D = JS_GetOpaque(argv[0], mx2d_class_id);
+		if (!mx2_2D)
+			return GF_JS_EXCEPTION(ctx);
+
+		GF_SAFEALLOC(_mx2, GF_Matrix);
+		if (!_mx2)
+			return GF_JS_EXCEPTION(ctx);
+		gf_mx_from_mx2d(_mx2, mx2_2D);
+		mx2 = _mx2;
+	}
 	if ((argc>1) && JS_ToBool(ctx, argv[1])) {
 		gf_mx_add_matrix_4x4(mx, mx2);
 	} else {
 		gf_mx_add_matrix(mx, mx2);
 	}
+	if (_mx2) gf_free(_mx2);
+
 	return JS_DupValue(ctx, this_val);
 }
 
@@ -7140,11 +7500,16 @@ static JSValue mx_apply(JSContext *ctx, JSValueConst this_val, int argc, JSValue
 
 	/*try rect*/
 	v = JS_GetPropertyStr(ctx, argv[0], "width");
+	if (JS_IsUndefined(v))
+		v = JS_GetPropertyStr(ctx, argv[0], "w");
+
 	if (!JS_IsUndefined(v)) {
 		GF_Rect rc;
 		EVG_GET_FLOAT(width, v);
 		JS_FreeValue(ctx, v);
 		v = JS_GetPropertyStr(ctx, argv[0], "height");
+		if (JS_IsUndefined(v))
+			v = JS_GetPropertyStr(ctx, argv[0], "h");
 		EVG_GET_FLOAT(height, v);
 		JS_FreeValue(ctx, v);
 		v = JS_GetPropertyStr(ctx, argv[0], "x");
@@ -7245,6 +7610,7 @@ static JSValue mx_lookat(JSContext *ctx, JSValueConst this_val, int argc, JSValu
 static const JSCFunctionListEntry mx_funcs[] =
 {
 	JS_CGETSET_MAGIC_DEF("identity", mx_getProperty, mx_setProperty, MX_PROP_IDENTITY),
+	JS_CGETSET_MAGIC_DEF("is3D", mx_getProperty, mx_setProperty, MX_PROP_3D),
 	JS_CGETSET_MAGIC_DEF("m", mx_getProperty, mx_setProperty, MX_PROP_M),
 	JS_CGETSET_MAGIC_DEF("yaw", mx_getProperty, NULL, MX_PROP_YAW),
 	JS_CGETSET_MAGIC_DEF("pitch", mx_getProperty, NULL, MX_PROP_PITCH),
@@ -7311,24 +7677,6 @@ JSClassDef mesh_class = {
 	.finalizer = mesh_finalize
 };
 
-enum
-{
-	MESH_PROP_VERTICES=0,
-	MESH_PROP_INDICES
-};
-
-static JSValue mesh_getProperty(JSContext *c, JSValueConst obj, int magic)
-{
-	GF_Mesh *mesh = JS_GetOpaque(obj, mesh_class_id);
-	if (!mesh) return GF_JS_EXCEPTION(c);
-	if (magic== MESH_PROP_VERTICES) {
-		return JS_UNDEFINED;
-	}
-	if (magic== MESH_PROP_INDICES) {
-		return JS_UNDEFINED;
-	}
-	return JS_UNDEFINED;
-}
 
 Bool mesh_gl_update_buffers(GF_Mesh *mesh);
 
@@ -7352,8 +7700,6 @@ static JSValue mesh_draw(JSContext *ctx, JSValueConst this_val, int argc, JSValu
 
 static const JSCFunctionListEntry mesh_funcs[] =
 {
-	JS_CGETSET_MAGIC_DEF("vertices", mesh_getProperty, NULL, MESH_PROP_VERTICES),
-	JS_CGETSET_MAGIC_DEF("indices", mesh_getProperty, NULL, MESH_PROP_INDICES),
 	JS_CFUNC_DEF("update_gl", 0, mesh_update_gl),
 	JS_CFUNC_DEF("draw", 0, mesh_draw),
 };
@@ -7632,6 +7978,13 @@ static int js_evg_load_module(JSContext *c, JSModuleDef *m)
 	JS_SetPropertyStr(c, global, "GF_RASTER_HIGH_SPEED", JS_NewInt32(c, GF_RASTER_HIGH_SPEED));
 	JS_SetPropertyStr(c, global, "GF_RASTER_MID", JS_NewInt32(c, GF_RASTER_MID));
 	JS_SetPropertyStr(c, global, "GF_RASTER_HIGH_QUALITY", JS_NewInt32(c, GF_RASTER_HIGH_QUALITY));
+
+	JS_SetPropertyStr(c, global, "GF_EVGMASK_NONE", JS_NewInt32(c, GF_EVGMASK_NONE));
+	JS_SetPropertyStr(c, global, "GF_EVGMASK_DRAW", JS_NewInt32(c, GF_EVGMASK_DRAW));
+	JS_SetPropertyStr(c, global, "GF_EVGMASK_DRAW_NO_CLEAR", JS_NewInt32(c, GF_EVGMASK_DRAW_NO_CLEAR));
+	JS_SetPropertyStr(c, global, "GF_EVGMASK_USE", JS_NewInt32(c, GF_EVGMASK_USE));
+	JS_SetPropertyStr(c, global, "GF_EVGMASK_USE_INV", JS_NewInt32(c, GF_EVGMASK_USE_INV));
+	JS_SetPropertyStr(c, global, "GF_EVGMASK_RECORD", JS_NewInt32(c, GF_EVGMASK_RECORD));
 
 	JS_FreeValue(c, global);
 

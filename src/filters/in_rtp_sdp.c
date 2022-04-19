@@ -55,12 +55,21 @@ static GF_Err rtpin_setup_sdp(GF_RTPIn *rtp, GF_SDPInfo *sdp, GF_RTPInStream *fo
 		//NPT range only for now
 		else if (!strcmp(att->Name, "range") && !range) range = gf_rtsp_range_parse(att->Value);
 		/*we have the H264-SVC streams*/
-		else if (!strcmp(att->Name, "group") && !strncmp(att->Value, "DDP", 3)) rtp->is_scalable = GF_TRUE;
+		else if (!strcmp(att->Name, "group") && !strncmp(att->Value, "DDP", 3))
+			rtp->is_scalable = GF_TRUE;
 	}
 	if (range) {
 		Start = range->start;
 		End = range->end;
 		gf_rtsp_range_del(range);
+	}
+
+	if (!sess_ctrl && rtp->session) {
+		if (rtp->forceagg) {
+			sess_ctrl = "*";
+		} else {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_RTP, ("[RTPIn] Session-level control missing in RTSP SDP - if playback failure, retry specifying `--forceagg`\n"));
+		}
 	}
 
 	//setup all streams
@@ -107,6 +116,9 @@ static GF_Err rtpin_setup_sdp(GF_RTPIn *rtp, GF_SDPInfo *sdp, GF_RTPInStream *fo
 	return GF_OK;
 }
 
+//we now ignore the IOD (default scene anyway) and let the user deal with the media streams
+//code is kept for reference
+#if 0
 /*load iod from data:application/mpeg4-iod;base64*/
 static GF_Err rtpin_sdp_load_iod(GF_RTPIn *rtp, char *iod_str)
 {
@@ -145,6 +157,7 @@ static GF_Err rtpin_sdp_load_iod(GF_RTPIn *rtp, char *iod_str)
 	gf_odf_desc_read(buf, size, &rtp->iod_desc);
 	return GF_OK;
 }
+#endif
 
 void rtpin_declare_pid(GF_RTPInStream *stream, Bool force_iod, u32 ch_idx, u32 *ocr_es_id)
 {
@@ -182,7 +195,7 @@ void rtpin_declare_pid(GF_RTPInStream *stream, Bool force_iod, u32 ch_idx, u32 *
 	//od->objectDescriptorID = stream->OD_ID ? stream->OD_ID : stream->ES_ID;
 
 	// for each channel depending on this channel, get esd, set esd->dependsOnESID and add to od
-	if (stream->rtpin->is_scalable) {
+	if (stream->rtpin->is_scalable && stream->prev_stream) {
 		gf_filter_pid_set_property(stream->opid, GF_PROP_PID_DEPENDENCY_ID, &PROP_UINT( stream->prev_stream) );
 	}
 
@@ -260,27 +273,34 @@ void rtpin_declare_pid(GF_RTPInStream *stream, Bool force_iod, u32 ch_idx, u32 *
 	}
 
 
-	if (sl_map->StreamType==GF_STREAM_AUDIO) {
-		switch (sl_map->CodecID) {
-		case GF_CODECID_AAC_MPEG4:
-		case GF_CODECID_AAC_MPEG2_MP:
-		case GF_CODECID_AAC_MPEG2_LCP:
-		case GF_CODECID_AAC_MPEG2_SSRP:
-			if (sl_map->config) {
+	switch (sl_map->CodecID) {
+	case GF_CODECID_AAC_MPEG4:
+	case GF_CODECID_AAC_MPEG2_MP:
+	case GF_CODECID_AAC_MPEG2_LCP:
+	case GF_CODECID_AAC_MPEG2_SSRP:
+		if (sl_map->config) {
 #ifndef GPAC_DISABLE_AV_PARSERS
-				GF_M4ADecSpecInfo acfg;
-				gf_m4a_get_config(sl_map->config, sl_map->configSize, &acfg);
-				gf_filter_pid_set_property(stream->opid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(acfg.base_sr) );
-				gf_filter_pid_set_property(stream->opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(acfg.nb_chan) );
+			GF_M4ADecSpecInfo acfg;
+			gf_m4a_get_config(sl_map->config, sl_map->configSize, &acfg);
+			gf_filter_pid_set_property(stream->opid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(acfg.base_sr) );
+			gf_filter_pid_set_property(stream->opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(acfg.nb_chan) );
 #endif
 
-			} else {
-				gf_filter_pid_set_property(stream->opid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(gf_rtp_get_clockrate(stream->rtp_ch) ) );
-				gf_filter_pid_set_property(stream->opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(2) );
-
-			}
-			break;
+		} else {
+			gf_filter_pid_set_property(stream->opid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(gf_rtp_get_clockrate(stream->rtp_ch) ) );
+			gf_filter_pid_set_property(stream->opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(2) );
 		}
+		break;
+	//declare as unframed the following for decoder config extraction
+	case GF_CODECID_MPEG1:
+	case GF_CODECID_MPEG2_SIMPLE:
+	case GF_CODECID_MPEG2_MAIN:
+	case GF_CODECID_MPEG2_HIGH:
+	case GF_CODECID_MPEG2_422:
+	case GF_CODECID_MPEG2_SNR:
+	case GF_CODECID_MPEG2_SPATIAL:
+		gf_filter_pid_set_property(stream->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
+		break;
 	}
 }
 
@@ -294,7 +314,7 @@ static void rtpin_declare_media(GF_RTPIn *rtp, Bool force_iod)
 	i=0;
 	while ((stream = (GF_RTPInStream *)gf_list_enum(rtp->streams, &i))) {
 		if (stream->control && !strnicmp(stream->control, "data:", 5)) continue;
-		if (stream->prev_stream) continue;
+
 		if (rtp->stream_type && (rtp->stream_type!=stream->depacketizer->sl_map.StreamType)) continue;
 
 		rtpin_declare_pid(stream, force_iod, i, &ocr_es_id);
@@ -308,12 +328,13 @@ void rtpin_load_sdp(GF_RTPIn *rtp, char *sdp_text, u32 sdp_len, GF_RTPInStream *
 	u32 i;
 	GF_SDPInfo *sdp;
 	Bool is_isma_1;
-	char *iod_str;
+#if 0
+	char *iod_str = NULL;
+#endif
 	GF_X_Attribute *att;
 	Bool force_in_iod = GF_FALSE;
 
 	is_isma_1 = GF_FALSE;
-	iod_str = NULL;
 	sdp = gf_sdp_info_new();
 	e = gf_sdp_info_parse(sdp, sdp_text, sdp_len);
 
@@ -336,16 +357,23 @@ void rtpin_load_sdp(GF_RTPIn *rtp, char *sdp_text, u32 sdp_len, GF_RTPInStream *
 		/*look for IOD*/
 		i=0;
 		while ((att = (GF_X_Attribute*)gf_list_enum(sdp->Attributes, &i))) {
+#if 0
 			if (!iod_str && !strcmp(att->Name, "mpeg4-iod") ) iod_str = att->Value;
+#endif
 			if (!is_isma_1 && !strcmp(att->Name, "isma-compliance") ) {
 				if (!stricmp(att->Value, "1,1.0,1")) is_isma_1 = GF_TRUE;
 			}
 		}
 
+#if 0
 		/*force iod reconstruction with ISMA to use proper clock dependencies*/
 		if (is_isma_1) iod_str = NULL;
 
-		if (!iod_str) {
+		if (iod_str) {
+			e = rtpin_sdp_load_iod(rtp, iod_str);
+		} else
+#endif
+		{
 			GF_RTPInStream *a_stream;
 			i=0;
 			while (!force_in_iod && (a_stream = (GF_RTPInStream *)gf_list_enum(rtp->streams, &i))) {
@@ -361,8 +389,6 @@ void rtpin_load_sdp(GF_RTPIn *rtp, char *sdp_text, u32 sdp_len, GF_RTPInStream *
 				}
 			}
 		}
-
-		if (iod_str) e = rtpin_sdp_load_iod(rtp, iod_str);
 
 		/* service failed*/
 		if (e) gf_filter_setup_failure(rtp->filter, e);

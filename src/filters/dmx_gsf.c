@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / GPAC stream format reader filter
@@ -140,6 +140,7 @@ typedef enum
 } GSF_PacketType;
 
 
+static void gsfdmx_stream_del(GSF_DemuxCtx *ctx, GSF_Stream *gst, Bool is_flush);
 
 GF_Err gsfdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 {
@@ -152,7 +153,7 @@ GF_Err gsfdmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 			GSF_Stream *st = gf_list_pop_back(ctx->streams);
 			if (st->opid)
 				gf_filter_pid_remove(st->opid);
-			gf_free(st);
+			gsfdmx_stream_del(ctx, st, GF_FALSE);
 		}
 		return GF_OK;
 	}
@@ -208,10 +209,13 @@ static Bool gsfdmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	case GF_FEVT_STOP:
 		ctx->nb_playing--;
 		if (ctx->file_pids) return GF_TRUE;
-		if (!ctx->nb_playing)
+		if (!ctx->nb_playing) {
 			ctx->stop_pending = GF_TRUE;
+			//force a process to evaluate eos
+			gf_filter_post_process_task(filter);
+		}
 		//always cancel, take the decision to stop source after demuxing some packets
-		//this avoids stoping (and reseting inputs) when some streams of the mux are not used while other are
+		//this avoids stopping (and resetting inputs) when some streams of the mux are not used while other are
 		return GF_TRUE;
 
 	case GF_FEVT_SET_SPEED:
@@ -451,9 +455,9 @@ static GF_Err gsfdmx_parse_pid_info(GF_Filter *filter, GSF_DemuxCtx *ctx, GSF_St
 		if (e) return e;
 
 #ifndef GPAC_DISABLE_LOG
-		if (gf_log_tool_level_on(GF_LOG_PARSER, GF_LOG_DEBUG)) {
+		if (gf_log_tool_level_on(GF_LOG_CONTAINER, GF_LOG_DEBUG)) {
 			char dump[GF_PROP_DUMP_ARG_SIZE];
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_PARSER, ("[GSFDemux] Set pid %d %s %s to %s\n", gst->idx, gf_props_4cc_get_name(p4cc), is_info_update ? "info" : "property", gf_props_dump(p4cc, &p, dump, GF_PROP_DUMP_DATA_NONE) ) );
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[GSFDemux] Set pid %d %s %s to %s\n", gst->idx, gf_props_4cc_get_name(p4cc), is_info_update ? "info" : "property", gf_props_dump(p4cc, &p, dump, GF_PROP_DUMP_DATA_NONE) ) );
 		}
 #endif
 
@@ -1189,13 +1193,12 @@ static GF_Err gsfdmx_demux(GF_Filter *filter, GSF_DemuxCtx *ctx, char *data, u32
 		assert(ctx->buf_size>=last_pck_end);
 		memmove(ctx->buffer, ctx->buffer+last_pck_end, sizeof(char) * (ctx->buf_size-last_pck_end));
 		ctx->buf_size -= last_pck_end;
-
-		if (ctx->stop_pending) {
-			GF_FilterEvent evt;
-			ctx->stop_pending = GF_FALSE;
-			GF_FEVT_INIT(evt, GF_FEVT_STOP, ctx->ipid);
-			gf_filter_pid_send_event(ctx->ipid, &evt);
-		}
+	}
+	if (ctx->stop_pending) {
+		GF_FilterEvent evt;
+		ctx->stop_pending = GF_FALSE;
+		GF_FEVT_INIT(evt, GF_FEVT_STOP, ctx->ipid);
+		gf_filter_pid_send_event(ctx->ipid, &evt);
 	}
 	return GF_OK;
 }
@@ -1238,8 +1241,15 @@ GF_Err gsfdmx_process(GF_Filter *filter)
 			}
 		}
 	}
-	if (is_eos)
+	if (is_eos) {
+		if (ctx->stop_pending) {
+			GF_FilterEvent evt;
+			ctx->stop_pending = GF_FALSE;
+			GF_FEVT_INIT(evt, GF_FEVT_STOP, ctx->ipid);
+			gf_filter_pid_send_event(ctx->ipid, &evt);
+		}
 		return GF_EOS;
+	}
 
 	if (would_block && (would_block+1==i))
 		return GF_OK;
@@ -1351,14 +1361,14 @@ static const GF_FilterArgs GSFDemuxArgs[] =
 
 GF_FilterRegister GSFDemuxRegister = {
 	.name = "gsfdmx",
-	GF_FS_SET_DESCRIPTION("GSF Demuxer")
+	GF_FS_SET_DESCRIPTION("GSF demultiplexer")
 #ifndef GPAC_DISABLE_DOC
 	.help = "This filter provides GSF (__GPAC Serialized Format__) demultiplexing.\n"
-			"It unserializes the stream states (config/reconfig/info update/remove/eos) and packets of input PIDs.\n"
+			"It de-serializes the stream states (config/reconfig/info update/remove/eos) and packets in the GSF bytestream.\n"
 			"This allows either reading a session saved to file, or receiving the state/data of streams from another instance of GPAC using either pipes or sockets\n"
 			"\n"
 #ifndef GPAC_DISABLE_CRYPTO
-			"The stream format can be encrypted in AES 128 CBC mode, in which case the demux filters must be given a 128 bit key."
+			"The stream format can be encrypted in AES 128 CBC mode, in which case the demultiplexing filter must be given a 128 bit key."
 #endif
 		,
 #endif

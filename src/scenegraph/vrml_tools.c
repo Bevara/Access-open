@@ -610,10 +610,6 @@ void gf_sg_sfimage_del(SFImage im) {
 void gf_sg_sfstring_del(SFString par) {
 	if (par.buffer) gf_free(par.buffer);
 }
-void gf_sg_sfscript_del(SFScript par) {
-	if (par.script_text) gf_free(par.script_text);
-}
-
 
 void gf_sg_sfcommand_del(SFCommandBuffer cb)
 {
@@ -1119,7 +1115,7 @@ GF_EXPORT
 GF_Err gf_sg_vrml_mf_reset(void *mf, u32 FieldType)
 {
 	GenMFField *mffield = (GenMFField *)mf;
-	if (!mffield->array) return GF_OK;
+	if (!mffield || !mffield->array) return GF_OK;
 
 	//field we can't copy
 	if (gf_sg_vrml_is_sf_field(FieldType)) return GF_BAD_PARAM;
@@ -1133,7 +1129,7 @@ GF_Err gf_sg_vrml_mf_reset(void *mf, u32 FieldType)
 		gf_sg_mfurl_del( * ((MFURL *) mf));
 		break;
 	case GF_SG_VRML_MFSCRIPT:
-		gf_sg_mfscript_del( * ((MFScript *) mf));
+		gf_sg_mfscript_del( * ((MFScript *) mf));	
 		break;
 	default:
 		if (mffield->array) gf_free(mffield->array);
@@ -1156,6 +1152,7 @@ GF_Err gf_sg_vrml_mf_alloc(void *mf, u32 FieldType, u32 NbItems)
 
 	if (gf_sg_vrml_is_sf_field(FieldType)) return GF_BAD_PARAM;
 	if (FieldType == GF_SG_VRML_MFNODE) return GF_BAD_PARAM;
+	if (!mffield) return GF_NON_COMPLIANT_BITSTREAM;
 
 	FieldSize = gf_sg_vrml_get_sf_size(FieldType);
 
@@ -1182,6 +1179,7 @@ GF_Err gf_sg_vrml_mf_get_item(void *mf, u32 FieldType, void **new_ptr, u32 ItemP
 	*new_ptr = NULL;
 	if (gf_sg_vrml_is_sf_field(FieldType)) return GF_BAD_PARAM;
 	if (FieldType == GF_SG_VRML_MFNODE) return GF_BAD_PARAM;
+	if (!mffield) return GF_NON_COMPLIANT_BITSTREAM;
 
 	FieldSize = gf_sg_vrml_get_sf_size(FieldType);
 
@@ -1197,6 +1195,7 @@ GF_EXPORT
 GF_Err gf_sg_vrml_mf_append(void *mf, u32 FieldType, void **new_ptr)
 {
 	GenMFField *mffield = (GenMFField *)mf;
+	if (!mf) return GF_NON_COMPLIANT_BITSTREAM;
 	return gf_sg_vrml_mf_insert(mf, FieldType, new_ptr, mffield->count+2);
 }
 
@@ -1208,6 +1207,7 @@ GF_Err gf_sg_vrml_mf_remove(void *mf, u32 FieldType, u32 RemoveFrom)
 	char *buffer;
 	u32 FieldSize, i, k;
 	GenMFField *mffield = (GenMFField *)mf;
+	if (!mffield) return GF_NON_COMPLIANT_BITSTREAM;
 
 	FieldSize = gf_sg_vrml_get_sf_size(FieldType);
 

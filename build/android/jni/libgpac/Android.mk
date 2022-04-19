@@ -1,5 +1,4 @@
 LOCAL_PATH:= $(call my-dir)
-APP_ABI          := armeabi armeabi-v7a x86
 
 include $(CLEAR_VARS)
 include $(LOCAL_PATH)/../common.mk
@@ -15,7 +14,6 @@ LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/freetype/freety
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/jpeg/
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/png/
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/faad
-LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/ffmpeg_android/
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/openjpeg
 +LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/openssl_android/
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../modules
@@ -153,6 +151,8 @@ LOCAL_SRC_FILES := \
 	../../../../src/filter_core/filter_register.c \
 	../../../../src/filter_core/filter_session.c \
 	../../../../src/filter_core/filter_session_js.c \
+	../../../../src/filters/bs_agg.c \
+	../../../../src/filters/bs_split.c \
 	../../../../src/filters/bsrw.c \
 	../../../../src/filters/compose.c \
 	../../../../src/filters/dasher.c \
@@ -221,6 +221,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/mux_avi.c \
 	../../../../src/filters/mux_gsf.c \
 	../../../../src/filters/mux_isom.c \
+	../../../../src/filters/mux_ogg.c \
 	../../../../src/filters/mux_ts.c \
 	../../../../src/filters/out_audio.c \
 	../../../../src/filters/out_file.c \
@@ -248,6 +249,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/reframe_truehd.c \
 	../../../../src/filters/reframer.c \
 	../../../../src/filters/resample_audio.c \
+	../../../../src/filters/restamp.c \
 	../../../../src/filters/rewind.c \
 	../../../../src/filters/rewrite_adts.c \
 	../../../../src/filters/rewrite_mhas.c \
@@ -257,6 +259,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/tileagg.c \
 	../../../../src/filters/tilesplit.c \
 	../../../../src/filters/tssplit.c \
+	../../../../src/filters/ttml_conv.c \
 	../../../../src/filters/unit_test_filter.c \
 	../../../../src/filters/vcrop.c \
 	../../../../src/filters/vflip.c \
@@ -264,6 +267,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/write_nhml.c \
 	../../../../src/filters/write_nhnt.c \
 	../../../../src/filters/write_qcp.c \
+	../../../../src/filters/write_tx3g.c \
 	../../../../src/filters/write_vtt.c \
 	../../../../src/ietf/rtcp.c \
 	../../../../src/ietf/rtp.c \

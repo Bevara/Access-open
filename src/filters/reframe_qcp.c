@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / AMR&EVRC&SMV reframer filter
@@ -125,8 +125,12 @@ static void qcpdmx_check_dur(GF_Filter *filter, GF_QCPDmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->codecid = 0;
 	ctx->sample_rate = 8000;
@@ -136,7 +140,7 @@ static void qcpdmx_check_dur(GF_Filter *filter, GF_QCPDmxCtx *ctx)
 	if (!ctx->hdr_processed ) {
 		e = qcpdmx_process_header(filter, ctx, NULL, 0, bs);
 		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[QCPDmx] Header parsed error %s\n", gf_error_to_string(e) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[QCPDmx] Header parsed error %s\n", gf_error_to_string(e) ));
 		}
 	} else {
 		gf_bs_skip_bytes(bs, 170);
@@ -299,7 +303,7 @@ static GF_Err qcpdmx_process_header(GF_Filter *filter, GF_QCPDmxCtx *ctx, char *
 
 	gf_bs_read_data(bs, magic, 4);
 	if (strnicmp(magic, "RIFF", 4)) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[QCPDmx] Broken file: RIFF header not found\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[QCPDmx] Broken file: RIFF header not found\n"));
 		if (!file_bs) gf_bs_del(bs);
 		return GF_NON_COMPLIANT_BITSTREAM;
 	}
@@ -308,18 +312,18 @@ static GF_Err qcpdmx_process_header(GF_Filter *filter, GF_QCPDmxCtx *ctx, char *
 	gf_bs_seek(bs, 8);
 	gf_bs_read_data(bs, magic, 4);
 	if (strnicmp(magic, "QLCM", 4)) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[QCPDmx] Broken file: QLCM header not found\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[QCPDmx] Broken file: QLCM header not found\n"));
 		if (!file_bs) gf_bs_del(bs);
 		return GF_NON_COMPLIANT_BITSTREAM;
 	}
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_DOWN_SIZE);
 	if (p && p->value.longuint != riff_size+8) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[QCPDmx] Broken file:  RIFF-Size %d got %d\n", p->value.uint - 8, riff_size));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[QCPDmx] Broken file:  RIFF-Size %d got %d\n", p->value.uint - 8, riff_size));
 	}
 	/*fmt*/
 	gf_bs_read_data(bs, magic, 4);
 	if (strnicmp(magic, "fmt ", 4)) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[QCPDmx] Broken file: FMT not found\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[QCPDmx] Broken file: FMT not found\n"));
 		if (!file_bs) gf_bs_del(bs);
 		return GF_NON_COMPLIANT_BITSTREAM;
 	}
@@ -342,6 +346,10 @@ static GF_Err qcpdmx_process_header(GF_Filter *filter, GF_QCPDmxCtx *ctx, char *
 	ctx->sample_rate = gf_bs_read_u16_le(bs);
 	/*bps = */gf_bs_read_u16_le(bs);
 	ctx->rate_table_count = gf_bs_read_u32_le(bs);
+	if (ctx->rate_table_count>8) {
+		if (!file_bs) gf_bs_del(bs);
+		return GF_NON_COMPLIANT_BITSTREAM;
+	}
 	chunk_size -= 14;
 	/*skip var rate*/
 	for (i=0; i<8; i++) {
@@ -361,14 +369,14 @@ static GF_Err qcpdmx_process_header(GF_Filter *filter, GF_QCPDmxCtx *ctx, char *
 	} else if (!strncmp(GUID, QCP_SMV_GUID, 16)) {
 		ctx->codecid = GF_CODECID_SMV;
 	} else {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[QCPDmx] Unsupported codec GUID %s\n", GUID));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[QCPDmx] Unsupported codec GUID %s\n", GUID));
 		if (!file_bs) gf_bs_del(bs);
 		return GF_NON_COMPLIANT_BITSTREAM;
 	}
 	/*vrat*/
 	gf_bs_read_data(bs, magic, 4);
 	if (strnicmp(magic, "vrat", 4)) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[QCPDmx] Broken file: VRAT not found\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[QCPDmx] Broken file: VRAT not found\n"));
 		if (!file_bs) gf_bs_del(bs);
 		return GF_NON_COMPLIANT_BITSTREAM;
 	}

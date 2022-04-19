@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2017
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -356,13 +356,14 @@ static GF_Err IS_ProcessData(GF_InputSensorCtx *is_ctx, const char *inBuffer, u3
 		field1->eventType = field2->eventType = 0;
 		is_ctx->enteredText[is_ctx->text_len] = (short) '\0';
 
-		len = (u32) gf_utf8_wcslen(is_ctx->enteredText);
+		len = gf_utf8_wcslen(is_ctx->enteredText);
 		if (len && (is_ctx->enteredText[len-1] == is_ctx->termChar)) {
 			ptr = is_ctx->enteredText;
-			len = (u32) gf_utf8_wcstombs(tmp_utf8, 5000, &ptr);
+			len = gf_utf8_wcstombs(tmp_utf8, 5000, &ptr);
+			if (len == GF_UTF8_FAIL) len = 1;
 			if (outText->buffer) gf_free(outText->buffer);
 			outText->buffer = (char*)gf_malloc(sizeof(char) * (len));
-			memcpy(outText->buffer, tmp_utf8, sizeof(char) * len-1);
+			memcpy(outText->buffer, tmp_utf8, sizeof(char) * (len-1) );
 			outText->buffer[len-1] = 0;
 			if (inText->buffer) gf_free(inText->buffer);
 			inText->buffer = NULL;
@@ -381,7 +382,8 @@ static GF_Err IS_ProcessData(GF_InputSensorCtx *is_ctx, const char *inBuffer, u3
 			}
 			is_ctx->text_len = len;
 			ptr = is_ctx->enteredText;
-			len = (u32) gf_utf8_wcstombs(tmp_utf8, 5000, &ptr);
+			len = gf_utf8_wcstombs(tmp_utf8, 5000, &ptr);
+			if (len == GF_UTF8_FAIL) len = 0;
 			if (inText->buffer) gf_free(inText->buffer);
 			inText->buffer = (char*)gf_malloc(sizeof(char) * (len+1));
 			memcpy(inText->buffer, tmp_utf8, sizeof(char) * len);
@@ -508,7 +510,7 @@ void InitInputSensor(GF_Scene *scene, GF_Node *node)
 	ISStack *stack;
 	GF_SAFEALLOC(stack, ISStack);
 	if (!stack) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Terminal] Failed to allocate input sensor stack\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Compositor] Failed to allocate input sensor stack\n"));
 		return;
 	}
 	stack->is = (M_InputSensor *) node;
@@ -793,7 +795,8 @@ Bool gf_sc_input_sensor_keyboard_input(GF_Compositor *compositor, u32 key_code, 
 			tc[0] = keyPressed;
 			tc[1] = 0;
 			ptr = tc;
-			len = (u32) gf_utf8_wcstombs(szStr, 10, &ptr);
+			len = gf_utf8_wcstombs(szStr, 10, &ptr);
+			if (len == GF_UTF8_FAIL) len = 0;
 			n->keyPress.buffer = (char*)gf_malloc(sizeof(char) * (len+1));
 			memcpy(n->keyPress.buffer, szStr, sizeof(char) * len);
 			n->keyPress.buffer[len] = 0;
@@ -804,7 +807,8 @@ Bool gf_sc_input_sensor_keyboard_input(GF_Compositor *compositor, u32 key_code, 
 			tc[0] = keyReleased;
 			tc[1] = 0;
 			ptr = tc;
-			len = (u32) gf_utf8_wcstombs(szStr, 10, &ptr);
+			len = gf_utf8_wcstombs(szStr, 10, &ptr);
+			if (len == GF_UTF8_FAIL) len = 0;
 			n->keyRelease.buffer = (char*)gf_malloc(sizeof(char) * (len+1));
 			memcpy(n->keyRelease.buffer, szStr, sizeof(char) * len);
 			n->keyRelease.buffer[len] = 0;
@@ -900,7 +904,8 @@ void gf_sc_input_sensor_string_input(GF_Compositor *compositor, u32 character)
 				st->text_len -= 1;
 				st->enteredText[st->text_len] = 0;
 				ptr = st->enteredText;
-				len = (u32) gf_utf8_wcstombs(szStr, 10, &ptr);
+				len = gf_utf8_wcstombs(szStr, 10, &ptr);
+				if (len == GF_UTF8_FAIL) len = 0;
 				if (n->enteredText.buffer) gf_free(n->enteredText.buffer);
 				szStr[len] = 0;
 				n->enteredText.buffer = gf_strdup(szStr);
@@ -918,7 +923,8 @@ void gf_sc_input_sensor_string_input(GF_Compositor *compositor, u32 character)
 			st->text_len += 1;
 			st->enteredText[st->text_len] = 0;
 			ptr = st->enteredText;
-			len = (u32) gf_utf8_wcstombs(szStr, 10, &ptr);
+			len = gf_utf8_wcstombs(szStr, 10, &ptr);
+			if (len == GF_UTF8_FAIL) len = 0;
 			if (n->enteredText.buffer) gf_free(n->enteredText.buffer);
 			szStr[len] = 0;
 			n->enteredText.buffer = gf_strdup(szStr);
@@ -960,7 +966,7 @@ void InitStringSensor(GF_Scene *scene, GF_Node *node)
 	StringSensorStack*st;
 	GF_SAFEALLOC(st, StringSensorStack)
 	if (!st) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Terminal] Failed to allocate string sensor stack\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_INTERACT, ("[Compositor] Failed to allocate string sensor stack\n"));
 		return;
 	}
 	st->compositor = scene->compositor;

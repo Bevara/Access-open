@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -49,6 +49,12 @@ static GF_Err gf_ar_setup_output_format(GF_AudioRenderer *ar)
 	a_fmt = ar->compositor->afmt;
 	nb_chan = ar->compositor->ach;
 	ch_cfg = ar->compositor->alayout;
+
+	if (nb_chan && !ch_cfg) {
+		u32 cicp = gf_audio_fmt_get_cicp_layout(nb_chan, 0, 0);
+		ch_cfg = gf_audio_fmt_get_layout_from_cicp(cicp);
+	}
+
 	bsize = ar->compositor->asize;
 	if (!bsize) bsize = 1024;
 
@@ -106,6 +112,7 @@ static GF_Err gf_ar_setup_output_format(GF_AudioRenderer *ar)
 		ar->wait_for_rcfg ++;
 		gf_filter_pck_set_readonly(pck);
 		gf_filter_pck_send(pck);
+		ar->compositor->audio_frames_sent++;
 	}
 	return GF_OK;
 }
@@ -121,7 +128,7 @@ static void gf_ar_pause(GF_AudioRenderer *ar, Bool DoFreeze, Bool for_reconfig, 
 				GF_FEVT_INIT(evt, GF_FEVT_STOP, ar->aout);
 				gf_filter_pid_send_event(ar->aout, &evt);
 			}
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("[Audio] pausing master clock - time "LLD" (sys time "LLD")\n", ar->freeze_time, gf_sys_clock_high_res()));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Audio] pausing master clock - time "LLD" (sys time "LLD")\n", ar->freeze_time, gf_sys_clock_high_res()));
 			ar->Frozen = GF_TRUE;
 		}
 	} else {
@@ -133,7 +140,7 @@ static void gf_ar_pause(GF_AudioRenderer *ar, Bool DoFreeze, Bool for_reconfig, 
 			}
 
 			ar->start_time += gf_sys_clock_high_res() - ar->freeze_time;
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("[Audio] resuming master clock - new time "LLD" (sys time "LLD") \n", ar->start_time, gf_sys_clock_high_res()));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Audio] resuming master clock - new time "LLD" (sys time "LLD") \n", ar->start_time, gf_sys_clock_high_res()));
 			ar->Frozen = GF_FALSE;
 		}
 	}
@@ -284,6 +291,8 @@ void gf_ar_send_packets(GF_AudioRenderer *ar)
 	u32 written, max_send=100;
 	u64 now = gf_sys_clock_high_res();
 
+	ar->compositor->audio_frames_sent = 0;
+
 	if (!ar->aout) {
 		if (ar->compositor->player) {
 			ar->current_time = (u32) ( (now - ar->start_time)/1000);
@@ -344,9 +353,16 @@ void gf_ar_send_packets(GF_AudioRenderer *ar)
 		gf_mixer_lock(ar->mixer, GF_FALSE);
 
 		if (!written) {
-			if (!ar->non_rt_output) written = ar->buffer_size;
-			else if ((ar->non_rt_output==1) && ar->scene_ready && ar->nb_audio_objects && !gf_mixer_buffering(ar->mixer) ) written = ar->buffer_size;
-			else {
+			if (!ar->non_rt_output) {
+				written = ar->buffer_size;
+			} else if ((ar->non_rt_output==1) && ar->scene_ready
+				&& ar->nb_audio_objects
+				&& !gf_mixer_buffering(ar->mixer)
+				&& !gf_mixer_is_eos(ar->mixer)
+			) {
+				written = ar->buffer_size;
+			} else {
+				//truncate to 0 since we will get called back in gf_ar_pck_done
 				gf_filter_pck_truncate(pck, 0);
 				gf_filter_pck_discard(pck);
 
@@ -358,8 +374,13 @@ void gf_ar_send_packets(GF_AudioRenderer *ar)
 						ar->current_time = (u32) ( (now - ar->start_time)/1000);
 					}
 				}
+				if (gf_mixer_buffering(ar->mixer))
+					ar->compositor->audio_frames_sent++;
+
 				break;
 			}
+		} else {
+			ar->compositor->audio_frames_sent++;
 		}
 
 		if (written<ar->buffer_size) {

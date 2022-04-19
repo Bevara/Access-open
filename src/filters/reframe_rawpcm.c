@@ -177,6 +177,10 @@ static Bool pcmreframe_process_event(GF_Filter *filter, const GF_FilterEvent *ev
 	case GF_FEVT_STOP:
 		//don't cancel event
 		ctx->is_playing = GF_FALSE;
+		if (ctx->out_pck) {
+			gf_filter_pck_discard(ctx->out_pck);
+			ctx->out_pck = NULL;
+		}
 		return GF_FALSE;
 
 	case GF_FEVT_SET_SPEED:
@@ -289,6 +293,11 @@ GF_Err pcmreframe_process(GF_Filter *filter)
 	return GF_OK;
 }
 
+static void pcmreframe_finalize(GF_Filter *filter)
+{
+	GF_PCMReframeCtx *ctx = gf_filter_get_udta(filter);
+	if (ctx->out_pck) gf_filter_pck_discard(ctx->out_pck);
+}
 
 static GF_FilterCapability PCMReframeCaps[] =
 {
@@ -297,7 +306,7 @@ static GF_FilterCapability PCMReframeCaps[] =
 	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "audio/x-pcm"),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_RAW),
-	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 };
 
 #define OFFS(_n)	#_n, offsetof(GF_PCMReframeCtx, _n)
@@ -318,6 +327,7 @@ GF_FilterRegister PCMReframeRegister = {
 	.private_size = sizeof(GF_PCMReframeCtx),
 	.args = PCMReframeArgs,
 	SETCAPS(PCMReframeCaps),
+	.finalize = pcmreframe_finalize,
 	.configure_pid = pcmreframe_configure_pid,
 	.process = pcmreframe_process,
 	.process_event = pcmreframe_process_event

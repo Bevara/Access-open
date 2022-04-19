@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / MP3 reframer filter
@@ -39,7 +39,7 @@ typedef struct
 {
 	//filter args
 	Double index;
-	Bool expart;
+	Bool expart, forcemp3;
 
 	//only one input pid declared
 	GF_FilterPid *ipid;
@@ -74,6 +74,7 @@ typedef struct
 	u32 id3_buffer_size, id3_buffer_alloc;
 
 	GF_FilterPid *vpid;
+	Bool copy_props;
 } GF_MP3DmxCtx;
 
 
@@ -108,6 +109,7 @@ GF_Err mp3_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	}
+	if (ctx->timescale) ctx->copy_props = GF_TRUE;
 	return GF_OK;
 }
 
@@ -132,8 +134,12 @@ static void mp3_dmx_check_dur(GF_Filter *filter, GF_MP3DmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->index_size = 0;
 
@@ -183,7 +189,6 @@ static void mp3_dmx_check_dur(GF_Filter *filter, GF_MP3DmxCtx *ctx)
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 }
 
 
@@ -192,10 +197,10 @@ static void id3dmx_set_string(GF_FilterPid *apid, char *name, u8 *buf, Bool is_d
 {
 	if ((buf[0]==0xFF) || (buf[0]==0xFE)) {
 		const u16 *sptr = (u16 *) (buf+2);
-		s32 len = (s32) ( UTF8_MAX_BYTES_PER_CHAR * gf_utf8_wcslen(sptr) );
+		u32 len = UTF8_MAX_BYTES_PER_CHAR * gf_utf8_wcslen(sptr);
 		char *tmp = gf_malloc(len+1);
-		len = (s32) gf_utf8_wcstombs(tmp, len, &sptr);
-		if (len>=0) {
+		len = gf_utf8_wcstombs(tmp, len, &sptr);
+		if (len != GF_UTF8_FAIL) {
 			tmp[len] = 0;
 			if (is_dyn) {
 				gf_filter_pid_set_property_dyn(apid, name, &PROP_STRING(tmp) );
@@ -203,7 +208,7 @@ static void id3dmx_set_string(GF_FilterPid *apid, char *name, u8 *buf, Bool is_d
 				gf_filter_pid_set_property_str(apid, name, &PROP_STRING(tmp) );
 			}
 		} else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[MP3Dmx] Corrupted ID3 text frame %s\n", name));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[MP3Dmx] Corrupted ID3 text frame %s\n", name));
 		}
 		gf_free(tmp);
 	} else {
@@ -250,7 +255,7 @@ void id3dmx_flush(GF_Filter *filter, u8 *id3_buf, u32 id3_buf_size, GF_FilterPid
 			break;
 
 		if (size<fsize) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[MP3Dmx] Broken ID3 frame tag %s, size %d but remaining bytes %d\n", gf_4cc_to_str(ftag), fsize, size));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[MP3Dmx] Broken ID3 frame tag %s, size %d but remaining bytes %d\n", gf_4cc_to_str(ftag), fsize, size));
 			break;
 		}
 
@@ -292,7 +297,7 @@ void id3dmx_flush(GF_Filter *filter, u8 *id3_buf, u32 id3_buf_size, GF_FilterPid
 				if (video_pid_p) {
 					e = gf_filter_pid_raw_new(filter, NULL, NULL, buf+1, NULL, sep_desc+1, pic_size, GF_FALSE, video_pid_p);
 					if (e) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[MP3Dmx] error setting up video pid for cover art: %s\n", gf_error_to_string(e) ));
+						GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[MP3Dmx] error setting up video pid for cover art: %s\n", gf_error_to_string(e) ));
 					}
 					if (*video_pid_p) {
 						u8 *out_buffer;
@@ -336,18 +341,32 @@ static void mp3_dmx_flush_id3(GF_Filter *filter, GF_MP3DmxCtx *ctx)
 
 static void mp3_dmx_check_pid(GF_Filter *filter, GF_MP3DmxCtx *ctx)
 {
-	u32 sr;
+	u32 sr, codec_id;
 
 	if (!ctx->opid) {
 		ctx->opid = gf_filter_pid_new(filter);
 		mp3_dmx_check_dur(filter, ctx);
 	}
 
+	codec_id = gf_mp3_object_type_indication(ctx->hdr);
+	switch (gf_mp3_layer(ctx->hdr)) {
+	case 3:
+		if (ctx->forcemp3) {
+			codec_id = GF_CODECID_MPEG_AUDIO;
+		}
+		break;
+	case 1:
+		codec_id = GF_CODECID_MPEG_AUDIO_L1;
+		break;
+	}
+
 	if ((ctx->sr == gf_mp3_sampling_rate(ctx->hdr)) && (ctx->nb_ch == gf_mp3_num_channels(ctx->hdr) )
-		&& (ctx->codecid == gf_mp3_object_type_indication(ctx->hdr) )
+		&& (ctx->codecid == codec_id )
+		&& !ctx->copy_props
 	)
 		return;
 
+	ctx->copy_props = GF_FALSE;
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT( GF_STREAM_AUDIO));
@@ -357,11 +376,13 @@ static void mp3_dmx_check_pid(GF_Filter *filter, GF_MP3DmxCtx *ctx)
 	}
 	if (ctx->duration.num)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 
 	if (!ctx->timescale) gf_filter_pid_set_name(ctx->opid, "audio");
 
 	ctx->nb_ch = gf_mp3_num_channels(ctx->hdr);
-	ctx->codecid = gf_mp3_object_type_indication(ctx->hdr);
+
 	sr = gf_mp3_sampling_rate(ctx->hdr);
 
 	if (!ctx->timescale) {
@@ -371,11 +392,12 @@ static void mp3_dmx_check_pid(GF_Filter *filter, GF_MP3DmxCtx *ctx)
 		}
 	}
 	ctx->sr = sr;
+	ctx->codecid = codec_id;
 
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->timescale ? ctx->timescale : sr));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAMPLE_RATE, & PROP_UINT(sr));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_NUM_CHANNELS, & PROP_UINT(ctx->nb_ch) );
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(gf_mp3_object_type_indication(ctx->hdr) ) );
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(ctx->codecid ) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAMPLES_PER_FRAME, & PROP_UINT(gf_mp3_window_size(ctx->hdr) ) );
 
 	if (!gf_sys_is_test_mode() ) {
@@ -442,6 +464,7 @@ static Bool mp3_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		ctx->is_playing = GF_FALSE;
 		if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 		ctx->src_pck = NULL;
+		ctx->cts = 0;
 		//don't cancel event
 		return GF_FALSE;
 
@@ -472,6 +495,7 @@ GF_Err mp3_dmx_process(GF_Filter *filter)
 {
 	GF_MP3DmxCtx *ctx = gf_filter_get_udta(filter);
 	GF_FilterPacket *pck, *dst_pck;
+	Bool is_eos=GF_FALSE;
 	u8 *data, *output;
 	u8 *start;
 	u32 pck_size, remain, prev_pck_size;
@@ -494,6 +518,7 @@ GF_Err mp3_dmx_process(GF_Filter *filter)
 				ctx->src_pck = NULL;
 				return GF_EOS;
 			}
+			is_eos = GF_TRUE;
 		} else {
 			return GF_OK;
 		}
@@ -526,6 +551,9 @@ GF_Err mp3_dmx_process(GF_Filter *filter)
 	//input pid sets some timescale - we flushed pending data , update cts
 	if (ctx->timescale && pck) {
 		cts = gf_filter_pck_get_cts(pck);
+		//init cts at first packet
+		if (!ctx->cts && (cts != GF_FILTER_NO_TS))
+			ctx->cts = cts;
 	}
 
 	if (cts == GF_FILTER_NO_TS) {
@@ -602,7 +630,7 @@ GF_Err mp3_dmx_process(GF_Filter *filter)
 				if ((sync[size]=='T') && (sync[size+1]=='A') && (sync[size+2]=='G')) {
 					skip_id3v1=GF_TRUE;
 				} else {
-					GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[MP3Dmx] invalid frame, resyncing\n"));
+					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[MP3Dmx] invalid frame, resyncing\n"));
 					goto drop_byte;
 				}
 			}
@@ -659,7 +687,9 @@ GF_Err mp3_dmx_process(GF_Filter *filter)
 
 		//truncated last frame
 		if (bytes_to_drop>remain) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[MP3Dmx] truncated frame!\n"));
+			if (!is_eos) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[MP3Dmx] truncated frame!\n"));
+			}
 			bytes_to_drop=remain;
 		}
 
@@ -694,6 +724,14 @@ drop_byte:
 		ctx->mp3_buffer_size = remain;
 		gf_filter_pid_drop_packet(ctx->ipid);
 	}
+	return GF_OK;
+}
+
+static GF_Err mp3_dmx_initialize(GF_Filter *filter)
+{
+	GF_MP3DmxCtx *ctx = gf_filter_get_udta(filter);
+	//in test mode we keep strict signaling, eg MPEG-2 layer 3 is still mpeg2 audio
+	if (gf_sys_is_test_mode()) ctx->forcemp3 = GF_FALSE;
 	return GF_OK;
 }
 
@@ -811,12 +849,14 @@ static const GF_FilterCapability MP3DmxCaps[] =
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_MPEG_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_MPEG2_PART3),
+	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_MPEG_AUDIO_L1),
 	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	{0},
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG_AUDIO),
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG2_PART3),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG_AUDIO_L1),
 	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	{0},
 	//also declare generic file output for embedded files (cover art & co), but explicit to skip this cap in chain resolution
@@ -830,7 +870,8 @@ static const GF_FilterCapability MP3DmxCaps[] =
 static const GF_FilterArgs MP3DmxArgs[] =
 {
 	{ OFFS(index), "indexing window length", GF_PROP_DOUBLE, "1.0", NULL, 0},
-	{ OFFS(expart), "expose pictures as a dedicated video pid", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(expart), "expose pictures as a dedicated video PID", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(forcemp3), "force mp3 signaling for MPEG-2 Audio layer 3", GF_PROP_BOOL, "true", NULL, GF_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -841,6 +882,7 @@ GF_FilterRegister MP3DmxRegister = {
 	GF_FS_SET_HELP("This filter parses MPEG-1/2 audio files/data and outputs corresponding audio PID and frames.")
 	.private_size = sizeof(GF_MP3DmxCtx),
 	.args = MP3DmxArgs,
+	.initialize = mp3_dmx_initialize,
 	.finalize = mp3_dmx_finalize,
 	SETCAPS(MP3DmxCaps),
 	.configure_pid = mp3_dmx_configure_pid,

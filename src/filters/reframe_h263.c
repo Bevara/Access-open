@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / H263 reframer filter
@@ -38,6 +38,7 @@ typedef struct
 	//filter args
 	GF_Fraction fps;
 	Double index;
+	Bool notime;
 
 	//only one input pid declared
 	GF_FilterPid *ipid;
@@ -67,6 +68,7 @@ typedef struct
 	H263Idx *indexes;
 	u32 index_alloc_size, index_size;
 	u32 bitrate;
+	Bool copy_props;
 } GF_H263DmxCtx;
 
 
@@ -95,6 +97,10 @@ GF_Err h263dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	}
+
+	//if source has no timescale, recompute time
+	if (!ctx->timescale) ctx->notime = GF_TRUE;
+	else ctx->copy_props = GF_TRUE;
 	return GF_OK;
 }
 
@@ -153,8 +159,12 @@ static void h263dmx_check_dur(GF_Filter *filter, GF_H263DmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
 
 	ctx->index_size = 0;
 
@@ -209,7 +219,6 @@ static void h263dmx_check_dur(GF_Filter *filter, GF_H263DmxCtx *ctx)
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 }
 
 static void h263dmx_check_pid(GF_Filter *filter, GF_H263DmxCtx *ctx, u32 width, u32 height)
@@ -219,18 +228,20 @@ static void h263dmx_check_pid(GF_Filter *filter, GF_H263DmxCtx *ctx, u32 width, 
 		ctx->opid = gf_filter_pid_new(filter);
 		h263dmx_check_dur(filter, ctx);
 	}
-	if ((ctx->width == width) && (ctx->height == height)) return;
+	if ((ctx->width == width) && (ctx->height == height) && !ctx->copy_props) return;
 
+	ctx->copy_props = GF_FALSE;
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
+	if (ctx->duration.num)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT(GF_STREAM_VISUAL));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT(GF_CODECID_H263));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->fps.num));
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FPS, & PROP_FRAC(ctx->fps));
-
-	if (ctx->duration.num)
-		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
 	ctx->width = width;
 	ctx->height = height;
@@ -292,6 +303,7 @@ static Bool h263dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	case GF_FEVT_STOP:
 		//don't cancel event
 		ctx->is_playing = GF_FALSE;
+		ctx->cts = 0;
 		return GF_FALSE;
 
 	case GF_FEVT_SET_SPEED:
@@ -309,7 +321,7 @@ static GFINLINE void h263dmx_update_cts(GF_H263DmxCtx *ctx)
 	assert(ctx->fps.num);
 	assert(ctx->fps.den);
 
-	if (ctx->timescale) {
+	if (!ctx->notime) {
 		u64 inc = ctx->fps.den;
 		inc *= ctx->timescale;
 		inc /= ctx->fps.num;
@@ -421,11 +433,13 @@ GF_Err h263dmx_process(GF_Filter *filter)
 #endif
 
 	}
-	//input pid sets some timescale - we flushed pending data , update cts
+	//input pid is muxed - we flushed pending data , update cts unless recomputing timing
 	else if (ctx->timescale) {
-		u64 cts = gf_filter_pck_get_cts(pck);
-		if (cts != GF_FILTER_NO_TS)
-			ctx->cts = cts;
+		if (!ctx->notime) {
+			u64 cts = gf_filter_pck_get_cts(pck);
+			if (cts != GF_FILTER_NO_TS)
+				ctx->cts = cts;
+		}
 		if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 		ctx->src_pck = pck;
 		gf_filter_pck_ref_props(&ctx->src_pck);
@@ -455,7 +469,7 @@ GF_Err h263dmx_process(GF_Filter *filter)
 
 		if (ctx->bytes_in_header) {
 			if (first_frame_found) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[H263Dmx] corrupted frame!\n"));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[H263Dmx] corrupted frame!\n"));
 			}
 
 			memcpy(ctx->hdr_store + ctx->bytes_in_header, start, 8 - ctx->bytes_in_header);
@@ -501,11 +515,11 @@ GF_Err h263dmx_process(GF_Filter *filter)
 					start += current;
 					remain -= current;
 				}
-				GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[H263Dmx] garbage before first frame!\n"));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[H263Dmx] garbage before first frame!\n"));
 				continue;
 			}
 			if (first_frame_found) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[H263Dmx] corrupted frame!\n"));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[H263Dmx] corrupted frame!\n"));
 			}
 			//flush remaining
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, current, &pck_data);
@@ -719,6 +733,7 @@ static const GF_FilterArgs H263DmxArgs[] =
 {
 	{ OFFS(fps), "import frame rate", GF_PROP_FRACTION, "15000/1000", NULL, 0},
 	{ OFFS(index), "indexing window length", GF_PROP_DOUBLE, "1.0", NULL, 0},
+	{ OFFS(notime), "ignore input timestamps, rebuild from 0", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{0}
 };
 

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre - Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2010-2021
+ *			Copyright (c) Telecom ParisTech 2010-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / 3GPP/MPEG Media Presentation Description input module
@@ -441,6 +441,9 @@ typedef struct
 	/*! set to true if the representation comes from a broadcast link (ATSC3, eMBMS)*/
 	Bool broadcast_flag;
 
+	/*! if set indicates the associated representations use vvc rpr switching*/
+	Bool vvc_rpr_switch;
+
 	/*! start of segment name in full url*/
 	const char *init_seg_name_start;
 	/*! opaque data*/
@@ -641,6 +644,15 @@ typedef struct {
 	/*! for m3u8: 0: not encrypted, 1: full segment, 2: CENC*/
 	u8 crypto_type;
 	u8 def_kms_used;
+
+	u32 nb_hls_master_tags;
+	const char **hls_master_tags;
+
+	u32 nb_hls_variant_tags;
+	const char **hls_variant_tags;
+
+	/*! target part (cmaf chunk) duration for HLS LL*/
+	Double hls_ll_part_dur;
 } GF_MPD_Representation;
 
 /*! AdaptationSet*/
@@ -722,8 +734,8 @@ typedef struct
 	Bool intra_only;
 	/*! adaptation set uses HLS LL*/
 	Bool use_hls_ll;
-	/*! target part (cmaf chunk) duration for HLS LL*/
-	Double hls_ll_frag_dur;
+	/*target fragment duration*/
+	Double hls_ll_target_frag_dur;
 } GF_MPD_AdaptationSet;
 
 /*! MPD offering type*/
@@ -873,6 +885,15 @@ typedef struct {
 	Bool m3u8_time;
 	/*! indicates  LL-HLS forced generation. 0: regular write, 1: write as byterange, 2: write as independent files*/
 	u32 force_llhls_mode;
+	/*! HLS extensions to append in the master playlist*/
+	u32 nb_hls_ext_master;
+	const char **hls_ext_master;
+	/*! if true inject EXT-X-PRELOAD-HINT*/
+	Bool llhls_preload;
+	/*! if true inject EXT-X-RENDITION-REPORT*/
+	Bool llhls_rendition_reports;
+	/*! user-defined  PART-HOLD-BACK, auto computed if <=0*/
+	Double llhls_part_holdback;
 } GF_MPD;
 
 /*! parses an MPD Element (and subtree) from DOM
@@ -997,7 +1018,7 @@ struct _gf_file_get
 \param reload_count number of times the manifest was reloaded
 \param mimeTypeForM3U8Segments default mime type for the segments in case not found in the m3u8
 \param do_import if GF_TRUE, will try to load the media segments to extract more info
-\param use_mpd_templates if GF_TRUE, will use MPD SegmentTemplate instead of SegmentList
+\param use_mpd_templates if GF_TRUE, will use MPD SegmentTemplate instead of SegmentList (only if parse_sub_playlist is GF_TRUE)
 \param use_segment_timeline if GF_TRUE, uses SegmentTimeline to describe the varying duration of segments
 \param getter HTTP interface object
 \param mpd MPD structure to fill, or NULL if converting to file
@@ -1009,13 +1030,14 @@ GF_Err gf_m3u8_to_mpd(const char *m3u8_file, const char *base_url, const char *m
 
 /*! solves an m3u8 xlink on a representation, and fills the SegmentList accordingly
 \param rep the target representation
+\param base_url base URL of master manifest (representation xlink is likely relative to this URL)
 \param getter HTTP interface object
 \param is_static set to GF_TRUE if the variant subplaylist is on demand
 \param duration set to the duration of the parsed subplaylist
 \param signature SHA1 digest of last solved version, updated if changed
 \return error if any, GF_EOS if no changes
 */
-GF_Err gf_m3u8_solve_representation_xlink(GF_MPD_Representation *rep, GF_FileDownload *getter, Bool *is_static, u64 *duration, u8 signature[GF_SHA1_DIGEST_SIZE]);
+GF_Err gf_m3u8_solve_representation_xlink(GF_MPD_Representation *rep, const char *base_url, GF_FileDownload *getter, Bool *is_static, u64 *duration, u8 signature[GF_SHA1_DIGEST_SIZE]);
 
 /*! creates a segment list from a remote segment list DOM root
 \param mpd the target MPD to write

@@ -544,7 +544,7 @@ interface Path {
 
 	/*! transforms a path - see \ref gf_path_add_subpath
 	\param mx matrix to apply to path
-	\return the path*/
+	\return the new transformed path*/
 	Path transform(Matrix2D mx);
 
 };
@@ -618,6 +618,8 @@ interface Matrix2D {
 	attribute double tx;
 	/*! matrix is identity*/
 	attribute boolean identity;
+	/*! indicates matrix is a 2D matrix*/
+	attribute const boolean is3D = false;
 
 	/*! get scale part of the matrix after decomposition - see \ref gf_mx2d_decompose
 	\return {x, y} object, or null if matrix cannot be decomposed*/
@@ -632,9 +634,12 @@ interface Matrix2D {
 	/*! inverse matrix - see \ref gf_mx2d_inverse
 	\return the matrix*/
 	Matrix2D inverse();
-	/*! copies the matrix 
+	/*! copies the matrix
 	\return the new copy matrix*/
 	Matrix2D copy();
+	/*! copies from a matrix
+	\param from the matrix to copy from*/
+	void copy(Matrix2D from);
 	/*! adds a matrix - see \ref gf_mx2d_add_matrix and \ref gf_mx2d_pre_multiply
 	\param mx the matrix to multiply 
 	\param premultiply if true, performs \code mx * this \endcode, otherwise \code this * mx \endcode 
@@ -817,7 +822,9 @@ interface Stencil {
 	\warning this is a copy of the associated matrix, not a live object*/
 	attribute Matrix2D mx;
 	/*! true if stencil is a solid color brush, false for gradient stencils*/
-	attribute readonly boolean solid_color;
+	attribute readonly boolean solid_brush;
+	/*! automatic matrix mode, see \ref gf_evg_stencil_set_auto_matrix*/
+	attribute boolean auto_mx;
 
 	/*! set color for solid brush stencil
 	\param color the color to set*/
@@ -849,6 +856,10 @@ interface Stencil {
 	*/
 	void set_colorf(double r, double g, double b, double a);
 
+	/*! get color for solid brush stencil
+	\return color string*/
+	DOMString get_color();
+
 	/*! sets alpha value for stencil. The alpha is multiplied with the alpha component of the solid brush or gradient color
 	\param alpha the alpha to set, between 0 and 255*/
 	void set_alpha(unsigned long alpha);
@@ -856,6 +867,10 @@ interface Stencil {
 	/*! sets alpha value for stencil. The alpha is multiplied with the alpha component of the solid brush or gradient color
 	\param alpha the alpha to set, between 0.0 and 1.0*/
 	void set_alphaf(double alpha);
+
+	/*! gets alpha value for stencil
+	\return alpha value, between 0.0 and 1.0*/
+	double get_alphaf();
 
 	/*! sets linear gradient start and end point. If end point is omitted, sets gradient line betwee {0,0} and start. Coordinates are given in surface coordinates, not object coordinates. See \ref gf_evg_stencil_set_linear_gradient
 	\note Point2D can be replaced with 2 number x, y, i.e. these syntaxes are all equivalent:
@@ -1102,6 +1117,16 @@ interface Texture {
 	\return the converted value
 	*/
 	Object get_pixel(unsigned long x, unsigned long y, optional bool as_array=false);
+
+	/*! gets MAE (Mean Absolute Error) and/or MSE (Mean Square Error) metric of texture compared with another texture. Both textures shall have the same size and pixel format.
+	\param diff_with texture to compute difference with
+	\param mode string indicating metric(s) to compute as a comma-separated list. Currently only 'mae' and 'mse' are supported.
+	\param split_planes if true, metrics are computed per plane, otherwise averaged on all planes. For YUV textures, if this is not set, metric is only computed on luma plane and alpha plane if present.
+	\return an array of object, each containing 'mae' and 'mse' properties. Values are numbers between 0 (all identical) and 100 (all pixels have full intensity difference).
+
+	If split_planes is false, the array contains a single object. Otherwise, it contains 4 objects if alpha plane or 3 otherwise, in {R,G,B,A} or {Y,U,V,A} order.
+	*/
+	Array diff_score(Texture diff_with, optional DOMString mode="mae", optional boolean split_planes=false);
 };
 
 /*! convolution kernel interface*/
@@ -1113,7 +1138,7 @@ interface ConvolutionKernel
 	attribute unsigned long h;
 	/*! kernel normalization. If 0 or undefined, no normalization is applied*/
 	attribute unsigned long norm;
-	/*! kernel coeficients. The coeficients are unsigned intergers, and there shall be at least w * h coefficients*/
+	/*! kernel coeficients. The coeficients are unsigned integers, and there shall be at least w * h coefficients*/
 	attribute Array k;
 };
 
@@ -1236,6 +1261,9 @@ print(`transformed ${res.x} ${res.y} ${res.z});`
 interface Matrix {
 /*! indicates if matrix is identity. If set to true, resets matrix*/
 attribute boolean identity;
+/*! indicates matrix is a 3D matrix*/
+attribute const boolean is3D = true;
+
 /*! float buffer of coeficients (typically use matrix.m to pass matrices uniforms)*/
 attribute Array<float> m;
 /*! yaw value of matrix*/
@@ -1335,7 +1363,7 @@ Matrix transpose();
 \param z_far max depth coordinate of viewport
 \return the matrix object
 */
-Matrix ortho(float left, float right, float top, float bottom, float z_near, float z_far);
+Matrix ortho(float left, float right, float bottom, float top, float z_near, float z_far);
 
 /*! loads a perspective projection matrix
 \param fov camera field of view angle in radian
@@ -1485,7 +1513,7 @@ The working principles of the shader object is as follows:
 - variables can be defined as uniforms, and updated whenever needed
 - upon executing the shader, the instructions are processed in order
 
-Local variables are untyped, except for reserved variables. The type is infered whenever the variable is assigned or modified, thus a same variable can change type during the execution of the shader. 
+Local variables are untyped, except for reserved variables. The type is inferred whenever the variable is assigned or modified, thus a same variable can change type during the execution of the shader. 
 Upon assigning, the type of the source variable is inferred as follows:
 - Javascript bool and integer are converted to integer type
 - Javascript float is converted to float type
@@ -1652,8 +1680,8 @@ Example
 # Conditions
 
 Conditions are expressed with the following keywords:
-- 'if' : takes 3 additionnal parameters `left`, `operand`and `right` and evaluates the condition
-- 'elseif' : takes 3 additionnal parameters `left`, `operand` and `right` and evaluates the condition
+- 'if' : takes 3 additional parameters `left`, `operand`and `right` and evaluates the condition
+- 'elseif' : takes 3 additional parameters `left`, `operand` and `right` and evaluates the condition
 - 'else': no additional parameters
 - 'end': no additional parameters
 
@@ -1791,7 +1819,7 @@ Texture sampling can also work on both RGB and YUV texture maps.
 - When a `samplerYUV` call is made on a RGB texture, conversion is performed
 - Otherwise, no conversion is done
 
-The `toRGB` and `toYUV` operations can also be used to convert between color space, but precomputed values should be prefered. 
+The `toRGB` and `toYUV` operations can also be used to convert between color space, but precomputed values should be preferred. 
 
 */
 interface Shader {
@@ -1872,7 +1900,7 @@ interface Mesh {
 	*/
 	Mesh(Path path);
 
-	/*! Updates underlying openGL vertex buffer objects*/
+	/*! Updates underlying OpenGL vertex buffer objects*/
 	void update_gl();
 	/*! Draw mesh using current program
 	\param vertex_attrib_location uniform location of vertex buffer attribute in program

@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # GPAC configure script
-#     (c) 2003-2020 Telecom ParisTech
+#     (c) 2003-2022 Telecom ParisTech
 #     Authors: Jean Le Feuvre, Romain Bouqueau, Aurelien David
 #
 #set -v
@@ -201,6 +201,7 @@ OSS_LDFLAGS=""
 INSTFLAGS=""
 is_64="no"
 ffmpeg_extra_ldflags=""
+has_st_nsec="no"
 
 logs="config.log"
 echo "Logs for GPAC configure $GPAC_CONFIGURATION" > $logs
@@ -246,6 +247,7 @@ GPAC configuration options:
   --enable-mem-track       enable tracking of all memory allocated by gpac
   --enable-sanitizer       enable address sanitizer
   --enable-afl             enable instrumentation for American Fuzzy Lop
+  --enable-afl-clang       enable instrumentation for American Fuzzy Lop using afl-clang(++)
   --disable-opt            disable GCC optimizations
   --disable-ipv6           disable IPV6 support
   --disable-platinum       disable Platinum UPnP support
@@ -386,11 +388,15 @@ for opt do
             ;;
         --enable-afl) cc_orig="afl-gcc"; cxx_orig="afl-g++"
             ;;
+        --enable-afl-clang) cc_orig="afl-clang"; cxx_orig="afl-clang++"
+            ;;
         --verbose) verbose="yes";
             ;;
         --static-bin) use_static="yes"
             ;;
         --static-mp4box) use_static="yes"
+            ;;
+        --enable-sanitizer) enable_sanitizer="yes"
             ;;
     esac
 done
@@ -473,6 +479,13 @@ ar="${cross_prefix}${ar}"
 ranlib="${cross_prefix}${ranlib}"
 strip="${cross_prefix}${strip}"
 windres="${cross_prefix}${windres}"
+
+if test "$enable_sanitizer" = "yes" ; then
+if test "$use_static" = "yes" ; then
+echo "Cannot use static bin with sanitizer, disabling static bin"
+use_static="no"
+fi
+fi
 
 if test "$use_static" = "yes" ; then
 pkg_config="${pkg_config} --static"
@@ -824,6 +837,17 @@ fi
 
 
 
+#check st_mtim.tv_nsec
+cat > $TMPC << EOF
+#include <sys/stat.h>
+int main( void ) { struct stat st; st.st_mtim.tv_nsec = 0; return 0; }
+EOF
+
+if docc ; then
+    has_st_nsec="yes"
+fi
+
+
 #look for platinum support
 cat > $TMPCXX << EOF
 #include <Platinum.h>
@@ -908,8 +932,8 @@ if docc $CFLAGS_DIR $ft_cflags $ft_lflags $LDFLAGS ; then
 fi
 
 if test "$has_ft" = "no" ; then
-    ft_cflags="`pkg-config --cflags freetype2 2>>$logs`"
-    ft_lflags="`pkg-config --libs freetype2 2>>$logs`"
+    ft_cflags="`$pkg_config --cflags freetype2 2>>$logs`"
+    ft_lflags="`$pkg_config --libs freetype2 2>>$logs`"
     if docc $ft_cflags $ft_lflags $LDFLAGS ; then
         has_ft="system"
     fi
@@ -1708,20 +1732,23 @@ fi
 
 #look for nghttp2 support
 
-if test "$cross_prefix" = "" -a "$pkg_config" != "no"; then
-  if $pkg_config --exists libnghttp2 ; then
-    has_nghttp2="system"
-    nghttp2_cflags=`$pkg_config --cflags libnghttp2`
-    nghttp2_ldflags=`$pkg_config --libs libnghttp2`
-  fi
-fi
-
-if test "$has_nghttp2" = "no" ; then
 cat > $TMPC << EOF
 #include <stdio.h>
 #include <nghttp2/nghttp2.h>
 int main( void ) { return 0; }
 EOF
+
+if test "$cross_prefix" = "" -a "$pkg_config" != "no"; then
+  if $pkg_config --exists libnghttp2 ; then
+    nghttp2_cflags=`$pkg_config --cflags libnghttp2`
+    nghttp2_ldflags=`$pkg_config --libs libnghttp2`
+    if docc $nghttp2_cflags $LDFLAGS $nghttp2_ldflags ; then
+        has_nghttp2="system"
+    fi
+  fi
+fi
+
+if test "$has_nghttp2" = "no" ; then
 
 if docc $LDFLAGS -lnghttp2 ; then
     has_nghttp2="system"
@@ -1809,8 +1836,6 @@ for opt do
             ;;
         --enable-mem-track) use_memory_tracking="yes"
             ;;
-        --enable-sanitizer) enable_sanitizer="yes"
-            ;;
         --enable-tinygl) enable_tinygl="yes"
             ;;
         --disable-ssl) has_ssl="no"
@@ -1844,6 +1869,8 @@ for opt do
         --use-ffmpeg=*) has_ffmpeg=${opt#--use-ffmpeg=}
             ;;
         --use-freenect=*) has_freenect=${opt#--use-freenect=}
+            ;;
+        --use-nghttp2=*) has_nghttp2=${opt#--use-nghttp2=}
             ;;
         --use-png=*) tmp_has_png=${opt#--use-png=}
             if test "$tmp_has_png" = "system" ; then
@@ -2496,7 +2523,7 @@ soname_version="${version_major}.${version_minor}.${version_micro}"
 
 #check revision.h
 cd $source_path
-source ./check_revision.sh
+. ./check_revision.sh
 cd $build_path
 
 echo ""
@@ -2534,6 +2561,10 @@ if test "$disable_player" = "yes" ; then
     echo "Player disabled"
     echo "#define GPAC_DISABLE_PLAYER" >> $TMPH
     disable_laser="yes"
+fi
+
+if test "$has_st_nsec" = "yes" ; then
+    echo "#define GPAC_HAS_MTIM_NSEC" >> $TMPH
 fi
 
 
@@ -2913,7 +2944,7 @@ echo "STRIP=@$strip" >> config.mak
 echo "WINDRES=$windres" >> config.mak
 fi
 echo "INSTALL=$install" >> config.mak
-echo "LIBTOOL=libtool" >> config.mak
+echo "LIBTOOL=@libtool" >> config.mak
 
 echo "INSTFLAGS=$instflags" >> config.mak
 echo "OPTFLAGS=$CFLAGS" >> config.mak

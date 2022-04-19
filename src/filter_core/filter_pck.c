@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -48,8 +48,13 @@ GF_Err gf_filter_pck_merge_properties_filter(GF_FilterPacket *pck_src, GF_Filter
 	pck_src=pck_src->pck;
 	pck_dst=pck_dst->pck;
 
+	//keep internal flags
+	u32 iflags = pck_dst->info.flags & (GF_PCKF_PROPS_REFERENCE | GF_PCKF_FORCE_MAIN) ;
 	pck_dst->info = pck_src->info;
-	pck_dst->info.flags &= ~GF_PCKF_PROPS_REFERENCE;
+	//remove internal props flags of reference
+	pck_dst->info.flags &= ~ (GF_PCKF_PROPS_REFERENCE | GF_PCKF_FORCE_MAIN);
+	//restore internal props flags of packet
+	pck_dst->info.flags |= iflags;
 
 	if (!pck_src->props || pck_dst->is_dangling) {
 		return GF_OK;
@@ -184,7 +189,7 @@ GF_FilterPacket *gf_filter_pck_new_alloc(GF_FilterPid *pid, u32 data_size, u8 **
 	return gf_filter_pck_new_alloc_internal(pid, data_size, data);
 }
 
-static GF_FilterPacket *new_dangling_packet(GF_FilterPacket *cached_pck, u32 data_length)
+static GF_FilterPacket *gf_filter_pck_new_dangling_packet(GF_FilterPacket *cached_pck, u32 data_length)
 {
 	GF_FilterPacket *dst;
 
@@ -224,7 +229,7 @@ static GF_FilterPacket *new_dangling_packet(GF_FilterPacket *cached_pck, u32 dat
 	return dst;
 }
 
-static GF_FilterPacket *clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data, Bool dangling_packet, GF_FilterPacket *cached_pck)
+static GF_FilterPacket *gf_filter_pck_clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket *pck_source, u8 **data, Bool dangling_packet, GF_FilterPacket *cached_pck)
 {
 	u32 i, w, h, stride, stride_uv, pf, osize;
 	u32 nb_planes, uv_height;
@@ -264,7 +269,7 @@ static GF_FilterPacket *clone_frame_interface(GF_FilterPid *pid, GF_FilterPacket
 		dst = gf_filter_pck_new_alloc(pid, osize, &pck_data);
 		if (!dst) return NULL;
 	} else {
-		dst = new_dangling_packet(cached_pck, osize);
+		dst = gf_filter_pck_new_dangling_packet(cached_pck, osize);
 		if (!dst) return NULL;
 		pck_data = dst->data;
 	}
@@ -314,7 +319,7 @@ static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_F
 
 	pcki = (GF_FilterPacketInstance *) pck_source;
 	if (pcki->pck->frame_ifce)
-		return clone_frame_interface(pid, pck_source, data, dangling_packet, cached_pck);
+		return gf_filter_pck_clone_frame_interface(pid, pck_source, data, dangling_packet, cached_pck);
 
 	if (force_copy) {
 		max_ref = 2;
@@ -334,7 +339,7 @@ static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_F
 	if (max_ref>1) {
 		u8 *data_new;
 		if (dangling_packet) {
-			dst = new_dangling_packet(cached_pck, pcki->pck->data_length);
+			dst = gf_filter_pck_new_dangling_packet(cached_pck, pcki->pck->data_length);
 			if (!dst) return NULL;
 
 			data_new = dst->data;
@@ -352,7 +357,6 @@ static GF_FilterPacket *gf_filter_pck_new_clone_internal(GF_FilterPid *pid, GF_F
 	if (dangling_packet) {
 		if (cached_pck && cached_pck->reference) {
 			gf_filter_pck_discard(cached_pck);
-			cached_pck = NULL;
 		}
 		GF_SAFEALLOC(dst, GF_FilterPacket);
 		if (!dst) {
@@ -406,7 +410,11 @@ GF_EXPORT
 GF_FilterPacket *gf_filter_pck_new_alloc_destructor(GF_FilterPid *pid, u32 data_size, u8 **data, gf_fsess_packet_destructor destruct)
 {
 	GF_FilterPacket *pck = gf_filter_pck_new_alloc_internal(pid, data_size, data);
-	if (pck) pck->destructor = destruct;
+	if (pck && destruct) {
+		pck->destructor = destruct;
+		if (pid->filter->freg->flags & GF_FS_REG_MAIN_THREAD)
+			pck->info.flags |= GF_PCKF_FORCE_MAIN;
+	}
 	return pck;
 }
 
@@ -437,6 +445,9 @@ GF_FilterPacket *gf_filter_pck_new_shared_internal(GF_FilterPid *pid, const u8 *
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s PID %s has %d shared packets out\n", pid->filter->name, pid->name, pid->nb_shared_packets_out));
 	}
 	gf_filter_pck_reset_props(pck, pid);
+
+	if (destruct && (pid->filter->freg->flags & GF_FS_REG_MAIN_THREAD))
+		pck->info.flags |= GF_PCKF_FORCE_MAIN;
 
 	assert(pck->pid);
 	return pck;
@@ -480,6 +491,9 @@ GF_FilterPacket *gf_filter_pck_new_ref(GF_FilterPid *pid, u32 data_offset, u32 d
 		pck->data_length = reference->data_length;
 		pck->frame_ifce = reference->frame_ifce;
 	}
+	if (reference->info.flags & GF_PCKF_FORCE_MAIN)
+		pck->info.flags |= GF_PCKF_FORCE_MAIN;
+
 	safe_int_inc(&reference->pid->nb_shared_packets_out);
 	safe_int_inc(&reference->pid->filter->nb_shared_packets_out);
 	return pck;
@@ -506,6 +520,8 @@ GF_FilterPacket *gf_filter_pck_new_frame_interface(GF_FilterPid *pid, GF_FilterF
 	pck->destructor = destruct;
 	pck->frame_ifce = frame_ifce;
 	pck->filter_owns_mem = 2;
+	if (frame_ifce && frame_ifce->get_gl_texture)
+		pck->info.flags |= GF_PCKF_FORCE_MAIN;
 	return pck;
 }
 
@@ -527,6 +543,8 @@ GF_Err gf_filter_pck_forward(GF_FilterPacket *reference, GF_FilterPid *pid)
 	pck->data = reference->data;
 	pck->data_length = reference->data_length;
 	pck->frame_ifce = reference->frame_ifce;
+	if (reference->info.flags & GF_PCKF_FORCE_MAIN)
+		pck->info.flags |= GF_PCKF_FORCE_MAIN;
 
 	return gf_filter_pck_send(pck);
 }
@@ -881,9 +899,11 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		if ( (pck->info.flags & GF_PCK_CMD_MASK) == GF_PCK_CMD_PID_EOS) {
 			if (!pid->has_seen_eos) {
 				pid->has_seen_eos = GF_TRUE;
-				GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Filter %s PID %s EOS detected\n", pck->pid->filter->name, pck->pid->name));
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s PID %s EOS detected\n", pck->pid->filter->name, pck->pid->name));
 			}
-		} else if (pid->has_seen_eos && !is_cmd) {
+		}
+		//reset eos only if not a command and not a clock signaling
+		else if (pid->has_seen_eos && !is_cmd && !cktype) {
 			pid->has_seen_eos = GF_FALSE;
 		}
 
@@ -927,7 +947,11 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		}
 	}
 
-	if (pid->filter->out_pid_connection_pending || pid->filter->has_pending_pids || pid->init_task_pending) {
+	if (pid->filter->out_pid_connection_pending
+		|| pid->filter->has_pending_pids
+		|| pid->init_task_pending
+		|| (from_filter && pid->filter->postponed_packets)
+	) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("Filter %s PID %s connection pending, queuing packet\n", pck->pid->filter->name, pck->pid->name));
 		if (!pid->filter->postponed_packets) pid->filter->postponed_packets = gf_list_new();
 		gf_list_add(pid->filter->postponed_packets, pck);
@@ -1046,7 +1070,8 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 			else if ((u32) duration < pid->min_pck_duration) pid->min_pck_duration = (u32) duration;
 		}
 
-		if (!pck->info.duration && pid->min_pck_duration)
+		//set duration if pid is not sparse. If sparse (text & co) don't set it because we will likely get it wrong
+		if (!pid->is_sparse && !pck->info.duration && pid->min_pck_duration)
 			pck->info.duration = (u32) duration;
 
 		//may happen if we don't have DTS, only CTS signaled and B-frames
@@ -1090,6 +1115,9 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 
 	assert(pck->pid);
 	count = pck->pid->num_destinations;
+	//check if processing this packet must be done on main thread (OpenGL interface or source filter asked fo this) 
+	Bool force_main_thread = (pck->info.flags & GF_PCKF_FORCE_MAIN) ? GF_TRUE : GF_FALSE;
+
 	for (i=0; i<count; i++) {
 		Bool post_task=GF_FALSE;
 		GF_FilterPacketInstance *inst;
@@ -1137,9 +1165,11 @@ GF_Err gf_filter_pck_send_internal(GF_FilterPacket *pck, Bool from_filter)
 		inst->pid = dst;
 		inst->pid_props_change_done = 0;
 		inst->pid_info_change_done = 0;
-		//if packet is an openGL interface, force scheduling on main thread for the destination
-		if (pck->frame_ifce&&pck->frame_ifce->get_gl_texture)
-			dst->filter->main_thread_forced = GF_TRUE;
+
+		//if packet is forcing main thread processing increase destination filter main_thread
+		if (force_main_thread) {
+			safe_int_inc(&dst->filter->nb_main_thread_forced);
+		}
 
 		if ((inst->pck->info.flags & GF_PCK_CMD_MASK) == GF_PCK_CMD_PID_EOS)  {
 			safe_int_inc(&inst->pid->nb_eos_signaled);
@@ -1463,6 +1493,15 @@ GF_EXPORT
 GF_Err gf_filter_pck_set_property_dyn(GF_FilterPacket *pck, char *name, const GF_PropertyValue *value)
 {
 	return gf_filter_pck_set_property_full(pck, 0, NULL, name, value);
+}
+
+GF_EXPORT
+Bool gf_filter_pck_has_properties(GF_FilterPacket *pck)
+{
+	//get true packet pointer
+	pck = pck->pck;
+	if (!pck->props) return GF_FALSE;
+	return GF_TRUE;
 }
 
 GF_EXPORT

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2021
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / ROUTE (ATSC3, DVB-I) input filter
@@ -81,15 +81,22 @@ typedef struct
 } ROUTEInCtx;
 
 
-static void routein_repair_segment_ts(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo *finfo)
+static Bool routein_repair_segment_ts(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo *finfo)
 {
     u32 i, pos;
+    Bool drop_if_first = GF_FALSE;
     u8 *data = finfo->blob->data;
-    
+
+
     pos = 0;
     for (i=0; i<finfo->nb_frags; i++) {
         u32 start_range = finfo->frags[i].offset;
         u32 end_range = finfo->frags[i].size;
+
+		//if we missed first 4 packets, we cannot rely on PAT/PMT being present in the rest of the segment
+		//we could further check this at the demux level, but for now we drop the segment
+        if (!i && (start_range>4*188))
+			drop_if_first = GF_TRUE;
 
         end_range += start_range;
         //reset all missed byte ranges as padding packets
@@ -103,10 +110,8 @@ static void routein_repair_segment_ts(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo *fi
             pos += 188;
         }
         //end range not aligned with a packet start, rewind position to prev packet start
-        if (end_range % 188) {
-            while (end_range % 188) end_range--;
-            pos = end_range;
-        }
+		while (end_range % 188) end_range--;
+		pos = end_range;
     }
     //and patch all end packets
     while (pos<finfo->blob->size) {
@@ -118,6 +123,7 @@ static void routein_repair_segment_ts(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo *fi
     }
 	//remove corrupted flag
 	finfo->blob->flags = 0;
+	return drop_if_first;
 }
 
 //top boxes we look for in segments
@@ -268,22 +274,25 @@ static void routein_repair_segment_isobmf(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo
 	finfo->blob->flags = 0;
 }
 
-static void routein_repair_segment(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo *finfo)
+static Bool routein_repair_segment(ROUTEInCtx *ctx, GF_ROUTEEventFileInfo *finfo)
 {
+	Bool drop_if_first = GF_FALSE;
 	if (ctx->repair==ROUTEIN_REPAIR_NO)
-		return;
+		return GF_FALSE;
 
 	if (finfo->blob->mx)
 		gf_mx_p(finfo->blob->mx);
 	
     if (strstr(finfo->filename, ".ts") || strstr(finfo->filename, ".m2ts")) {
-        routein_repair_segment_ts(ctx, finfo);
+        drop_if_first = routein_repair_segment_ts(ctx, finfo);
     } else {
         routein_repair_segment_isobmf(ctx, finfo);
     }
 
 	if (finfo->blob->mx)
 		gf_mx_v(finfo->blob->mx);
+
+	return drop_if_first;
 }
 
 
@@ -461,6 +470,7 @@ void routein_on_event(void *udta, GF_ROUTEEventType evt, u32 evt_param, GF_ROUTE
 	ROUTEInCtx *ctx = (ROUTEInCtx *)udta;
 	u32 nb_obj;
 	Bool is_init = GF_TRUE;
+	Bool drop_if_first = GF_FALSE;
 	Bool is_loop = GF_FALSE;
 	DownloadedCacheEntry cache_entry;
 
@@ -538,7 +548,7 @@ void routein_on_event(void *udta, GF_ROUTEEventType evt, u32 evt_param, GF_ROUTE
 
 		//corrupted file, try to repair
 		if (finfo->blob->flags & GF_BLOB_CORRUPTED) {
-			routein_repair_segment(ctx, finfo);
+			drop_if_first = routein_repair_segment(ctx, finfo);
 		}
 			
 		if (ctx->odir) {
@@ -593,6 +603,9 @@ void routein_on_event(void *udta, GF_ROUTEEventType evt, u32 evt_param, GF_ROUTE
 		if (!ctx->sync_tsi) {
 			ctx->sync_tsi = finfo->tsi;
 			ctx->last_toi = finfo->toi;
+			if (drop_if_first) {
+				break;
+			}
 		} else if (ctx->sync_tsi == finfo->tsi) {
 			if (ctx->last_toi > finfo->toi) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_ROUTE, ("[ROUTE] Loop detected on service %d for TSI %u: prev TOI %u this toi %u\n", ctx->tune_service_id, finfo->tsi, ctx->last_toi, finfo->toi));
@@ -855,27 +868,27 @@ static Bool routein_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 #define OFFS(_n)	#_n, offsetof(ROUTEInCtx, _n)
 static const GF_FilterArgs ROUTEInArgs[] =
 {
-	{ OFFS(src), "URL of source content - see filter help", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(src), "URL of source content", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(ifce), "default interface to use for multicast. If NULL, the default system interface will be used", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(gcache), "indicate the files should populate GPAC HTTP cache - see filter help", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(tunein), "service ID to bootstrap on for ATSC 3.0 mode. 0 means tune to no service, -1 tune all services -2 means tune on first service found", GF_PROP_SINT, "-2", NULL, 0},
+	{ OFFS(gcache), "indicate the files should populate GPAC HTTP cache", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(tunein), "service ID to bootstrap on for ATSC 3.0 mode (0 means tune to no service, -1 tune all services -2 means tune on first service found)", GF_PROP_SINT, "-2", NULL, 0},
 	{ OFFS(buffer), "receive buffer size to use in bytes", GF_PROP_UINT, "0x80000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(timeout), "timeout in ms after which tunein fails", GF_PROP_UINT, "5000", NULL, 0},
     { OFFS(nbcached), "number of segments to keep in cache per service", GF_PROP_UINT, "8", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(kc), "keep corrupted file", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(skipr), "skip repeated files - ignored in cache mode", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(stsi), "define one output pid per tsi/serviceID - ignored in cache mode, see filter help", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(skipr), "skip repeated files (ignored in cache mode)", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(stsi), "define one output PID per tsi/serviceID (ignored in cache mode)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(stats), "log statistics at the given rate in ms (0 disables stats)", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(tsidbg), "gather only objects with given TSI (debug)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(max_segs), "maximum number of segments to keep on disk", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(odir), "output directory for standalone mode - see filter help", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(odir), "output directory for standalone mode", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(reorder), "ignore order flag in ROUTE/LCT packets, avoiding considering object done when TOI changes", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(rtimeout), "default timeout in ms to wait when gathering out-of-order packets", GF_PROP_UINT, "5000", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(fullseg), "only dispatch full segments in cache mode (always true for other modes (source, standalone))", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(repair), "repair mode for corrupted files (see filter help)\n"
+	{ OFFS(fullseg), "only dispatch full segments in cache mode (always true for other modes)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(repair), "repair mode for corrupted files\n"
 		"- no: no repair is performed\n"
-		"- simple: simple repair is performed (incomplete mdat boxes will be kept)\n"
-		"- strict: incomplete mdat boxes will be lost as well as preceding moof box\n"
+		"- simple: simple repair is performed (incomplete `mdat` boxes will be kept)\n"
+		"- strict: incomplete mdat boxes will be lost as well as preceding `moof` boxes\n"
 		"- full: HTTP-based repair, not yet implemented"
 		, GF_PROP_UINT, "simple", "no|simple|strict|full", GF_FS_ARG_HINT_EXPERT},
 
@@ -897,32 +910,32 @@ GF_FilterRegister ROUTEInRegister = {
 	"\n"
 	"The filter can work in cached mode, source mode or standalone mode.\n"
 	"# Cached mode\n"
-	"The cached mode is the default filter behavior. It populates GPAC HTTP Cache with the received files, using `http://groute/serviceN/` as service root, N being the ROUTE service ID.\n"
+	"The cached mode is the default filter behavior. It populates GPAC HTTP Cache with the received files, using `http://groute/serviceN/` as service root, `N being the ROUTE service ID.\n"
 	"In cached mode, repeated files are always pushed to cache.\n"
 	"The maximum number of media segment objects in cache per service is defined by [-nbcached](); this is a safety used to force object removal in case DASH client timing is wrong and some files are never requested at cache level.\n"
 	"  \n"
 	"The cached MPD is assigned the following headers:\n"
-	"- x-route: integer value, indicates the ROUTE service ID.\n"
-	"- x-route-first-seg: string value, indicates the name of the first segment (completely or currently being) retrieved from the broadcast.\n"
-    "- x-route-ll: boolean value, if yes indicates that the indicated first segment is currently being received (low latency signaling).\n"
-    "- x-route-loop: boolean value, if yes indicates a loop in the service has been detected (usually pcap replay loop).\n"
+	"- `x-route`: integer value, indicates the ROUTE service ID.\n"
+	"- `x-route-first-seg`: string value, indicates the name of the first segment (completely or currently being) retrieved from the broadcast.\n"
+    "- `x-route-ll`: boolean value, if yes indicates that the indicated first segment is currently being received (low latency signaling).\n"
+    "- `x-route-loop`: boolean value, if yes indicates a loop in the service has been detected (usually pcap replay loop).\n"
 	"  \n"
 	"The cached files are assigned the following headers:\n"
-	"- x-route: boolean value, if yes indicates the file comes from an ROUTE session.\n"
+	"- `x-route`: boolean value, if yes indicates the file comes from an ROUTE session.\n"
 	"\n"
 	"If [-max_segs]() is set, file deletion event will be triggered in the filter chain.\n"
 	"\n"
 	"# Source mode\n"
-	"In source mode, the filter outputs files on a single output pid of type `file`. "
-	"The files are dispatched once fully received, the output pid carries a sequence of complete files. Repeated files are not sent unless requested.\n"
-	"If needed, one pid per TSI can be used rather than a single pid. This avoids mixing files of different mime types on the same pid (e.g. mpd and isobmff).\n"
+	"In source mode, the filter outputs files on a single output PID of type `file`. "
+	"The files are dispatched once fully received, the output PID carries a sequence of complete files. Repeated files are not sent unless requested.\n"
+	"If needed, one PID per TSI can be used rather than a single PID. This avoids mixing files of different mime types on the same PID (e.g. HAS manifest and ISOBMFF).\n"
 	"EX gpac -i atsc://gcache=false -o $ServiceID$/$File$:dynext\n"
 	"This will grab the files and forward them as output PIDs, consumed by the [fout](fout) filter.\n"
 	"\n"
 	"If [-max_segs]() is set, file deletion event will be triggered in the filter chain.\n"
 	"\n"
 	"# Standalone mode\n"
-	"In standalone mode, the filter does not produce any output pid and writes received files to the [-odir]() directory.\n"
+	"In standalone mode, the filter does not produce any output PID and writes received files to the [-odir]() directory.\n"
 	"EX gpac -i atsc://:odir=output\n"
 	"This will grab the files and write them to `output` directory.\n"
 	"\n"

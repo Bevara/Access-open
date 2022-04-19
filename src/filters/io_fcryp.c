@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2021
+ *			Copyright (c) Telecom ParisTech 2021-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / file crypt/decrypt for full segment encryption filter
@@ -105,13 +105,14 @@ static GF_Err cryptfile_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool
 
 const char *gf_filter_get_src_args(GF_Filter *filter);
 
-static void cryptfile_on_filter_setup_error(GF_Filter *failed_filter, void *udta, GF_Err err)
+static Bool cryptfile_on_filter_setup_error(GF_Filter *failed_filter, void *udta, GF_Err err)
 {
 	GF_Filter *f = (GF_Filter *)udta;
-	if (!udta) return;
+	if (!udta) return GF_FALSE;
 	//forward failure, but do not send a setup failure (gf_filter_setup_failure) which would remove this filter
 	//we let the final user (dashdmx) decide what to do
 	gf_filter_notification_failure(f, err, GF_FALSE);
+	return GF_FALSE;
 }
 
 static GF_Err cryptfin_initialize(GF_Filter *filter)
@@ -127,6 +128,12 @@ static GF_Err cryptfin_initialize(GF_Filter *filter)
 	if (args) args = strstr(args, "gcryp://");
 	if (args) args += 8;
 	else args = ctx->src+8;
+
+#ifdef GPAC_ENABLE_COVERAGE
+	if (gf_sys_is_cov_mode()) {
+		cryptfile_on_filter_setup_error(NULL, NULL, GF_OK);
+	}
+#endif
 
 	ctx->for_filter = gf_filter_connect_source(filter, args, NULL, GF_FALSE, &e);
 	if (e) return e;
@@ -326,10 +333,11 @@ GF_FilterRegister CryptFinRegister = {
 	GF_FS_SET_DESCRIPTION("CryptFile input")
 	GF_FS_SET_HELP("This filter dispatch raw blocks from encrypted files with AES 128 CBC in PKCS7 to clear input files\n"
 	"\n"
+	"The filter is automatically loaded by the DASH/HLS demultiplexer and should not be explicitly loaded by your application.\n"
+	"\n"
 	"The filter accepts URL with scheme `gcryp://URL`, where `URL` is the URL to decrypt.\n"
 	"\n"
-	"The filter can process http(s) and local file key URLs, and expects a full key (16 bytes) as result of resource fetching.\n"
-	"The special URL `urn:gpac:keys:value:VALUE` can also be used, with `VALUE` containing the 16 bytes of the key in hexadecimal.\n"
+	"The filter can process http(s) and local file key URLs (setup through HLS manifest), and expects a full key (16 bytes) as result of resource fetching.\n"
 	)
 	.private_size = sizeof(GF_CryptFileCtx),
 	.args = CryptFinArgs,
@@ -401,7 +409,7 @@ void gf_cryptfin_set_kms(GF_Filter *filter, const char *key_url, bin128 key_IV)
 		}
 		//key is local, activate right away
 		else if (gf_url_is_local(key_url)) {
-			FILE *fkey = gf_fopen(key_url, "r");
+			FILE *fkey = gf_fopen(key_url, "rb");
 			if (!fkey) {
 				ctx->in_error = GF_URL_ERROR;
 				GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CryptFile] key %s not found\n", key_url))
@@ -604,6 +612,8 @@ GF_FilterRegister CryptFoutRegister = {
 	.name = "cryptout",
 	GF_FS_SET_DESCRIPTION("CryptFile output")
 	GF_FS_SET_HELP("This filter dispatch raw blocks from clear input files to encrypted files with AES 128 CBC in PKCS7\n"
+	"\n"
+	"The filter is automatically loaded by the DASH/HLS multiplexer and should not be explicitly loaded by your application.\n"
 	"\n"
 	"The filter accepts URL with scheme `gcryp://URL`, where `URL` is the URL to encrypt.")
 	.private_size = sizeof(GF_CryptFileCtx),

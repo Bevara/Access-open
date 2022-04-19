@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019-2021
+ *			Copyright (c) Telecom ParisTech 2019-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / FLAC reframer filter
@@ -74,6 +74,8 @@ typedef struct
 	FLACIdx *indexes;
 	u32 index_alloc_size, index_size;
 	u32 bitrate;
+	Bool copy_props;
+	u32 dsi_crc;
 } GF_FLACDmxCtx;
 
 
@@ -108,6 +110,7 @@ GF_Err flac_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
 	}
+	if (ctx->timescale) ctx->copy_props = GF_TRUE;
 	return GF_OK;
 }
 
@@ -131,8 +134,13 @@ static void flac_dmx_check_dur(GF_Filter *filter, GF_FLACDmxCtx *ctx)
 	}
 	ctx->is_file = GF_TRUE;
 
-	stream = gf_fopen(p->value.string, "rb");
-	if (!stream) return;
+	stream = gf_fopen_ex(p->value.string, NULL, "rb", GF_TRUE);
+	if (!stream) {
+		if (gf_fileio_is_main_thread(p->value.string))
+			ctx->file_loaded = GF_TRUE;
+		return;
+	}
+
 	gf_fseek(stream, 0, SEEK_END);
 
 	rate = gf_ftell(stream);
@@ -145,15 +153,19 @@ static void flac_dmx_check_dur(GF_Filter *filter, GF_FLACDmxCtx *ctx)
 
 	p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FILE_CACHED);
 	if (p && p->value.boolean) ctx->file_loaded = GF_TRUE;
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 }
 
 static void flac_dmx_check_pid(GF_Filter *filter, GF_FLACDmxCtx *ctx, u8 *dsi, u32 dsi_size)
 {
+	u32 crc = gf_crc_32(dsi, dsi_size);
 	if (!ctx->opid) {
 		ctx->opid = gf_filter_pid_new(filter);
 		flac_dmx_check_dur(filter, ctx);
 	}
+	if ((ctx->dsi_crc == crc) && !ctx->copy_props) return;
+	ctx->dsi_crc = crc;
+	ctx->copy_props = GF_FALSE;
+
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, & PROP_UINT( GF_STREAM_AUDIO));
@@ -163,6 +175,8 @@ static void flac_dmx_check_pid(GF_Filter *filter, GF_FLACDmxCtx *ctx, u8 *dsi, u
 	}
 	if (ctx->duration.num)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
+	if (!ctx->timescale)
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CAN_DATAREF, & PROP_BOOL(GF_TRUE ) );
 
 	if (!ctx->timescale) gf_filter_pid_set_name(ctx->opid, "audio");
 
@@ -237,6 +251,7 @@ static Bool flac_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		ctx->is_playing = GF_FALSE;
 		if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
 		ctx->src_pck = NULL;
+		ctx->cts = 0;
 		//don't cancel event
 		return GF_FALSE;
 
@@ -442,6 +457,9 @@ GF_Err flac_dmx_process(GF_Filter *filter)
 	//input pid sets some timescale - we flushed pending data , update cts
 	if (ctx->timescale && pck) {
 		cts = gf_filter_pck_get_cts(pck);
+		//init cts at first packet
+		if (!ctx->cts && (cts != GF_FILTER_NO_TS))
+			ctx->cts = cts;
 	}
 
 	if (cts == GF_FILTER_NO_TS) {
@@ -498,7 +516,7 @@ GF_Err flac_dmx_process(GF_Filter *filter)
 			gf_bs_reassign_buffer(ctx->bs, ctx->flac_buffer, size);
 			u32 magic = gf_bs_read_u32(ctx->bs);
 			if (magic != GF_4CC('f','L','a','C')) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[FLACDmx] invalid FLAC magic\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[FLACDmx] invalid FLAC magic\n"));
 				ctx->in_error = GF_TRUE;
 				ctx->flac_buffer_size = 0;
 				if (pck)
@@ -535,7 +553,7 @@ GF_Err flac_dmx_process(GF_Filter *filter)
 				if (last) break;
 			}
 			if (!dsi_end) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[FLACDmx] invalid FLAC header\n"));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[FLACDmx] invalid FLAC header\n"));
 				ctx->in_error = GF_TRUE;
 				ctx->flac_buffer_size = 0;
 				if (pck)
@@ -552,7 +570,7 @@ GF_Err flac_dmx_process(GF_Filter *filter)
 
 		//we have a next frame, check we are synchronize
 		if ((start[0] != 0xFF) && ((start[1]&0xFC) != 0xF8)) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[FLACDmx] invalid frame, dropping %d bytes and resyncing\n", next_frame));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[FLACDmx] invalid frame, dropping %d bytes and resyncing\n", next_frame));
 			start += next_frame;
 			remain -= next_frame;
 			continue;

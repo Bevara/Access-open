@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2018
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Media terminal sub-project
@@ -83,7 +83,8 @@ static GF_Err gf_sc_step_clocks_intern(GF_Compositor *compositor, u32 ms_diff, B
 			j = 0;
 			while (ns->clocks && (ck = (GF_Clock *)gf_list_enum(ns->clocks, &j))) {
 				ck->init_timestamp += ms_diff;
-				ck->media_time_at_init += ms_diff;
+				ck->media_ts_orig += ms_diff;
+				ck->media_time_orig += ms_diff;
 				//make sure we don't touch clock while doing resume/pause below
 				if (force_resume_pause)
 					ck->nb_paused++;
@@ -193,7 +194,7 @@ void gf_sc_connect_from_time_ex(GF_Compositor *compositor, const char *URL, u64 
 		/*disconnect*/
 		gf_sc_disconnect(compositor);
 	}
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] Connecting to %s\n", URL));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Terminal] Connecting to %s\n", URL));
 
 	assert(!compositor->root_scene);
 
@@ -216,7 +217,7 @@ void gf_sc_connect_from_time_ex(GF_Compositor *compositor, const char *URL, u64 
 		scene->first_frame_pause_type = pause_at_first_frame;
 	}
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] root scene created\n", URL));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Terminal] root scene created\n", URL));
 
 	if (!strnicmp(URL, "views://", 8)) {
 		gf_scene_generate_views(compositor->root_scene, (char *) URL+8, (char*)parent_path);
@@ -261,17 +262,15 @@ static void gf_term_refresh_cache()
 		}
 
 		force_delete = 0;
-		if (file) {
-			FILE *t = gf_fopen(file, "r");
-			if (!t) force_delete = 1;
-			else gf_fclose(t);
+		if (file && gf_file_exists(file)) {
+			force_delete = 1;
 		}
 		sscanf(opt, "%u", &exp);
 		gf_net_get_ntp(&sec, &frac);
 		if (exp && (exp<sec)) force_delete=1;
 
 		if (force_delete) {
-			if (file) gf_file_delete((char*) opt);
+			if (file) gf_file_delete(file);
 
 			gf_opts_del_section(name);
 			i--;
@@ -291,11 +290,11 @@ GF_Terminal *gf_term_new(GF_User *user)
 	const char *opt;
 	char szArgs[200];
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] Creating terminal\n"));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Terminal] Creating terminal\n"));
 
 	tmp = (GF_Terminal*)gf_malloc(sizeof(GF_Terminal));
 	if (!tmp) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to allocate GF_Terminal : OUT OF MEMORY ?\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPTIME, ("[Terminal] Failed to allocate GF_Terminal : OUT OF MEMORY ?\n"));
 		return NULL;
 	}
 	memset(tmp, 0, sizeof(GF_Terminal));
@@ -310,9 +309,9 @@ GF_Terminal *gf_term_new(GF_User *user)
 	sprintf(szArgs, "%d", user->init_flags);
 	gf_opts_set_key("Temp", "InitFlags", szArgs);
 
-	tmp->fsess = gf_fs_new_defaults(GF_FS_FLAG_NO_MAIN_THREAD);
+	tmp->fsess = gf_fs_new_defaults(GF_FS_FLAG_NON_BLOCKING);
 	if (!tmp->fsess) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to create filter session.\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPTIME, ("[Terminal] Failed to create filter session.\n"));
 		gf_free(tmp);
 		return NULL;
 	}
@@ -333,13 +332,13 @@ GF_Terminal *gf_term_new(GF_User *user)
 	comp_filter = gf_fs_load_filter(tmp->fsess, szArgs, &e);
 	tmp->compositor = comp_filter ? gf_sc_from_filter(comp_filter) : NULL;
 	if (!tmp->compositor) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to load compositor filter: %s\n", gf_error_to_string(e) ));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPTIME, ("[Terminal] Failed to load compositor filter: %s\n", gf_error_to_string(e) ));
 		gf_fs_del(tmp->fsess);
 		gf_free(tmp);
 		return NULL;
 	}
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] compositor loaded\n"));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Terminal] compositor loaded\n"));
 
 	gf_term_refresh_cache();
 	gf_fs_run(tmp->fsess);
@@ -352,10 +351,10 @@ GF_Err gf_term_del(GF_Terminal * term)
 {
 	if (!term) return GF_BAD_PARAM;
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] Destroying terminal\n"));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Terminal] Destroying terminal\n"));
 	/*close main service*/
 	gf_term_disconnect(term);
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] main service disconnected\n"));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Terminal] main service disconnected\n"));
 
 	term->in_destroy = GF_TRUE;
 	/*stop the media manager */
@@ -364,7 +363,7 @@ GF_Err gf_term_del(GF_Terminal * term)
 	gf_sys_close();
 	if (term->reload_url) gf_free(term->reload_url);
 	gf_free(term);
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[Terminal] Terminal destroyed\n"));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[Terminal] Terminal destroyed\n"));
 	return GF_OK;
 }
 
@@ -688,7 +687,22 @@ GF_Err gf_term_scene_update(GF_Terminal *term, char *type, char *com)
 	if (!term || !com) return GF_BAD_PARAM;
 
 	if (type && (!stricmp(type, "application/ecmascript") || !stricmp(type, "js")) )  {
-		return gf_scene_execute_script(compositor->root_scene->graph, com);
+#if defined(GPAC_HAS_QJS) && !defined(GPAC_DISABLE_SVG)
+		u32 tag;
+		GF_Node *root = gf_sg_get_root_node(compositor->root_scene->graph);
+		if (!root) return GF_BAD_PARAM;
+		tag = gf_node_get_tag(root);
+		if (tag >= GF_NODE_RANGE_FIRST_SVG) {
+			if (compositor->root_scene->graph->svg_js) {
+				GF_Err svg_exec_script(struct __tag_svg_script_ctx *svg_js, GF_SceneGraph *sg, const char *com);
+				return svg_exec_script(compositor->root_scene->graph->svg_js, compositor->root_scene->graph, (char *)com);
+			}
+			return GF_NOT_FOUND;
+		}
+		return GF_NOT_SUPPORTED;
+#else
+		return GF_NOT_SUPPORTED;
+#endif
 	}
 
 	if (!type && !strncmp(com, "gpac ", 5)) {
@@ -1288,7 +1302,7 @@ Bool gf_term_process_step(GF_Terminal *term)
 		}
 	}
 
-	gf_fs_run_step(term->fsess);
+	gf_fs_run(term->fsess);
 	return term->compositor->frame_was_produced;
 }
 
