@@ -188,6 +188,30 @@ enum
 	GF_SOCK_IS_UN = 1<<15,
 };
 
+#if __EMSCRIPTEN__
+#include <emscripten/fetch.h>
+
+void downloadSucceeded(emscripten_fetch_t *fetch) {
+  printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
+  // The data is now available at fetch->data[0] through fetch->data[fetch->numBytes-1];
+  emscripten_fetch_close(fetch); // Free data associated with the fetch.
+}
+
+void downloadFailed(emscripten_fetch_t *fetch) {
+  printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
+  emscripten_fetch_close(fetch); // Also free data on failure.
+}
+
+void downloadProgress(emscripten_fetch_t *fetch) {
+  if (fetch->totalBytes) {
+    printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
+  } else {
+    printf("Downloading %s.. %lld bytes complete.\n", fetch->url, fetch->dataOffset + fetch->numBytes);
+  }
+}
+
+#endif
+
 struct __tag_socket
 {
 	u32 flags;
@@ -197,6 +221,11 @@ struct __tag_socket
 	struct sockaddr_storage dest_addr;
 #else
 	struct sockaddr_in dest_addr;
+#endif
+
+#if __EMSCRIPTEN__
+	emscripten_fetch_attr_t attr;
+	emscripten_fetch_t * fetch;
 #endif
 	u32 dest_addr_len;
 
@@ -519,6 +548,16 @@ GF_EXPORT
 GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, const char *local_ip)
 {
 	s32 ret;
+
+	#if __EMSCRIPTEN__
+	emscripten_fetch_attr_init(&sock->attr);
+	strcpy(sock->attr.requestMethod, "GET");
+	sock->attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+	sock->attr.onsuccess = downloadSucceeded;
+	sock->attr.onprogress = downloadProgress;
+	sock->attr.onerror = downloadFailed;
+	return GF_OK;
+	#endif
 #ifdef GPAC_HAS_IPV6
 	u32 type;
 	struct addrinfo *res, *aip, *lip;
@@ -907,6 +946,44 @@ GF_Err gf_sk_bind(GF_Socket *sock, const char *local_ip, u16 port, const char *p
 #endif
 }
 
+#if __EMSCRIPTEN__
+#define MAX_PARAM 128
+#define MAX_HTTP 2048
+GF_EXPORT
+GF_Err gf_sk_send(GF_Socket *sock, const u8 *buffer, u32 length)
+{
+	char * token;
+	char* url;
+	const char* host;
+	const char* header[MAX_PARAM];
+	int i = 0;
+	//const char* http = "http://";
+	char dest[MAX_HTTP] = "http://";
+	
+	token = strtok ((char *)buffer," ");
+
+	while (token != NULL) {
+		if (!strcmp(token, "GET")) {
+			strcpy(sock->attr.requestMethod, token);
+			url = strtok (NULL, " ");
+			token = strtok (NULL, "\n"); //HTTP1.1
+		}else if (!strcmp(token, "Host:")) {
+			host = strtok (NULL, "\n"); //HTTP1.1
+		}else{
+			header[i++] = token;
+			header[i++] = strtok (NULL, "\n");
+		}
+		token = strtok (NULL, " ");
+	}
+
+	header[i++] = NULL;
+	//sock->attr.requestHeaders = header;
+	strcat(dest, host);
+	strcat(dest, url);
+	sock->fetch = emscripten_fetch(&sock->attr, dest);
+	return GF_OK;
+}
+#else
 //send length bytes of a buffer
 GF_EXPORT
 GF_Err gf_sk_send(GF_Socket *sock, const u8 *buffer, u32 length)
@@ -992,7 +1069,7 @@ GF_Err gf_sk_send(GF_Socket *sock, const u8 *buffer, u32 length)
 	}
 	return GF_OK;
 }
-
+#endif
 GF_Err gf_sk_select(GF_Socket *sock, u32 mode)
 {
 #ifndef __SYMBIAN32__
@@ -1491,10 +1568,26 @@ GF_Err gf_sk_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *By
 	return GF_OK;
 }
 
+#if __EMSCRIPTEN__
+GF_Err gf_emscripten_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *BytesRead, Bool do_select)
+{
+	if (BytesRead) *BytesRead = emscripten_fetch_get_response_headers_length(sock->fetch);
+	if (!buffer) return GF_OK;
+	if (*BytesRead == 0) return GF_OK;
+	emscripten_fetch_get_response_headers(sock->fetch, buffer, length);
+	return GF_OK;
+}
+#endif
+
+
 GF_EXPORT
 GF_Err gf_sk_receive(GF_Socket *sock, u8 *buffer, u32 length, u32 *BytesRead)
 {
+	#if __EMSCRIPTEN__
+	return gf_emscripten_receive_internal(sock, buffer, length, BytesRead, GF_TRUE);
+	#else
 	return gf_sk_receive_internal(sock, buffer, length, BytesRead, GF_TRUE);
+	#endif
 }
 
 GF_EXPORT
