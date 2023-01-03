@@ -357,16 +357,17 @@ void set_source_restricted(_Filter src, DOMString link_args=null);
 
 /*! insert a given filter after this filter - see \ref gf_filter_set_source and \ref gf_filter_reconnect_output
 \param f _Filter to insert
+\param pid_idx index of pid to relink, negative value means all output pids
 \param link_args link options
 */
-void insert(_Filter f, DOMString link_args=null);
+void insert(_Filter f, long pid_idx=-1, DOMString link_args=null);
 
 /*! get an input pid property by name
 \param idx index of input pid
 \param prop_name name of property
 \return property value or None if not found
 */
-PropertyValue ipid_prop(unsigned long idx, DOMStreing prop_name);
+PropertyValue ipid_prop(unsigned long idx, DOMString prop_name);
 
 /*! enumerate an input pid properties
 \param idx index of input pid
@@ -386,6 +387,22 @@ PropertyValue opid_prop(unsigned long idx, DOMString prop_name);
 \param callback_fun callback function taking three parameters, prop_name (string), propval (PPropertyValue) and proptype (int, GPAC property data type)
 */
 void opid_enum_props(unsigned long idx, function callback_fun);
+
+
+/*! get statistics on input pid
+\param idx index of input pid
+\param mode search mode for stats (one of GF_STATS_XXX)
+\return stats or null if error
+*/
+PidStatistics ipid_stats(unsigned long idx, unsigned long mode=0);
+
+/*! get statistics on output pid
+\param idx index of input pid
+\param mode search mode for stats (one of GF_STATS_XXX)
+\return stats or null if error
+*/
+PidStatistics opid_stats(unsigned long idx, unsigned long mode=0);
+
 
 /*! gets the filter at the source of an input pid
 \param idx index of input PID
@@ -435,6 +452,14 @@ Fields have the same types, names and semantics as \ref GF_FilterStats, except:
 */
 interface FilterStatistics {
 	
+};
+
+/*! Statistics object for pid as defined in libgpac.
+
+Fields have the same types, names and semantics as \ref GF_FilterPidStatistics
+*/
+interface PidStatistics {
+
 };
 
 
@@ -757,6 +782,9 @@ attribute readonly boolean playing;
 attribute readonly unsigned long long next_ts;
 
 
+/*! Set to true if input chain has a decoder - see \ref gf_filter_pid_has_decoder*/
+attribute readonly boolean has_decoder;
+
 
 /*! send an event on the pid - see \ref gf_filter_pid_send_event
 \param evt filter event to send
@@ -1055,7 +1083,7 @@ void discard();
 /*! creates a new packet cloning a source packet - see \ref gf_filter_pck_dangling_copy.
 The resulting packet is read/write mode and may have its own memory allocated.
 This is typically used by sink filters wishing to access underling GPU data of a packet using frame interface.
-the resulting packet can be explicitly discarded using \ref discard, otherwise will be garrbage collected.
+the resulting packet can be explicitly discarded using \ref discard, otherwise will be garbage collected.
 \param cached_pck if set, will be reuse for creation of new packet. This can greatly reduce memory allocations
 \return the new FilterPacket or None if failure or None if failure ( if grabbing the frame into a local copy failed)
 */
@@ -1271,7 +1299,7 @@ attribute readonly unsigned long display_width;
 /*! display height in pixels of object*/
 attribute readonly unsigned long display_height;
 
-/*! index of current quality*/
+/*! index of current quality or last downloaded quality*/
 attribute readonly unsigned long active_quality_idx;
 
 /*! minimum buffer in milliseconds, below witch rebuffer occurs*/

@@ -31,7 +31,6 @@
 #include <gpac/network.h>
 #include <gpac/internal/compositor_dev.h>
 #include <gpac/nodes_x3d.h>
-#include <gpac/options.h>
 
 /*SVG properties*/
 #ifndef GPAC_DISABLE_SVG
@@ -43,14 +42,15 @@ Double gf_scene_get_time(void *_is)
 {
 	GF_Scene *scene = (GF_Scene *)_is;
 #if 1
-	u32 ret;
+	u64 ret;
 	GF_Clock *ck;
 	assert(scene);
 	assert(scene->root_od);
 	ck = scene->root_od->ck;
 	if (!ck) return 0.0;
-	ret = gf_clock_time(ck);
-	if (scene->root_od->media_stop_time && (scene->root_od->media_stop_time<ret)) ret = (u32) scene->root_od->media_stop_time;
+	ret = gf_clock_time_absolute(ck);
+	if ((scene->root_od->media_stop_time>0) && ((u64) scene->root_od->media_stop_time<ret))
+		ret = scene->root_od->media_stop_time;
 	return ret/1000.0;
 #else
 	return scene->simulation_time;
@@ -356,6 +356,8 @@ void gf_scene_del(GF_Scene *scene)
 	}
 	gf_list_del(scene->extern_protos);
 #endif
+
+	gf_sc_node_destroy(scene->compositor, NULL, scene->graph);
 
 	/*delete the scene graph*/
 	gf_sg_del(scene->graph);
@@ -962,7 +964,7 @@ restart:
 		    (OD_ID != GF_MEDIA_EXTERNAL_ID && (obj->OD_ID==OD_ID))
 		    ||
 		    /*dynamic OD scheme - !! obj->OD_ID may different from GF_MEDIA_EXTERNAL_ID when ODs are
-		    directly added to the terminal by the service*/
+		    directly added to the compositor by the service*/
 		    ((OD_ID == GF_MEDIA_EXTERNAL_ID)
 		     /*if object type unknown (media control, media sensor), return first obj matching URL
 		     otherwise check types*/
@@ -1306,16 +1308,18 @@ void gf_scene_force_size_to_video(GF_Scene *scene, GF_MediaObject *mo)
 	w = scene->compositor->scene_width;
 	h = scene->compositor->scene_height;
 
-	M_Transform2D *tr = (M_Transform2D *) gf_sg_find_node_by_name(scene->graph, "TR_SUBT_IMG");
+#ifndef GPAC_DISABLE_VRML
+	M_Transform2D *tr = NULL;
+	tr = (M_Transform2D *) gf_sg_find_node_by_name(scene->graph, "TR_SUBT_IMG");
 	if (!tr) return;
 
 	tr->translation.x = 0;
 	p = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_TRANS_X_INV);
 	if (p) {
-		if (p) tr->translation.x = -INT2FIX(w/2) + INT2FIX(p->value.sint+mo->width/2);
+		tr->translation.x = -INT2FIX(w/2) + INT2FIX(p->value.sint+mo->width/2);
 	} else {
 		p = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_TRANS_X);
-		if (p) tr->translation.x = p->value.sint;
+		if (p) tr->translation.x = INT2FIX(p->value.sint);
 	}
 	tr->translation.x += scene->compositor->subtx;
 
@@ -1329,7 +1333,7 @@ void gf_scene_force_size_to_video(GF_Scene *scene, GF_MediaObject *mo)
 	}
 	tr->translation.y += scene->compositor->subty;
 	gf_node_changed((GF_Node *)tr, NULL);
-
+#endif /*GPAC_DISABLE_VRML*/
 }
 
 #ifndef GPAC_DISABLE_VRML
@@ -1541,7 +1545,7 @@ static GF_Node *load_vr_proto_node(GF_SceneGraph *sg, const char *name, const ch
 		if (url)
 			url->vals = gf_malloc(sizeof(SFURL));
 		if (!url || !url->vals) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_COMPTIME, ("[Terminal] Failed to allocate VR proto\n"));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_COMPTIME, ("[Compositor] Failed to allocate VR proto\n"));
 			return NULL;
 		}
 		url->count=1;
@@ -1642,7 +1646,7 @@ void gf_scene_regenerate(GF_Scene *scene)
 		gf_node_register(n1, NULL);
 		root = n1;
 
-		if (! scene->root_od->parentscene && !scene->compositor->dyn_filter_mode) {
+		if (! scene->root_od->parentscene && !scene->compositor->forced_alpha) {
 			n2 = is_create_node(scene->graph, TAG_MPEG4_Background2D, "DYN_BACK");
 			gf_node_list_add_child( &((GF_ParentNode *)n1)->children, n2);
 			gf_node_register(n2, n1);
@@ -1959,7 +1963,7 @@ void gf_scene_resume_live(GF_Scene *subscene) { }
 GF_EXPORT
 void gf_scene_set_addon_layout_info(GF_Scene *scene, u32 position, u32 size_factor) {}
 GF_EXPORT
-void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set_on, u32 current_clock_time) { }
+void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set_on, u64 absolute_clock_time) { }
 
 #endif	/*GPAC_DISABLE_VRML*/
 
@@ -2191,7 +2195,7 @@ void gf_scene_select_object(GF_Scene *scene, GF_ObjectManager *odm)
 	}
 }
 
-void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set_on, u32 current_clock_time)
+void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set_on, u64 absolute_clock_time)
 {
 	GF_DOM_Event devt;
 	M_Inline *dscene = (M_Inline *) gf_sg_find_node_by_name(scene->graph, scene->compositor->dbgpvr ? "ADDON_SCENE" : "PVR_SCENE");
@@ -2215,7 +2219,7 @@ void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set
 		//main addon is vod not live, store clock
 		if (! odm->timeshift_depth &&  !scene->sys_clock_at_main_activation) {
 			scene->sys_clock_at_main_activation = gf_sys_clock();
-			scene->obj_clock_at_main_activation = current_clock_time;
+			scene->obj_clock_at_main_activation = absolute_clock_time;
 		}
 
 
@@ -2344,7 +2348,7 @@ void gf_scene_restart_dynamic(GF_Scene *scene, s64 from_time, Bool restart_only,
 
 				//we're timeshifting through the main addon, activate it
 				if (from_time < -1) {
-					gf_scene_select_main_addon(scene, odm, GF_TRUE, gf_clock_time(ck));
+					gf_scene_select_main_addon(scene, odm, GF_TRUE, gf_clock_time_absolute(ck) );
 
 					/*no timeshift, this is a VoD associated with the live broadcast: get current time*/
 					if (! odm->timeshift_depth) {
@@ -2394,11 +2398,20 @@ void gf_scene_restart_dynamic(GF_Scene *scene, s64 from_time, Bool restart_only,
 		gf_clock_reset(ck);
 
 		//used by SVG for JSAPIs..;
-		if (!scene->is_dynamic_scene) gf_clock_set_time(ck, 0);
+		if (!scene->is_dynamic_scene) gf_clock_set_time(ck, 0, 1000);
 	} else {
 		GF_LOG(GF_LOG_INFO, GF_LOG_COMPTIME, ("[Scene] Restarting scene from current clock %d\n", gf_clock_time(ck) ));
 	}
 
+	//in case we sent a stop on objects directly (to stop scene), collect stop objects bound to scene
+	if (!scene->compositor->player && !gf_list_count(to_restart)) {
+		i=0;
+		while ((odm = (GF_ObjectManager*)gf_list_enum(scene->resources, &i))) {
+			if ((odm->state == GF_ODM_STATE_STOP) && odm->mo && odm->mo->num_open && gf_odm_shares_clock(odm, ck)) {
+				gf_list_add(to_restart, odm);
+			}
+		}
+	}
 
 	/*restart objects*/
 	i=0;
@@ -2717,7 +2730,7 @@ Bool gf_scene_check_clocks(GF_SceneNamespace *ns, GF_Scene *scene, Bool check_bu
 	}
 
 	if (!check_buffering && scene) {
-		if (scene->root_od->ID) {
+		if (scene->root_od->pid_id) {
 			initialized = GF_TRUE;
 			if (scene->root_od->parentscene && (scene->root_od->state != GF_ODM_STATE_STOP)) return 0;
 		}
@@ -3103,7 +3116,7 @@ void gf_scene_register_associated_media(GF_Scene *scene, GF_AssociatedContentLoc
 	if (!addon) {
 		GF_SAFEALLOC(addon, GF_AddonMedia);
 		if (!addon) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_COMPTIME, ("[Terminal] Failed to allocate media addon\n"));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_COMPTIME, ("[Compositor] Failed to allocate media addon\n"));
 			return;
 		}
 		addon->timeline_id = addon_info->timeline_id;

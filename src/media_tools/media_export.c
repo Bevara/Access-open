@@ -470,6 +470,7 @@ GF_Err gf_media_export_isom(GF_MediaExporter *dumper)
 GF_Err gf_media_export_webvtt_metadata(GF_MediaExporter *dumper)
 {
 	GF_ESD *esd;
+	GF_Err e = GF_OK;
 	char szName[1000], szMedia[1000];
 	FILE *med, *vtt;
 	u32 w, h;
@@ -666,7 +667,8 @@ GF_Err gf_media_export_webvtt_metadata(GF_MediaExporter *dumper)
 			gf_fprintf(vtt, "\n");
 		}
 		if (med) {
-			gf_fwrite(samp->data, samp->dataLength, med);
+			if (gf_fwrite(samp->data, samp->dataLength, med) != samp->dataLength)
+				e = GF_IO_ERR;
 		} else if (dumper->flags & GF_EXPORT_WEBVTT_META_EMBEDDED) {
 			if (isText) {
 				samp->data = (char *)gf_realloc(samp->data, samp->dataLength+1);
@@ -691,7 +693,7 @@ GF_Err gf_media_export_webvtt_metadata(GF_MediaExporter *dumper)
 	}
 	if (med) gf_fclose(med);
 	gf_fclose(vtt);
-	return GF_OK;
+	return e;
 }
 
 #endif /*GPAC_DISABLE_VTT*/
@@ -700,6 +702,7 @@ GF_Err gf_media_export_webvtt_metadata(GF_MediaExporter *dumper)
 GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 {
 	GF_ESD *esd;
+	GF_Err e=GF_OK;
 	char szName[1000], szMedia[1000];
 	FILE *media, *six;
 	u32 track, i, di, count, pos, header_size;
@@ -767,7 +770,8 @@ GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 			} else
 #endif
 			{
-				gf_fwrite(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, media);
+				if (gf_fwrite(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, media) != esd->decoderConfig->decoderSpecificInfo->dataLength)
+					e = GF_IO_ERR;
 				header_size = esd->decoderConfig->decoderSpecificInfo->dataLength;
 			}
 		}
@@ -788,7 +792,8 @@ GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 		if (!samp) break;
 
 		if (media) {
-			gf_fwrite(samp->data, samp->dataLength, media);
+			if (gf_fwrite(samp->data, samp->dataLength, media)!=samp->dataLength)
+				e = GF_IO_ERR;
 		}
 
 		gf_fprintf(six, "<unit time=\""LLU"\" ", samp->DTS);
@@ -806,7 +811,7 @@ GF_Err gf_media_export_six(GF_MediaExporter *dumper)
 	gf_fprintf(six, "</%s>\n", szRootName);
 	if (media) gf_fclose(media);
 	gf_fclose(six);
-	return GF_OK;
+	return e;
 
 }
 
@@ -826,7 +831,7 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 	Bool is_stdout = 0;
 	FILE *saf_f;
 	SAFInfo safs[1024];
-
+	GF_Err e=GF_OK;
 	if (dumper->flags & GF_EXPORT_PROBE_ONLY) return GF_OK;
 
 	s_count = tot_samp = 0;
@@ -869,13 +874,13 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 				mime = "audio/amr-wb";
 				break;
 			case GF_ISOM_SUBTYPE_3GP_EVRC:
-				mime = "audio/evrc";
+				mime = "audio/x-evrc-es";
 				break;
 			case GF_ISOM_SUBTYPE_3GP_QCELP:
-				mime = "audio/qcelp";
+				mime = "audio/x-qcelp-es";
 				break;
 			case GF_ISOM_SUBTYPE_3GP_SMV:
-				mime = "audio/smv";
+				mime = "audio/x-smv-es";
 				break;
 			}
 			if (!mime) continue;
@@ -926,7 +931,7 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 		while (1) {
 			gf_saf_mux_for_time(mux, (u32) -1, 0, &data, &size);
 			if (!data) break;
-			gf_fwrite(data, size, saf_f);
+			if (gf_fwrite(data, size, saf_f) != size) e = GF_IO_ERR;
 			gf_free(data);
 		}
 		gf_set_progress("SAF Export", samp_done, tot_samp);
@@ -934,14 +939,14 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 	}
 	gf_saf_mux_for_time(mux, (u32) -1, 1, &data, &size);
 	if (data) {
-		gf_fwrite(data, size, saf_f);
+		if (gf_fwrite(data, size, saf_f)!=size) e = GF_IO_ERR;
 		gf_free(data);
 	}
 	if (!is_stdout)
 		gf_fclose(saf_f);
 
 	gf_saf_mux_del(mux);
-	return GF_OK;
+	return e;
 #else
 	return GF_NOT_SUPPORTED;
 #endif
@@ -1100,6 +1105,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 					} else if (dumper->track_type) {
 						if ((dumper->track_type==1) && (tki->stream_type!=GF_STREAM_VISUAL)) continue;
 						if ((dumper->track_type==2) && (tki->stream_type!=GF_STREAM_AUDIO)) continue;
+						if ((dumper->track_type==3) && (tki->stream_type!=GF_STREAM_TEXT)) continue;
 					}
 
 					found = GF_TRUE;
@@ -1134,6 +1140,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 	}
 	file_out = NULL;
 	args = NULL;
+	Bool load_dest = GF_FALSE;
 
 	if (dumper->flags & GF_EXPORT_REMUX) {
 		file_out = gf_fs_load_destination(fsess, dumper->out_name, NULL, NULL, &e);
@@ -1192,6 +1199,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 				e |= gf_dynstrcat(&args, ":ext=", NULL);
 				e |= gf_dynstrcat(&args, szExt, NULL);
 			}
+			load_dest = GF_TRUE;
 		} else if ((dumper->trackID || dumper->track_type) && use_dynext) {
 			e |= gf_dynstrcat(&args, ":dynext", NULL);
 		}
@@ -1202,7 +1210,12 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 			return e;
 		}
 
-		file_out = gf_fs_load_filter(fsess, args, &e);
+		if (load_dest) {
+			//skip fout:dst= whenever we have an extension specified, to allow using meta filters (ffmx) 
+			file_out = gf_fs_load_destination(fsess, args+9, NULL, NULL, &e);
+		} else {
+			file_out = gf_fs_load_filter(fsess, args, &e);
+		}
 		if (!file_out) {
 			gf_fs_del(fsess);
 			if (args) gf_free(args);
@@ -1319,7 +1332,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 	}
 
 	if (dumper->track_type) {
-		const char *mtype = (dumper->track_type==1) ? "video" : "audio";
+		const char *mtype = (dumper->track_type==1) ? "video" : ((dumper->track_type==2) ? "audio" : "text");
 		if (dumper->trackID) {
 			sprintf(szSubArgs, "%s%d", mtype, dumper->trackID);
 		} else {

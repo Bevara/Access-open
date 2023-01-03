@@ -1,7 +1,7 @@
 /////////////////////////////////////////////////////////////////////////////////
 //
 //	Authors:	
-//          Jean Le Feuvre, (c) 2010-2020 Telecom Paris
+//          Jean Le Feuvre, (c) 2010-2022 Telecom Paris
 //
 /////////////////////////////////////////////////////////////////////////////////
 import {scene} from 'scenejs'
@@ -85,10 +85,10 @@ globalThis.initialize = function () {
     //var icon;
     var i, count, wid;
 
-    scene.caption = 'Osmo4';
+    scene.caption = 'GPAC';
 
-    gw_display_width = parseInt(scene.get_option('General', 'LastWidth'));
-    gw_display_height = parseInt(scene.get_option('General', 'LastHeight'));
+    gw_display_width = parseInt(scene.get_option('GUI', 'width'));
+    gw_display_height = parseInt(scene.get_option('GUI', 'height'));
     if (!scene.fullscreen && (!gw_display_width || !gw_display_height)) {
         gw_display_width = 320;
         gw_display_height = 240;
@@ -102,7 +102,6 @@ globalThis.initialize = function () {
     //request event listeners on the window - GPAC specific BIFS extensions !!! We don't allow using the event proc for size events
     root.addEventListener('resize', on_resize, 0);
 
-    
     /*load the UI lib*/
     Browser.loadScript('gwlib.js', false);
     gwlib_init(ui_root);
@@ -200,7 +199,7 @@ globalThis.initialize = function () {
           
     for (i = 1; i < Sys.args.length; i++) {
       var arg = Sys.args[i];
-      if (arg=='-h') {
+      if ((arg=='-h') || (arg=='-ha') || (arg=='-hx') || (arg=='-hh')) {
           print_help();
           scene.exit();                    
           return;
@@ -222,14 +221,71 @@ globalThis.initialize = function () {
 
      //let's do the layout   
     layout();
-    gwskin.enable_focus(true);    
+    gwskin.enable_focus(true);
 
+
+	session.set_auth_fun( (site, user, pass, secure, auth_cbk) => {
+        var popup = gw_new_window_full(null, true, 'Authentication for ' + site + (secure ? " - secured" :  " - NOT SECURED"));
+        popup.area = gw_new_grid_container(popup);
+        popup.area.dlg = popup;
+        popup.area.spread_h = true;
+
+		popup.user='';
+		popup.pass='';
+		popup.state=0;
+		popup.auth_cbk = auth_cbk;
+        popup.name = gw_new_text(popup.area, 'Username');
+        popup.store = gw_new_checkbox(popup.area, 'Remember Me');
+
+        popup.edit = gw_new_text_edit(popup.area, user);
+        popup.edit.dlg = popup;
+        scene.set_focus(popup.edit);
+        popup.edit.on_text = function (val) {
+            if (val != '') {
+				if (popup.state==0) {
+					popup.user=val;
+					popup.state = 1;
+					popup.name.set_label('Password');
+					popup.edit.reset(true);
+					scene.set_focus(popup.edit.edit);
+				} else if (popup.state==1) {
+					print('done');
+					popup.pass=val;
+					popup.state = 2;
+					this.dlg.close();
+				}
+            } else {
+				this.dlg.close();
+			}
+		}
+
+        popup.on_display_size = function (w, h) {
+			let ed_h = 2 * gwskin.default_text_font_size;
+			if (gwskin.mobile_device) ed_h *= 1.5;
+            this.name.set_size(w/2, ed_h);
+            this.store.set_size(w/2, ed_h);
+            this.edit.set_size(w, ed_h);
+            this.set_size(w, 2*ed_h + gwskin.default_icon_height);
+			this.move(0, 0);
+        }
+
+        popup.on_display_size(gw_display_width, gw_display_height);
+        popup.set_alpha(1.0);
+
+        popup.on_close = function () {
+			this.auth_cbk.done(this.user, this.pass, this.store.checked);
+			this.pass='';
+			this.auth_cbk = null;
+        }
+        popup._init_focus = popup.edit.edit;
+        popup.show();
+	});
 }
 
 function print_help()
 {
     globalThis._gpac_log_name = "";
-    print(-2, "GPAC GUI Help\nOptions are specified as '-opt' or '-opt=value'.\n");
+    print(-2, "GPAC GUI command-line help\nOptions are specified as `-opt` or `-opt=value`.\nSee `gpac -h[x] compositor` for rendering options.\n");
 
     //launch all default ext
     var i;
@@ -238,7 +294,10 @@ function print_help()
           && (typeof all_extensions[i].clopts != 'undefined')
           && all_extensions[i].icon.ext_description.autostart) {
          
-        print(-2, '' + all_extensions[i].icon.ext_description.name + ' extension');
+        print(-2, '# ' + all_extensions[i].icon.ext_description.name + ' extension');
+
+        if (typeof all_extensions[i].description != 'undefined')
+          print(-2, '' + all_extensions[i].description);
 
         if (typeof all_extensions[i].clusage != 'undefined')
           print(-2, 'Usage: ' + all_extensions[i].clusage);
@@ -284,8 +343,8 @@ function on_resize(evt) {
     gw_display_width = evt.width;
     gw_display_height = evt.height;
     if (!scene.fullscreen) {
-        scene.set_option('General', 'LastWidth', '' + gw_display_width);
-        scene.set_option('General', 'LastHeight', '' + gw_display_height);
+        scene.set_option('GUI', 'width', '' + gw_display_width);
+        scene.set_option('GUI', 'height', '' + gw_display_height);
     }
 /*
     var v = 12;

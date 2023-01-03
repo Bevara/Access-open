@@ -96,6 +96,7 @@ Bool gf_url_is_local(const char *pathName)
 GF_EXPORT
 Bool gf_url_is_relative(const char *pathName)
 {
+	if (!pathName) return GF_TRUE;
 	u32 mode = URL_GetProtocolType(pathName);
 	return (mode==GF_URL_TYPE_RELATIVE) ? GF_TRUE : GF_FALSE;
 }
@@ -426,7 +427,7 @@ void gf_url_to_fs_path(char *sURL)
 
 //TODO handle reserved characters
 const char *pce_special = " %";
-const char *pce_encoded = "0123456789ABCDEF";
+const char *pce_encoded = "0123456789ABCDEFabcdef";
 
 char *gf_url_percent_encode(const char *path)
 {

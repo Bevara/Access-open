@@ -164,11 +164,13 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 
 			if (do_uncompress) {
 				compb = gf_malloc((u32) (size-8));
+				if (!compb) return GF_OUT_OF_MEM;
 
 				compressed_size = (u32) (size - 8);
 				gf_bs_read_data(bs, compb, compressed_size);
 				e = gf_gz_decompress_payload(compb, compressed_size, &uncomp_data, &osize);
 				if (e) {
+					gf_free(compb);
 					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Failed to uncompress payload for box type %s (0x%08X)\n", gf_4cc_to_str(otype), otype));
 					return e;
 				}
@@ -182,11 +184,20 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 			}
 		}
 	}
+
+#define ERR_EXIT(_e) { \
+		if (uncomp_bs) {\
+			gf_free(uncomp_data);\
+			gf_bs_del(uncomp_bs); \
+		}\
+		return _e;\
+	}
+
 	/*handle uuid*/
 	memset(uuid, 0, 16);
 	if (type == GF_ISOM_BOX_TYPE_UUID ) {
 		if (gf_bs_available(bs) < 16) {
-			return GF_ISOM_INCOMPLETE_FILE;
+			ERR_EXIT(GF_ISOM_INCOMPLETE_FILE);
 		}
 		gf_bs_read_data(bs, uuid, 16);
 		hdr_size += 16;
@@ -196,7 +207,7 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 	//handle large box
 	if (size == 1) {
 		if (gf_bs_available(bs) < 8) {
-			return GF_ISOM_INCOMPLETE_FILE;
+			ERR_EXIT(GF_ISOM_INCOMPLETE_FILE);
 		}
 		size = gf_bs_read_u64(bs);
 		hdr_size += 8;
@@ -206,12 +217,12 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 
 	if ( size < hdr_size ) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Box %s size "LLD" less than box header size %d\n", gf_4cc_to_str(type), size, hdr_size));
-		return GF_ISOM_INVALID_FILE;
+		ERR_EXIT(GF_ISOM_INVALID_FILE);
 	}
 	//if parent size is given, make sure box fits within parent
 	if (parent_size && (parent_size<size)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Box %s size "LLU" is larger than remaining parent size "LLU"\n", gf_4cc_to_str(type), size, parent_size ));
-		return GF_ISOM_INVALID_FILE;
+		ERR_EXIT(GF_ISOM_INVALID_FILE);
 	}
 	restore_type = 0;
 	if ((parent_type==GF_ISOM_BOX_TYPE_STSD) && (type==GF_QT_SUBTYPE_RAW) ) {
@@ -227,25 +238,25 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 	//some special boxes (references and track groups) are handled by a single generic box with an associated ref/group type
 	if (parent_type && (parent_type == GF_ISOM_BOX_TYPE_TREF)) {
 		newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_REFT);
-		if (!newBox) return GF_OUT_OF_MEM;
+		if (!newBox) ERR_EXIT(GF_OUT_OF_MEM);
 		((GF_TrackReferenceTypeBox*)newBox)->reference_type = type;
 	} else if (parent_type && (parent_type == GF_ISOM_BOX_TYPE_IREF)) {
 		newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_REFI);
-		if (!newBox) return GF_OUT_OF_MEM;
+		if (!newBox) ERR_EXIT(GF_OUT_OF_MEM);
 		((GF_ItemReferenceTypeBox*)newBox)->reference_type = type;
 	} else if (parent_type && (parent_type == GF_ISOM_BOX_TYPE_TRGR)) {
 		newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_TRGT);
-		if (!newBox) return GF_OUT_OF_MEM;
+		if (!newBox) ERR_EXIT(GF_OUT_OF_MEM);
 		((GF_TrackGroupTypeBox*)newBox)->group_type = type;
 	} else if (parent_type && (parent_type == GF_ISOM_BOX_TYPE_GRPL)) {
 		newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_GRPT);
-		if (!newBox) return GF_OUT_OF_MEM;
+		if (!newBox) ERR_EXIT(GF_OUT_OF_MEM);
 		((GF_EntityToGroupTypeBox*)newBox)->grouping_type = type;
 	} else {
 		//OK, create the box based on the type
 		is_special = GF_FALSE;
 		newBox = gf_isom_box_new_ex(uuid_type ? uuid_type : type, parent_type, skip_logs, is_root_box);
-		if (!newBox) return GF_OUT_OF_MEM;
+		if (!newBox) ERR_EXIT(GF_OUT_OF_MEM);
 	}
 
 	//OK, init and read this box
@@ -262,7 +273,7 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 	if (size - hdr_size > end ) {
 		newBox->size = size - hdr_size - end;
 		*outBox = newBox;
-		return GF_ISOM_INCOMPLETE_FILE;
+		ERR_EXIT(GF_ISOM_INCOMPLETE_FILE);
 	}
 
 	newBox->size = size - hdr_size;
@@ -538,6 +549,7 @@ ISOM_BOX_IMPL_DECL(ireftype)
 ISOM_BOX_IMPL_DECL(free)
 ISOM_BOX_IMPL_DECL(wide)
 ISOM_BOX_IMPL_DECL(mdat)
+ISOM_BOX_IMPL_DECL(imda)
 ISOM_BOX_IMPL_DECL_CHILD(moov)
 ISOM_BOX_IMPL_DECL(mvhd)
 ISOM_BOX_IMPL_DECL(mdhd)
@@ -883,6 +895,7 @@ ISOM_BOX_IMPL_DECL(prhd)
 ISOM_BOX_IMPL_DECL(proj_type)
 //ISOM_BOX_IMPL_DECL(mesh)
 
+ISOM_BOX_IMPL_DECL(keys)
 
 #define BOX_DEFINE(__type, b_rad, __par) { __type, b_rad##_box_new, b_rad##_box_del, b_rad##_box_read, b_rad##_box_write, b_rad##_box_size, b_rad##_box_dump, 0, 0, 0, __par, "p12", GF_FALSE}
 
@@ -1020,6 +1033,7 @@ static struct box_registry_entry {
 	BOX_DEFINE( GF_ISOM_BOX_TYPE_SKIP, free, "*"),
 	BOX_DEFINE( GF_ISOM_BOX_TYPE_MDAT, mdat, "file"),
 	BOX_DEFINE( GF_ISOM_BOX_TYPE_IDAT, mdat, "meta"),
+	BOX_DEFINE( GF_ISOM_BOX_TYPE_IMDA, mdat, "file"),
 	BOX_DEFINE_CHILD( GF_ISOM_BOX_TYPE_MOOV, moov, "file"),
 	FBOX_DEFINE( GF_ISOM_BOX_TYPE_MVHD, mvhd, "moov", 1),
 	FBOX_DEFINE( GF_ISOM_BOX_TYPE_MDHD, mdhd, "mdia", 1),
@@ -1077,7 +1091,7 @@ static struct box_registry_entry {
 	BOX_DEFINE( GF_ISOM_BOX_TYPE_BTRT, btrt, "sample_entry"),
 	BOX_DEFINE( GF_ISOM_BOX_TYPE_PASP, pasp, "video_sample_entry ipco"),
 	BOX_DEFINE( GF_ISOM_BOX_TYPE_CLAP, clap, "video_sample_entry ipco"),
-	FBOX_DEFINE_CHILD( GF_ISOM_BOX_TYPE_META, meta, "file moov trak moof traf udta", 0),	//apple uses meta in moov->udta
+	BOX_DEFINE_CHILD( GF_ISOM_BOX_TYPE_META, meta, "file moov trak moof traf udta"),	//apple uses meta in moov->udta
 	FBOX_DEFINE( GF_ISOM_BOX_TYPE_XML, xml, "meta", 0),
 	FBOX_DEFINE( GF_ISOM_BOX_TYPE_BXML, bxml, "meta", 0),
 	FBOX_DEFINE( GF_ISOM_BOX_TYPE_ILOC, iloc, "meta", 2),
@@ -1448,6 +1462,7 @@ static struct box_registry_entry {
 	ITUNES_TAG(GF_ISOM_ITUNE_THANKS),
 	ITUNES_TAG(GF_ISOM_ITUNE_ONLINE),
 	ITUNES_TAG(GF_ISOM_ITUNE_EXEC_PRODUCER),
+	ITUNES_TAG(GF_ISOM_ITUNE_LOCATION),
 
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_iTunesSpecificInfo, ilst_item, "ilst data", "apple"),
 	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_GMHD, def_parent, "minf", "apple"),
@@ -1455,6 +1470,7 @@ static struct box_registry_entry {
 	BOX_DEFINE_S(GF_QT_BOX_TYPE_TAPT, def_parent, "trak", "apple"),
 	FBOX_DEFINE_S( GF_QT_BOX_TYPE_GMIN, gmin, "gmhd", 0, "apple"),
 	FBOX_DEFINE_FLAGS_S( GF_QT_BOX_TYPE_ALIS, alis, "dref", 0, 1, "apple"),
+	FBOX_DEFINE_FLAGS_S( GF_QT_BOX_TYPE_CIOS, alis, "dref", 0, 1, "apple"),
 	FBOX_DEFINE_S( GF_QT_BOX_TYPE_CLEF, clef, "tapt", 0, "apple"),
 	FBOX_DEFINE_S( GF_QT_BOX_TYPE_PROF, clef, "tapt", 0, "apple"),
 	FBOX_DEFINE_S( GF_QT_BOX_TYPE_ENOF, clef, "tapt", 0, "apple"),
@@ -1513,7 +1529,8 @@ static struct box_registry_entry {
 	BOX_DEFINE_S_CHILD( GF_QT_SUBTYPE_RGBA, video_sample_entry, "stsd", "apple"),
 	BOX_DEFINE_S_CHILD( GF_QT_SUBTYPE_ABGR, video_sample_entry, "stsd", "apple"),
 	
-	
+	FBOX_DEFINE_S(GF_QT_BOX_TYPE_STPS, stss, "stbl", 0, "apple"),
+
 	//dolby boxes
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_AC3, audio_sample_entry, "stsd", "dolby"),
 	BOX_DEFINE_S_CHILD( GF_ISOM_BOX_TYPE_EC3, audio_sample_entry, "stsd", "dolby"),
@@ -1592,6 +1609,31 @@ static struct box_registry_entry {
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_EQUI, proj_type, "proj", 0, "youtube"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_MESH, proj_type, "proj", 0, "youtube"),
 
+	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_KEYS, keys, "meta", 0, "apple"),
+
+	BOX_DEFINE_S(GF_QT_SUBTYPE_ALAC, unkn, "stsd", "apple"),
+	BOX_DEFINE_S(GF_ISOM_SUBTYPE_FFV1, unkn, "stsd", "ffmpeg"),
+
+	BOX_DEFINE_S(GF_4CC('v','c','-','1'), unkn, "stsd", "smpte-RP2025"),
+	BOX_DEFINE_S(GF_4CC('d','v','c','1'), unkn, "vc-1 ipco", "smpte-RP2025"),
+
+	BOX_DEFINE_S(GF_4CC('G','M','C','W'), unkn, "stsd", "GPAC"),
+	BOX_DEFINE_S(GF_4CC('G','M','C','C'), unkn, "GMCW", "GPAC"),
+
+	/* for now we don't parse these*/
+	BOX_DEFINE_S(GF_4CC('u','n','c','C'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('c','m','p','d'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('c','p','a','l'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('c','p','a','t'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('c','l','e','v'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('s','p','l','z'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('s','n','u','c'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('s','b','p','m'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('c','l','o','c'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('f','p','c','k'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('d','i','s','i'), unkn, "video_sample_entry ipco", "rawff"),
+	BOX_DEFINE_S(GF_4CC('d','e','p','i'), unkn, "video_sample_entry ipco", "rawff"),
+
 /*
 	GF_ISOM_BOX_TYPE_CBMP	= GF_4CC( 'c', 'b', 'm', 'p' ),
 	GF_ISOM_BOX_TYPE_EQUI	= GF_4CC( 'e', 'q', 'u', 'i' ),
@@ -1628,8 +1670,6 @@ void gf_isom_registry_disable(u32 boxCode, Bool disable)
 static u32 get_box_reg_idx(u32 boxCode, u32 parent_type, u32 start_from)
 {
 	u32 i=0, count = gf_isom_get_num_supported_boxes();
-	const char *parent_name = parent_type ? gf_4cc_to_str(parent_type) : NULL;
-
 	if (!start_from) start_from = 1;
 
 	for (i=start_from; i<count; i++) {
@@ -1639,7 +1679,7 @@ static u32 get_box_reg_idx(u32 boxCode, u32 parent_type, u32 start_from)
 
 		if (!parent_type)
 			return i;
-		if (strstr(box_registry[i].parents_4cc, parent_name) != NULL)
+		if (strstr(box_registry[i].parents_4cc, gf_4cc_to_str(parent_type)) != NULL)
 			return i;
 		if (strstr(box_registry[i].parents_4cc, "*") != NULL)
 			return i;
@@ -1683,7 +1723,6 @@ GF_Box *gf_isom_box_new_ex(u32 boxType, u32 parentType, Bool skip_logs, Bool is_
 				break;
 			//some sample descritions are handled as generic ones but we know them, don't warn
 			case GF_ISOM_BOX_TYPE_STSD:
-				if (boxType==GF_ISOM_SUBTYPE_FFV1) break;
 				//fallthrough
 			default:
 				if (boxType==GF_ISOM_BOX_TYPE_GDAT) break;
@@ -1770,7 +1809,7 @@ GF_Err gf_isom_box_array_read(GF_Box *parent, GF_BitStream *bs)
 		}
 
 		//check container validity
-		if (strlen(a->registry->parents_4cc)) {
+		if (parent_type && strlen(a->registry->parents_4cc)) {
 			Bool parent_OK = GF_FALSE;
 			const char *parent_code = gf_4cc_to_str(parent->type);
 			if (parent->type == GF_ISOM_BOX_TYPE_UNKNOWN)
@@ -1810,7 +1849,7 @@ GF_Err gf_isom_box_array_read(GF_Box *parent, GF_BitStream *bs)
 		e = gf_list_add(parent->child_boxes, a);
 		if (e) return e;
 
-		if (parent->registry->add_rem_fn) {
+		if (parent->registry && parent->registry->add_rem_fn) {
 			e = parent->registry->add_rem_fn(parent, a, GF_FALSE);
 			if (e) {
 				if (e == GF_ISOM_INVALID_MEDIA) return GF_OK;
@@ -2051,7 +2090,7 @@ u32 gf_isom_get_supported_box_type(u32 idx)
 
 #ifndef GPAC_DISABLE_ISOM_DUMP
 
-GF_Err gf_isom_box_dump_start(GF_Box *a, const char *name, FILE * trace)
+GF_Err gf_isom_box_dump_start_ex(GF_Box *a, const char *name, FILE * trace, Bool force_version)
 {
 	gf_fprintf(trace, "<%s ", name);
 	if (a->size > 0xFFFFFFFF) {
@@ -2075,7 +2114,7 @@ GF_Err gf_isom_box_dump_start(GF_Box *a, const char *name, FILE * trace)
 		gf_fprintf(trace, "}\" ");
 	}
 
-	if (a->registry->max_version_plus_one) {
+	if (a->registry->max_version_plus_one || force_version) {
 		gf_fprintf(trace, "Version=\"%d\" Flags=\"%d\" ", ((GF_FullBox*)a)->version,((GF_FullBox*)a)->flags);
 	}
 	gf_fprintf(trace, "Specification=\"%s\" ", a->registry->spec);
@@ -2085,6 +2124,10 @@ GF_Err gf_isom_box_dump_start(GF_Box *a, const char *name, FILE * trace)
 		gf_fprintf(trace, "Container=\"%s\" ", a->registry->parents_4cc);
 	}
 	return GF_OK;
+}
+GF_Err gf_isom_box_dump_start(GF_Box *a, const char *name, FILE * trace)
+{
+	return gf_isom_box_dump_start_ex(a, name, trace, GF_FALSE);
 }
 
 GF_Err gf_isom_box_dump(void *ptr, FILE * trace)

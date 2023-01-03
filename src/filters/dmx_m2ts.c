@@ -31,6 +31,7 @@
 
 #include <gpac/mpegts.h>
 #include <gpac/thread.h>
+#include <gpac/internal/media_dev.h>
 
 typedef struct {
 	char *fragment;
@@ -203,13 +204,13 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 	if (stream->flags & GF_M2TS_GPAC_CODEC_ID) {
 		codecid = stream->stream_type;
 		stype = gf_codecid_type(codecid);
-		unframed = GF_TRUE;
+		if (stream->gpac_meta_dsi)
+			stype = stream->gpac_meta_dsi[4];
 		if (!stype) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[M2TSDmx] Unrecognized gpac codec %s - ignoring pid\n", gf_4cc_to_str(codecid) ));
 			return;
 		}
 	} else {
-
 		switch (stream->stream_type) {
 		case GF_M2TS_VIDEO_MPEG1:
 			stype = GF_STREAM_VISUAL;
@@ -272,6 +273,7 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 		case GF_M2TS_VIDEO_VC1:
 			stype = GF_STREAM_VISUAL;
 			codecid = GF_CODECID_SMPTE_VC1;
+			stream->flags |= GF_M2TS_CHECK_VC1;
 			break;
 		case GF_M2TS_VIDEO_AV1:
 			stype = GF_STREAM_VISUAL;
@@ -317,6 +319,12 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 		case GF_M2TS_AUDIO_EC3:
 			stype = GF_STREAM_AUDIO;
 			codecid = GF_CODECID_EAC3;
+			unframed = GF_TRUE;
+			break;
+		case GF_M2TS_AUDIO_TRUEHD:
+			stype = GF_STREAM_AUDIO;
+			codecid = GF_CODECID_TRUEHD;
+			unframed = GF_TRUE;
 			break;
 		case GF_M2TS_AUDIO_DTS:
 			stype = GF_STREAM_AUDIO;
@@ -332,7 +340,7 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 		case GF_M2TS_SYSTEMS_MPEG4_PES:
 			if (!esd) {
 				m4sys_iod_stream = GF_TRUE;
-				count = gf_list_count(stream->program->pmt_iod->ESDescriptors);
+				count = stream->program->pmt_iod ? gf_list_count(stream->program->pmt_iod->ESDescriptors) : 0;
 				for (i=0; i<count; i++) {
 					esd = gf_list_get(stream->program->pmt_iod->ESDescriptors, i);
 					if (esd->ESID == stream->mpeg4_es_id) break;
@@ -458,12 +466,47 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 
 		gf_filter_pid_set_property(opid, GF_PROP_PID_TIMESCALE, &PROP_UINT(90000) );
 		gf_filter_pid_set_property(opid, GF_PROP_PID_CLOCK_ID, &PROP_UINT(stream->program->pcr_pid) );
+
+		if ((stream->flags&GF_M2TS_ES_IS_PES) && stream->gpac_meta_dsi) {
+			char *cname;
+			GF_BitStream *bs = gf_bs_new(stream->gpac_meta_dsi, stream->gpac_meta_dsi_size, GF_BITSTREAM_READ);
+			u32 val = gf_bs_read_u32(bs); //codec ID (meta codec identifier)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_CODECID, &PROP_UINT(val) );
+			gf_bs_read_u8(bs); //stream type
+			gf_bs_read_u8(bs); //version
+			val = gf_bs_read_u32(bs); //codecID for meta codec, e.g. an AVCodecID or other
+			gf_filter_pid_set_property(opid, GF_PROP_PID_META_DEMUX_CODEC_ID, &PROP_UINT(val) );
+			cname = gf_bs_read_utf8(bs); //meta codec name
+			gf_filter_pid_set_property(opid, GF_PROP_PID_META_DEMUX_CODEC_NAME, cname ? &PROP_STRING_NO_COPY(cname) : NULL );
+			val = gf_bs_read_u32(bs); //meta opaque
+			gf_filter_pid_set_property(opid, GF_PROP_PID_META_DEMUX_OPAQUE, &PROP_UINT(val) );
+			u32 dsi_len = gf_bs_read_u32(bs);
+			if (dsi_len) {
+				u32 pos = (u32) gf_bs_get_position(bs);
+				gf_filter_pid_set_property(opid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA(stream->gpac_meta_dsi+pos, dsi_len) );
+				gf_bs_skip_bytes(bs, dsi_len);
+			} else {
+				gf_filter_pid_set_property(opid, GF_PROP_PID_DECODER_CONFIG, NULL);
+			}
+			if (stype==GF_STREAM_VISUAL) {
+				val = gf_bs_read_u32(bs);
+				gf_filter_pid_set_property(opid, GF_PROP_PID_WIDTH, &PROP_UINT(val) );
+				val = gf_bs_read_u32(bs);
+				gf_filter_pid_set_property(opid, GF_PROP_PID_HEIGHT, &PROP_UINT(val) );
+			} else if (stype==GF_STREAM_AUDIO) {
+				val = gf_bs_read_u32(bs);
+				gf_filter_pid_set_property(opid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(val) );
+				val = gf_bs_read_u32(bs);
+				gf_filter_pid_set_property(opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(val) );
+			}
+			gf_bs_del(bs);
+		}
 	}
 	gf_filter_pid_set_property(opid, GF_PROP_PID_SCALABLE, has_scal_layer ? &PROP_BOOL(GF_TRUE) : NULL);
 
 	gf_filter_pid_set_property(opid, GF_PROP_PID_SERVICE_ID, &PROP_UINT(stream->program->number) );
 
-	if (stream->lang) {
+	if ((stream->flags&GF_M2TS_ES_IS_PES) && stream->lang) {
 		char szLang[4];
 		szLang[0] = (stream->lang>>16) & 0xFF;
 		szLang[1] = (stream->lang>>8) & 0xFF;
@@ -493,7 +536,7 @@ static void m2tsdmx_declare_pid(GF_M2TSDmxCtx *ctx, GF_M2TS_PES *stream, GF_ESD 
 	}
 	/*indicate our coding dependencies if any*/
 	if (!m4sys_stream) {
-		if (stream->depends_on_pid) {
+		if ((stream->flags&GF_M2TS_ES_IS_PES) && stream->depends_on_pid) {
 			gf_filter_pid_set_property(opid, GF_PROP_PID_DEPENDENCY_ID, &PROP_UINT(stream->depends_on_pid) );
 			if ((stream->stream_type == GF_M2TS_VIDEO_HEVC_TEMPORAL) || (stream->stream_type == GF_M2TS_VIDEO_HEVC_MCTS)) {
 				gf_filter_pid_set_property(opid, GF_PROP_PID_SUBLAYER, &PROP_BOOL(GF_TRUE) );
@@ -606,6 +649,37 @@ static void m2tsdmx_send_packet(GF_M2TSDmxCtx *ctx, GF_M2TS_PES_PCK *pck)
 		sap_type = GF_FILTER_SAP_1;
 	}
 
+	if (pck->stream->flags & GF_M2TS_CHECK_VC1) {
+		//extract seq header
+		u32 start, next, sc_size, sc_size2, sc_size3, hdr_len=0;
+
+		start = next = gf_media_nalu_next_start_code(ptr, len, &sc_size);
+		if ((next<len) && (ptr[next+sc_size]==0x0F)) {
+			u32 ephdr = gf_media_nalu_next_start_code (ptr+next+sc_size, len-next-sc_size, &sc_size2);
+			if ((ephdr + next + sc_size < len) && (ptr[next+sc_size+ephdr+sc_size2]==0x0E)) {
+				u32 end = gf_media_nalu_next_start_code (ptr+next+sc_size+ephdr+sc_size2, len-next-sc_size-ephdr-sc_size2, &sc_size3);
+				if (end + ephdr + next + sc_size + sc_size2 < len)
+					hdr_len = end + ephdr + sc_size2 + next + sc_size;
+			} else if ((ephdr + next + sc_size < len) && (ptr[next+sc_size+ephdr+sc_size2]==0x0D)) {
+				hdr_len = ephdr + next + sc_size;
+			}
+		}
+		if (hdr_len) {
+			u8 *dsi=NULL;
+			u32 dsi_len;
+			ptr += start;
+			len -= start;
+			gf_media_vc1_seq_header_to_dsi(ptr, len, &dsi, &dsi_len);
+			if (dsi)
+				gf_filter_pid_set_property(opid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA_NO_COPY(dsi, dsi_len));
+
+			ptr += hdr_len;
+			len -= hdr_len;
+			pck->stream->flags &= ~GF_M2TS_CHECK_VC1;
+		}
+	}
+
+
 	dst_pck = gf_filter_pck_new_alloc(opid, len, &data);
 	if (!dst_pck) return;
 	memcpy(data, ptr, len);
@@ -632,7 +706,7 @@ static void m2tsdmx_send_packet(GF_M2TSDmxCtx *ctx, GF_M2TS_PES_PCK *pck)
 				pes->map_utc=0;
 			}
 			if (pes->map_pcr) {
-				Double diff = pck->PTS;
+				Double diff = (Double) pck->PTS;
 				diff -= pes->map_pcr;
 				diff /= 90000;
 				gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_MEDIA_TIME, &PROP_DOUBLE(ctx->media_start_range+diff) );

@@ -258,7 +258,7 @@ GF_Err gf_isom_setup_track_fragment(GF_ISOFile *movie, GF_ISOTrackID TrackID,
                                     u32 DefaultSampleDescriptionIndex,
                                     u32 DefaultSampleDuration,
                                     u32 DefaultSampleSize,
-                                    u8 DefaultSampleIsSync,
+                                    u8 DefaultSampleSyncFlags,
                                     u8 DefaultSamplePadding,
                                     u16 DefaultDegradationPriority,
                                     Bool force_traf_flags)
@@ -276,6 +276,13 @@ GF_Err gf_isom_setup_track_fragment(GF_ISOFile *movie, GF_ISOTrackID TrackID,
 
 	trak = gf_isom_get_track_from_id(movie->moov, TrackID);
 	if (!trak) return GF_BAD_PARAM;
+
+	if (DefaultSampleSyncFlags & GF_ISOM_FRAG_USE_SYNC_TABLE) {
+		DefaultSampleSyncFlags &= ~GF_ISOM_FRAG_USE_SYNC_TABLE;
+		if (!trak->Media->information->sampleTable->SyncSample) {
+			trak->Media->information->sampleTable->SyncSample = (GF_SyncSampleBox *) gf_isom_box_new_parent(&trak->Media->information->sampleTable->child_boxes, GF_ISOM_BOX_TYPE_STSS);
+		}
+	}
 
 	//create MVEX if needed
 	if (!movie->moov->mvex) {
@@ -298,7 +305,7 @@ GF_Err gf_isom_setup_track_fragment(GF_ISOFile *movie, GF_ISOTrackID TrackID,
 		mvex_on_child_box((GF_Box*)mvex, (GF_Box *) trex, GF_FALSE);
 	}
 	trex->track = trak;
-	return gf_isom_change_track_fragment_defaults(movie, TrackID, DefaultSampleDescriptionIndex, DefaultSampleDuration, DefaultSampleSize, DefaultSampleIsSync, DefaultSamplePadding, DefaultDegradationPriority, force_traf_flags);
+	return gf_isom_change_track_fragment_defaults(movie, TrackID, DefaultSampleDescriptionIndex, DefaultSampleDuration, DefaultSampleSize, DefaultSampleSyncFlags, DefaultSamplePadding, DefaultDegradationPriority, force_traf_flags);
 }
 
 #ifdef GF_ENABLE_CTRN
@@ -1224,6 +1231,9 @@ static GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_off
 
 	if (e) return e;
 
+	if (movie->on_last_block_start && !gf_list_count(movie->moof_list))
+		movie->on_last_block_start(movie->on_block_out_usr_data);
+		
 	//rewrite mdat after moof
 	if (movie->moof->mdat) {
 		gf_bs_write_data(bs, movie->moof->mdat, movie->moof->mdat_size);

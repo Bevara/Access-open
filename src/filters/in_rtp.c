@@ -57,8 +57,10 @@ static GF_FilterProbeScore rtpin_probe_url(const char *url, const char *mime)
 	/*we need rtsp/tcp , rtsp/udp or direct RTP sender (no control)*/
 	if (!strnicmp(url, "rtsp://", 7)
 		|| !strnicmp(url, "rtspu://", 8)
+		|| !strnicmp(url, "rtsph://", 8)
+		|| !strnicmp(url, "rtsps://", 8)
 		|| !strnicmp(url, "rtp://", 6)
-		|| !strnicmp(url, "satip://", 6))
+		|| !strnicmp(url, "satip://", 8))
 	{
 		return GF_FPROBE_SUPPORTED;
 	}
@@ -301,6 +303,7 @@ static Bool rtpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 
 	stream = rtpin_find_stream(ctx, evt->base.on_pid, 0, NULL, GF_FALSE);
 	if (!stream) return GF_TRUE;
+	if (stream->last_err) return GF_TRUE;
 
 	switch (evt->base.type) {
 	case GF_FEVT_PLAY:
@@ -317,6 +320,7 @@ static Bool rtpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		/*is this RTSP or direct RTP?*/
 		stream->flags &= ~RTP_EOS;
 		stream->flags &= ~RTP_EOS_FLUSHED;
+		stream->last_udp_time = 0;
 
 		if (!(stream->flags & RTP_INTERLEAVED)) {
 			if (stream->rtp_ch->rtp)
@@ -342,6 +346,7 @@ static Bool rtpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 					ctx->postponed_play_stream = stream;
 					ctx->last_start_range = evt->play.start_range;
 				}
+				stream->flags &= ~RTP_SKIP_NEXT_COM;
 				return GF_TRUE;
 			}
 		} else {
@@ -399,10 +404,11 @@ static Bool rtpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		}
 		break;
 	case GF_FEVT_SET_SPEED:
+		break;
 	case GF_FEVT_PAUSE:
 	case GF_FEVT_RESUME:
-		assert(stream->rtsp);
-		rtpin_rtsp_usercom_send(stream->rtsp, stream, evt);
+		if (stream->rtsp)
+			rtpin_rtsp_usercom_send(stream->rtsp, stream, evt);
 		break;
 	case GF_FEVT_CONNECT_FAIL:
 		//stream canceled due to setup failure, prevent any further setup on PLAY
@@ -412,23 +418,33 @@ static Bool rtpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		break;
 	}
 
-	//flush rtsp commands
-	if (ctx->session && !skip_rtsp_teardown) {
-		rtpin_rtsp_process_commands(ctx->session);
+	if (!ctx->creds) {
+		//flush rtsp commands
+		if (ctx->session && !skip_rtsp_teardown) {
+			rtpin_rtsp_process_commands(ctx->session);
+		}
 	}
-
 	if (reset_stream) rtpin_stream_reset_queue(stream);
+
 	//cancel event
 	return GF_TRUE;
 }
 
-static void rtpin_rtsp_flush(GF_RTPInRTSP *session)
+static void rtpin_rtsp_flush(GF_RTPInRTSP *session, Bool reset_only)
 {
 	/*process teardown on all sessions*/
 	while (!session->connect_error) {
 		if (!gf_list_count(session->rtsp_commands))
 			break;
-		rtpin_rtsp_process_commands(session);
+
+		if (reset_only) {
+			GF_RTSPCommand *com = gf_list_pop_back(session->rtsp_commands);
+			com->Session = NULL;
+			gf_rtsp_command_del(com);
+			session->flags &= ~RTSP_WAIT_REPLY;
+		} else {
+			rtpin_rtsp_process_commands(session);
+		}
 	}
 }
 
@@ -439,6 +455,11 @@ static GF_Err rtpin_process(GF_Filter *filter)
 	GF_RTPIn *ctx = gf_filter_get_udta(filter);
 
 	if (ctx->is_eos) return GF_EOS;
+	if (ctx->notif_error) {
+		GF_Err e = ctx->notif_error;
+		ctx->notif_error = GF_OK;
+		return e;
+	}
 
 	if (ctx->ipid) {
 		GF_FilterPacket *pck = gf_filter_pid_get_packet(ctx->ipid);
@@ -469,27 +490,125 @@ static GF_Err rtpin_process(GF_Filter *filter)
 		rtpin_rtsp_usercom_send(stream->rtsp, stream, &evt);
 	}
 
+	if (ctx->session) {
+		GF_Err e = gf_rtsp_check_connection(ctx->session->session);
+		if (e==GF_IP_NETWORK_EMPTY) {
+			gf_filter_post_process_task(filter);
+			return GF_OK;
+		} else if (e) {
 
-	if (ctx->retry_tcp && ctx->session) {
+			if (e==GF_IP_CONNECTION_CLOSED) {
+				if (gf_rtsp_session_reset(ctx->session->session, 1)<10) {
+#ifdef GPAC_HAS_SSL
+					if (gf_rtsp_session_needs_ssl(ctx->session->session) ) {
+						gf_rtsp_set_ssl_ctx(ctx->session->session, gf_dm_ssl_init(ctx->dm, 0) );
+					}
+#endif
+					e = GF_OK;
+				} else {
+					e = GF_IP_CONNECTION_FAILURE;
+				}
+			}
+
+			if (e==GF_IP_CONNECTION_FAILURE) {
+				gf_filter_setup_failure(filter, e);
+				gf_rtsp_session_del(ctx->session->session);
+				ctx->session->session = NULL;
+			}
+			return e;
+		}
+
+		if (ctx->check_creds) {
+			Bool force = (ctx->check_creds==2) ? GF_TRUE : GF_FALSE;
+			const char *user = gf_rtsp_get_user(ctx->session->session);
+			ctx->check_creds = 0;
+			if (user || force) {
+				const char *server_name = gf_rtsp_get_server_name(ctx->session->session);
+				const char *pass = gf_rtsp_get_password(ctx->session->session);
+				Bool secure = gf_rtsp_use_tls(ctx->session->session);
+				ctx->creds = gf_user_credentials_register(ctx->dm, secure, server_name, user, pass, GF_TRUE);
+				if (!ctx->creds) {
+					gf_filter_setup_failure(filter, GF_AUTHENTICATION_FAILURE);
+					return GF_AUTHENTICATION_FAILURE;
+				}
+			}
+		}
+
+		if (ctx->creds) {
+			if (ctx->creds->req_state==GF_CREDS_STATE_PENDING)
+				return GF_OK;
+
+			if (!ctx->creds->valid) {
+				ctx->creds = NULL;
+				gf_filter_setup_failure(filter, GF_AUTHENTICATION_FAILURE);
+				return GF_AUTHENTICATION_FAILURE;
+			}
+			gf_dynstrcat(&ctx->auth_string, "Basic ", NULL);
+			gf_dynstrcat(&ctx->auth_string, ctx->creds->digest, NULL);
+			ctx->creds = NULL;
+
+			if (ctx->auth_stream) {
+				stream = ctx->auth_stream;
+				ctx->auth_stream = NULL;
+				//send a setup if needed
+				stream->flags |= RTP_AUTH_RESETUP;
+				rtpin_check_setup(stream);
+				stream->flags &= ~RTP_AUTH_RESETUP;
+
+				//if not aggregated control or no more queued events send a play
+				if (! (stream->rtsp->flags & RTSP_AGG_CONTROL) )  {
+					GF_FilterEvent evt;
+					evt.base.on_pid = stream->opid;
+					evt.base.type = GF_FEVT_PLAY;
+					evt.play.start_range = ctx->last_start_range;
+					rtpin_rtsp_usercom_send(stream->rtsp, stream, &evt);
+				}
+			} else {
+				rtpin_rtsp_describe_send(ctx->session, 0, NULL);
+			}
+			return GF_OK;
+		}
+
+
+	}
+
+
+	if (ctx->retry_rtsp && ctx->session) {
 		GF_FilterEvent evt;
 		Bool send_agg_play = GF_TRUE;
+		Bool force_tcp = GF_FALSE;
 		GF_List *streams = gf_list_new();
-		ctx->retry_tcp = GF_FALSE;
-		ctx->interleave = 1;
+
+		if (ctx->retry_rtsp==RETRY_RTSP_FORCE_TCP) {
+			ctx->transport = RTP_TRANSPORT_TCP_ONLY;
+			force_tcp = GF_TRUE;
+		}
+
 		i=0;
 		while ((stream = (GF_RTPInStream *)gf_list_enum(ctx->streams, &i))) {
 			if (stream->status >= RTP_Setup) {
 				gf_list_add(streams, stream);
 			}
 		}
-		rtpin_rtsp_flush(ctx->session);
-		/*send teardown*/
-		rtpin_rtsp_teardown(ctx->session, NULL);
-		rtpin_rtsp_flush(ctx->session);
-		//for safety reset the session, some servers don't handle teardown that well
-		gf_rtsp_session_reset(ctx->session->session, GF_TRUE);
+		if (!(ctx->retry_rtsp & RETRY_RTSP_PENDING)) {
+			rtpin_rtsp_flush(ctx->session, GF_TRUE);
+			/*send teardown*/
+			rtpin_rtsp_teardown(ctx->session, NULL);
+			rtpin_rtsp_flush(ctx->session, GF_FALSE);
+			//for safety reset the session, some servers don't handle teardown that well
+			gf_rtsp_session_reset(ctx->session->session, GF_TRUE);
+			ctx->retry_rtsp |= RETRY_RTSP_PENDING;
+		}
+		GF_Err e = gf_rtsp_check_connection(ctx->session->session);
+		if (e==GF_IP_NETWORK_EMPTY) {
+			gf_filter_post_process_task(filter);
+			return GF_OK;
+		}
+		ctx->retry_rtsp = RETRY_RTSP_NONE;
 
-		ctx->session->flags |= RTSP_FORCE_INTER;
+		if (force_tcp)
+			ctx->session->flags |= RTSP_FORCE_INTER;
+
 		evt.play = ctx->postponed_play;
 		if (!evt.base.type) evt.base.type = GF_FEVT_PLAY;
 		gf_rtsp_set_buffer_size(ctx->session->session, ctx->block_size);
@@ -502,13 +621,14 @@ static GF_Err rtpin_process(GF_Filter *filter)
 			//reset all dynamic flags
 			stream->flags &= ~(RTP_EOS | RTP_EOS_FLUSHED | RTP_SKIP_NEXT_COM | RTP_CONNECTED);
 			//mark as interleaved
-			stream->flags |= RTP_INTERLEAVED;
+			if (force_tcp)
+				stream->flags |= RTP_INTERLEAVED;
 			//reset SSRC since some servers don't include it in interleave response
 			gf_rtp_reset_ssrc(stream->rtp_ch);
 
 			//send setup
 			rtpin_check_setup(stream);
-			rtpin_rtsp_flush(ctx->session);
+			rtpin_rtsp_flush(ctx->session, GF_FALSE);
 
 			//if not aggregated control or no more queued events send a play
 			if (! (stream->rtsp->flags & RTSP_AGG_CONTROL) )  {
@@ -516,7 +636,7 @@ static GF_Err rtpin_process(GF_Filter *filter)
 				rtpin_rtsp_usercom_send(stream->rtsp, stream, &evt);
 				send_agg_play = GF_FALSE;
 			}
-			rtpin_rtsp_flush(ctx->session);
+			rtpin_rtsp_flush(ctx->session, GF_FALSE);
 		}
 		if (stream && send_agg_play) {
 			evt.base.on_pid = stream->opid;
@@ -605,7 +725,7 @@ static GF_Err rtpin_process(GF_Filter *filter)
 				if (ctx->session) {
 					/*send teardown*/
 					rtpin_rtsp_teardown(ctx->session, NULL);
-					rtpin_rtsp_flush(ctx->session);
+					rtpin_rtsp_flush(ctx->session, GF_FALSE);
 				}
 			}
 			return GF_EOS;
@@ -622,7 +742,7 @@ static GF_Err rtpin_process(GF_Filter *filter)
 			ctx->session->connect_error = GF_OK;
 		}
 	}
-
+	ctx->nb_bytes_rcv += tot_read;
 	//we had data, ask for immediate re-process
 	if (tot_read) {
 		gf_filter_post_process_task(filter);
@@ -632,7 +752,7 @@ static GF_Err rtpin_process(GF_Filter *filter)
 	if (ctx->max_sleep<0)
 		gf_filter_ask_rt_reschedule(filter, (u32) ((-ctx->max_sleep) *1000) );
 	else if (!ctx->min_frame_dur_ms) {
-		gf_filter_ask_rt_reschedule(filter, 1000);
+		gf_filter_ask_rt_reschedule(filter, ctx->nb_bytes_rcv ? 1000 : 10000);
 	}
 	else {
 		assert(ctx->min_frame_dur_ms <= (u32) ctx->max_sleep);
@@ -642,6 +762,11 @@ static GF_Err rtpin_process(GF_Filter *filter)
 	return GF_OK;
 }
 
+void rtpin_do_authenticate(GF_RTPIn *ctx)
+{
+	if (!ctx->session) return;
+	ctx->check_creds = 2;
+}
 
 static GF_Err rtpin_initialize(GF_Filter *filter)
 {
@@ -651,8 +776,12 @@ static GF_Err rtpin_initialize(GF_Filter *filter)
 	ctx->streams = gf_list_new();
 	ctx->filter = filter;
 	//turn on interleave on http port
-	if ((ctx->default_port == 80) || (ctx->default_port == 8080))
-		ctx->interleave = 1;
+	if (ctx->transport==RTP_TRANSPORT_AUTO) {
+		if ((ctx->default_port == 80) || (ctx->default_port == 8080))
+			ctx->transport = RTP_TRANSPORT_TCP_ONLY;
+		if (ctx->src && !strnicmp(ctx->src, "rtsph://", 8))
+			ctx->transport = RTP_TRANSPORT_TCP_ONLY;
+	}
 
 	ctx->last_start_range = -1.0;
 
@@ -712,11 +841,36 @@ static GF_Err rtpin_initialize(GF_Filter *filter)
 		rtpin_satip_get_server_ip(ctx->src, ctx->session->satip_server);
 	}
 
-	if (!ctx->session) {
+	if (!ctx->session)
 		return GF_NOT_SUPPORTED;
-	} else {
-		rtpin_rtsp_describe_send(ctx->session, 0, NULL);
+
+	ctx->dm = gf_filter_get_download_manager(filter);
+	if (!strnicmp(ctx->src, "rtsps://", 8)
+		|| (!strnicmp(ctx->src, "rtsph://", 8) && 
+			((gf_rtsp_get_session_port(ctx->session->session) == 443) || (gf_rtsp_get_session_port(ctx->session->session) == 8443)))
+	) {
+#ifdef GPAC_HAS_SSL
+
+#ifdef GPAC_ENABLE_COVERAGE
+		//all our tests directly detect ssl from above conditions
+		if (gf_sys_is_cov_mode())
+			gf_rtsp_session_needs_ssl(ctx->session->session);
+#endif
+
+		GF_Err e = gf_rtsp_set_ssl_ctx(ctx->session->session, gf_dm_ssl_init(ctx->dm, 0) );
+		if (e) return e;
+#else
+		return GF_NOT_SUPPORTED;
+#endif
 	}
+
+	const char *user = gf_rtsp_get_user(ctx->session->session);
+	if (user) {
+		ctx->check_creds = 1;
+		return GF_OK;
+	}
+
+	rtpin_rtsp_describe_send(ctx->session, 0, NULL);
 	return GF_OK;
 }
 
@@ -727,16 +881,17 @@ static void rtpin_finalize(GF_Filter *filter)
 	ctx->done = GF_TRUE;
 	if (ctx->session) {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_RTP, ("[RTP] Closing RTSP service\n"));
-		rtpin_rtsp_flush(ctx->session);
+		rtpin_rtsp_flush(ctx->session, GF_FALSE);
 		if (!ctx->is_eos) {
 			/*send teardown*/
 			rtpin_rtsp_teardown(ctx->session, NULL);
-			rtpin_rtsp_flush(ctx->session);
+			rtpin_rtsp_flush(ctx->session, GF_FALSE);
 		}
 	}
 
 	rtpin_reset(ctx, GF_TRUE);
 	gf_list_del(ctx->streams);
+	if (ctx->auth_string) gf_free(ctx->auth_string);
 
 	gf_sk_group_del(ctx->sockgroup);
 }
@@ -786,7 +941,7 @@ static const GF_FilterArgs RTPInArgs[] =
 	{ OFFS(ttl), "multicast TTL", GF_PROP_UINT, "127", "0-127", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(reorder_len), "reorder length in packets", GF_PROP_UINT, "1000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(reorder_delay), "max delay in RTP re-orderer, packets will be dispatched after that", GF_PROP_UINT, "50", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(block_size), "buffer size for RTP/UDP or RTSP when interleaved", GF_PROP_UINT, "0x200000", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(block_size), "buffer size for RTP/UDP or RTSP when interleaved", GF_PROP_UINT, "0x100000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(disable_rtcp), "disable RTCP reporting", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(nat_keepalive), "delay in ms of NAT keepalive, disabled by default (except for SatIP, set to 30s by default)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(force_mcast), "force multicast on indicated IP in RTSP setup", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -794,13 +949,15 @@ static const GF_FilterArgs RTPInArgs[] =
 	{ OFFS(bandwidth), "set bandwidth param for RTSP requests", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(default_port), "set default RTSP port", GF_PROP_UINT, "554", "0-65535", 0},
 	{ OFFS(satip_port), "set default port for SATIP", GF_PROP_UINT, "1400", "0-65535", 0},
-	{ OFFS(interleave), "set RTP over RTSP", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(transport), "set RTP over RTSP\n"
+		"- auto: set interleave on if HTTP tunnel is used, off otherwise and retry in interleaved mode if UDP timeout\n"
+		"- tcp: enable RTP over RTSP\n"
+		"- udp: disable RTP over RTSP", GF_PROP_UINT, "auto", "auto|tcp|udp", GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(udp_timeout), "default timeout before considering UDP is down", GF_PROP_UINT, "10000", NULL, 0},
-	{ OFFS(rtsp_timeout), "default timeout before considering RTSP is down", GF_PROP_UINT, "3000", NULL, 0},
 	{ OFFS(rtcp_timeout), "default timeout for RTCP traffic in ms. After this timeout, playback will start out of sync. If 0 always wait for RTCP", GF_PROP_UINT, "5000", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(autortsp), "automatically reconfig RTSP interleaving if UDP timeout", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(first_packet_drop), "set number of first RTP packet to drop (0 if no drop)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(frequency_drop), "drop 1 out of N packet (0 disable dropping)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(first_packet_drop), "set number of first RTP packet to drop (0 if no drop)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
+	{ OFFS(frequency_drop), "drop 1 out of N packet (0 disable dropping)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
+	{ OFFS(loss_rate), "loss rate to signal in RTCP, -1 means real loss rate, otherwise a per-thousand of packet lost", GF_PROP_SINT, "-1", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 	{ OFFS(user_agent), "user agent string, by default solved from GPAC preferences", GF_PROP_STRING, "$GUA", NULL, 0},
 	{ OFFS(languages), "user languages, by default solved from GPAC preferences", GF_PROP_STRING, "$GLANG", NULL, 0},
 	{ OFFS(stats), "update statistics to the user every given MS (0 disables reporting)", GF_PROP_UINT, "500", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -809,6 +966,8 @@ static const GF_FilterArgs RTPInArgs[] =
 	"- a positive value `N` means to sleep at most `N` ms but will sleep less if frame duration is shorter", GF_PROP_SINT, "1000", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(rtcpsync), "use RTCP to adjust synchronization", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(forceagg), "force RTSP control aggregation (patch for buggy servers)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(ssm), "list of IP to include for source-specific multicast", GF_PROP_STRING_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(ssmx), "list of IP to exclude for source-specific multicast", GF_PROP_STRING_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -821,7 +980,15 @@ GF_FilterRegister RTPInRegister = {
 	"- RTP direct url through `rtp://` protocol scheme\n"
 	"- RTSP session processing through `rtsp://` and `satip://` protocol schemes\n"
 	" \n"
-	"The filter produces either PIDs with media frames, or file PIDs with multiplexed data (e.g. MPEG-2 TS).")
+	"The filter produces either PIDs with media frames, or file PIDs with multiplexed data (e.g. MPEG-2 TS)."
+	" \n"
+	"The filter will use:\n"
+	"- RTSP over HTTP tunnel if server port is 80 or 8080 or if protocol scheme is `rtsph://`.\n"
+	"- RTSP over TLS if server port is 322 or if protocol scheme is `rtsps://`.\n"
+	"- RTSP over HTTPS tunnel if server port is 443 and if protocol scheme is `rtsph://`.\n"
+	" \n"
+	"The filter will attempt reconnecting in TLS mode after two consecutive initial connection failures.\n"
+	)
 	.private_size = sizeof(GF_RTPIn),
 	.args = RTPInArgs,
 	.initialize = rtpin_initialize,
@@ -840,6 +1007,9 @@ GF_FilterRegister RTPInRegister = {
 const GF_FilterRegister *rtpin_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_STREAMING
+	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
+		gf_opts_set_key("temp_in_proto", RTPInRegister.name, "rtp,rtsp,rtspu,rtsph,satip,rtsps");
+	}
 	return &RTPInRegister;
 #else
 	return NULL;

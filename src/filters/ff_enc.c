@@ -39,13 +39,12 @@ typedef struct _gf_ffenc_ctx
 	//opts
 	Bool all_intra;
 	char *c;
-	Bool ls;
+	Bool ls, rld;
 	u32 pfmt;
 	GF_Fraction fintra;
 	Bool rc;
 
 	//internal data
-	Bool initialized;
 	Bool gen_dsi;
 
 	u32 gop_size;
@@ -137,7 +136,7 @@ typedef struct _gf_ffenc_ctx
 	AVPacket *pkt;
 #endif
 
-	u32 premul_timescale;
+	Bool args_updated;
 
 	FILE *logfile_pass1;
 } GF_FFEncodeCtx;
@@ -174,7 +173,6 @@ static GF_Err ffenc_initialize(GF_Filter *filter)
 {
 	u32 codec_id;
 	GF_FFEncodeCtx *ctx = (GF_FFEncodeCtx *) gf_filter_get_udta(filter);
-	ctx->initialized = GF_TRUE;
 	ctx->src_packets = gf_list_new();
 	ctx->sdbs = gf_bs_new((u8*)ctx, 1, GF_BITSTREAM_READ);
 
@@ -199,6 +197,13 @@ static GF_Err ffenc_initialize(GF_Filter *filter)
 	}
 	if (!ctx->force_codec) return GF_NOT_SUPPORTED;
 	ffenc_override_caps(filter, ctx->force_codec->type);
+
+
+	if (gf_filter_is_temporary(filter)) {
+		gf_filter_meta_set_instances(filter, ctx->force_codec->name);
+		return GF_OK;
+	}
+
 	return GF_OK;
 }
 
@@ -242,11 +247,11 @@ static void ffenc_copy_pid_props(GF_FFEncodeCtx *ctx)
 	if (!ctx->codecid) {
 		gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_CODECID, &PROP_UINT(GF_CODECID_FFMPEG) );
 		if (ctx->encoder) {
-			gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_FFMPEG_CODEC_ID, &PROP_UINT(ctx->encoder->codec->id) );
+			gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_META_DEMUX_CODEC_ID, &PROP_UINT(ctx->encoder->codec->id) );
 
 			const char *cname = avcodec_get_name(ctx->encoder->codec->id);
 			if (cname)
-				gf_filter_pid_set_property_str(ctx->out_pid, "ffmpeg:codec", &PROP_STRING(cname ) );
+				gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_META_DEMUX_CODEC_NAME, &PROP_STRING(cname ) );
 		}
 	} else {
 		gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_CODECID, &PROP_UINT(ctx->codecid) );
@@ -313,130 +318,7 @@ static void ffenc_copy_pid_props(GF_FFEncodeCtx *ctx)
 	}
 }
 
-static void ffenc_generate_dsi(GF_FFEncodeCtx *ctx, const u8 *data, u32 size)
-{
-	GF_VPConfig *vpc=NULL;
-	GF_AC3Header ac3hdr;
-	u32 dsi_size=0;
-	u8 *dsi=NULL;
-	GF_BitStream *bs;
-	GF_Err e;
-	Bool flag=GF_FALSE;
 
-	ctx->gen_dsi = GF_FALSE;
-	switch (ctx->codecid) {
-	case GF_CODECID_VP8:
-	case GF_CODECID_VP10:
-		vpc = gf_odf_vp_cfg_new();
-		vpc->profile = 1;
-		vpc->level = 10;
-		vpc->bit_depth = 8;
-		vpc->colour_primaries = ctx->encoder->color_primaries;
-		vpc->transfer_characteristics = ctx->encoder->color_trc;
-		vpc->matrix_coefficients = ctx->encoder->colorspace;
-		break;
-	case GF_CODECID_VP9:
-	{
-		Bool key_frame = GF_FALSE;
-		u32 width = 0, height = 0, renderWidth, renderHeight;
-		u32 num_frames_in_superframe = 0, superframe_index_size = 0, i;
-		u32 frame_sizes[VP9_MAX_FRAMES_IN_SUPERFRAME];
-		bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
-		e = gf_vp9_parse_superframe(bs, size, &num_frames_in_superframe, frame_sizes, &superframe_index_size);
-		if (!e) {
-			vpc = gf_odf_vp_cfg_new();
-			for (i = 0; i < num_frames_in_superframe; ++i) {
-				u64 pos2 = gf_bs_get_position(bs);
-				if (gf_vp9_parse_sample(bs, vpc, &key_frame, &width, &height, &renderWidth, &renderHeight) != GF_OK) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[VP9Dmx] Error parsing frame\n"));
-					gf_odf_vp_cfg_del(vpc);
-					vpc = NULL;
-					break;
-				}
-				gf_bs_seek(bs, pos2 + frame_sizes[i]);
-			}
-		}
-		gf_bs_del(bs);
-	}
-		break;
-	case GF_CODECID_EAC3:
-		flag = GF_TRUE;
-	case GF_CODECID_AC3:
-		bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
-		if (flag) {
-			if (gf_eac3_parser_header_bs(bs, &ac3hdr) == GF_TRUE) {
-				ac3hdr.is_ec3=GF_TRUE;
-				gf_odf_ac3_cfg_write(&ac3hdr, &dsi, &dsi_size);
-			}
-		} else {
-			if (gf_ac3_parser_bs(bs, &ac3hdr, GF_TRUE) == GF_TRUE) {
-				gf_odf_ac3_cfg_write(&ac3hdr, &dsi, &dsi_size);
-			}
-		}
-		gf_bs_del(bs);
-		break;
-	case GF_CODECID_TRUEHD:
-	{
-		u32 format, peak_rate, sync, valid=0;
-		bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
-
-		/*nibble, frame size and time = */gf_bs_read_u32(bs);
-		sync = gf_bs_read_u32(bs);
-		if (sync == 0xF8726FBA) {
-			format = gf_bs_read_u32(bs);
-			u16 sig = gf_bs_read_u16(bs);
-			if (sig == 0xB752) {
-				gf_bs_read_u16(bs);
-				gf_bs_read_u16(bs);
-				gf_bs_read_int(bs, 1);
-				peak_rate = gf_bs_read_int(bs, 15);
-				valid = 1;
-			}
-		}
-		gf_bs_del(bs);
-
-		if (valid) {
-			bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-			gf_bs_write_u32(bs, format);
-			gf_bs_write_int(bs, peak_rate, 15);
-			gf_bs_write_int(bs, 0, 1);
-			gf_bs_write_u32(bs, 0);
-			gf_bs_get_content(bs, &dsi, &dsi_size);
-			gf_bs_del(bs);
-		}
-	}
-		break;
-	case GF_CODECID_MPEG1:
-	case GF_CODECID_MPEG2_422:
-	case GF_CODECID_MPEG2_SNR:
-	case GF_CODECID_MPEG2_HIGH:
-	case GF_CODECID_MPEG2_MAIN:
-	case GF_CODECID_MPEG2_SIMPLE:
-	case GF_CODECID_MPEG2_SPATIAL:
-		flag = GF_TRUE;
-	case GF_CODECID_MPEG4_PART2:
-	{
-		GF_M4VDecSpecInfo vcfg;
-		GF_M4VParser *mvp;
-		mvp = gf_m4v_parser_new((u8*)data, size, flag);
-		if (gf_m4v_parse_config(mvp, &vcfg) == GF_OK) {
-			dsi_size = (u32) gf_m4v_get_object_start(mvp);
-			dsi = gf_malloc(sizeof(u8) * dsi_size);
-			memcpy(dsi, data, dsi_size);
-		}
-		gf_m4v_parser_del(mvp);
-	}
-		break;
-	}
-
-	if (vpc) {
-		gf_odf_vp_cfg_write(vpc, &dsi, &dsi_size,  vpc->codec_initdata_size ? GF_TRUE : GF_FALSE);
-		gf_odf_vp_cfg_del(vpc);
-	}
-
-	if (dsi)
-		gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA_NO_COPY(dsi, dsi_size));
-}
 
 static u64 ffenc_get_cts(GF_FFEncodeCtx *ctx, GF_FilterPacket *pck)
 {
@@ -616,6 +498,10 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 	}
 
 	if (force_intra) {
+		if (ctx->args_updated) {
+			force_intra = 2;
+			ctx->args_updated = GF_FALSE;
+		}
 		//file switch we force a full reset to force injecting xPS in the stream
 		//we could also inject them manually but we don't have them !!
 		if ((ctx->rc && ctx->nb_frames_in) || (force_intra==2)) {
@@ -680,9 +566,9 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		ctx->frame->pkt_duration = gf_filter_pck_get_duration(pck);
 
 //use signed version of timestamp rescale since we may have negative dts
-#define SCALE_TS(_ts) if (_ts != GF_FILTER_NO_TS) { _ts = gf_timestamp_rescale_signed(_ts, ctx->premul_timescale, ctx->encoder->time_base.den); }
-#define UNSCALE_TS(_ts) if (_ts != AV_NOPTS_VALUE)  { _ts = gf_timestamp_rescale_signed(_ts, ctx->encoder->time_base.den, ctx->premul_timescale); }
-#define UNSCALE_DUR(_ts) { _ts = gf_timestamp_rescale(_ts, ctx->encoder->time_base.den, ctx->premul_timescale); }
+#define SCALE_TS(_ts) if (_ts != GF_FILTER_NO_TS) { _ts = gf_timestamp_rescale_signed(_ts, ctx->timescale, ctx->encoder->time_base.den); }
+#define UNSCALE_TS(_ts) if (_ts != AV_NOPTS_VALUE)  { _ts = gf_timestamp_rescale_signed(_ts, ctx->encoder->time_base.den, ctx->timescale); }
+#define UNSCALE_DUR(_ts) { _ts = gf_timestamp_rescale(_ts, ctx->encoder->time_base.den, ctx->timescale); }
 
 		if (ctx->remap_ts) {
 			SCALE_TS(ctx->frame->pts);
@@ -930,7 +816,8 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		}
 	}
 	if (ctx->gen_dsi) {
-		ffenc_generate_dsi(ctx, output, size);
+		ffmpeg_generate_gpac_dsi(ctx->out_pid, ctx->codecid, ctx->encoder->color_primaries, ctx->encoder->color_trc, ctx->encoder->colorspace, output, size);
+		ctx->gen_dsi = GF_FALSE;
 	}
 
 	ffenc_log_video(filter, ctx, pkt, gf_filter_reporting_enabled(filter));
@@ -968,7 +855,7 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 static void ffenc_audio_append_samples(struct _gf_ffenc_ctx *ctx, const u8 *data, u32 size, u32 sample_offset, u32 nb_samples)
 {
 	u8 *dst;
-	u32 f_idx, s_idx;
+	u32 f_idx, s_idx, offset, bytes;
 	u32 i, bytes_per_chan, src_frame_size;
 
 	if (!ctx->audio_buffer || !nb_samples)
@@ -997,7 +884,14 @@ static void ffenc_audio_append_samples(struct _gf_ffenc_ctx *ctx, const u8 *data
 	if (s_idx) {
 		assert(s_idx + nb_samples <= (u32) ctx->encoder->frame_size);
 	}
-	dst = ctx->audio_buffer + (f_idx * ctx->channels * ctx->encoder->frame_size + s_idx) * bytes_per_chan;
+
+	offset = (f_idx * ctx->channels * ctx->encoder->frame_size + s_idx) * bytes_per_chan;
+	bytes = nb_samples * ctx->channels * bytes_per_chan;
+	if (bytes + offset > ctx->audio_buffer_size) {
+		ctx->audio_buffer_size = bytes+offset;
+		ctx->audio_buffer = gf_realloc(ctx->audio_buffer, sizeof(u8)*ctx->audio_buffer_size);
+	}
+	dst = ctx->audio_buffer + offset;
 	while (nb_samples) {
 		const u8 *src = NULL;
 		u32 nb_samples_to_copy = nb_samples;
@@ -1261,7 +1155,10 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 				len = nb_p * ctx->encoder->frame_size;
 			}
 			len *= ctx->bytes_per_sample;
-			assert(len + offset <= ctx->audio_buffer_size);
+			if (len + offset > ctx->audio_buffer_size) {
+				ctx->audio_buffer_size = len+offset;
+				ctx->audio_buffer = gf_realloc(ctx->audio_buffer, sizeof(u8) * ctx->audio_buffer_size);
+			}
 			memmove(ctx->audio_buffer, ctx->audio_buffer + offset, sizeof(u8)*len);
 			ctx->samples_in_audio_buffer -= nb_samples_to_drop;
 		} else {
@@ -1352,7 +1249,8 @@ static GF_Err ffenc_process_audio(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 		gf_filter_pck_unref(src_pck);
 	}
 	if (ctx->gen_dsi) {
-		ffenc_generate_dsi(ctx, output, pkt->size);
+		ffmpeg_generate_gpac_dsi(ctx->out_pid, ctx->codecid, ctx->encoder->color_primaries, ctx->encoder->color_trc, ctx->encoder->colorspace, output, size);
+		ctx->gen_dsi = GF_FALSE;
 	}
 
 	gf_filter_pck_set_cts(dst_pck, pkt->pts + ctx->ts_shift);
@@ -1488,13 +1386,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	//declare our output pid to make sure we connect the chain
 	ctx->in_pid = pid;
 	if (!ctx->out_pid) {
-		char szCodecName[1000];
 		ctx->out_pid = gf_filter_pid_new(filter);
-
-		//to change once we implement on-the-fly codec change
-		sprintf(szCodecName, "ffenc:%s", codec->name ? codec->name : "unknown");
-		gf_filter_set_name(filter, szCodecName);
-		gf_filter_pid_set_framing_mode(ctx->in_pid, GF_TRUE);
 	}
 	if (type==GF_STREAM_AUDIO) {
 		ctx->process = ffenc_process_audio;
@@ -1700,7 +1592,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		u64 change_chan_layout = 0;
 		//check audio format
 		ctx->sample_fmt = ffmpeg_audio_fmt_from_gpac(afmt);
-		change_input_fmt = 0;
+		change_input_fmt = AV_SAMPLE_FMT_NONE;
 		while (codec->sample_fmts) {
 			if (codec->sample_fmts[i] == AV_SAMPLE_FMT_NONE) break;
 			if (codec->sample_fmts[i] == ctx->sample_fmt) {
@@ -1726,12 +1618,13 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		if (!ctx->channel_layout) {
 			ctx->channel_layout = gf_audio_fmt_get_layout_from_cicp(gf_audio_fmt_get_cicp_layout(ctx->channels, 0, 0));
 		}
+		u64 ff_ch_layout = ffmpeg_channel_layout_from_gpac(ctx->channel_layout);
 		if (!codec->channel_layouts)
 			change_chan_layout = ctx->channel_layout;
 
 		while (codec->channel_layouts) {
 			if (!codec->channel_layouts[i]) break;
-			if (codec->channel_layouts[i] == ffmpeg_channel_layout_from_gpac(ctx->channel_layout)) {
+			if (codec->channel_layouts[i] == ff_ch_layout) {
 				change_chan_layout = ctx->channel_layout;
 				break;
 			}
@@ -1818,7 +1711,14 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 			//by default use input timescale as timebase for encoder, but:
 			//
 			// - mpeg12enc (maybe other codecs?) uses timebase to compute framerate so 1/25000 will fail, we must pass the fps
-			if ((codec->id==AV_CODEC_ID_MPEG1VIDEO) || (codec->id==AV_CODEC_ID_MPEG2VIDEO)) {
+			if ((codec->id==AV_CODEC_ID_MPEG1VIDEO)
+				|| (codec->id==AV_CODEC_ID_MPEG2VIDEO)
+				|| (codec->id==AV_CODEC_ID_H264)
+				|| (codec->id==AV_CODEC_ID_HEVC)
+#ifdef FFMPEG_ENABLE_VVC
+				|| (codec->id==AV_CODEC_ID_VVC)
+#endif
+			) {
 				ctx->encoder->time_base.num = ctx->encoder->framerate.den;
 				ctx->encoder->time_base.den = ctx->encoder->framerate.num;
 			}
@@ -1941,7 +1841,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		ctx->frame->format = ctx->encoder->sample_fmt;
 
 		ctx->audio_buffer_size = ctx->sample_rate;
-		ctx->audio_buffer = gf_realloc(ctx->audio_buffer, sizeof(char) * ctx->enc_buffer_size);
+		ctx->audio_buffer = gf_realloc(ctx->audio_buffer, sizeof(char) * ctx->audio_buffer_size);
 		ctx->bytes_per_sample = ctx->channels * gf_audio_fmt_bit_depth(afmt) / 8;
 		ctx->init_cts_setup = GF_TRUE;
 
@@ -1976,8 +1876,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	else if (ctx->gop_size) ctx->encoder->gop_size = ctx->gop_size;
 
 	//by default let libavcodec decide - if single thread is required, let the user define -threads option
-	if (codec->capabilities & AV_CODEC_CAP_AUTO_THREADS)
-		ctx->encoder->thread_count = 0;
+	ctx->encoder->thread_count = 0;
 
 	//setup 2 pass encoding
 	if (ctx->encoder->flags & (AV_CODEC_FLAG_PASS1|AV_CODEC_FLAG_PASS2)) {
@@ -2022,7 +1921,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	}
 
 	av_dict_copy(&options, ctx->options, 0);
-	res = avcodec_open2(ctx->encoder, codec, &options );
+	res = avcodec_open2(ctx->encoder, codec, &options);
 	if (res < 0) {
 		if (options) av_dict_free(&options);
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] PID %s failed to open codec context: %s\n", gf_filter_pid_get_name(pid), av_err2str(res) ));
@@ -2031,12 +1930,22 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		ctx->setup_failed = 1;
 		return GF_BAD_PARAM;
 	}
-	//precompute gpac_timescale * encoder->time_base.num for rescale operations
-	//do that AFTER opening the codec, since some codecs may touch this field ...
-	ctx->premul_timescale = ctx->timescale;
-	ctx->premul_timescale *= ctx->encoder->time_base.num;
 
-	ctx->remap_ts = (ctx->encoder->time_base.den && (ctx->encoder->time_base.den != ctx->premul_timescale)) ? GF_TRUE : GF_FALSE;
+	if (ctx->c) gf_free(ctx->c);
+	ctx->c = gf_strdup(codec->name);
+
+	{
+		char szCodecName[1000];
+		if (ctx->encoder->thread_count>1)
+			sprintf(szCodecName, "ffenc:%s (%d frames)", codec->name ? codec->name : "unknown", ctx->encoder->thread_count);
+		else
+			sprintf(szCodecName, "ffenc:%s", codec->name ? codec->name : "unknown");
+		gf_filter_set_name(filter, szCodecName);
+		gf_filter_pid_set_framing_mode(ctx->in_pid, GF_TRUE);
+	}
+
+
+	ctx->remap_ts = (ctx->encoder->time_base.den != ctx->timescale) ? GF_TRUE : GF_FALSE;
 	if (!ctx->target_rate)
 		ctx->target_rate = (u32)ctx->encoder->bit_rate;
 
@@ -2056,10 +1965,11 @@ static GF_Err ffenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 
 static GF_Err ffenc_update_arg(GF_Filter *filter, const char *arg_name, const GF_PropertyValue *arg_val)
 {
-	s32 res;
 	char szOverrideOpt[1000];
-	Bool do_override = GF_FALSE;
+	GF_PropertyValue arg_val_override;
 	GF_FFEncodeCtx *ctx = gf_filter_get_udta(filter);
+
+	if (!strcmp(arg_name, "rld")) return GF_OK;
 
 	if (!strcmp(arg_name, "global_header"))	return GF_OK;
 	else if (!strcmp(arg_name, "local_header"))	return GF_OK;
@@ -2084,33 +1994,54 @@ static GF_Err ffenc_update_arg(GF_Filter *filter, const char *arg_name, const GF
 			ctx->target_rate *= 1000;
 
 		sprintf(szOverrideOpt, "%d", ctx->target_rate);
-		do_override = GF_TRUE;
+		arg_val_override.type = GF_PROP_STRING;
+		arg_val_override.value.string = szOverrideOpt;
+		arg_val = &arg_val_override;
 	}
 
 	//initial parsing of arguments
-	if (!ctx->initialized) {
-		const char *arg_val_str;
-		switch (arg_val->type) {
-		case GF_PROP_STRING:
-			if (do_override)
-				arg_val_str = szOverrideOpt;
-			else {
-				arg_val_str = arg_val->value.string;
-				if (!arg_val_str) arg_val_str = "1";
+	if (!ctx->encoder) {
+		return ffmpeg_update_arg("FFEnc", NULL, &ctx->options, arg_name, arg_val);
+	}
+	//updates of arguments
+	u64 value=0;
+	switch (arg_val->type) {
+	case GF_PROP_STRING:
+	{
+		GF_PropertyValue res = gf_props_parse_value(GF_PROP_LUINT, arg_name, arg_val->value.string, NULL, 0);
+		value = res.value.longuint;
+	}
+		break;
+	case GF_PROP_UINT: value = arg_val->value.uint; break;
+	case GF_PROP_LUINT: value = arg_val->value.longuint; break;
+	default:
+		return GF_NOT_SUPPORTED;
+	}
+
+	if (ctx->rld) {
+		Bool skip=GF_FALSE;
+		char szVal[100];
+		sprintf(szVal, LLU, value);
+		AVDictionaryEntry *key = av_dict_get(ctx->options, arg_name, NULL, 0);
+		if (key) {
+			if ((arg_val->type==GF_PROP_STRING) && !strcmp(key->value, arg_val->value.string))
+				skip=GF_TRUE;
+			else if (!strcmp(key->value, szVal))
+				skip=GF_TRUE;
+		}
+		if (!skip) {
+			av_dict_set(&ctx->options, arg_name, szVal, 0);
+			//if video and fintra is set, reload args at next intra
+			if (ctx->width && (ctx->fintra.num>=0)) {
+				ctx->args_updated = GF_TRUE;
+			} else {
+				ctx->reconfig_pending = GF_TRUE;
+				ctx->force_reconfig = GF_TRUE;
 			}
-			res = av_dict_set(&ctx->options, arg_name, arg_val_str, 0);
-			if (res<0) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] Failed to set option %s:%s\n", arg_name, arg_val_str ));
-			}
-			break;
-		default:
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFEnc] Failed to set option %s, unrecognized type %d\n", arg_name, arg_val->type ));
-			return GF_NOT_SUPPORTED;
 		}
 		return GF_OK;
 	}
-	//updates of arguments, not supported for ffmpeg decoders
-	return GF_NOT_SUPPORTED;
+	return ffmpeg_update_arg("FFEnc", ctx->encoder, NULL, arg_name, arg_val);
 }
 
 static Bool ffenc_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
@@ -2167,6 +2098,10 @@ GF_FilterRegister FFEncodeRegister = {
 		"If [-fintra]() is not set and the output of the encoder is a DASH session in live profile without segment timeline, [-fintra]() will be set to the target segment duration and [-rc]() will be set.\n"
 		"\n"
 		"The filter will look for property `logpass` on input PID to set 2-pass log filename, otherwise defaults to `ffenc2pass-PID.log`.\n"
+		"\n"
+		"Arguments may be updated at runtime. If [-rld]() is set, the encoder will be flushed then reloaded with new options.\n"
+		"If codec is video and [-fintra]() is set, reload will happen at next forced intra; otherwise, reload happens at next encode.\n"
+		"The [-rld]() option is usually needed for dynamic updates of rate control parameters, since most encoders in ffmpeg do not support it.\n"
 	)
 	.private_size = sizeof(GF_FFEncodeCtx),
 	SETCAPS(FFEncodeCaps),
@@ -2176,19 +2111,20 @@ GF_FilterRegister FFEncodeRegister = {
 	.process = ffenc_process,
 	.process_event = ffenc_process_event,
 	.update_arg = ffenc_update_arg,
-	.flags = GF_FS_REG_META,
+	.flags = GF_FS_REG_META | GF_FS_REG_TEMP_INIT,
 };
 
 #define OFFS(_n)	#_n, offsetof(GF_FFEncodeCtx, _n)
 static const GF_FilterArgs FFEncodeArgs[] =
 {
-	{ OFFS(c), "codec identifier. Can be any supported GPAC codec name or ffmpeg codec name", GF_PROP_STRING, NULL, NULL, 0},
+	{ OFFS(c), "codec identifier. Can be any supported GPAC codec name or ffmpeg codec name - updated to ffmpeg codec name after initialization", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(pfmt), "pixel format for input video. When not set, input format is used", GF_PROP_PIXFMT, "none", NULL, 0},
 	{ OFFS(fintra), "force intra / IDR frames at the given period in sec, e.g. `fintra=2` will force an intra every 2 seconds and `fintra=1001/1000` will force an intra every 30 frames on 30000/1001=29.97 fps video; ignored for audio", GF_PROP_FRACTION, "-1/1", NULL, 0},
 
 	{ OFFS(all_intra), "only produce intra frames", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ls), "log stats", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(rc), "reset encoder when forcing intra frame (some encoders might not support intra frame forcing)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(rld), "force reloading of encoder when arguments are updated", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 
 	{ "*", -1, "any possible options defined for AVCodecContext and sub-classes. see `gpac -hx ffenc` and `gpac -hx ffenc:*`", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
 	{0}
@@ -2198,8 +2134,7 @@ const int FFENC_STATIC_ARGS = (sizeof (FFEncodeArgs) / sizeof (GF_FilterArgs)) -
 
 const GF_FilterRegister *ffenc_register(GF_FilterSession *session)
 {
-	ffmpeg_build_register(session, &FFEncodeRegister, FFEncodeArgs, FFENC_STATIC_ARGS, FF_REG_TYPE_ENCODE);
-	return &FFEncodeRegister;
+	return ffmpeg_build_register(session, &FFEncodeRegister, FFEncodeArgs, FFENC_STATIC_ARGS, FF_REG_TYPE_ENCODE);
 }
 
 

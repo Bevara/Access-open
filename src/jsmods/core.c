@@ -111,6 +111,10 @@ void gf_js_delete_context(JSContext *ctx)
 
 void gf_js_delete_runtime()
 {
+	//prevent destruction of the runtime if asked (used for android)
+	if (gf_opts_get_bool("temp", "static-jsrt"))
+		return;
+
 	if (js_rt) {
 		qjs_uninit_runtime_libc(js_rt->js_runtime);
 		JS_FreeRuntime(js_rt->js_runtime);
@@ -455,6 +459,18 @@ static JSValue js_bs_get_bits(JSContext *ctx, JSValueConst this_val, int argc, J
 		return JS_NewInt32(ctx, gf_bs_read_int(bs, nb_bits) );
 	return JS_NewInt64(ctx, gf_bs_read_long_int(bs, nb_bits) );
 }
+static JSValue js_bs_get_string(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	char *res;
+	JSValue ret;
+	GET_JSBS
+	if (!bs) return GF_JS_EXCEPTION(ctx);
+	res = gf_bs_read_utf8(bs);
+	if (!res) return JS_NULL;
+	ret = JS_NewString(ctx, res);
+	gf_free(res);
+	return ret;
+}
 
 static JSValue js_bs_data_io(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, u32 mode)
 {
@@ -497,6 +513,14 @@ static JSValue js_bs_get_data(JSContext *ctx, JSValueConst this_val, int argc, J
 {
 	return js_bs_data_io(ctx, this_val, argc, argv, 0);
 }
+
+static JSValue js_bs_get_4cc(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	GET_JSBS
+	u32 fcc = gf_bs_read_u32(bs);
+	return JS_NewString(ctx, gf_4cc_to_str(fcc) );
+}
+
 static JSValue js_bs_skip_bytes(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
 	s32 nb_bytes;
@@ -666,6 +690,35 @@ static JSValue js_bs_insert_data(JSContext *ctx, JSValueConst this_val, int argc
 	return js_bs_data_io(ctx, this_val, argc, argv, 2);
 }
 
+static JSValue js_bs_put_4cc(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	u32 val;
+	GET_JSBS
+	if (!bs || (argc!=1)) return GF_JS_EXCEPTION(ctx);
+	if (!JS_IsString(argv[0])) return GF_JS_EXCEPTION(ctx);
+	const char *str = JS_ToCString(ctx, argv[0]);
+	if (!str || (strlen(str) != 4)) {
+		if (str) JS_FreeCString(ctx, str);
+		return GF_JS_EXCEPTION(ctx);
+	}
+	val = GF_4CC(str[0], str[1], str[2], str[3]);
+	JS_FreeCString(ctx, str);
+	gf_bs_write_u32(bs, val);
+	return JS_UNDEFINED;
+}
+
+static JSValue js_bs_put_string(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	GET_JSBS
+	if (!bs || (argc!=1)) return GF_JS_EXCEPTION(ctx);
+	if (!JS_IsString(argv[0])) return GF_JS_EXCEPTION(ctx);
+	const char *str = JS_ToCString(ctx, argv[0]);
+	if (!str) return GF_JS_EXCEPTION(ctx);
+	gf_bs_write_utf8(bs, str);
+	JS_FreeCString(ctx, str);
+	return JS_UNDEFINED;
+}
+
 static JSValue js_bs_get_content(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
 	u8 *data;
@@ -780,9 +833,11 @@ static const JSCFunctionListEntry bitstream_funcs[] = {
 	JS_CFUNC_DEF("get_u64_le", 0, js_bs_get_u64_le),
 	JS_CFUNC_DEF("get_s64", 0, js_bs_get_s64),
 	JS_CFUNC_DEF("get_bits", 0, js_bs_get_bits),
+	JS_CFUNC_DEF("get_string", 0, js_bs_get_string),
 	JS_CFUNC_DEF("get_float", 0, js_bs_get_float),
 	JS_CFUNC_DEF("get_double", 0, js_bs_get_double),
 	JS_CFUNC_DEF("get_data", 0, js_bs_get_data),
+	JS_CFUNC_DEF("get_4cc", 0, js_bs_get_4cc),
 	JS_CFUNC_DEF("put_u8", 0, js_bs_put_u8),
 	JS_CFUNC_DEF("put_s8", 0, js_bs_put_s8),
 	JS_CFUNC_DEF("put_u16", 0, js_bs_put_u16),
@@ -799,6 +854,8 @@ static const JSCFunctionListEntry bitstream_funcs[] = {
 	JS_CFUNC_DEF("put_float", 0, js_bs_put_float),
 	JS_CFUNC_DEF("put_double", 0, js_bs_put_double),
 	JS_CFUNC_DEF("put_data", 0, js_bs_put_data),
+	JS_CFUNC_DEF("put_4cc", 0, js_bs_put_4cc),
+	JS_CFUNC_DEF("put_string", 0, js_bs_put_string),
 	JS_CFUNC_DEF("insert_data", 0, js_bs_insert_data),
 	JS_CFUNC_DEF("get_content", 0, js_bs_get_content),
 	JS_CFUNC_DEF("transfer", 0, js_bs_transfer),
@@ -976,18 +1033,15 @@ static JSValue js_sys_prop_get(JSContext *ctx, JSValueConst this_val, int magic)
 		}
 		break;
 	case JS_SYS_LAST_WORK_DIR:
-		res = gf_opts_get_key("General", "LastWorkingDir");
+		res = gf_opts_get_key("core", "last-dir");
 #ifdef WIN32
 		if (!res) res = getenv("HOMEPATH");
 		if (!res) res = "C:\\";
 #elif defined(GPAC_CONFIG_DARWIN)
 		if (!res) res = getenv("HOME");
 		if (!res) res = "/Users";
-#elif defined(GPAC_CONFIG_ANDROID)
-		if (!res) res = getenv("EXTERNAL_STORAGE");
-		if (!res) res = "/sdcard";
-#elif defined(GPAC_CONFIG_IOS)
-		if (!res) res = (char *) gf_opts_get_key("General", "iOSDocumentsDir");
+#elif defined(GPAC_CONFIG_ANDROID) || defined(GPAC_CONFIG_IOS)
+		if (!res) res = (char *) gf_opts_get_key("core", "docs-dir");
 #else
 		if (!res) res = getenv("HOME");
 		if (!res) res = "/home/";
@@ -1055,7 +1109,7 @@ static JSValue js_sys_prop_set(JSContext *ctx, JSValueConst this_val, JSValueCon
 	case JS_SYS_LAST_WORK_DIR:
 		if (!JS_IsString(value)) return GF_JS_EXCEPTION(ctx);
 		prop_val = JS_ToCString(ctx, value);
-		gf_opts_set_key("General", "LastWorkingDir", prop_val);
+		gf_opts_set_key("core", "last-dir", prop_val);
 		JS_FreeCString(ctx, prop_val);
 		break;
 	}
@@ -2754,7 +2808,7 @@ static JSValue js_file_write(JSContext *ctx, JSValueConst this_val, int argc, JS
 {
 	const u8 *data;
 	size_t size;
-	u32 read;
+	u32 written;
 	s32 nb_bytes=0;
 	FILE *f = JS_GetOpaque(this_val, file_class_id);
 	if (!f) return GF_JS_EXCEPTION(ctx);
@@ -2768,8 +2822,8 @@ static JSValue js_file_write(JSContext *ctx, JSValueConst this_val, int argc, JS
 	if (!nb_bytes) nb_bytes = (u32) size;
 	else if (nb_bytes > (s32) size) nb_bytes = (u32) size;
 
-	read = (u32) gf_fwrite((void *) data, nb_bytes, f);
-	return JS_NewInt64(ctx, read);
+	written = (u32) gf_fwrite((void *) data, nb_bytes, f);
+	return JS_NewInt64(ctx, written);
 }
 static JSValue js_file_puts(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -3680,6 +3734,12 @@ static void qjs_init_runtime_libc(JSRuntime *rt)
     if (gf_opts_get_bool("core", "unhandled-rejection")) {
         JS_SetHostPromiseRejectionTracker(rt, js_promise_rejection_tracker, NULL);
     }
+#ifdef GPAC_ENABLE_COVERAGE
+	if (gf_sys_is_cov_mode()) {
+		js_promise_rejection_tracker(NULL, JS_NULL, JS_NULL, 1, NULL);
+	}
+#endif
+
 #endif
 
 }

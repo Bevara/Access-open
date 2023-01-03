@@ -981,6 +981,7 @@ static u32 FS_PROP_PID_MIN_PCK_DUR = 13;
 static u32 FS_PROP_PID_PLAYING = 14;
 static u32 FS_PROP_PID_NEXT_TS = 15;
 static u32 FS_PROP_PID_SPARSE = 16;
+static u32 FS_PROP_PID_HAS_DECODER = 17;
 
 #define FILTERPID\
 	GF_FilterPid *pid=NULL;\
@@ -1089,6 +1090,10 @@ napi_value filterpid_getter(napi_env env, napi_callback_info info)
 		} else {
 			NAPI_CALL( napi_create_int64(env, (s64) cts, &ret) );
 		}
+        return ret;
+	}
+	if (magic == &FS_PROP_PID_HAS_DECODER) {
+		NAPI_CALL( napi_get_boolean(env, gf_filter_pid_has_decoder(pid), &ret) );
         return ret;
 	}
 	return NULL;
@@ -1940,12 +1945,13 @@ napi_value filter_remove(napi_env env, napi_callback_info info)
 }
 napi_value filter_update(napi_env env, napi_callback_info info)
 {
-	NARG_ARGS_THIS(2, 2)
+	NARG_ARGS_THIS(3, 2)
 	FILTER
 	NARG_STR(name, 0, NULL);
 	NARG_STR_ALLOC(value, 1, NULL);
+	NARG_U32(mask, 2, 0)
 
-	gf_fs_send_update(NULL, NULL, f, name, value, 0);
+	gf_fs_send_update(NULL, NULL, f, name, value, mask);
 	if (value) gf_free(value);
 	return NULL;
 }
@@ -1977,17 +1983,34 @@ napi_value filter_set_source_restricted(napi_env env, napi_callback_info info)
 }
 napi_value filter_insert(napi_env env, napi_callback_info info)
 {
+	GF_FilterPid *opid=NULL;
+	s32 offset=1;
 	GF_Err e;
-	NARG_ARGS_THIS(2, 1)
+	NARG_ARGS_THIS(3, 1)
 	FILTER
 	FILTER_ARG(ins_f, 0)
-	NARG_STR(link_ext, 1, NULL);
+
+	//check if 2nd param is int, get opid
+	if (argc>1) {
+		s32 idx = -1;
+		if (napi_get_value_int32(env, argv[1], &idx) == napi_ok) {
+			offset = 2;
+			if (idx>=0) {
+				opid = gf_filter_get_opid(f, (u32) idx);
+				if (!opid) {
+					napi_throw_error(env, NULL, "Invalid output PID index");
+					return NULL;
+				}
+			}
+		}
+	}
+	NARG_STR(link_ext, offset, NULL);
 
 	e = gf_filter_set_source(f, ins_f, link_ext);
 	if (e)
 		napi_throw_error(env, gf_error_to_string(e), "Failed to set source");
 	else
-		gf_filter_reconnect_output(f);
+		gf_filter_reconnect_output(f, opid);
 	return NULL;
 }
 
@@ -2064,21 +2087,6 @@ napi_status frac64_from_napi(napi_env env, napi_value prop, GF_Fraction64 *frac)
 	return napi_ok;
 }
 
-napi_value filter_get_statistics(napi_env env, napi_callback_info info)
-{
-	GF_Err e;
-	GF_FilterStats stats;
-	napi_value res, val;
-	NARG_THIS
-	FILTER
-
-	e = gf_filter_get_stats(f, &stats);
- 	if (e) {
-		napi_throw_error(env, gf_error_to_string(e), "Failed to get filter stats");
-		return NULL;
-	}
-	NAPI_CALL(napi_create_object(env, &res) );
-
 #define SET_BOOL(_val) \
 	NAPI_CALL(napi_get_boolean(env, stats._val ? true : false, &val) ); \
 	NAPI_CALL(napi_set_named_property(env, res, #_val, val) );
@@ -2106,6 +2114,22 @@ napi_value filter_get_statistics(napi_env env, napi_callback_info info)
 		napi_get_null(env, &val);\
 	}\
 	NAPI_CALL(napi_set_named_property(env, res, #_val, val) );
+
+napi_value filter_get_statistics(napi_env env, napi_callback_info info)
+{
+	GF_Err e;
+	GF_FilterStats stats;
+	napi_value res, val;
+	NARG_THIS
+	FILTER
+
+	e = gf_filter_get_stats(f, &stats);
+ 	if (e) {
+		napi_throw_error(env, gf_error_to_string(e), "Failed to get filter stats");
+		return NULL;
+	}
+	NAPI_CALL(napi_create_object(env, &res) );
+
 
 	NAPI_CALL(napi_get_boolean(env, stats.filter_alias ? true : false, &val) );
 	NAPI_CALL(napi_set_named_property(env, res, "filter_alias", val) );
@@ -2695,6 +2719,67 @@ napi_value filter_opid_prop(napi_env env, napi_callback_info info)
 	return filter_iopid_prop(env, info, GF_TRUE);
 }
 
+napi_value filter_iopid_stats(napi_env env, napi_callback_info info, Bool is_opid)
+{
+	GF_Err e;
+	napi_value res, val;
+	GF_FilterPidStatistics stats;
+	GF_FilterPid *pid=NULL;
+	NARG_ARGS_THIS(2, 1)
+	FILTER
+	NARG_U32(idx, 0, 0)
+	NARG_U32(mode, 1, 0)
+
+	if (is_opid) {
+		pid = gf_filter_get_opid(f, idx);
+	} else {
+		pid = gf_filter_get_ipid(f, idx);
+	}
+	if (!pid) {
+		napi_throw_error(env, NULL, "Invalid PID index");
+		return NULL;
+	}
+
+	e = gf_filter_pid_get_statistics(pid, &stats, mode);
+ 	if (e) {
+		napi_throw_error(env, gf_error_to_string(e), "Failed to get filter stats");
+		return NULL;
+	}
+	NAPI_CALL(napi_create_object(env, &res) );
+	SET_BOOL(disconnected)
+	SET_U32(average_process_rate)
+	SET_U32(max_process_rate)
+	SET_U32(average_bitrate)
+	SET_U32(max_bitrate)
+	SET_U32(nb_processed)
+	SET_U32(max_process_time)
+	SET_U64(total_process_time)
+	SET_U64(first_process_time)
+	SET_U64(last_process_time)
+	SET_U32(min_frame_dur)
+	SET_U32(nb_saps)
+	SET_U32(max_sap_process_time)
+	SET_U64(total_sap_process_time)
+	SET_U64(max_buffer_time)
+	SET_U64(max_playout_time)
+	SET_U64(min_playout_time)
+	SET_U64(buffer_time)
+	SET_U32(nb_buffer_units)
+	SET_U64(last_rt_report)
+	SET_U32(rtt)
+	SET_U32(jitter)
+	SET_U32(loss_rate)
+	return res;
+}
+napi_value filter_ipid_stats(napi_env env, napi_callback_info info)
+{
+	return filter_iopid_stats(env, info, GF_FALSE);
+}
+napi_value filter_opid_stats(napi_env env, napi_callback_info info)
+{
+	return filter_iopid_stats(env, info, GF_TRUE);
+}
+
 napi_value filter_ipid_source(napi_env env, napi_callback_info info)
 {
 	GF_FilterPid *pid=NULL;
@@ -2880,6 +2965,7 @@ static NAPI_FilterPid *wrap_filter_pid(napi_env env, GF_Filter *filter, GF_Filte
 		{ "min_pck_dur", NULL, NULL, filterpid_getter, NULL, NULL, napi_enumerable, &FS_PROP_PID_MIN_PCK_DUR},
 		{ "playing", NULL, NULL, filterpid_getter, NULL, NULL, napi_enumerable, &FS_PROP_PID_PLAYING},
 		{ "next_ts", NULL, NULL, filterpid_getter, NULL, NULL, napi_enumerable, &FS_PROP_PID_NEXT_TS},
+		{ "has_decoder", NULL, NULL, filterpid_getter, NULL, NULL, napi_enumerable, &FS_PROP_PID_HAS_DECODER},
 
 		{ "remove", 0, filterpid_remove, 0, 0, 0, napi_enumerable, 0 },
 		{ "enum_props", 0, filterpid_enum_props, 0, 0, 0, napi_enumerable, 0 },
@@ -3394,6 +3480,8 @@ napi_value fs_wrap_filter(napi_env env, GF_FilterSession *fs, GF_Filter *filter)
 		{ "get_statistics", 0, filter_get_statistics, 0, 0, 0, napi_enumerable, 0 },
 		{ "require_source_id", 0, filter_require_source_id, 0, 0, 0, napi_enumerable, 0 },
 		{ "bind", 0, filter_bind, 0, 0, 0, napi_enumerable, 0 },
+		{ "ipid_stats", 0, filter_ipid_stats, 0, 0, 0, napi_enumerable, 0 },
+		{ "opid_stats", 0, filter_opid_stats, 0, 0, 0, napi_enumerable, 0 },
 	};
 
 	if (napi_f) {
@@ -4721,6 +4809,7 @@ static napi_status InitConstants(napi_env env, napi_value exports)
 	DEF_CONST(GF_STATS_DECODER_SOURCE)
 	DEF_CONST(GF_STATS_ENCODER_SINK)
 	DEF_CONST(GF_STATS_ENCODER_SOURCE)
+	DEF_CONST(GF_STATS_SINK)
 
 	DEF_CONST(GF_FILTER_CLOCK_NONE)
 	DEF_CONST(GF_FILTER_CLOCK_PCR)
@@ -4764,7 +4853,6 @@ static napi_status InitConstants(napi_env env, napi_value exports)
 	DEF_CONST(GF_IP_NETWORK_FAILURE)
 	DEF_CONST(GF_IP_CONNECTION_CLOSED)
 	DEF_CONST(GF_IP_NETWORK_EMPTY)
-	DEF_CONST(GF_IP_SOCK_WOULD_BLOCK)
 	DEF_CONST(GF_IP_UDP_TIMEOUT)
 	DEF_CONST(GF_AUTHENTICATION_FAILURE)
 	DEF_CONST(GF_SCRIPT_NOT_READY)
@@ -4801,6 +4889,8 @@ static napi_status InitConstants(napi_env env, napi_value exports)
 	DEF_CONST(GF_EVENT_SET_CAPTION)
 	DEF_CONST(GF_EVENT_REFRESH)
 	DEF_CONST(GF_EVENT_QUIT)
+	DEF_CONST(GF_EVENT_CODEC_SLOW)
+	DEF_CONST(GF_EVENT_CODEC_OK)
 
 	DEF_CONST(GF_KEY_UNIDENTIFIED)
 	DEF_CONST(GF_KEY_ACCEPT)

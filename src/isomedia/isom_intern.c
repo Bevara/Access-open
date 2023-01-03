@@ -104,7 +104,7 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 		if (gf_list_count(moof->PSSHs)) {
 			u8 *pssh_data;
 			u32 pssh_len;
-			u32 j, k, nb_pssh = gf_list_count(moof->PSSHs);
+			u32 k, nb_pssh = gf_list_count(moof->PSSHs);
 			GF_BitStream *pssh_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 			gf_bs_write_u32(pssh_bs, nb_pssh);
 			for (j=0; j<nb_pssh; j++) {
@@ -132,7 +132,7 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 		if (gf_list_count(mov->emsgs)) {
 			u8 *emsg_data;
 			u32 emsg_len;
-			u32 j, nb_emsg = gf_list_count(mov->emsgs);
+			u32 nb_emsg = gf_list_count(mov->emsgs);
 			GF_BitStream *emsg_bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 			for (j=0; j<nb_emsg; j++) {
 				GF_Box *emsg = gf_list_get(mov->emsgs, j);
@@ -218,20 +218,25 @@ static void FixSDTPInTRAF(GF_MovieFragmentBox *moof)
 
 			while ((trun = (GF_TrackFragmentRunBox*)gf_list_enum(traf->TrackRuns, &j))) {
 				u32 i;
+				Bool aborted=GF_FALSE;
+				//use sample flags
 				trun->flags |= GF_ISOM_TRUN_FLAGS;
+				//remove first sample flag (cannot be used with sample flags)
+				trun->flags &= ~GF_ISOM_TRUN_FIRST_FLAG;
 				for (i=0; i<trun->nb_samples; i++) {
 					GF_TrunEntry *entry = &trun->samples[i];
+					if (sample_index >= traf->sdtp->sampleCount) {
+						aborted = GF_TRUE;
+						break;
+					}
 					const u8 info = traf->sdtp->sample_info[sample_index];
 					entry->flags |= GF_ISOM_GET_FRAG_DEPEND_FLAGS(info >> 6, info >> 4, info >> 2, info);
 					sample_index++;
-					if (sample_index > traf->sdtp->sampleCount) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Error: TRAF box of track id=%u contained an inconsistent SDTP.\n", traf->tfhd->trackID));
-						return;
-					}
 				}
+				if (aborted) break;
 			}
-			if (sample_index < traf->sdtp->sampleCount) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Error: TRAF box of track id=%u list less samples than SDTP.\n", traf->tfhd->trackID));
+			if (sample_index != traf->sdtp->sampleCount) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Error: TRAF box of track id=%u list %d samples but SDTP %d.\n", traf->tfhd->trackID, sample_index, traf->sdtp->sampleCount));
 			}
 			gf_isom_box_del_parent(&traf->child_boxes, (GF_Box*)traf->sdtp);
 			traf->sdtp = NULL;
@@ -610,7 +615,10 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 					mov->root_sidx = (GF_SegmentIndexBox *) a;
 					mov->sidx_start_offset = mov->current_top_box_start;
 					mov->sidx_end_offset = gf_bs_get_position(mov->movieFileMap->bs);
-
+					if (!mov->root_sidx_end_offset) {
+						mov->root_sidx_end_offset = mov->sidx_end_offset;
+						mov->root_sidx_start_offset = mov->sidx_start_offset;
+					}
 				}
 				else if (a->type==GF_ISOM_BOX_TYPE_STYP) {
 					mov->styp_start_offset = mov->current_top_box_start;
@@ -978,6 +986,8 @@ GF_ISOFile *gf_isom_open_file(const char *fileName, GF_ISOOpenMode OpenMode, con
 
 	//OK, let's parse the movie...
 	mov->LastError = gf_isom_parse_movie_boxes(mov, NULL, &bytes, 0);
+	if (((OpenMode & 0xFF) == GF_ISOM_OPEN_READ_DUMP) && (mov->LastError==GF_ISOM_INCOMPLETE_FILE))
+		mov->LastError = GF_OK;
 
 #if 0
 	if (!mov->LastError && (OpenMode == GF_ISOM_OPEN_CAT_FRAGMENTS)) {
@@ -1000,6 +1010,7 @@ GF_ISOFile *gf_isom_open_file(const char *fileName, GF_ISOOpenMode OpenMode, con
 GF_Err gf_isom_set_write_callback(GF_ISOFile *mov,
  			GF_Err (*on_block_out)(void *cbk, u8 *data, u32 block_size),
 			GF_Err (*on_block_patch)(void *usr_data, u8 *block, u32 block_size, u64 block_offset, Bool is_insert),
+			void (*on_last_block_start)(void *usr_data),
  			void *usr_data,
  			u32 block_size)
 {
@@ -1009,6 +1020,7 @@ GF_Err gf_isom_set_write_callback(GF_ISOFile *mov,
 	else return GF_BAD_PARAM;
 	mov->on_block_out = on_block_out;
 	mov->on_block_patch = on_block_patch;
+	mov->on_last_block_start = on_last_block_start;
 	mov->on_block_out_usr_data = usr_data;
 	mov->on_block_out_block_size = block_size;
 	return GF_OK;
@@ -1057,6 +1069,9 @@ void gf_isom_delete_movie(GF_ISOFile *mov)
 
 	if (mov->block_buffer)
 		gf_free(mov->block_buffer);
+
+	if (mov->emsgs)
+		gf_isom_box_array_del(mov->emsgs);
 #endif
 	if (mov->last_producer_ref_time)
 		gf_isom_box_del((GF_Box *) mov->last_producer_ref_time);

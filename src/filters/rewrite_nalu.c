@@ -223,6 +223,7 @@ GF_Err nalumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 			//copy properties at init or reconfig
 			gf_filter_pid_copy_properties(ctx->opid, pid);
 			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FORCE_UNFRAME, NULL);
 		}
 		return GF_OK;
 	}
@@ -249,6 +250,7 @@ GF_Err nalumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 	//copy properties at init or reconfig
 	gf_filter_pid_copy_properties(ctx->opid, pid);
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FORCE_UNFRAME, NULL);
 
 	ctx->ipid = pid;
 	gf_filter_pid_set_framing_mode(ctx->ipid, GF_TRUE);
@@ -389,6 +391,9 @@ GF_Err nalumx_process(GF_Filter *filter)
 			gf_filter_pid_drop_packet(ctx->ipid);
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
+		//we allow nal_size=0 for incomplete files, abort as soon as we see one to avoid parsing thousands of 0 bytes
+		if (!nal_size) break;
+
 		pos = (u32) gf_bs_get_position(ctx->bs_r);
 		//even if not filtering, parse to check for AU delim
 		skip_nal = nalumx_is_nal_skip(ctx, data, pos, &is_nalu_delim, &layer_id, &temporal_id, &avc_hdr);
@@ -406,6 +411,12 @@ GF_Err nalumx_process(GF_Filter *filter)
 		gf_bs_skip_bytes(ctx->bs_r, nal_size);
 	}
 	gf_bs_seek(ctx->bs_r, 0);
+
+	if (!size) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[NALWrite] Empty AU with only 0-size NAL, skipping\n"));
+		gf_filter_pid_drop_packet(ctx->ipid);
+		return GF_OK;
+	}
 
 	if (!ctx->delim)
 		has_nalu_delim = GF_TRUE;
@@ -497,6 +508,7 @@ GF_Err nalumx_process(GF_Filter *filter)
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
 		pos = (u32) gf_bs_get_position(ctx->bs_r);
+		if (!nal_size) continue;
 
 		skip_nal = nalumx_is_nal_skip(ctx, data, pos, &is_nalu_delim, &layer_id, &temporal_id, &avc_hdr);
 		if (!ctx->extract) {
@@ -506,7 +518,6 @@ GF_Err nalumx_process(GF_Filter *filter)
 		else if (!ctx->delim && is_nalu_delim) {
 			skip_nal = GF_TRUE;
 		}
-
 
 		if (skip_nal) {
 			gf_bs_skip_bytes(ctx->bs_r, nal_size);
@@ -588,6 +599,17 @@ static const GF_FilterCapability NALUMxCaps[] =
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_AVC),
 	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_BOOL(GF_CAPS_OUTPUT, GF_PROP_PID_UNFRAMED, GF_TRUE),
+	{0},
+	//for forced frame->unframe
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_AVC),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_SVC),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_MVC),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_HEVC),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_LHVC),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT,GF_PROP_PID_CODECID, GF_CODECID_VVC),
+	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_FORCE_UNFRAME, GF_TRUE),
+	CAP_BOOL(GF_CAPS_INPUT_OUTPUT, GF_PROP_PID_UNFRAMED, GF_TRUE),
 };
 
 

@@ -1307,6 +1307,7 @@ GF_Err gf_isom_track_cenc_add_sample_info(GF_ISOFile *the_file, u32 trackNumber,
 	case GF_ISOM_BOX_TYPE_SENC:
 	case 0:
 		senc = trak->sample_encryption;
+		if (!senc) return GF_BAD_PARAM;
 		break;
 	default:
 		return GF_NOT_SUPPORTED;
@@ -1701,8 +1702,6 @@ GF_Err gf_isom_cenc_get_sample_aux_info(GF_ISOFile *the_file, u32 trackNumber, u
 	memcpy(*out_buffer, a_sai->cenc_data, a_sai->cenc_data_size);
 	return GF_OK;
 }
-
-u32 gf_isom_has_cenc_sample_group_ex(GF_TrackBox *trak);
 
 void gf_isom_cenc_get_default_info_internal(GF_TrackBox *trak, u32 sampleDescriptionIndex, u32 *container_type, Bool *default_IsEncrypted, u8 *crypt_byte_block, u8 *skip_byte_block, const u8 **key_info, u32 *key_info_size)
 {

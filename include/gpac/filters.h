@@ -33,7 +33,6 @@ extern "C" {
 #include <gpac/tools.h>
 #include <gpac/list.h>
 #include <gpac/events.h>
-#include <gpac/user.h>
 #include <gpac/constants.h>
 #include <gpac/download.h>
 #include <gpac/main.h>
@@ -271,7 +270,7 @@ Bool gf_fs_filter_exists(GF_FilterSession *session, const char *name);
 
 /*! Runs the session
 
-If the session is non-blocking ( created with \ref GF_FS_FLAG_NON_BLOCKING), process all tasks of oldest scheduled filter, process any pending PID connections and returns.
+If the session is non-blocking (created with \ref GF_FS_FLAG_NON_BLOCKING), process all tasks of oldest scheduled filter, process any pending PID connections and returns.
 Otherwise (session is blocking), runs until session is over or aborted.
 
 \param session filter session
@@ -396,6 +395,17 @@ void gf_fs_remove_filter_register(GF_FilterSession *session, GF_FilterRegister *
 \return the error code if any
 */
 GF_Err gf_fs_post_user_task(GF_FilterSession *session, Bool (*task_execute) (GF_FilterSession *fsess, void *callback, u32 *reschedule_ms), void *udta_callback, const char *log_name);
+
+/*! Posts a user task to the session main thread only
+\param session filter session
+\param task_execute the callback function for the task. The callback can return:
+ - GF_FALSE to cancel the task
+ - GF_TRUE to reschedule the task, in which case the task will be rescheduled immediately or after reschedule_ms.
+\param udta_callback callback user data passed back to the task_execute function
+\param log_name log name of the task. If NULL, default is "user_task"
+\return the error code if any
+*/
+GF_Err gf_fs_post_user_task_main(GF_FilterSession *session, Bool (*task_execute) (GF_FilterSession *fsess, void *callback, u32 *reschedule_ms), void *udta_callback, const char *log_name);
 
 /*! Session flush types*/
 typedef enum
@@ -607,14 +617,16 @@ typedef struct
 GF_Err gf_fs_get_filter_stats(GF_FilterSession *session, u32 idx, GF_FilterStats *stats);
 
 
-/*! Enumerates filter and meta-filter arguments not matched in the session
+/*! Enumerates filter and meta-filter arguments not matched in the session. All output parameters may be NULL.
 \param session filter session
 \param idx index of argument to query, 0 being first argument; this value is automatically incremented
 \param argname set to argument name
 \param argtype set to argument type: 0 was a filter param (eg :arg=val), 1 was a global arg (eg --arg=val) and 2 was a global meta arg (eg -+arg=val)
+\param meta_name set to meta filter name if any (for local filter args only)
+\param meta_opt set to meta filter suboption name if any (for local filter args only)
 \return GF_TRUE if success, GF_FALSE if nothing more to enumerate
 */
-Bool gf_fs_enum_unmapped_options(GF_FilterSession *session, u32 *idx, char **argname, u32 *argtype);
+Bool gf_fs_enum_unmapped_options(GF_FilterSession *session, u32 *idx, const char **argname, u32 *argtype, const char **meta_name, const char **meta_opt);
 
 
 
@@ -622,9 +634,9 @@ Bool gf_fs_enum_unmapped_options(GF_FilterSession *session, u32 *idx, char **arg
 typedef enum
 {
 	/*! the update event can be sent down the source chain*/
-	GF_FILTER_UPDATE_DOWNSTREAM = 1<<1,
+	GF_FILTER_UPDATE_DOWNSTREAM = 1,
 	/*! the update event can be sent up the filter chain*/
-	GF_FILTER_UPDATE_UPSTREAM = 1<<2,
+	GF_FILTER_UPDATE_UPSTREAM = 1<<1,
 } GF_EventPropagateType;
 
 /*! Enumerates filter and meta-filter arguments not matched in the session
@@ -703,6 +715,22 @@ void *gf_fs_get_rt_udta(GF_FilterSession *session);
 \return GF_TRUE if event was sent, GF_FALSE otherwise
  */
 Bool gf_fs_fire_event(GF_FilterSession *session, GF_Filter *filter, GF_FilterEvent *evt, Bool upstream);
+
+
+/*! callback functions for external monitoring of filter creation or destruction
+\param udta user data passed back to callback
+\param do_activate if true context must be activated for calling thread, otherwise context is no longer used
+\return error if any
+ */
+typedef	GF_Err (*gf_fs_gl_activate)(void *udta, Bool do_activate);
+
+/*! assign callbacks for filter creation and destruction monitoring
+\param session filter session
+\param on_gl_activate openGL context activation callback, must not be NULL
+\param udta user data for callbacks, may be NULL
+\return error if any
+ */
+GF_Err gf_fs_set_external_gl_provider(GF_FilterSession *session, gf_fs_gl_activate on_gl_activate, void *udta);
 
 /*! @} */
 
@@ -783,8 +811,10 @@ typedef enum
 	/*! 4CC on unsigned 32 bit integer*/
 	GF_PROP_4CC			=	25,
 	/*! 4CC list on unsigned 32 bit integer, memory is ALWAYS duplicated when setting the property*/
-	GF_PROP_4CC_LIST			=	26,
-
+	GF_PROP_4CC_LIST	=	26,
+	/*! string list, memory is duplicated when setting the property - to use only with property assignment functions*/
+	GF_PROP_STRING_LIST_COPY = 27,
+	
 	/*! last non-enum property*/
 	GF_PROP_LAST_NON_ENUM,
 
@@ -1102,6 +1132,7 @@ enum
 	GF_PROP_PID_CENC_PATTERN = GF_4CC('C','P','T','R'),
 	GF_PROP_PID_CENC_STORE = GF_4CC('C','S','T','R'),
 	GF_PROP_PID_CENC_STSD_MODE = GF_4CC('C','S','T','M'),
+	GF_PROP_PID_CENC_HAS_ROLL = GF_4CC('C','R','O','L'),
 	GF_PROP_PID_AMR_MODE_SET = GF_4CC('A','M','S','T'),
 	GF_PROP_PCK_SUBS = GF_4CC('S','U','B','S'),
 	GF_PROP_PID_MAX_NALU_SIZE = GF_4CC('N','A','L','S'),
@@ -1136,6 +1167,7 @@ enum
 	GF_PROP_PID_AS_ID = GF_4CC('D','A','I','D'),
 	GF_PROP_PID_MUX_SRC = GF_4CC('M','S','R','C'),
 	GF_PROP_PID_DASH_MODE = GF_4CC('D','M','O','D'),
+	GF_PROP_PID_FORCE_SEG_SYNC = GF_4CC('D','F','S','S'),
 	GF_PROP_PID_DASH_DUR = GF_4CC('D','D','U','R'),
 	GF_PROP_PID_DASH_MULTI_PID = GF_4CC('D','M','S','D'),
 	GF_PROP_PID_DASH_MULTI_PID_IDX = GF_4CC('D','M','S','I'),
@@ -1175,6 +1207,7 @@ enum
 	GF_PROP_PID_COLR_CHROMALOC = GF_4CC('C','L','O','C'),
 	GF_PROP_PID_CONTENT_LIGHT_LEVEL = GF_4CC('C','L','L','I'),
 	GF_PROP_PID_MASTER_DISPLAY_COLOUR = GF_4CC('M','D','C','V'),
+	GF_PROP_PID_ICC_PROFILE = GF_4CC('I','C','C','P'),
 	GF_PROP_PID_SRC_MAGIC = GF_4CC('P','S','M','G'),
 	GF_PROP_PID_MUX_INDEX = GF_4CC('T','I','D','X'),
 	GF_PROP_NO_TS_LOOP = GF_4CC('N','T','S','L'),
@@ -1206,6 +1239,9 @@ enum
 	GF_PROP_PID_ORIG_CRYPT_SCHEME = GF_4CC('P','O','C','S'),
 	GF_PROP_PID_TIMESHIFT_SEGS = GF_4CC('P','T','S','N'),
 
+	GF_PROP_PID_CHAP_TIMES = GF_4CC('C','H','P','T'),
+	GF_PROP_PID_CHAP_NAMES = GF_4CC('C','H','P','N'),
+
 	//internal for HLS playlist reference, gives a unique ID identifying media mux, and indicated in packets carrying child playlists
 	GF_PROP_PCK_HLS_REF = GF_4CC('H','P','L','R'),
 	//internal for HLS low latency
@@ -1222,6 +1258,11 @@ enum
 	GF_PROP_PCK_HLS_VARIANT_NAME = GF_4CC('D','H','L','N'),
 	GF_PROP_PID_HLS_KMS = GF_4CC('H','L','S','K'),
 	GF_PROP_PID_HLS_IV = GF_4CC('H','L','S','I'),
+	GF_PROP_PID_CLEARKEY_URI = GF_4CC('C','C','K','U'),
+	//internal
+	GF_PROP_PID_CLEARKEY_KID = GF_4CC('C','C','K','I'),
+
+
 	//internal property indicating pointer to associated GF_DownloadSession
 	GF_PROP_PID_DOWNLOAD_SESSION = GF_4CC('G','H','T','T'),
 
@@ -1235,13 +1276,23 @@ enum
 	GF_PROP_PCK_XPS_MASK = GF_4CC('P','X','P','M'),
 	GF_PROP_PCK_END_RANGE = GF_4CC('P','C','E','R'),
 
-	/*! Internal property used for FFMPEG codec ID
+	//internal, force creation of rewriter filter (only used for forcing reparse of NALU-based codecs)
+	GF_PROP_PID_FORCE_UNFRAME = GF_4CC('P','F','U','F'),
+
+
+	/*! Internal property used for meta demuxers ( FFMPEG, ...) codec ID
 
 	Property can be:
 	- pointer to codec context: only for ffdmx with old ffmpeg versions)
 	- uint: AVCODEC_ID_*  ffdmx with newer versions or ffenc output
 	*/
-	GF_PROP_PID_FFMPEG_CODEC_ID = GF_4CC('F','C','I','D'),
+	GF_PROP_PID_META_DEMUX_CODEC_ID = GF_4CC('M','D','C','I'),
+
+	/*! Internal property used for meta demuxers ( FFMPEG, ...) codec name*/
+	GF_PROP_PID_META_DEMUX_CODEC_NAME = GF_4CC('M','D','C','N'),
+
+	/*! Internal property used for meta demuxers ( FFMPEG, ...) codec opaque data, u32*/
+	GF_PROP_PID_META_DEMUX_OPAQUE = GF_4CC('M','D','O','P'),
 };
 
 /*! Block patching requirements for FILE pids, as signaled by GF_PROP_PID_DISABLE_PROGRESSIVE
@@ -1353,7 +1404,7 @@ typedef enum
 	GF_PROP_DUMP_DATA_INFO,
 	/*! dump data to parsable property, as ADDRESS+'@'+POINTER*/
 	GF_PROP_DUMP_DATA_PTR,
-} GF_PropDumDataMode;
+} GF_PropDumpDataMode;
 
 /*! Dumps a property value to string
 \param att property value
@@ -1362,7 +1413,7 @@ typedef enum
 \param min_max_enum optional, gives the min/max or enum string when the property is a filter argument
 \return string
 */
-const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumDataMode dump_data_mode, const char *min_max_enum);
+const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumpDataMode dump_data_mode, const char *min_max_enum);
 
 /*! Dumps a property value to string, resolving any built-in types (pix formats, codec id, ...)
 \param p4cc property 4CC
@@ -1371,7 +1422,7 @@ const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUM
 \param dump_data_mode data dump mode
 \return string
 */
-const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumDataMode dump_data_mode);
+const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumpDataMode dump_data_mode);
 
 /*! Resets a property value, freeing allocated data or strings depending on the property type
 \param prop property 4CC
@@ -2048,6 +2099,8 @@ void gf_filter_lock_all(GF_Filter *filter, Bool do_lock);
  This is used by filters loading subchains to enforce that filters from these subchain only connect to each other or the target filter but not other filters outside this chain.
  Filters using this function must setup source IDs on filters of the sunchain(s) they load.
 
+ Noye: This has the same effect has setting `:RSID` option on the filter
+
 \param filter target filter
 */
 void gf_filter_require_source_id(GF_Filter *filter);
@@ -2143,6 +2196,11 @@ typedef enum
 		For source filters, indicates the PIDs should be remuxed to a destination filter with force remux set
 	*/
 	GF_FS_REG_FORCE_REMUX = 1<<12,
+	/*! Indicates the filter must always be run by the same thread, except for the initialize and finalize methods*/
+	GF_FS_REG_SINGLE_THREAD = 1<<13,
+	/*! Indicates the filter needs to be initialized even if temoorary - see \ref gf_filter_is_temporary. Always enabled if GF_FS_REG_META is set */
+	GF_FS_REG_TEMP_INIT = 1<<14,
+
 
 	/*! flag dynamically set at runtime for custom filters*/
 	GF_FS_REG_CUSTOM = 0x40000000,
@@ -2358,6 +2416,20 @@ void *gf_filter_get_udta(GF_Filter *filter);
 */
 void gf_filter_set_name(GF_Filter *filter, const char *name);
 
+/*! Checks is a filter is temporary, ie only loaded to solve caps but will not be used.
+
+ Only filter classes setting the GF_FS_REG_TEMP_INIT or GF_FS_REG_META need to check this, and only during the initialize call.
+
+if filter is temprary, it is loaded only to probe for a filter chain setup and will be finalized immediately after.
+This implies that most filter resources (sockets, file handles, etc) must not be created in this case.
+
+A temporary filter will be finalized as any other filter.
+
+\param filter target filter
+\return GF_TRUE if filter is temporary
+*/
+Bool gf_filter_is_temporary(GF_Filter *filter);
+
 /*! Gets filter name
 \param filter target filter
 \return name of the filter
@@ -2510,6 +2582,15 @@ GF_Filter *gf_filter_load_filter(GF_Filter *filter, const char *name, GF_Err *er
 \return GF_TRUE if a source filter can be found for this URL, GF_FALSE otherwise
 */
 Bool gf_filter_is_supported_source(GF_Filter *filter, const char *url, const char *parent_url);
+
+/*! Checks if a URL describes a filter
+
+\param filter the target filter
+\param url filter description chain, with optional arguments.
+\param act_as_source set to GF_TRUE if filter described acts as a source - may be NULL.
+\return GF_TRUE if a filter is described by this url, GF_FALSE otherwise
+*/
+Bool gf_filter_url_is_filter(GF_Filter *filter, const char *url, Bool *act_as_source);
 
 /*! Gets the number of input PIDs connected to a filter
 \param filter the target filter
@@ -2683,9 +2764,10 @@ void gf_filter_send_event(GF_Filter *filter, GF_FilterEvent *evt, Bool upstream)
 
 /*! Trigger reconnection of output PIDs of a filter. This is needed when inserting a filter in the chain while the session is running
 \param filter the target filter
+\param for_pid reconnects only the given output PID - if NULL, reconnect all output PIDs
 \return error if any
 */
-GF_Err gf_filter_reconnect_output(GF_Filter *filter);
+GF_Err gf_filter_reconnect_output(GF_Filter *filter, GF_FilterPid *for_pid);
 
 
 /*! Indicates that the filter accept and can process events coming from outside the filter chain, typically used by application firing events.
@@ -2865,9 +2947,10 @@ GF_Err gf_filter_request_opengl(GF_Filter *filter);
 \note There may be several OpenGL context created in the filter session, depending on activated filters. A filter using OpenGL must call this function before issuing any OpenGL calls
 
 \param filter filter asking for OpenGL context activation
+\param do_activate if true, context must be activated for the calling thread, otherwise context is being released
 \return error code if any
 */
-GF_Err gf_filter_set_active_opengl_context(GF_Filter *filter);
+GF_Err gf_filter_set_active_opengl_context(GF_Filter *filter, Bool do_activate);
 
 
 /*! Count the number of source filters for the given filter matching the given protocol type.
@@ -2950,9 +3033,10 @@ Bool gf_filter_end_of_session(GF_Filter *filter);
 know the set of available options at initialize() time.
 \param filter target filter
 \param arg name of the argument not used/found
-\param was_found indicate that this option was found
+\param was_found indicate if option was found ot not
+\param sub_opt_name indicate sub-option name, or NULL for regular options. This is used to track unused values in multiple-values options
 */
-void gf_filter_report_meta_option(GF_Filter *filter, const char *arg, Bool was_found);
+void gf_filter_report_meta_option(GF_Filter *filter, const char *arg, Bool was_found, const char *sub_opt_name);
 
 /*! used by script to set a per-instance description
 \param filter target filter
@@ -3126,6 +3210,25 @@ If filters do not have the same sourceID, they cannot link to each other except 
 \return error if any
 */
 GF_Err gf_filter_tag_subsession(GF_Filter *filter, u32 subsession_id, u32 source_id);
+
+/*! Check if connect errors happened in the filter parent session
+\param filter target filter
+\return GF_TRUE if parent session has seen connection errors, GF_FALSE otherwise
+*/
+Bool gf_filter_has_connect_errors(GF_Filter *filter);
+
+
+/*! Sets names of sub-instances involved in a meta-filter instance
+\param filter target filter
+\param instance_names_list space-separated names of meta filter instances, without meta registry name. eg "negate" for ffavf::f=negate
+*/
+void gf_filter_meta_set_instances(GF_Filter *filter, const char *instance_names_list);
+
+/*! Gets names of sub-instances involved in a meta-filter instance
+\param filter target filter
+\return NULL or space-separated names of meta filter instances, without meta registry name. eg "negate" for ffavf::f=negate
+*/
+const char *gf_filter_meta_get_instances(GF_Filter *filter);
 
 /*! @} */
 
@@ -3420,7 +3523,7 @@ typedef struct
 	/*! max process rate on that PID in bits per seconds*/
 	u32 max_process_rate;
 	/*! average bitrate for that PID*/
-	u32 avgerage_bitrate;
+	u32 average_bitrate;
 	/*! max bitrate for that PID*/
 	u32 max_bitrate;
 	/*! number of packets processed on that PID*/
@@ -3452,6 +3555,16 @@ typedef struct
 	u64 buffer_time;
 	/*! number of units in input buffer of the filter - only set when querying decoder stats*/
 	u32 nb_buffer_units;
+
+	/*! last RT info update time in microsec (cf \ref gf_sys_clock_high_res)  - input pid only */
+	u64 last_rt_report;
+	/*! estimated round-trip time in ms - input pid only */
+	u32 rtt;
+	/*! estimated interarrival jitter in microseconds - input pid only */
+	u32 jitter;
+	/*! loss rate in per-thousand - input pid only */
+	u32 loss_rate;
+
 } GF_FilterPidStatistics;
 
 /*! Direction for stats querying*/
@@ -3459,7 +3572,8 @@ typedef enum
 {
 	/*! statistics are fetched on the current PID's parent filter. If the PID is an output PID, the statistics are fetched on all the destinations for that PID*/
 	GF_STATS_LOCAL = 0,
-	/*! statistics are fetched on the current PID's parent filter. The statistics are fetched on all input of the parent filter*/
+	/*! statistics are fetched on the current PID's parent filter. The statistics are fetched on all input of the parent filter
+	If the pid is an output pid, this is equivalent to GF_STATS_LOCAL*/
 	GF_STATS_LOCAL_INPUTS,
 	/*! statistics are fetched on all inputs of the next decoder filter up the chain (towards the sink)*/
 	GF_STATS_DECODER_SINK,
@@ -3468,7 +3582,9 @@ typedef enum
 	/*! statistics are fetched on all inputs of the next encoder filter up the chain (towards the sink)*/
 	GF_STATS_ENCODER_SINK,
 	/*! statistics are fetched on all inputs of the previous encoder filter down the chain (towards the source)*/
-	GF_STATS_ENCODER_SOURCE
+	GF_STATS_ENCODER_SOURCE,
+	/*! statistics are fetched on all inputs of the next sink filter of the chain*/
+	GF_STATS_SINK
 } GF_FilterPidStatsLocation;
 
 /*! Gets statistics for the PID
@@ -3625,6 +3741,10 @@ Bool gf_filter_pid_first_packet_is_blocking_ref(GF_FilterPid *PID);
 /*! Gets the first packet in the input PID buffer.
 This may trigger a reconfigure signal on the filter. If reconfigure is not OK, returns NULL and the PID passed to the filter NO LONGER EXISTS (implicit remove)
 The packet is still present in the PID buffer until explicitly removed by \ref gf_filter_pid_drop_packet
+
+The returned packet is only valid for the current filter execution (process callback, task, ...), and may be discarded in-between calls, typically when the session is aborted.
+If a filter needs to keep a packet across calls, it must use \ref gf_filter_pck_ref and \ref gf_filter_pck_unref
+
 \param PID the target filter PID
 \return packet or NULL of empty or reconfigure error
 */
@@ -3858,6 +3978,23 @@ GF_Err gf_filter_pid_ignore_blocking(GF_FilterPid *PID, Bool do_ignore);
 */
 u64 gf_filter_pid_get_next_ts(GF_FilterPid *PID);
 
+/*! Checks if a decoder is present in parent chain of this pid.
+This is a recursive call on input chain. The function is typically used when setting up buffer levels on raw media pids.
+\param PID the target filter PID
+\return GF_TRUE if a decoder is present in input chain, GF_FALSE otherwise
+*/
+Bool gf_filter_pid_has_decoder(GF_FilterPid *PID);
+
+
+/*! Sets real-time stats on PID (input PID only for now)
+
+\param PID the target filter PID
+\param rtt_ms estimated round-trip time in ms
+\param jitter_us estimated packet inter-arrival jitter in us
+\param loss_rate loss rate in per-thousand
+\return error if any
+*/
+GF_Err gf_filter_pid_set_rt_stats(GF_FilterPid *PID, u32 rtt_ms, u32 jitter_us, u32 loss_rate);
 
 /*! @} */
 
@@ -3975,7 +4112,7 @@ GF_FilterPacket *gf_filter_pck_new_clone(GF_FilterPid *PID, GF_FilterPacket *pck
 */
 GF_FilterPacket *gf_filter_pck_new_copy(GF_FilterPid *PID, GF_FilterPacket *pck_source, u8 **data);
 
-/*! Creates a  read-only detached copy of a packet from a source packet and copy all source properties to output.
+/*! Creates a read-only detached copy of a packet from a source packet and copy all source properties to output.
 
 If the source packet uses a frame interface object or has no associated data, returns a copy of the packet.
 If the source packet is referenced more than once (ie more than just the caller), a new packet on the output PID is allocated with source data copied.
@@ -4472,8 +4609,9 @@ Bool gf_filter_pck_is_blocking_ref(GF_FilterPacket *pck);
 
 
 /*!
-\addtogroup fs_props Filter Properties
-\ingroup filters__cust_grp
+\addtogroup filters__cust_grp Custom Filter
+\ingroup filters_grp
+
 \brief Custom Filter
 
 Custom filters are filters created by the app with no associated registry.

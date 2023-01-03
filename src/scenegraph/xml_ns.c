@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre - Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2000-2020
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / SVG Scene Graph sub-project
@@ -443,9 +443,13 @@ u32 gf_xml_get_attribute_tag(GF_Node *elt, char *attribute_name, GF_NamespaceTyp
 			case TAG_SVG_animateMotion:
 			case TAG_SVG_animateTransform:
 			case TAG_SVG_animation:
+			case TAG_SVG_set:
+				return xml_attributes[i].tag;
 			case TAG_SVG_audio:
 			case TAG_SVG_video:
-			case TAG_SVG_set:
+				//"type" on audio and video is mime type, not smil anim type
+				if (xml_attributes[i].tag == TAG_SVG_ATT_transform_type)
+					break;
 				return xml_attributes[i].tag;
 			default:
 				break;
@@ -1090,7 +1094,10 @@ GF_Err gf_node_store_embedded_data(XMLRI *iri, const char *cache_dir, const char
 	u32 data_size=0, idx;
 	Bool existing;
 
-	if (!cache_dir || !base_filename || !iri || !iri->string || strncmp(iri->string, "data:", 5)) return GF_OK;
+	if (!cache_dir || !base_filename || !iri || !iri->string) return GF_OK;
+	if (strncmp(iri->string, "data:", 5)) return GF_OK;
+	//used in test suite
+	if (!strcmp(iri->string, "data:,void")) return GF_OK;
 
 	/*handle "data:" scheme when cache is specified*/
 	strcpy(szFile, cache_dir);
@@ -1121,7 +1128,7 @@ GF_Err gf_node_store_embedded_data(XMLRI *iri, const char *cache_dir, const char
 
 
 	data = NULL;
-	sep = strchr(iri->string, ';');
+	sep = strstr(iri->string, ";base");
 	if (!strncmp(sep, ";base64,", 8)) {
 		sep += 8;
 		data_size = 2 * (u32) strlen(sep);
@@ -1155,6 +1162,7 @@ GF_Err gf_node_store_embedded_data(XMLRI *iri, const char *cache_dir, const char
 	strcat(szFile, buf);
 	strcat(szFile, ext);
 
+	GF_Err e = GF_OK;
 	if (!existing) {
 		FILE *f = gf_fopen(szFile, "wb");
 		if (!f) {
@@ -1163,13 +1171,15 @@ GF_Err gf_node_store_embedded_data(XMLRI *iri, const char *cache_dir, const char
 			iri->string = NULL;
 			return GF_IO_ERR;
 		}
-		gf_fwrite(data, data_size, f);
+		if (gf_fwrite(data, data_size, f)!=data_size) e = GF_IO_ERR;
 		gf_fclose(f);
 	}
 	gf_free(data);
 	gf_free(iri->string);
 	iri->string = gf_strdup(szFile);
-	return GF_OK;
+	if (!iri->string) e = GF_OUT_OF_MEM;
+
+	return e;
 }
 
 

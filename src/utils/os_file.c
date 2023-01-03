@@ -101,6 +101,16 @@ GF_Err gf_mkdir(const char* DirPathName)
 	}
 #elif defined (WIN32)
 	int res;
+
+	//don't try creation for UNC root:  \\foo\bar\name will trigger creation for "", "\\foo" and "\\foo\bar", ignore these
+	if (!strcmp(DirPathName, "")) return GF_OK;
+	if (!strncmp(DirPathName, "\\\\", 2)) {
+		char *sep = strchr(DirPathName + 2, '\\');
+		if (!sep) return GF_OK;
+		sep = strchr(sep + 1, '\\');
+		if (!sep) return GF_OK;
+	}
+
 	wchar_t* wcsDirPathName = gf_utf8_to_wcs(DirPathName);
 	if (!wcsDirPathName)
 		return GF_IO_ERR;
@@ -703,11 +713,8 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 		iFs.Close();
 		FlushItemList();
 		return GF_OK;
-#elif defined(GPAC_CONFIG_ANDROID)
-		dir = getenv("EXTERNAL_STORAGE");
-		if (!dir) dir = "/sdcard";
-#elif defined(GPAC_CONFIG_IOS)
-		dir = (char *) gf_opts_get_key("General", "iOSDocumentsDir");
+#elif defined(GPAC_CONFIG_ANDROID) || defined(GPAC_CONFIG_IOS)
+		dir = (char *) gf_opts_get_key("core", "docs-dir");
 #endif
 	}
 
@@ -1510,26 +1517,18 @@ size_t gf_fwrite(const void *ptr, size_t nb_bytes, FILE *stream)
 #else
 		int errno_save = errno;
 #endif
-		//if (errno_save!=0)
-		{
 #ifdef HAVE_STRERROR_R
 #define ERRSTR_BUF_SIZE 256
-			char errstr[ERRSTR_BUF_SIZE];
-			if(strerror_r(errno_save, errstr, ERRSTR_BUF_SIZE) != 0)
-			{
-				strerror_r(0, errstr, ERRSTR_BUF_SIZE);
-			}
-#else
-			char *errstr = (char*)strerror(errno_save);
-#endif
-
-#ifndef GPAC_DISABLE_LOG
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Error writing data (%s): %d blocks to write but %d blocks written\n", errstr, nb_bytes, result));
-#else
-			fprintf(stderr, "Error writing data (%s): %d blocks to write but %d blocks written\n", errstr, (u32) nb_bytes, (u32) result);
-#endif
-
+		char errstr[ERRSTR_BUF_SIZE];
+		if(strerror_r(errno_save, errstr, ERRSTR_BUF_SIZE) != 0)
+		{
+			strerror_r(0, errstr, ERRSTR_BUF_SIZE);
 		}
+#else
+		char *errstr = (char*)strerror(errno_save);
+#endif
+
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Error writing data (%s): %d blocks to write but %d blocks written\n", errstr, nb_bytes, result));
 #endif
 	}
 	return result;
@@ -1620,6 +1619,18 @@ int gf_fprintf(FILE *stream, const char *format, ...)
 		res = vfprintf(stream, format, args);
 	}
 	va_end(args);
+	return res;
+}
+
+GF_EXPORT
+int gf_vfprintf(FILE *stream, const char *format, va_list args)
+{
+	int	res;
+	if (gf_fileio_check(stream)) {
+		res = gf_fileio_printf((GF_FileIO *)stream, format, args);
+	} else {
+		res = vfprintf(stream, format, args);
+	}
 	return res;
 }
 
@@ -1738,10 +1749,19 @@ char* gf_url_colon_suffix(const char *path, char assign_sep)
 	if (!strncmp(path, "gfio://", 7) || !strncmp(path, "gmem://", 7)) {
 		return strchr(path+7, ':');
 	}
-	
+
+	//handle "\\foo\Z:\bar"
+	if ((path[0] == '\\') && (path[1] == '\\')) {
+		char *next = strchr(path+2, '\\');
+		if (next) next = strchr(next + 1, '\\');
+		if (next)
+			return gf_url_colon_suffix(next + 1, assign_sep);
+	}
+
+
 	//handle PROTO://ADD:PORT/
 	if ((sep[1]=='/') && (sep[2]=='/')) {
-		char *next_colon, *next_slash;
+		char *next_colon, *next_slash, *userpass;
 		sep++;
 		//skip all // (eg PROTO://////////////mytest/)
 		while (sep[0]=='/')
@@ -1757,6 +1777,11 @@ char* gf_url_colon_suffix(const char *path, char assign_sep)
 		//find closest : or /, if : is before / consider this is a port or an IPv6 address and check next : after /
 		next_colon = strchr(sep, ':');
 		next_slash = strchr(sep, '/');
+		userpass = strchr(sep, '@');
+		//if ':' is before '@' with '@' before next '/', consider this is `user:pass@SERVER`
+		if (userpass && next_colon && next_slash && (userpass<next_slash) && (userpass>next_colon))
+			next_colon = strchr(userpass, ':');
+
 		if (next_colon && next_slash && ((next_slash - sep) > (next_colon - sep)) ) {
 			const char *last_colon;
 			u32 i, port, nb_colons=0, nb_dots=0, nb_non_alnums=0;
@@ -1788,6 +1813,17 @@ char* gf_url_colon_suffix(const char *path, char assign_sep)
 		if (assign) file_ext = NULL;
 		if (file_ext && (file_ext>sep)) {
 			sep = strchr(file_ext, ':');
+		}
+		if (assign && (strlen(assign) > 4)) {
+			if ((assign[2] == ':') && ((assign[3] == '\\') || (assign[3] == '/'))) {
+				return gf_url_colon_suffix(assign + 1, 0);
+			}
+			if ((assign[1] == '\\') && (assign[2] == '\\')) {
+				char *next = strchr(assign + 3, '\\');
+				if (next) next = strchr(next+1, '\\');
+				if (next && (next>sep))
+					return gf_url_colon_suffix(next, 0);
+			}
 		}
 	}
 	return sep;

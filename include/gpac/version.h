@@ -42,13 +42,13 @@
  * SONAME versions must be digits (not strings)
  */
 /*! Macro giving GPAC version name expressed as a printable string*/
-#define GPAC_VERSION          "2.1-DEV"
+#define GPAC_VERSION          "2.3-DEV"
 
 // WARNING: when bumping, reflect the changes in share/python/libgpac.py !!
 /*! ABI Major number of libgpac */
-#define GPAC_VERSION_MAJOR 11
+#define GPAC_VERSION_MAJOR 12
 /*! ABI Minor number of libgpac */
-#define GPAC_VERSION_MINOR 0
+#define GPAC_VERSION_MINOR 10
 /*! ABI Micro number of libgpac */
 #define GPAC_VERSION_MICRO 0
 

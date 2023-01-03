@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2021
+ *			Copyright (c) Telecom ParisTech 2017-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / HTTP input filter using GPAC http stack
@@ -28,10 +28,10 @@
 #include <gpac/constants.h>
 #include <gpac/download.h>
 
-
 typedef enum
 {
-	GF_HTTPIN_STORE_DISK=0,
+	GF_HTTPIN_STORE_AUTO=0,
+	GF_HTTPIN_STORE_DISK,
 	GF_HTTPIN_STORE_DISK_KEEP,
 	GF_HTTPIN_STORE_MEM,
 	GF_HTTPIN_STORE_MEM_KEEP,
@@ -55,6 +55,8 @@ typedef struct
 	GF_Fraction64 range;
 	char *ext;
 	char *mime;
+	Bool blockio;
+
 
 	//internal
 	Bool initial_ack_done;
@@ -112,6 +114,8 @@ static GF_Err httpin_initialize(GF_Filter *filter)
 		flags |= GF_NETIO_SESSION_NOT_CACHED;
 	else if (ctx->cache==GF_HTTPIN_STORE_DISK_KEEP)
 		flags |= GF_NETIO_SESSION_KEEP_CACHE;
+	else if (ctx->cache==GF_HTTPIN_STORE_AUTO)
+		flags |= GF_NETIO_SESSION_AUTO_CACHE;
 	else if (ctx->cache==GF_HTTPIN_STORE_MEM_KEEP) {
 		flags |= GF_NETIO_SESSION_MEMORY_CACHE|GF_NETIO_SESSION_KEEP_FIRST_CACHE;
 		ctx->cache = GF_HTTPIN_STORE_MEM;
@@ -120,6 +124,10 @@ static GF_Err httpin_initialize(GF_Filter *filter)
 		flags |= GF_NETIO_SESSION_NOT_CACHED|GF_NETIO_SESSION_MEMORY_CACHE|GF_NETIO_SESSION_KEEP_FIRST_CACHE;
 		ctx->cache = GF_HTTPIN_STORE_NONE;
 	}
+	gf_filter_set_blocking(filter, GF_TRUE);
+
+	if (!ctx->blockio)
+		flags |= GF_NETIO_SESSION_NO_BLOCK;
 
 	server = strstr(ctx->src, "://");
 	if (server) server += 3;
@@ -275,6 +283,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			GF_FilterPacket *pck;
 			gf_filter_pid_raw_new(filter, ctx->src, ctx->src, NULL, NULL, NULL, 0, GF_FALSE, &ctx->pid);
 			ctx->is_end = GF_TRUE;
+			ctx->prev_was_init_segment = GF_TRUE;
 			pck = gf_filter_pck_new_shared(ctx->pid, ctx->block, 0, httpin_rel_pck);
 			if (!pck) return GF_TRUE;
 			gf_filter_pck_set_framing(pck, GF_TRUE, GF_TRUE);
@@ -600,16 +609,18 @@ static const GF_FilterArgs HTTPInArgs[] =
 	{ OFFS(src), "URL of source content", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(block_size), "block size used to read file", GF_PROP_UINT, "100000", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(cache), "set cache mode\n"
+	"- auto: cache to disk if content length is known, no cache otherwise\n"
 	"- disk: cache to disk,  discard once session is no longer used\n"
 	"- keep: cache to disk and keep\n"
 	"- mem: stores to memory, discard once session is no longer used\n"
 	"- mem_keep: stores to memory, keep after session is reassigned but move to `mem` after first download\n"
 	"- none: no cache\n"
 	"- none_keep: stores to memory, keep after session is reassigned but move to `none` after first download"
-	, GF_PROP_UINT, "disk", "disk|keep|mem|mem_keep|none|none_keep", GF_FS_ARG_HINT_ADVANCED},
+	, GF_PROP_UINT, "disk", "auto|disk|keep|mem|mem_keep|none|none_keep", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(range), "set byte range, as fraction", GF_PROP_FRACTION64, "0-0", NULL, 0},
 	{ OFFS(ext), "override file extension", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(mime), "set file mime type", GF_PROP_NAME, NULL, NULL, 0},
+	{ OFFS(blockio), "use blocking IO", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -624,6 +635,9 @@ GF_FilterRegister HTTPInRegister = {
 	GF_FS_SET_HELP("This filter dispatch raw blocks from a remote HTTP resource into a filter chain.\n"
 	"Block size can be adjusted using [-block_size](), and disk caching policies can be adjusted.\n"
 	"Content format can be forced through [-mime]() and file extension can be changed through [-ext]().\n"
+	"\n"
+	"The filter supports both http and https schemes, and will attempt reconnecting as TLS if TCP connection fails.\n"
+	"\n"
 	"Note: Unless disabled at session level (see [-no-probe](CORE) ), file extensions are usually ignored and format probing is done on the first data block.")
 	.private_size = sizeof(GF_HTTPInCtx),
 	.args = HTTPInArgs,
@@ -638,6 +652,9 @@ GF_FilterRegister HTTPInRegister = {
 
 const GF_FilterRegister *httpin_register(GF_FilterSession *session)
 {
+	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
+		gf_opts_set_key("temp_in_proto", HTTPInRegister.name, "http,https,gmem");
+	}
 	return &HTTPInRegister;
 }
 

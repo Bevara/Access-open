@@ -710,8 +710,10 @@ enum
 	GF_M2TS_FAKE_PCR = 1<<7,
 	/*! signals the stream type is a gpac codec id*/
 	GF_M2TS_GPAC_CODEC_ID = 1<<8,
-	/*! signals the stream type is a gpac codec id*/
+	/*! signals the stream is a PMT*/
 	GF_M2TS_ES_IS_PMT = 1<<9,
+	/*! signals the stream is reused (fake pcr streams), i.e. present twice in ess[] list*/
+	GF_M2TS_ES_IS_PCR_REUSE = 1<<10,
 
 	/*! all flags above this mask are used by demultiplexer users*/
 	GF_M2TS_ES_STATIC_FLAGS_MASK = 0x0000FFFF,
@@ -728,6 +730,8 @@ enum
 	GF_M2TS_ES_FULL_AU = 1<<20,
 	/*! flag indicates ES is not sparse (AV), used to check discontinuity - set by user*/
 	GF_M2TS_CHECK_DISC = 1<<21,
+	/*! flag indicates VC1 sequence header is to be checked - set by user*/
+	GF_M2TS_CHECK_VC1 = 1<<22,
 };
 
 /*! macro for abstract Section/PES stream object, only used for type casting*/
@@ -888,6 +892,8 @@ typedef struct tag_m2ts_pes
 	u8 dv_info[25];
 
 	u64 map_utc, map_utc_pcr, map_pcr;
+	u8 *gpac_meta_dsi;
+	u32 gpac_meta_dsi_size;
 } GF_M2TS_PES;
 
 /*! reserved streamID for PES headers*/
@@ -1404,12 +1410,14 @@ enum
 	GF_ESI_STREAM_WITHOUT_MPEG4_SYSTEMS =	1<<3,
 	/*! stream is not signaled through MPEG-4 Systems (OD stream) */
 	GF_ESI_AAC_USE_LATM =	1<<4,
-	/*! temporrary end of stream (flush of segment)*/
+	/*! temporary end of stream (flush of segment)*/
 	GF_ESI_STREAM_FLUSH	=	1<<5,
 	/*! stream uses HLS SAES encryption*/
 	GF_ESI_STREAM_HLS_SAES	=	1<<6,
 	/*! stream uses non-backward DolbyVision signaling*/
 	GF_ESI_FORCE_DOLBY_VISION = 1<<7,
+	/*! sparse stream with currently no packets*/
+	GF_ESI_STREAM_SPARSE = 1<<8,
 };
 
 /*! elementary stream information*/
@@ -1458,6 +1466,12 @@ typedef struct __elementary_stream_ifce
 
 	/*! registration authority code to use, 0 if not applicable*/
 	u32 ra_code;
+	/*! GPAC unmapped meta codec decoder config size*/
+	u32 gpac_meta_dsi_size;
+	/*! GPAC unmapped meta codec decoder config*/
+	u8 *gpac_meta_dsi;
+	/*! GPAC unmapped meta codec name if knwon*/
+	const char *gpac_meta_name;
 } GF_ESInterface;
 
 /*! @} */

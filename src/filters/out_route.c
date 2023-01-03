@@ -30,6 +30,7 @@
 #include <gpac/route.h>
 #include <gpac/network.h>
 
+#if !defined(GPAC_DISABLE_ROUTE)
 
 enum
 {
@@ -625,7 +626,7 @@ static GF_Err routeout_initialize(GF_Filter *filter)
 
 
 	/*this is an alias for our main filter, nothing to initialize*/
-	if (gf_filter_is_alias(filter)) {
+	if (gf_filter_is_alias(filter) || gf_filter_is_temporary(filter)) {
 		return GF_OK;
 	}
 
@@ -2220,11 +2221,20 @@ GF_FilterRegister ROUTEOutRegister = {
 	.finalize = routeout_finalize,
 	.configure_pid = routeout_configure_pid,
 	.process = routeout_process,
-	.use_alias = routeout_use_alias
+	.use_alias = routeout_use_alias,
+	.flags = GF_FS_REG_TEMP_INIT
 };
-
 
 const GF_FilterRegister *routeout_register(GF_FilterSession *session)
 {
+	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
+		gf_opts_set_key("temp_out_proto", ROUTEOutRegister.name, "atsc,route");
+	}
 	return &ROUTEOutRegister;
 }
+#else
+const GF_FilterRegister *routeout_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif

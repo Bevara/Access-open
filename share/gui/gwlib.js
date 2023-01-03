@@ -652,6 +652,19 @@ s.font = gw_new_fontstyle(gwskin.default_text_font_size, 0);
 s.font.style += ' SIMPLE_EDIT';
 s.font.skin = true;
 
+s = { name: 'editpw' };
+gwskin.styles.push(s);
+s.normal = gw_new_appearance(1, 1, 1);
+s.normal.texture = gw_make_gradient('vertical', [0, 1], [0.0, 0.2, 0.4, 0.0, 0.8, 1]);
+s.over = gw_new_appearance(1, 1, 1);
+s.over.texture = gw_make_gradient('vertical', [0, 1], [0.0, 0.2, 0.4, 0.0, 0.8, 1]);
+s.over.material.lineProps = gw_new_lineprops(0.0, 0.8, 1);
+s.text = gw_new_appearance(0, 0, 0);
+s.text.skin = true;
+s.font = gw_new_fontstyle(gwskin.default_text_font_size, 0);
+s.font.style += ' SIMPLE_EDIT PASSWD';
+s.font.skin = true;
+
 s = { name: 'window' };
 gwskin.styles.push(s);
 s.normal = gw_new_appearance(0.6, 0.6, 0.6);
@@ -778,8 +791,8 @@ gwskin.images.device = 'icons/laptop.svg';
 gwskin.labels.device = 'Device';
 gwskin.images.home = 'icons/home.svg';
 gwskin.labels.home = 'Home';
-gwskin.images.osmo = 'icons/osmo.svg';
-gwskin.labels.osmo = 'Home';
+gwskin.images.gpac = 'icons/gpac.svg';
+gwskin.labels.gpac = 'Home';
 gwskin.images.media = 'icons/more.svg';
 gwskin.labels.media = 'Media';
 gwskin.images.favorite = 'icons/heart.svg';
@@ -832,6 +845,8 @@ gwskin.images.view360 = 'icons/image.svg';
 gwskin.labels.view360 = 'VR';
 gwskin.images.sensors = 'icons/compass.svg';
 gwskin.labels.sensors = 'Orientation';
+gwskin.images.chapters = 'icons/chapter.svg';
+gwskin.labels.chapters = 'Chapters';
 
 
 gwskin.mime_video_default_ext = " mp4 mp4s m4s 3gp 3gpp m2ts ts trp m3u8 mpd avi mov ";
@@ -965,8 +980,12 @@ function gwlib_init(root_node) {
             gw_ui_top_wnd = wnd;
         }
         if (typeof (wnd._no_focus) == 'boolean') return;
-        if (gwskin.focus_on)
-            scene.set_focus(gw_ui_top_wnd);
+        if (gwskin.focus_on) {
+			if (typeof (wnd._init_focus) != 'undefined')
+				scene.set_focus(wnd._init_focus);
+			else
+				scene.set_focus(gw_ui_top_wnd);
+		}
     }
 
     gw_ui_root.remove_focus = function(wnd) {
@@ -1017,12 +1036,16 @@ function gwlib_init(root_node) {
 
     if ((device == 'ios') || (device == 'android')) gwskin.mobile_device = true;
     else gwskin.mobile_device = false;
-    
+
+    var cutout = scene.get_option('temp', 'display-cutout');
+    gwskin.display_cutout = (cutout == 'yes') ? true : false;
+
     if (gwskin.mobile_device) {
         var size = scene.screen_width;
         if (size > scene.screen_height) size = scene.screen_height;
-        gwskin_set_default_control_height(size/6);
-        gwskin_set_default_icon_height(size/12);
+
+        gwskin_set_default_control_height(size/8);
+        gwskin_set_default_icon_height(size/10);
     }
     
 	gwskin_set_white_blue();
@@ -1985,14 +2008,14 @@ function gw_new_checkbox(parent, label) {
     obj.on_check = NULL;
     obj.down = false;
     obj.over = false;
-    obj._checked = false;
+    obj.checked = false;
     obj._on_active = function (value, timestamp) {
         if (value) {
             this.down = true;
         } else {
             if (this.down && this.over) {
-                this._set_checked(!this._checked);
-                if (this.on_check) this.on_check(this._checked);
+                this._set_checked(!this.checked);
+                if (this.on_check) this.on_check(this.checked);
             }
             this.down = false;
         }
@@ -2002,7 +2025,7 @@ function gw_new_checkbox(parent, label) {
         gw_reset_hit(this, value);
 
         if (gwskin.pointing_device) {
-                        var app = gwskin.get_style(class_name, value ? 'over' : (this._checked ? 'down' : 'normal') );
+                        var app = gwskin.get_style(class_name, value ? 'over' : (this.checked ? 'down' : 'normal') );
                         if (app) {
                             this._icon_root.children[0].children[0].set_style(app);
                         }
@@ -2015,7 +2038,7 @@ function gw_new_checkbox(parent, label) {
 
 
     obj._set_checked = function (value) {
-        this._checked = value;
+        this.checked = value;
         var app = gwskin.get_style(class_name, value ? 'down' : 'normal');
         this._icon_root.children[0].children[0].set_style(app);
     }
@@ -2910,7 +2933,8 @@ function gw_new_text_edit(parent, text_data) {
     //    gw_add_child(obj, edit);
     obj.on_text = null;
     obj._text_edited = function (val) {
-        if (this.on_text) this.on_text(val[0]);
+		if (this.nb_reset) this.nb_reset--;
+		else if (this.on_text) this.on_text(val[0]);
     };
     Browser.addRoute(obj.children[1].children[0].children[0].geometry, 'string', obj, obj._text_edited);
 
@@ -2921,8 +2945,16 @@ function gw_new_text_edit(parent, text_data) {
         this.children[1].move(5 - w / 2, 0);
     };
     obj.on_event = function (x, y) { return false; }
-
-
+    obj.nb_reset=0;
+    obj.reset = function (use_pass) {
+		this.nb_reset++;
+		edit.set_label('');
+		if (use_pass)
+			edit.children[0].children[0].geometry.fontStyle = gwskin.get_font('editpw');
+		else
+			edit.children[0].children[0].geometry.fontStyle = gwskin.get_font('edit');
+    }
+    obj.edit = edit;
     gw_add_child(parent, obj);
     return obj;
 }
@@ -3499,7 +3531,7 @@ function gw_new_plotter(parent) {
     obj.add_serie = function (legend, units, r, g, b) {
         var s = gw_new_curve2d('plot');
         s.set_color(r, g, b);
-
+		s.set_line_width(gwskin.default_icon_height/10);
         s.dlg = this;
         s.legend = legend;
         s.units = units;
@@ -3619,7 +3651,7 @@ function gw_new_popup(anchor, type)
           var s = children[i].get_label().length;
           if (s>max_s) max_s = s;
         }
-
+		max_s *= 0.66;
         for (var i=0; i<children.length; i++) {
             children[i].set_size(max_s * gwskin.default_text_font_size, gwskin.default_icon_height);
         }

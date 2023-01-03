@@ -58,7 +58,7 @@ enum
 typedef struct
 {
 	//options
-	char *src;
+	char *src, *initseg;
 	Bool allt, noedit, itt, itemid;
 	u32 smode;
 	u32 stsd;
@@ -107,7 +107,6 @@ typedef struct
 	Bool in_data_flush;
 	u32 has_pending_segments, nb_force_flush;
 
-	Bool clock_discontinuity;
 	Bool disconnected;
 	Bool no_order_check;
 	u32 moov_not_loaded;
@@ -124,6 +123,7 @@ typedef struct
 	u32 mem_load_mode;
 	u8 *mem_url;
 	GF_Blob mem_blob;
+	u32 mem_blob_alloc;
 	u64 bytes_removed;
 	u64 last_min_offset;
 	GF_Err in_error;
@@ -140,7 +140,6 @@ typedef struct
 	GF_FilterPid *pid;
 	ISOMReader *owner;
 	u64 duration;
-	Bool last_has_tfrf;
 
 	/*current sample*/
 	GF_ISOSample *static_sample;
@@ -152,43 +151,46 @@ typedef struct
 	s32 roll;
 	u32 xps_mask;
 	
-	Bool has_edit_list;
 	u32 sample_num;
 	s64 ts_offset;
-/*
-	s64 dts_offset;
-	Bool do_dts_shift_test;
-*/
 
 	/*for edit lists*/
 	u32 edit_sync_frame;
 	u64 sample_time, last_rap_sample_time, start, end;
-	Double speed;
+	Double speed, orig_start;
 
 	u32 timescale;
-	Bool to_init, has_rap;
-	//0: not playing, 1: playing 2: playing but end of range reached
-	u32 playing;
-	Bool eos_sent;
+	u32 clock_id;
 	u8 streamType;
-	Bool initial_play_seen;
+	//flags
+	u8 has_edit_list;
+	u8 last_has_tfrf;
+	//0: not playing, 1: playing 2: playing but end of range reached
+	u8 playing;
+	u8 to_init, has_rap;
+	u8 eos_sent;
+	u8 initial_play_seen;
+	u8 midrun_tune;
+	u8 is_encrypted, is_cenc;
+	u8 disable_seek, set_disc;
+	u8 skip_next_play;
+	u8 seek_flag;
+	u8 check_avc_ps, check_hevc_ps, check_vvc_ps, check_mhas_pl;
+	u8 needs_pid_reconfig;
+	u8 check_has_rap;
+	//0: no drop, 1: only keeps sap, 2: only keeps saps until next sap, then regular mode
+	u8 sap_only;
 
-	Bool is_encrypted, is_cenc;
-
-	Bool disable_seek;
-	u32 nalu_extract_mode;
+	GF_ISONaluExtractMode nalu_extract_mode;
 
 	//channel sample state
 	u32 last_sample_desc_index;
 	u32 isLeading, dependsOn, dependedOn, redundant;
 	u64 dts, cts;
 	u8 skip_byte_block, crypt_byte_block;
-	Bool is_protected;
 	u32 au_seq_num;
 	u64 sender_ntp, ntp_at_server_ntp;
-	u32 seek_flag;
 	u32 au_duration;
-	Bool set_disc;
 
 	u64 isma_BSO;
 	Bool pck_encrypted;
@@ -199,16 +201,10 @@ typedef struct
 	u8 *sai_buffer;
 	u32 sai_alloc_size, sai_buffer_size;
 
-	Bool check_avc_ps, check_hevc_ps, check_vvc_ps, check_mhas_pl;
 	GF_HEVCConfig *hvcc;
 	GF_AVCConfig *avcc;
 	GF_VVCConfig *vvcc;
-	GF_BitStream *nal_bs;
 	u32 dsi_crc;
-
-	Bool needs_pid_reconfig;
-	u32 sap_only;
-	Bool check_has_rap;
 } ISOMChannel;
 
 void isor_reset_reader(ISOMChannel *ch);

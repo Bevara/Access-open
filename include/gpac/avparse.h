@@ -665,34 +665,38 @@ Bool gf_ac3_parser_bs(GF_BitStream *bs, GF_AC3Config *hdr, Bool full_parse);
 \param buffer_size size of buffer to parse
 \param pos set to start offset (in bytes) of the AC3 header parsed
 \param hdr will be filled by parser
-\param full_parse if GF_TRUE, complete parsing of the header will be done
+\param full_parse if GF_TRUE, complete parsing of the header and check for next frame/blocks presence will be done
 \return GF_TRUE if success
 */
 Bool gf_eac3_parser(u8 *buffer, u32 buffer_size, u32 *pos, GF_AC3Config *hdr, Bool full_parse);
 
-/*! parses an EAC-3 header from a bitstream and checks for next frale/blocks presence
+/*! parses an EAC-3 header from a bitstream
 \param bs bitstream to parse
 \param hdr will be filled by parser
-\param full_parse if GF_TRUE, complete parsing of the header will be done
+\param full_parse if GF_TRUE, complete parsing of the header and check for next frame/blocks presence will be done
 \return GF_TRUE if success
 */
 Bool gf_eac3_parser_bs(GF_BitStream *bs, GF_AC3Config *hdr, Bool full_parse);
 
-/*! parses an EAC-3 header from a bitstream but does'nt check for next frames/blocks
-\param bs bitstream to parse
-\param hdr will be filled by parser
-\return GF_TRUE if success
+/*! gets the number of channels from chan_loc info of EAC3 config
+\param chan_loc acmod of the associated frame header
+\return number of channels
 */
-Bool gf_eac3_parser_header_bs(GF_BitStream *bs, GF_AC3Config *hdr);
+u32 gf_eac3_get_chan_loc_count(u32 chan_loc);
 
-/*! gets the number of channels in an AC3 frame
+/*! gets the total number of channels in an AC3 frame, including surround but not lfe
 \param acmod acmod of the associated frame header
 \return number of channels
 */
-u32 gf_ac3_get_channels(u32 acmod);
+u32 gf_ac3_get_total_channels(u32 acmod);
+/*! gets the number of surround channels in an AC3 frame
+\param acmod acmod of the associated frame header
+\return number of surround channels
+*/
+u32 gf_ac3_get_surround_channels(u32 acmod);
 /*! gets the bitrate of an AC3 frame
 \param brcode brcode of the associated frame header
-\return bitrate
+\return bitrate in bps
 */
 u32 gf_ac3_get_bitrate(u32 brcode);
 

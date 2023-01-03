@@ -65,7 +65,7 @@ enum {
 typedef struct
 {
 	//opts
-	s32 shift_utc, route_shift;
+	s32 shift_utc, spd, route_shift;
 	u32 max_buffer, tiles_rate, segstore, delay40X, exp_threshold, switch_count, bwcheck;
 	s32 auto_switch;
 	s32 init_timeshift;
@@ -300,7 +300,7 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 	}
 
 	if (!ctx->is_dash) {
-		GF_FilterPacket *dst_pck = gf_filter_pck_new_ref(out_pid, 0, 0, in_pck);
+		dst_pck = gf_filter_pck_new_ref(out_pid, 0, 0, in_pck);
 		if (!dst_pck) return;
 		gf_filter_pck_merge_properties(in_pck, dst_pck);
 
@@ -524,7 +524,9 @@ static Bool dashdmx_on_filter_setup_error(GF_Filter *failed_filter, void *udta, 
 	return GF_FALSE;
 }
 
+#ifndef GPAC_DISABLE_CRYPTO
 void gf_cryptfin_set_kms(GF_Filter *f, const char *key_url, bin128 key_IV);
+#endif
 
 /*locates input service (demuxer) based on mime type or segment name*/
 static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const char *mime, const char *init_segment_name, u64 start_range, u64 end_range)
@@ -576,17 +578,17 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 
 	//not from file system, set cache option
 	if (url_type) {
+		char szOpt[100];
+		char sep_name = gf_filter_get_sep(ctx->filter, GF_FS_SEP_NAME);
 		if (!ctx->segstore) {
 			if (!has_sep) { gf_dynstrcat(&sURL, "gpac", szSep); has_sep = GF_TRUE; }
 			//if operating in mem mode and we load a file decryptor, only store in mem cache the first seg, and no cache for segments
-			if (crypto_type==1)
-				gf_dynstrcat(&sURL, "cache=none_keep", szSep);
-			else
-				gf_dynstrcat(&sURL, "cache=mem_keep", szSep);
-		}
-		else if (ctx->segstore==2) {
+			sprintf(szOpt, "cache%c%s", sep_name, (crypto_type==1) ? "none_keep" : "mem_keep");
+			gf_dynstrcat(&sURL, szOpt, szSep);
+		} else {
+			sprintf(szOpt, "cache%c%s", sep_name, (ctx->segstore==2) ? "keep" : "disk");
 			if (!has_sep) { gf_dynstrcat(&sURL, "gpac", szSep); has_sep = GF_TRUE; }
-			gf_dynstrcat(&sURL, "cache=keep", szSep);
+			gf_dynstrcat(&sURL, szOpt, szSep);
 		}
 	}
 
@@ -628,7 +630,13 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 	//if HLS AES-CBC, set key BEFORE discarding segment URL (if TS, discarding the segment will discard the key uri)
 	if (key_uri) {
 		if (crypto_type==1) {
+#ifndef GPAC_DISABLE_CRYPTO
 			gf_cryptfin_set_kms(group->seg_filter_src, key_uri, key_IV);
+#else
+			gf_free(sURL);
+			return GF_NOT_SUPPORTED;
+#endif
+
 		} else {
 			group->hls_key_uri = key_uri;
 			memcpy(group->hls_key_IV, key_IV, sizeof(bin128));
@@ -651,6 +659,8 @@ void dashdmx_io_delete_cache_file(GF_DASHFileIO *dashio, GF_DASHFileIOSession se
 	gf_dm_delete_cached_file_entry_session((GF_DownloadSession *)session, cache_url);
 }
 
+void gf_dm_sess_force_blocking(GF_DownloadSession *sess);
+
 GF_DASHFileIOSession dashdmx_io_create(GF_DASHFileIO *dashio, Bool persistent, const char *url, s32 group_idx)
 {
 	GF_DownloadSession *sess;
@@ -668,6 +678,7 @@ GF_DASHFileIOSession dashdmx_io_create(GF_DASHFileIO *dashio, Bool persistent, c
 		const GF_PropertyValue *p = gf_filter_pid_get_property(ctx->mpd_pid, GF_PROP_PID_DOWNLOAD_SESSION);
 		if (p) {
 			sess = (GF_DownloadSession *) p->value.ptr;
+			gf_dm_sess_force_blocking(sess);
 			if (!ctx->segstore) {
 				gf_dm_sess_force_memory_mode(sess, 1);
 			}
@@ -945,12 +956,14 @@ GF_Err dashdmx_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_evt
 #ifdef GPAC_ENABLE_COVERAGE
 		if (gf_sys_is_cov_mode()) {
 			gf_dash_groups_set_language(ctx->dash, gf_opts_get_key("core", "lang"));
-			//not used in the test suite (require JS)
-			gf_dash_switch_quality(ctx->dash, GF_TRUE);
-			//not used relyably in the test suite (require fatal error in session)
+			//not used in the test suite (require JS), but don't run if algo is none
+			if (!ctx->algo || strcmp(ctx->algo, "none"))
+				gf_dash_switch_quality(ctx->dash, GF_TRUE);
+			//not used reliably in the test suite (require fatal error in session)
 			dashin_abort(NULL);
 		}
 #endif
+
 		if (ctx->groupsel)
 			gf_dash_groups_set_language(ctx->dash, gf_opts_get_key("core", "lang"));
 
@@ -1409,6 +1422,8 @@ static void dashdm_format_qinfo(char **q_desc, GF_DASHQualityInfo *qinfo)
 	}
 }
 
+const char *gf_dash_group_get_clearkey_uri(GF_DashClient *dash, u32 group_idx, bin128 *def_kid);
+
 static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, u32 group_idx, GF_FilterPid *opid, GF_FilterPid *ipid, Bool is_period_switch)
 {
 	GF_DASHQualityInfo qinfo;
@@ -1672,8 +1687,14 @@ static void dashdmx_declare_properties(GF_DASHDmxCtx *ctx, GF_DASHGroup *group, 
 	if (group->hls_key_uri) {
 		gf_filter_pid_set_property(opid, GF_PROP_PID_HLS_KMS, &PROP_STRING(group->hls_key_uri));
 		gf_filter_pid_set_property(opid, GF_PROP_PID_HLS_IV, &PROP_DATA(group->hls_key_IV, sizeof(bin128) ));
+	} else {
+		bin128 ck_kid;
+		const char *ckuri = gf_dash_group_get_clearkey_uri(ctx->dash, group_idx, &ck_kid);
+		if (ckuri) {
+			gf_filter_pid_set_property(opid, GF_PROP_PID_CLEARKEY_URI, &PROP_STRING(ckuri));
+			gf_filter_pid_set_property(opid, GF_PROP_PID_CLEARKEY_KID, &PROP_DATA(ck_kid, sizeof(bin128) ));
+		}
 	}
-
 	if (ctx->forward > DFWD_FILE) {
 		u64 pstart;
 		u32 timescale;
@@ -2066,13 +2087,6 @@ static GF_Err dashdmx_initialize(GF_Filter *filter)
 	ctx->dm = gf_filter_get_download_manager(filter);
 	if (!ctx->dm) return GF_SERVICE_ERROR;
 
-	//old syntax
-	if (ctx->filemode) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[DASHDmx] `filemode` option will soon be deprecated, update your script to use `:forward=file` option.\n"));
-		ctx->forward = DFWD_FILE;
-		ctx->filemode = GF_FALSE;
-	}
-
 	ctx->dash_io.udta = ctx;
 	ctx->dash_io.delete_cache_file = dashdmx_io_delete_cache_file;
 	ctx->dash_io.create = dashdmx_io_create;
@@ -2184,6 +2198,7 @@ static GF_Err dashdmx_initialize(GF_Filter *filter)
 
 	gf_dash_set_algo(ctx->dash, algo);
 	gf_dash_set_utc_shift(ctx->dash, ctx->shift_utc);
+	gf_dash_set_suggested_presentation_delay(ctx->dash, ctx->spd);
 	gf_dash_set_route_ast_shift(ctx->dash, ctx->route_shift);
 	gf_dash_enable_utc_drift_compensation(ctx->dash, ctx->server_utc);
 	gf_dash_set_tile_adaptation_mode(ctx->dash, ctx->tile_mode, ctx->tiles_rate);
@@ -2235,6 +2250,10 @@ static GF_Err dashdmx_initialize(GF_Filter *filter)
 		dashdmx_on_filter_setup_error(NULL, NULL, GF_OK);
 	}
 #endif
+
+	//we are blocking in live mode for manifest update 
+	gf_filter_set_blocking(filter, GF_TRUE);
+
 	return GF_OK;
 }
 
@@ -2426,14 +2445,19 @@ static Bool dashdmx_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 
 				//to remove once we manage to keep the service alive
 				/*don't forward commands if a switch of period is to be scheduled, we are killing the service anyway ...*/
-				if (gf_dash_get_period_switch_status(ctx->dash)) return GF_TRUE;
+				if (gf_dash_get_period_switch_status(ctx->dash)) {
+					ctx->nb_playing++;
+					return GF_TRUE;
+				}
 			}
 		}
 		//otherwise in static mode, perform a group seek
 		else if (!initial_play && !gf_dash_is_dynamic_mpd(ctx->dash) ) {
 			/*don't forward commands if a switch of period is to be scheduled, we are killing the service anyway ...*/
-			if (gf_dash_get_period_switch_status(ctx->dash)) return GF_TRUE;
-
+			if (gf_dash_get_period_switch_status(ctx->dash)) {
+				ctx->nb_playing++;
+				return GF_TRUE;
+			}
 			//seek on a single group
 
 			gf_dash_group_seek(ctx->dash, group->idx, fevt->play.start_range);
@@ -2816,7 +2840,9 @@ fetch_next:
 
 	if (next_url_init_or_switch_segment && !group->init_switch_seg_sent) {
 		if (group->in_is_cryptfile) {
+#ifndef GPAC_DISABLE_CRYPTO
 			gf_cryptfin_set_kms(group->seg_filter_src, key_url, key_IV);
+#endif
 		}
 		GF_FEVT_INIT(evt, GF_FEVT_SOURCE_SWITCH,  NULL);
 		evt.seek.start_offset = switch_start_range;
@@ -2860,7 +2886,9 @@ fetch_next:
 	}
 
 	if (group->in_is_cryptfile) {
+#ifndef GPAC_DISABLE_CRYPTO
 		gf_cryptfin_set_kms(group->seg_filter_src, key_url, key_IV);
+#endif
 	}
 
 	if (ctx->forward) {
@@ -3280,6 +3308,7 @@ static const GF_FilterArgs DASHDmxArgs[] =
 		"- mpd: use the indicated min buffer time of the MPD", GF_PROP_UINT, "auto", "no|auto|mpd", 0},
 
 	{ OFFS(shift_utc), "shift DASH UTC clock in ms", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(spd), "suggested presentation delay in ms", GF_PROP_SINT, "-I", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(route_shift), "shift ROUTE requests time by given ms", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(server_utc), "use `ServerUTC` or `Date` HTTP headers instead of local UTC", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(screen_res), "use screen resolution in selection phase", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -3321,7 +3350,6 @@ static const GF_FilterArgs DASHDmxArgs[] =
 
 	{ OFFS(skip_lqt), "disable decoding of tiles with highest degradation hints (not visible, not gazed at) for debug purposes", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(llhls_merge), "merge LL-HLS byte range parts into a single open byte range request", GF_PROP_BOOL, "yes", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(filemode), "alias for forward=file", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_HIDE},
 	{ OFFS(groupsel), "select groups based on language (by default all playable groups are exposed)", GF_PROP_BOOL, "no", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(chain_mode), "MPD chaining mode\n"
 	"- off: do not use MPD chaining\n"
@@ -3370,8 +3398,6 @@ GF_FilterRegister DASHDmxRegister = {
 	"\n"
 	"To expose a live DASH session to route:\n"
 	"EX gpac -i MANIFEST_URL dashin:forward=file -o route://225.0.0.1:8000/\n"
-	"\n"
-	"Note: This mode used to be trigger by [-filemode]() option, still recognized.\n"
 	"\n"
 	"If the source has dependent media streams (scalability) and all qualities and initialization segments need to be forwarded, add [-split_as]().\n"
 	"\n"

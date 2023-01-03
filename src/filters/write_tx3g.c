@@ -30,6 +30,8 @@
 #include <gpac/internal/media_dev.h>
 #include <gpac/color.h>
 
+#if !defined(GPAC_DISABLE_ISOM_DUMP) && !defined(GPAC_DISABLE_ISOM)
+
 
 typedef struct
 {
@@ -189,10 +191,12 @@ static void tx3gmx_write_config(TX3GMxCtx *ctx)
 	} else {
 		gf_fprintf(dump, "<TextStreamHeader>\n");
 	}
+#ifndef GPAC_DISABLE_ISOM_DUMP
 	dump_ttxt_header(dump, &samp_ent, w, h);
+#endif
 	gf_fprintf(dump, "</TextStreamHeader>\n");
 
-	u32 size = gf_ftell(dump);
+	u32 size = (u32) gf_ftell(dump);
 	u8 *dsi = gf_malloc(size);
 	if (dsi) {
 		gf_fseek(dump, 0, SEEK_SET);
@@ -431,11 +435,11 @@ GF_Err tx3gmx_process(GF_Filter *filter)
 
 	while (gf_bs_available(ctx->bs_r)) {
 		GF_TextSample *txt;
-		Bool is_utf_16=0;
-		u32 type, /*length, */sample_index, sample_duration;
+		//Bool is_utf_16=GF_FALSE;
+		u32 type, /*length, */sample_index;
 
 		if (!ctx->is_tx3g) {
-			is_utf_16 = (Bool)gf_bs_read_int(ctx->bs_r, 1);
+			/*is_utf_16 = (Bool) */gf_bs_read_int(ctx->bs_r, 1);
 			gf_bs_read_int(ctx->bs_r, 4);
 			type = gf_bs_read_int(ctx->bs_r, 3);
 			/*length = */gf_bs_read_u16(ctx->bs_r);
@@ -446,11 +450,11 @@ GF_Err tx3gmx_process(GF_Filter *filter)
 			}
 			sample_index = gf_bs_read_u8(ctx->bs_r);
 			/*duration*/
-			sample_duration = gf_bs_read_u24(ctx->bs_r);
+			//sample_duration = gf_bs_read_u24(ctx->bs_r);
 		} else {
 			sample_index = 1;
 			/*duration*/
-			sample_duration = gf_filter_pck_get_duration(pck);
+			//sample_duration = gf_filter_pck_get_duration(pck);
 		}
 		/*txt length is parsed with the sample*/
 		txt = gf_isom_parse_text_sample(ctx->bs_r);
@@ -552,7 +556,7 @@ static const GF_FilterArgs TX3GMxArgs[] =
 GF_FilterRegister TTXTMxRegister = {
 	.name = "ufttxt",
 	GF_FS_SET_DESCRIPTION("TX3G unframer")
-	GF_FS_SET_HELP("This filter converts a single ISOBMFF TX3G stream to a TTXT, SRT, WebVTT or TTML output file.")
+	GF_FS_SET_HELP("This filter converts a single ISOBMFF TX3G stream to TTXT (xml format) unframed stream.")
 	.private_size = sizeof(TX3GMxCtx),
 	.args = TX3GMxArgs,
 	.initialize = tx3gmx_initialize,
@@ -590,7 +594,7 @@ static GF_Err tx3g2srt_initialize(GF_Filter *filter)
 GF_FilterRegister TX3G2SRTRegister = {
 	.name = "tx3g2srt",
 	GF_FS_SET_DESCRIPTION("TX3G to SRT")
-	GF_FS_SET_HELP("This filter converts a single ISOBMFF TX3G stream to a TTXT, SRT, WebVTT or TTML output file.")
+	GF_FS_SET_HELP("This filter converts a single ISOBMFF TX3G stream to an SRT unframed stream.")
 	.private_size = sizeof(TX3GMxCtx),
 	.args = TX3GMxArgs,
 	.initialize = tx3g2srt_initialize,
@@ -629,7 +633,7 @@ static GF_Err tx3g2vtt_initialize(GF_Filter *filter)
 GF_FilterRegister TTX2VTTRegister = {
 	.name = "tx3g2vtt",
 	GF_FS_SET_DESCRIPTION("TX3G to WebVTT")
-	GF_FS_SET_HELP("This filter converts a single ISOBMFF TX3G stream to a TTXT, SRT, WebVTT or TTML output file.")
+	GF_FS_SET_HELP("This filter converts a single ISOBMFF TX3G stream to a WebVTT unframed stream.")
 	.private_size = sizeof(TX3GMxCtx),
 	.args = TX3GMxArgs,
 	.initialize = tx3g2vtt_initialize,
@@ -667,7 +671,7 @@ static GF_Err tx3g2ttml_initialize(GF_Filter *filter)
 GF_FilterRegister TX3G2TTMLRegister = {
 	.name = "tx3g2ttml",
 	GF_FS_SET_DESCRIPTION("TX3G to TTML")
-	GF_FS_SET_HELP("This filter converts ISOBMFF TX3G frames from a single stream to TTML frames.\n"
+	GF_FS_SET_HELP("This filter converts ISOBMFF TX3G stream to a TTML stream.\n"
 	"\n"
 	"Each output TTML frame is a complete TTML document.")
 	.private_size = sizeof(TX3GMxCtx),
@@ -684,3 +688,24 @@ const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session)
 {
 	return &TX3G2TTMLRegister;
 }
+
+#else
+const GF_FilterRegister *ttxtuf_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+const GF_FilterRegister *tx3g2srt_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+const GF_FilterRegister *tx3g2vtt_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif //#if !defined(GPAC_DISABLE_ISOM_DUMP) && !defined(GPAC_DISABLE_ISOM)
+
+

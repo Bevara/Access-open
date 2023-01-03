@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -77,7 +77,10 @@ static void load_all_modules(GF_ModuleManager *mgr)
 	LOAD_PLUGIN(pulseaudio);
 #endif
 
+#ifndef GPAC_DISABLE_PLAYER
 	LOAD_PLUGIN(validator);
+#endif
+
 
 #ifdef GPAC_HAS_WAVEOUT
 	LOAD_PLUGIN(wave_out);
@@ -340,8 +343,15 @@ GF_BaseInterface *gf_modules_load(u32 whichplug, u32 InterfaceFamily)
 		const char * ifce_str = gf_4cc_to_str(InterfaceFamily);
 		snprintf(szKey, 32, "%s:yes", ifce_str ? ifce_str : "(null)");
 		if (!strstr(opt, szKey)) {
-			gf_mx_v(pm->mutex);
-			return NULL;
+			//cleanup if version changed
+			szKey[3] = 0;
+			char *val = strstr(opt, szKey);
+			if (val && !strncmp(val+4, ":yes", 4)) {
+				gf_cfg_set_key(pm->cfg, "PluginsCache", inst->name, NULL);
+			} else {
+				gf_mx_v(pm->mutex);
+				return NULL;
+			}
 		}
 	}
 	if (!gf_modules_load_library(inst)) {

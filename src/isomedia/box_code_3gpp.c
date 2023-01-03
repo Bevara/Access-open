@@ -1046,8 +1046,8 @@ void dimC_box_del(GF_Box *s)
 
 GF_Err dimC_box_read(GF_Box *s, GF_BitStream *bs)
 {
-	char str[1024];
-	u32 i;
+	GF_Err e;
+	u32 i, msize;
 	GF_DIMSSceneConfigBox *p = (GF_DIMSSceneConfigBox *)s;
 
 	ISOM_DECREASE_SIZE(p, 3);
@@ -1058,28 +1058,47 @@ GF_Err dimC_box_read(GF_Box *s, GF_BitStream *bs)
 	p->streamType = gf_bs_read_int(bs, 1);
 	p->containsRedundant = gf_bs_read_int(bs, 2);
 
+	char *str = gf_malloc( (size_t) (p->size+1));
+	if (!str) return GF_OUT_OF_MEM;
+	msize = (u32) p->size;
+	str[msize] = 0;
 	i=0;
 	str[0]=0;
-	while (i < GF_ARRAY_LENGTH(str)) {
+	while (i < msize) {
+		ISOM_DECREASE_SIZE_GOTO_EXIT(p, 1);
 		str[i] = gf_bs_read_u8(bs);
 		if (!str[i]) break;
 		i++;
 	}
-	ISOM_DECREASE_SIZE(p, i);
+	if (i == msize) {
+		gf_free(str);
+		return GF_ISOM_INVALID_FILE;
+	}
 
 	p->textEncoding = gf_strdup(str);
 
 	i=0;
 	str[0]=0;
-	while (i < GF_ARRAY_LENGTH(str)) {
+	while (i < msize) {
+		ISOM_DECREASE_SIZE_GOTO_EXIT(p, 1);
 		str[i] = gf_bs_read_u8(bs);
 		if (!str[i]) break;
 		i++;
 	}
-	ISOM_DECREASE_SIZE(p, i);
+	if (i == msize) {
+		gf_free(str);
+		return GF_ISOM_INVALID_FILE;
+	}
 
 	p->contentEncoding = gf_strdup(str);
+	gf_free(str);
+	if (!p->textEncoding || !p->contentEncoding)
+		return GF_OUT_OF_MEM;
 	return GF_OK;
+
+exit:
+	gf_free(str);
+	return e;
 }
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
@@ -1130,9 +1149,9 @@ GF_Err diST_box_read(GF_Box *s, GF_BitStream *bs)
 {
 	GF_DIMSScriptTypesBox *p = (GF_DIMSScriptTypesBox *)s;
 
-	p->content_script_types = gf_malloc(sizeof(char) * (s->size+1));
+	p->content_script_types = gf_malloc(sizeof(u8) * ((u32) s->size + 1));
 	if (!p->content_script_types) return GF_OUT_OF_MEM;
-	gf_bs_read_data(bs, p->content_script_types, s->size);
+	gf_bs_read_data(bs, p->content_script_types, (u32) s->size);
 	p->content_script_types[s->size] = 0;
 	return GF_OK;
 }

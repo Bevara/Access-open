@@ -133,7 +133,30 @@ static void ttd_update_size_info(GF_TTXTDec *ctx)
 		} else if (ctx->cfg->text_width && ctx->cfg->text_height) {
 			gf_sg_set_scene_size_info(ctx->scenegraph, ctx->cfg->text_width, ctx->cfg->text_height, GF_TRUE);
 		} else {
-			gf_sg_set_scene_size_info(ctx->scenegraph, ctx->txtw, ctx->txth, GF_TRUE);
+			w=0;
+			h=0;
+			const GF_PropertyValue *p;
+			p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_WIDTH);
+			if (p) w = p->value.uint;
+			p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_HEIGHT);
+			if (p) h = p->value.uint;
+
+			if (ctx->scene->compositor->osize.x
+				&& ctx->scene->compositor->osize.y
+				&& gf_filter_is_dynamic(ctx->scene->compositor->filter)
+			) {
+				w = ctx->scene->compositor->osize.x;
+				h = ctx->scene->compositor->osize.y;
+			}
+
+			if (ctx->scene->compositor->osize.x && ctx->scene->compositor->osize.y) {
+				w = ctx->scene->compositor->osize.x;
+				h = ctx->scene->compositor->osize.y;
+			}
+			if (!w) w = ctx->txtw;
+			if (!h) h = ctx->txth;
+
+			gf_sg_set_scene_size_info(ctx->scenegraph, w, h, GF_TRUE);
 		}
 		gf_sg_get_scene_size_info(ctx->scenegraph, &w, &h);
 		if (!w || !h) return;
@@ -275,13 +298,7 @@ static GF_Err ttd_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_re
 			GF_SAFEALLOC(txtc, GF_TextSampleDescriptor);
 			gf_list_add(ctx->cfg->sample_descriptions, txtc);
 			txtc->sample_index = 1;
-			/*
-			txtc->font_count = 1;
-			txtc->fonts[0].fontID = 1;
-			txtc->fonts[0].fontName = gf_strdup(ctx->fontname ? ctx->fontname : "Serif");
-			txtc->default_style.fontID = 1;
-			txtc->default_style.font_size = ctx->fontsize;
-			*/
+			//font will default to compositor settings
 			txtc->back_color = 0x00000000;	/*transparent*/
 			txtc->default_style.text_color = 0xFFFFFFFF;	/*white*/
 			txtc->default_style.style_flags = 0;
@@ -685,7 +702,7 @@ static void ttd_new_text_chunk(GF_TTXTDec *ctx, GF_TextSampleDescriptor *tsd, M_
 	for (i=tc->start_char; i<tc->end_char; i++) {
 		Bool new_line = GF_FALSE;
 		if (utf16_txt[i] == '\r') continue;
-		if ((utf16_txt[i] == '\n') || (utf16_txt[i] == '\r') || (utf16_txt[i] == 0x85) || (utf16_txt[i] == 0x2028) || (utf16_txt[i] == 0x2029))
+		if ((utf16_txt[i] == '\n') || (utf16_txt[i] == 0x85) || (utf16_txt[i] == 0x2028) || (utf16_txt[i] == 0x2029))
 			new_line = GF_TRUE;
 
 		if (new_line || (i+1==tc->end_char) ) {
@@ -1299,7 +1316,7 @@ static GF_Err ttd_render_simple_text(GF_TTXTDec *ctx, const char *pck_data, u32 
 static GF_Err ttd_process(GF_Filter *filter)
 {
 	const char *pck_data;
-	u32 pck_size, obj_time;
+	u32 pck_size;
 	u64 cts;
 	GF_FilterPacket *pck;
 	GF_TTXTDec *ctx = gf_filter_get_udta(filter);
@@ -1342,7 +1359,7 @@ static GF_Err ttd_process(GF_Filter *filter)
 		delay += ctx->delay;
 
 		if (delay>=0) cts += delay;
-		else if (cts > -delay) cts -= -delay;
+		else if (cts > (u64) -delay) cts -= -delay;
 		else cts = 0;
 	} else {
 		cts = ctx->sample_end;
@@ -1351,19 +1368,15 @@ static GF_Err ttd_process(GF_Filter *filter)
 		cts = ctx->sample_end;
 		pck = NULL;
 	}
+	if (!ctx->is_playing)
+		return GF_EOS;
+	cts = gf_timestamp_to_clocktime(cts, ctx->timescale);
+	u32 dur = 0;
+	if (pck)
+		dur = (u32) gf_timestamp_rescale( gf_filter_pck_get_duration(pck), ctx->timescale, 1000);
 
-	gf_odm_check_buffering(ctx->odm, ctx->ipid);
-
-	//we still process any frame before our clock time even when buffering
-	obj_time = gf_clock_time(ctx->odm->ck);
-
-	if (gf_timestamp_greater(cts, ctx->timescale, obj_time, 1000)) {
-		Double ts_offset = (Double) cts;
-		ts_offset /= ctx->timescale;
-
-		gf_sc_sys_frame_pending(ctx->scene->compositor, ts_offset, obj_time, filter);
+	if (!gf_sc_check_sys_frame(ctx->scene, ctx->odm, ctx->ipid, filter, cts, dur))
 		return GF_OK;
-	}
 
 	if (!pck) {
 		GF_Err e = ttd_render_simple_text(ctx, NULL, 0, 0);
@@ -1450,8 +1463,8 @@ static const GF_FilterArgs TTXTDecArgs[] =
 {
 	{ OFFS(texture), "use texturing for output text", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(outline), "draw text outline", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, 0},
-	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, 0},
+	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -1471,7 +1484,13 @@ GF_FilterRegister TTXTDecRegister = {
 	.name = "ttxtdec",
 	GF_FS_SET_DESCRIPTION("TTXT/TX3G decoder")
 	GF_FS_SET_HELP("This filter decodes TTXT/TX3G streams into a BIFS scene graph of the compositor filter.\n"
-	"The TTXT documentation is available at https://wiki.gpac.io/TTXT-Format-Documentation\n")
+		"The TTXT documentation is available at https://wiki.gpac.io/TTXT-Format-Documentation\n"
+		"\n"
+		"In stand-alone rendering (no associated video), the filter will use:\n"
+		"- `Width` and `Height` properties of input pid if any\n"
+		"- otherwise, `osize` option of compositor if set\n"
+		"- otherwise, [-txtw]() and [-txth]()\n"
+	)
 	.private_size = sizeof(GF_TTXTDec),
 	.flags = GF_FS_REG_MAIN_THREAD,
 	.args = TTXTDecArgs,

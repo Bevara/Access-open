@@ -1717,7 +1717,7 @@ static JSValue xml_element_get_attribute(JSContext *c, JSValueConst obj, int arg
 				else if (ns) {
 					char *nssep = strchr(att->name, ':');
 					if (nssep && !strcmp(nssep+1, name)) {
-						u32 ns_len = nssep - att->name;
+						u32 ns_len = (u32) (nssep - att->name);
 						//todo check namespace
 						if (!strcmp(ns, "*") || !strncmp(ns, att->name, ns_len))
 							found = GF_TRUE;
@@ -2023,6 +2023,7 @@ void gf_svg_set_attributeNS(GF_Node *n, u32 ns_code, char *name, char *val)
 					attname->type = attType.fieldType;
 				} else {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[DOM] Cannot find target of the animation to parse attribute %s\n", attname->name));
+					return;
 				}
 			}
 

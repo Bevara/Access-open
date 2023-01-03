@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2017
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -111,13 +111,18 @@ void gf_inline_on_modified(GF_Node *node)
 				gf_node_dirty_parents(node);
 				gf_mo_event_target_remove_by_node(mo, node);
 
-				/*reset the scene pointer as it may get destroyed*/
+				/*reset the scene pointer as it may get destroyed - unregister from scene object if not done yet*/
 				switch (gf_node_get_tag(node)) {
 				case TAG_MPEG4_Inline:
 #ifndef GPAC_DISABLE_X3D
 				case TAG_X3D_Inline:
 #endif
-					gf_node_set_private(node, NULL);
+					{
+						GF_Scene *subscene = (GF_Scene *)gf_node_get_private(node);
+						if (subscene)
+							gf_list_del_item(subscene->attached_inlines, node);
+						gf_node_set_private(node, NULL);
+					}
 					break;
 				}
 
@@ -176,7 +181,6 @@ static void gf_inline_check_restart(GF_Scene *scene)
 	if (scene->root_od->media_ctrl && scene->root_od->media_ctrl->control->loop) {
 		GF_Clock *ck = gf_odm_get_media_clock(scene->root_od);
 		if (ck->has_seen_eos && !ck->nb_paused) {
-			u32 now = gf_clock_time(ck);
 			u64 dur = scene->duration;
 			if (scene->root_od->media_ctrl->current_seg) {
 				/*only process when all segments are played*/
@@ -187,8 +191,9 @@ static void gf_inline_check_restart(GF_Scene *scene)
 			}
 			else {
 				Double s, e;
-				s = now;
-				s/=1000;
+				u64 now = gf_clock_time_absolute(ck);
+				s = (Double) now;
+				s /= 1000;
 				e = -1;
 				MC_GetRange(scene->root_od->media_ctrl, &s, &e);
 				if ((e>=0) && (e<GF_MAX_FLOAT)) dur = (u32) (e*1000);

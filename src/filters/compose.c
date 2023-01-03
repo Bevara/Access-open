@@ -37,16 +37,6 @@ GF_Err compose_bifs_dec_process(GF_Scene *scene, GF_FilterPid *pid);
 GF_Err compose_odf_dec_config_input(GF_Scene *scene, GF_FilterPid *pid, u32 oti, Bool is_remove);
 GF_Err compose_odf_dec_process(GF_Scene *scene, GF_FilterPid *pid);
 
-#define COMPOSITOR_MAGIC	GF_4CC('c','o','m','p')
-//a bit ugly, used by terminal (old APIs)
-GF_Compositor *gf_sc_from_filter(GF_Filter *filter)
-{
-	GF_Compositor *ctx = (GF_Compositor *) gf_filter_get_udta(filter);
-	if (ctx->magic != COMPOSITOR_MAGIC) return NULL;
-	if (ctx->magic_ptr != ctx) return NULL;
-
-	return ctx;
-}
 
 static GF_Err compose_process(GF_Filter *filter)
 {
@@ -59,6 +49,23 @@ static GF_Err compose_process(GF_Filter *filter)
 
 	if (ctx->check_eos_state == 2)
 		return GF_EOS;
+
+	/*need to reload*/
+	if (ctx->reload_state == 1) {
+		ctx->reload_state = 0;
+		gf_sc_disconnect(ctx);
+		ctx->reload_state = 2;
+	}
+	if (ctx->reload_state == 2) {
+		if (!ctx->root_scene) {
+			ctx->reload_state = 0;
+			if (ctx->reload_url) {
+				gf_sc_connect_from_time(ctx, ctx->reload_url, 0, 0, 0, NULL);
+				gf_free(ctx->reload_url);
+				ctx->reload_url = NULL;
+			}
+		}
+	}
 
 	ctx->last_error = GF_OK;
 	if (ctx->reload_config) {
@@ -103,6 +110,7 @@ static GF_Err compose_process(GF_Filter *filter)
 
 	if (!ctx->player) {
 		Bool forced_eos = GF_FALSE;
+		Bool was_over = GF_FALSE;
 		/*remember to check for eos*/
 		if (ctx->dur<0) {
 			if (ctx->frame_number >= (u32) -ctx->dur)
@@ -117,9 +125,13 @@ static GF_Err compose_process(GF_Filter *filter)
 				if (!ctx->validator_mode)
 					ctx->force_next_frame_redraw = GF_TRUE;
 			}
-		} else if (!ret && !ctx->frame_was_produced && !ctx->audio_frames_sent && !ctx->check_eos_state && !nb_sys_streams_active) {
+		} else if (!ret && !ctx->frame_was_produced && !ctx->audio_frames_sent && !ctx->check_eos_state && !nb_sys_streams_active && !ctx->event_pending) {
 			ctx->check_eos_state = 1;
+			was_over = GF_TRUE;
+		} else if (ctx->sys_frames_pending) {
+			ctx->check_eos_state = 0;
 		}
+
 		if (ctx->timeout && (ctx->check_eos_state == 1) && !gf_filter_connections_pending(filter)) {
 			u32 now = gf_sys_clock();
 			if (!ctx->last_check_pass)
@@ -163,7 +175,7 @@ static GF_Err compose_process(GF_Filter *filter)
 			}
 			return forced_eos ? GF_SERVICE_ERROR : GF_EOS;
 		}
-		ctx->check_eos_state = 0;
+		ctx->check_eos_state = was_over ? 1 : 0;
 		//always repost a process task since we maye have things to draw even though no new input
 		gf_filter_post_process_task(filter);
 		return ctx->last_error;
@@ -213,8 +225,7 @@ static void compositor_setup_vout(GF_Compositor *ctx)
 	pid = ctx->vout = gf_filter_pid_new(ctx->filter);
 	gf_filter_pid_set_name(pid, "vout");
 	//compositor initiated for RT playback, vout pid may not be connected
-	if (! (ctx->init_flags & GF_TERM_NO_DEF_AUDIO_OUT))
-		gf_filter_pid_set_loose_connect(pid);
+	gf_filter_pid_set_loose_connect(pid);
 
 	gf_filter_pid_set_property(pid, GF_PROP_PID_CODECID, &PROP_UINT(GF_CODECID_RAW) );
 	gf_filter_pid_set_property(pid, GF_PROP_PID_STREAM_TYPE, &PROP_UINT(GF_STREAM_VISUAL) );
@@ -228,6 +239,7 @@ static void compositor_setup_vout(GF_Compositor *ctx)
 	gf_filter_pid_set_property(pid, GF_PROP_PID_HEIGHT, &PROP_UINT(ctx->output_height) );
 
 	gf_filter_pid_set_property(pid, GF_PROP_PID_FPS, &PROP_FRAC(ctx->fps) );
+	gf_filter_pid_set_property(pid, GF_PROP_PID_DELAY, NULL);
 }
 
 static GF_Err compose_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
@@ -561,7 +573,12 @@ static GF_Err compose_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 			gf_sg_reset(scene->graph);
 
 		gf_scene_regenerate(scene);
+
+		if (!ctx->player)
+			gf_filter_pid_set_property_str(ctx->vout, "InteractiveScene", scene_vr_type ? &PROP_UINT(2) : NULL);
 	}
+	else if (!ctx->player)
+		gf_filter_pid_set_property_str(ctx->vout, "InteractiveScene", &PROP_UINT(1));
 
 	merge_properties(ctx, pid, mtype, scene);
 	return GF_OK;
@@ -671,7 +688,6 @@ static Bool compose_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	{
 		u32 bps=0;
 		u64 tot_size=0, down_size=0;
-		GF_ObjectManager *odm = gf_filter_pid_get_udta(evt->base.on_pid);
 		GF_PropertyEntry *pe=NULL;
 		GF_PropertyValue *p = (GF_PropertyValue *) gf_filter_pid_get_info(evt->base.on_pid, GF_PROP_PID_TIMESHIFT_STATE, &pe);
 		if (p && p->value.uint) {
@@ -697,7 +713,7 @@ static Bool compose_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		if (p) down_size = p->value.longuint;
 
 		if (bps && down_size && tot_size)  {
-			odm = gf_filter_pid_get_udta(evt->base.on_pid);
+			GF_ObjectManager *odm = gf_filter_pid_get_udta(evt->base.on_pid);
 			if ((down_size!=odm->last_filesize_signaled) || (down_size != tot_size)) {
 				odm->last_filesize_signaled = down_size;
 				gf_odm_service_media_event_with_download(odm, GF_EVENT_MEDIA_PROGRESS, down_size, tot_size, bps/8, 0, 0);
@@ -709,6 +725,37 @@ static Bool compose_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 
 	case GF_FEVT_USER:
 		return gf_sc_user_event(gf_filter_get_udta(filter), (GF_Event *) &evt->user_event.event);
+
+	//handle play for non-player mode, dynamic scenes only
+	case GF_FEVT_PLAY:
+	{
+		GF_Compositor *compositor = gf_filter_get_udta(filter);
+		s32 diff = (s32) (evt->play.start_range*1000);
+		diff -= (s32) gf_sc_get_time_in_ms(compositor);
+		if (!compositor->player && compositor->root_scene->is_dynamic_scene && !evt->play.initial_broadcast_play
+			&& (abs(diff)>=1000)
+		) {
+			gf_sc_play_from_time(compositor, (u64) (evt->play.start_range*1000), GF_FALSE);
+		}
+	}
+		break;
+	//handle stop for non-player mode, dynamic scenes only
+	case GF_FEVT_STOP:
+	{
+		GF_Compositor *compositor = gf_filter_get_udta(filter);
+		if (!compositor->player && !evt->play.initial_broadcast_play) {
+			if (compositor->root_scene->is_dynamic_scene) {
+				u32 i, count = gf_list_count(compositor->root_scene->resources);
+				for (i=0; i<count; i++) {
+					GF_ObjectManager *odm = gf_list_get(compositor->root_scene->resources, i);
+					gf_odm_stop(odm, GF_TRUE);
+				}
+			} else {
+				gf_odm_stop(compositor->root_scene->root_od, 1);
+			}
+		}
+	}
+		break;
 
 	default:
 		break;
@@ -738,7 +785,7 @@ static void compose_finalize(GF_Filter *filter)
 }
 void compositor_setup_aout(GF_Compositor *ctx)
 {
-	if (! (ctx->init_flags & GF_TERM_NO_AUDIO) && ctx->audio_renderer && !ctx->audio_renderer->aout) {
+	if (!ctx->noaudio && ctx->audio_renderer && !ctx->audio_renderer->aout) {
 		GF_FilterPid *pid = ctx->audio_renderer->aout = gf_filter_pid_new(ctx->filter);
 		gf_filter_pid_set_udta(pid, ctx);
 		gf_filter_pid_set_name(pid, "aout");
@@ -749,6 +796,7 @@ void compositor_setup_aout(GF_Compositor *ctx)
 		gf_filter_pid_set_property(pid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(44100) );
 		gf_filter_pid_set_property(pid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(2) );
 		gf_filter_pid_set_max_buffer(ctx->audio_renderer->aout, 1000*ctx->abuf);
+		gf_filter_pid_set_property(pid, GF_PROP_PID_DELAY, NULL);
 		gf_filter_pid_set_loose_connect(pid);
 	}
 }
@@ -759,13 +807,17 @@ static GF_Err compose_initialize(GF_Filter *filter)
 	GF_FilterSessionCaps sess_caps;
 	GF_Compositor *ctx = gf_filter_get_udta(filter);
 
-	ctx->magic = COMPOSITOR_MAGIC;
-	ctx->magic_ptr = (void *) ctx;
 	ctx->filter = filter;
 
 	if (gf_filter_is_dynamic(filter)) {
-		ctx->dyn_filter_mode = GF_TRUE;
+		ctx->forced_alpha = GF_TRUE;
 		ctx->vfr = GF_TRUE;
+	} else if (ctx->bc && !GF_COL_A(ctx->bc)) {
+		ctx->forced_alpha = GF_TRUE;
+	} else if ((ctx->opfmt == GF_PIXEL_RGBA) || (ctx->opfmt == GF_PIXEL_ARGB) || (ctx->opfmt == GF_PIXEL_YUVA)) {
+		ctx->forced_alpha = GF_TRUE;
+	} else if (ctx->noback) {
+		ctx->forced_alpha = GF_TRUE;
 	}
 
 	//playout buffer not greater than max buffer
@@ -807,11 +859,11 @@ static GF_Err compose_initialize(GF_Filter *filter)
 	if (ctx->player) {
 
 		//load audio filter chain, declaring audio output pid first
-		if (! (ctx->init_flags & (GF_TERM_NO_AUDIO|GF_TERM_NO_DEF_AUDIO_OUT)) ) {
+		if (!ctx->noaudio) {
 			GF_Filter *audio_out = gf_filter_load_filter(filter, "aout", &e);
 			ctx->audio_renderer->non_rt_output = 0;
 			if (!audio_out) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Terminal] Failed to load audio output filter (%s) - audio disabled\n", gf_error_to_string(e) ));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to load audio output filter (%s) - audio disabled\n", gf_error_to_string(e) ));
 			}
 //			else {
 //				gf_filter_reconnect_output(filter);
@@ -836,15 +888,16 @@ static GF_Err compose_initialize(GF_Filter *filter)
 
 	gf_filter_set_event_target(filter, GF_TRUE);
 	if (ctx->player==2) {
-		const char *gui_path = gf_opts_get_key("General", "StartupFile");
+		const char *gui_path = gf_opts_get_key("core", "startup-file");
 		if (gui_path) {
-			gf_sc_connect_from_time_ex(ctx, gui_path, 0, 0, 0, NULL);
-			gf_opts_set_key("temp", "gui_load_url", ctx->src);
+			gf_sc_connect_from_time(ctx, gui_path, 0, 0, 0, NULL);
+			if (ctx->src)
+				gf_opts_set_key("temp", "gui_load_urls", ctx->src);
 		}
 	}
 	//src set, connect it (whether player mode or not)
 	else if (ctx->src) {
-		gf_sc_connect_from_time_ex(ctx, ctx->src, 0, 0, 0, NULL);
+		gf_sc_connect_from_time(ctx, ctx->src, 0, 0, 0, NULL);
 	}
 	return GF_OK;
 }
@@ -1056,10 +1109,11 @@ static GF_FilterArgs CompositorArgs[] =
 	{ OFFS(gazer_enabled), "enable gaze event dispatch", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 
 	{ OFFS(subtx), "horizontal translation in pixels towards right for subtitles renderers", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
-	{ OFFS(subty), "vertical translation in pixels towards right for subtitles renderers", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
+	{ OFFS(subty), "vertical translation in pixels towards top for subtitles renderers", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 	{ OFFS(subfs), "font size for subtitles renderers (0 means automatic)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 	{ OFFS(subd), "subtitle delay in milliseconds for subtitles renderers", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
 	{ OFFS(audd), "audio delay in milliseconds", GF_PROP_SINT, "0", NULL, GF_FS_ARG_HINT_EXPERT|GF_FS_ARG_UPDATE},
+	{ OFFS(clipframe), "visual output is clipped to bounding rectangle", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -1106,6 +1160,7 @@ const GF_FilterRegister CompositorFilterRegister = {
 	"- `rgb` when the filter is explicitly loaded by the application\n"
 	"- `rgba` when the filter is loaded during a link resolution\n"
 	"This can be changed by assigning the [-opfmt]() option.\n"
+	"If either [-opfmt]() specifies alpha channel or [-bc]() is not 0 but has alpha=0, background creation in default scene will be skipped.\n"
 	"\n"
 	"In filter-only mode, the special URL `gpid://` is used to locate PIDs in the scene description, in order to design scenes independently from source media.\n"
 	"When such a PID is associated to a `Background2D` node in BIFS (no SVG mapping yet), the compositor operates in pass-through mode.\n"

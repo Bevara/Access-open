@@ -45,9 +45,10 @@ typedef struct
 {
 	AVFilterContext *io_filter_ctx;
 	GF_FilterPid *io_pid;
-	u32 timescale, pfmt, width, height, sr, nb_ch, bps;
+	u32 timescale, width, height, sr, nb_ch, bps;
 	Bool planar;
-	u64 ch_layout;
+	u32 pfmt; //ffmpeg pixel or audio format
+	u64 ch_layout; //ffmpeg channel layout
 	GF_Fraction sar;
 	u32 stride, stride_uv, nb_planes;
 	//output only
@@ -81,6 +82,9 @@ typedef struct
 	//0: no flush, 1: graph flush (push EOS in input), 2: wait for EOS in output
 	u32 flush_state;
 	GF_Err in_error;
+
+	u32 nb_playing;
+	Bool done;
 } GF_FFAVFilterCtx;
 
 
@@ -293,6 +297,21 @@ static GF_Err ffavf_initialize(GF_Filter *filter)
 		return GF_BAD_PARAM;
 	}
 
+	char *desc = NULL;
+	for (i=0; i<ctx->filter_graph->nb_filters; i++) {
+		AVFilterContext *avf = ctx->filter_graph->filters[i];
+		if (desc) {
+			char *sep = strstr(desc, avf->filter->name);
+			if (sep) {
+				u32 slen = (u32) strlen(avf->filter->name);
+				if ((sep[slen]==',') || !sep[slen]) continue;;
+			}
+		}
+		gf_dynstrcat(&desc, avf->filter->name, " ");
+	}
+	gf_filter_meta_set_instances(filter, desc);
+	gf_free(desc);
+
 	ctx->nb_inputs=0;
 	io = inputs;
 	while (io) {
@@ -335,7 +354,7 @@ static GF_Err ffavf_initialize(GF_Filter *filter)
 
 	/*update filter caps*/
 	memset(ctx->filter_caps, 0, sizeof(GF_FilterCapability) * 7);
-	ctx->filter_caps[0].flags = GF_CAPS_INPUT_OUTPUT;
+	ctx->filter_caps[0].flags = ctx->nb_inputs ? GF_CAPS_INPUT_OUTPUT : GF_CAPS_OUTPUT;
 	ctx->filter_caps[0].code = GF_PROP_PID_CODECID;
 	ctx->filter_caps[0].val = PROP_UINT(GF_CODECID_RAW);
 	i=1;
@@ -365,6 +384,11 @@ static GF_Err ffavf_initialize(GF_Filter *filter)
 	}
 	gf_filter_override_caps(filter, ctx->filter_caps, i);
 
+	if (!ctx->nb_inputs) {
+		ctx->configure_state = 1;
+		gf_filter_post_process_task(filter);
+		return ffavf_setup_outputs(filter, ctx);
+	}
 	return GF_OK;
 }
 
@@ -458,6 +482,8 @@ static GF_Err ffavf_process(GF_Filter *filter)
 
 	if (ctx->in_error)
 		return ctx->in_error;
+	if (ctx->done)
+		return GF_EOS;
 
 	//graph needs to be loaded
 	if (ctx->configure_state==1) {
@@ -467,6 +493,8 @@ static GF_Err ffavf_process(GF_Filter *filter)
 			return GF_OK;
 		return ffavf_setup_filter(filter, ctx);
 	}
+	if (!ctx->nb_playing)
+		return GF_OK;
 
 	//push input
 	nb_eos = 0;
@@ -594,6 +622,9 @@ static GF_Err ffavf_process(GF_Filter *filter)
 					nb_eos++;
 				} else if (nb_eos) {
 					gf_filter_pid_set_eos(opid->io_pid);
+				} else if (!ctx->nb_inputs) {
+					gf_filter_pid_set_eos(opid->io_pid);
+					nb_eos++;
 				}
 			} else if (ret != AVERROR(EAGAIN)) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[FFAVF] Fail to pull frame from filtergaph: %s\n", av_err2str(ret) ));
@@ -693,8 +724,9 @@ static GF_Err ffavf_process(GF_Filter *filter)
 				update_props = GF_FALSE;
 			}
 			if (update_props) {
+				u64 gpac_ch_layout = ffmpeg_channel_layout_to_gpac(frame->channel_layout);
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(frame->sample_rate));
-				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_CHANNEL_LAYOUT, &PROP_LONGUINT(frame->channel_layout));
+				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_CHANNEL_LAYOUT, &PROP_LONGUINT(gpac_ch_layout));
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(frame->channels));
 				opid->gf_pfmt = ffmpeg_audio_fmt_to_gpac(frame->format);
 				gf_filter_pid_set_property(opid->io_pid, GF_PROP_PID_AUDIO_FORMAT, &PROP_UINT(opid->gf_pfmt));
@@ -735,7 +767,14 @@ static GF_Err ffavf_process(GF_Filter *filter)
 		if (nb_eos<count) return GF_OK;
 		return ffavf_reconfigure_graph(filter, ctx);
 	}
-	if (nb_eos) return GF_EOS;
+	if (nb_eos) {
+		if (ctx->nb_inputs) {
+			return GF_EOS;
+		} else if (nb_eos == count) {
+			ctx->done = GF_TRUE;
+			return GF_EOS;
+		}
+	}
 	return GF_OK;
 }
 
@@ -754,6 +793,23 @@ static GF_Err ffavf_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	streamtype = p->value.uint;
 
 	pid_ctx = gf_filter_pid_get_udta(pid);
+
+	if (is_remove) {
+		if (pid_ctx) {
+			gf_filter_pid_set_udta(pid, NULL);
+			ctx->nb_inputs--;
+			if (!ctx->nb_inputs) {
+				ffavf_reset_graph(ctx);
+				while (gf_list_count(ctx->opids)) {
+					GF_FFAVPid *opid = gf_list_pop_back(ctx->opids);
+					//io_filter_ctx is destroyed while resetting the graph
+					gf_filter_pid_remove(opid->io_pid);
+					gf_free(opid);
+				}
+			}
+		}
+		return GF_OK;
+	}
 	if (!pid_ctx) {
 		GF_SAFEALLOC(pid_ctx, GF_FFAVPid);
 		if (!pid_ctx) return GF_OUT_OF_MEM;
@@ -818,7 +874,7 @@ static GF_Err ffavf_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		u64 ch_layout=0;
 		u32 sr, afmt, nb_ch;
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_CHANNEL_LAYOUT);
-		if (p) ch_layout = p->value.longuint;
+		if (p) ch_layout = ffmpeg_channel_layout_from_gpac(p->value.longuint);
 
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_NUM_CHANNELS);
 		if (!p) return GF_OK; //not ready yet
@@ -959,6 +1015,24 @@ static GF_Err ffavf_update_arg(GF_Filter *filter, const char *arg_name, const GF
 	return GF_NOT_FOUND;
 }
 
+static Bool ffavf_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
+{
+	GF_FFAVFilterCtx *ctx = gf_filter_get_udta(filter);
+
+	if (evt->base.type == GF_FEVT_PLAY) {
+		if (!ctx->nb_playing && !ctx->nb_inputs) ctx->done = GF_FALSE;
+		ctx->nb_playing++;
+	}
+	else if (evt->base.type == GF_FEVT_STOP) {
+		if (ctx->nb_playing) {
+			ctx->nb_playing--;
+			if (!ctx->nb_playing && !ctx->nb_inputs) ctx->done = GF_TRUE;
+		}
+	}
+
+	if (ctx->nb_inputs) return GF_FALSE;
+	return GF_TRUE;
+}
 
 static const GF_FilterCapability FFAVFilterCaps[] =
 {
@@ -983,6 +1057,12 @@ GF_FilterRegister FFAVFilterRegister = {
 		"\n"
 		"Unlike other FFMPEG bindings in GPAC, this filter does not parse other libavfilter options, you must specify them directly in the filter chain, and the [-f]() option will have to be escaped.\n"
 		"EX ffavf::f=showspectrum=size=320x320 or ffavf::f=showspectrum=size=320x320::pfmt=rgb\n"
+		"EX ffavf::f=anullsrc=channel_layout=5.1:sample_rate=48000\n"
+		"\n"
+		"For complex filter graphs, it is possible to store options in a file (e.g. `opts.txt`):\n"
+		"EX :f=anullsrc=channel_layout=5.1:sample_rate=48000\n"
+		"And load arguments from file:\n"
+		"EX ffavf:opts.txt aout\n"
 		"\n"
 		"The filter will automatically create `buffer` and `buffersink` AV filters for data exchange between GPAC and libavfilter.\n"
 		"The builtin options ( [-pfmt](), [-afmt]() ...) can be used to configure the `buffersink` filter to set the output format of the filter.\n"
@@ -1012,13 +1092,14 @@ GF_FilterRegister FFAVFilterRegister = {
 		"- name#com_name=value: sends command `com_name` with value `value` to filter named `name`\n"
 		"\n"
 	)
-	.flags =  GF_FS_REG_META | GF_FS_REG_EXPLICIT_ONLY | GF_FS_REG_ALLOW_CYCLIC,
+	.flags =  GF_FS_REG_META | GF_FS_REG_EXPLICIT_ONLY | GF_FS_REG_ALLOW_CYCLIC | GF_FS_REG_TEMP_INIT,
 	.private_size = sizeof(GF_FFAVFilterCtx),
 	SETCAPS(FFAVFilterCaps),
 	.initialize = ffavf_initialize,
 	.finalize = ffavf_finalize,
 	.configure_pid = ffavf_configure_pid,
 	.process = ffavf_process,
+	.process_event = ffavf_process_event,
 	.update_arg = ffavf_update_arg,
 };
 
@@ -1040,8 +1121,7 @@ const int FFAVF_STATIC_ARGS = (sizeof (FFAVFilterArgs) / sizeof (GF_FilterArgs))
 
 const GF_FilterRegister *ffavf_register(GF_FilterSession *session)
 {
-	ffmpeg_build_register(session, &FFAVFilterRegister, FFAVFilterArgs, FFAVF_STATIC_ARGS, FF_REG_TYPE_AVF);
-	return &FFAVFilterRegister;
+	return ffmpeg_build_register(session, &FFAVFilterRegister, FFAVFilterArgs, FFAVF_STATIC_ARGS, FF_REG_TYPE_AVF);
 }
 
 #else

@@ -147,6 +147,9 @@ GF_Err reftype_box_dump(GF_Box *a, FILE * trace)
 	GF_TrackReferenceTypeBox *p = (GF_TrackReferenceTypeBox *)a;
 	if (!p->reference_type) return GF_OK;
 	p->type = p->reference_type;
+	//don't allow UNKN or UUID as type (possible buffer overflow when typecasting to GF_UnknownBox)
+	if ((p->type==GF_ISOM_BOX_TYPE_UNKNOWN) || (p->type==GF_ISOM_BOX_TYPE_UUID))
+		p->type = GF_4CC('u','k','n','w');
 
 	gf_isom_box_dump_start(a, "TrackReferenceTypeBox", trace);
 	gf_fprintf(trace, ">\n");
@@ -168,6 +171,9 @@ GF_Err ireftype_box_dump(GF_Box *a, FILE * trace)
 	if (!p->reference_type) return GF_OK;
 
 	p->type = p->reference_type;
+	//don't allow UNKN or UUI as type (possible buffer overflow when typecasting to GF_UnknownBox)
+	if ((p->type==GF_ISOM_BOX_TYPE_UNKNOWN) || (p->type==GF_ISOM_BOX_TYPE_UUID))
+		p->type = GF_4CC('u','k','n','w');
 	gf_isom_box_dump_start(a, "ItemReferenceBox", trace);
 	gf_fprintf(trace, "from_item_id=\"%d\">\n", p->from_item_id);
 	for (i = 0; i < p->reference_count; i++) {
@@ -204,7 +210,15 @@ GF_Err mdat_box_dump(GF_Box *a, FILE * trace)
 	GF_MediaDataBox *p;
 	const char *name = (a->type==GF_ISOM_BOX_TYPE_IDAT ? "ItemDataBox" : "MediaDataBox");
 	p = (GF_MediaDataBox *)a;
-	gf_isom_box_dump_start(a, name, trace);
+	if (p->is_imda) {
+		name = "IdentifiedMediaDataBox";
+		p->type = GF_ISOM_BOX_TYPE_IMDA;
+		gf_isom_box_dump_start(a, name, trace);
+		gf_fprintf(trace, "imda_identifier=\"%d\" ", p->imda_id);
+		p->type = GF_ISOM_BOX_TYPE_MDAT;
+	} else {
+		gf_isom_box_dump_start(a, name, trace);
+	}
 	gf_fprintf(trace, "dataSize=\""LLD"\">\n", p->dataSize);
 	gf_isom_box_dump_done(name, a, trace);
 	return GF_OK;
@@ -895,9 +909,12 @@ static void gnr_dump_exts(u8 *data, u32 data_size, FILE *trace)
 GF_Err gnrm_box_dump(GF_Box *a, FILE * trace)
 {
 	GF_GenericSampleEntryBox *p = (GF_GenericSampleEntryBox *)a;
-	if (p->EntryType)
+	if (p->EntryType) {
 		a->type = p->EntryType;
-
+		//don't allow UNKN or UUID as type (possible buffer overflow when typecasting to GF_UnknownBox)
+		if ((a->type==GF_ISOM_BOX_TYPE_UNKNOWN) || (a->type==GF_ISOM_BOX_TYPE_UUID))
+			a->type = GF_4CC('u','k','n','w');
+	}
 	gf_isom_box_dump_start(a, "SampleDescriptionEntryBox", trace);
 	gf_fprintf(trace, "DataReferenceIndex=\"%d\" ExtensionDataSize=\"%d\"", p->dataReferenceIndex, p->data_size);
 	a->type = GF_ISOM_BOX_TYPE_GNRM;
@@ -910,9 +927,12 @@ GF_Err gnrm_box_dump(GF_Box *a, FILE * trace)
 GF_Err gnrv_box_dump(GF_Box *a, FILE * trace)
 {
 	GF_GenericVisualSampleEntryBox *p = (GF_GenericVisualSampleEntryBox *)a;
-	if (p->EntryType)
+	if (p->EntryType) {
 		a->type = p->EntryType;
-
+		//don't allow UNKN or UUID as type (possible buffer overflow when typecasting to GF_UnknownBox)
+		if ((a->type==GF_ISOM_BOX_TYPE_UNKNOWN) || (a->type==GF_ISOM_BOX_TYPE_UUID))
+			a->type = GF_4CC('u','k','n','w');
+	}
 	gf_isom_box_dump_start(a, "VisualSampleDescriptionBox", trace);
 	gf_fprintf(trace, "DataReferenceIndex=\"%d\" Version=\"%d\" Revision=\"%d\" Vendor=\"%d\" TemporalQuality=\"%d\" SpacialQuality=\"%d\" Width=\"%d\" Height=\"%d\" HorizontalResolution=\"%d\" VerticalResolution=\"%d\" CompressorName=\"%s\" BitDepth=\"%d\"",
 	        p->dataReferenceIndex, p->version, p->revision, p->vendor, p->temporal_quality, p->spatial_quality, p->Width, p->Height, p->horiz_res, p->vert_res, isalnum(p->compressor_name[0]) ? p->compressor_name : p->compressor_name+1, p->bit_depth);
@@ -927,9 +947,12 @@ GF_Err gnrv_box_dump(GF_Box *a, FILE * trace)
 GF_Err gnra_box_dump(GF_Box *a, FILE * trace)
 {
 	GF_GenericAudioSampleEntryBox *p = (GF_GenericAudioSampleEntryBox *)a;
-	if (p->EntryType)
+	if (p->EntryType) {
 		a->type = p->EntryType;
-
+		//don't allow UNKN or UUID as type (possible buffer overflow when typecasting to GF_UnknownBox)
+		if ((a->type==GF_ISOM_BOX_TYPE_UNKNOWN) || (a->type==GF_ISOM_BOX_TYPE_UUID))
+			a->type = GF_4CC('u','k','n','w');
+	}
 	gf_isom_box_dump_start(a, "AudioSampleDescriptionBox", trace);
 	gf_fprintf(trace, "DataReferenceIndex=\"%d\" Version=\"%d\" Revision=\"%d\" Vendor=\"%d\" ChannelCount=\"%d\" BitsPerSample=\"%d\" Samplerate=\"%d\"",
 	        p->dataReferenceIndex, p->version, p->revision, p->vendor, p->channel_count, p->bitspersample, p->samplerate_hi);
@@ -1206,25 +1229,34 @@ GF_Err stss_box_dump(GF_Box *a, FILE * trace)
 {
 	GF_SyncSampleBox *p;
 	u32 i;
+	const char *name, *entname;
 
 	if (dump_skip_samples)
 		return GF_OK;
 
 	p = (GF_SyncSampleBox *)a;
-	gf_isom_box_dump_start(a, "SyncSampleBox", trace);
+	if (a->type==GF_ISOM_BOX_TYPE_STSS) {
+		name = "SyncSampleBox";
+		entname = "SyncSampleEntry";
+	} else {
+		name = "PartialSyncSampleBox";
+		entname = "PartialSyncSampleEntry";
+	}
+	gf_isom_box_dump_start(a, name, trace);
 	gf_fprintf(trace, "EntryCount=\"%d\">\n", p->nb_entries);
 
 	if (!p->sampleNumbers && p->size) {
-		gf_fprintf(trace, "<!--Warning: No Key Frames indications-->\n");
+		if (a->type==GF_ISOM_BOX_TYPE_STSS)
+			gf_fprintf(trace, "<!--Warning: No Key Frames indications-->\n");
 	} else if (p->sampleNumbers) {
 		for (i=0; i<p->nb_entries; i++) {
-			gf_fprintf(trace, "<SyncSampleEntry sampleNumber=\"%u\"/>\n", p->sampleNumbers[i]);
+			gf_fprintf(trace, "<%s sampleNumber=\"%u\"/>\n", entname, p->sampleNumbers[i]);
 		}
 	}
 	if (!p->size) {
-			gf_fprintf(trace, "<SyncSampleEntry sampleNumber=\"\"/>\n");
+			gf_fprintf(trace, "<%s sampleNumber=\"\"/>\n", entname);
 	}
-	gf_isom_box_dump_done("SyncSampleBox", a, trace);
+	gf_isom_box_dump_done(name, a, trace);
 	return GF_OK;
 }
 
@@ -1461,6 +1493,275 @@ GF_Err elng_box_dump(GF_Box *a, FILE * trace)
 	return GF_OK;
 }
 
+#define get_and_print(name, bits) \
+	val = gf_bs_read_int(bs, bits); \
+	gf_fprintf(trace, " "name"=\"%u\"", val);\
+
+#define get_4cc_and_print(name, bits) \
+	val = gf_bs_read_int(bs, bits); \
+	gf_fprintf(trace, " "name"=\"%s\"", gf_4cc_to_str(val) );\
+
+static GF_Err dump_alac(GF_UnknownBox *u, FILE * trace)
+{
+	u32 val;
+	GF_BitStream *bs = gf_bs_new(u->data, u->dataSize, GF_BITSTREAM_READ);
+	gf_isom_box_dump_start((GF_Box *)u, "ALACConfigurationBox", trace);
+
+	get_and_print("version", 32)
+	get_and_print("frameLength", 32)
+	get_and_print("compatibleVersion", 8)
+	get_and_print("bitDepth", 8)
+	get_and_print("pb", 8)
+	get_and_print("mb", 8)
+	get_and_print("kb", 8)
+	get_and_print("numChannels", 8)
+	get_and_print("maxRun", 16)
+	get_and_print("maxFrameBytes", 32)
+	get_and_print("avgBitRate", 32)
+	get_and_print("sampleRate", 32)
+
+	gf_bs_del(bs);
+	gf_fprintf(trace, ">\n");
+	gf_isom_box_dump_done("ALACConfigurationBox", (GF_Box *)u, trace);
+	return GF_OK;
+}
+
+
+static GF_Err dump_uncc(GF_UnknownBox *u, FILE * trace)
+{
+	u32 val, nb_comps, i;
+	GF_BitStream *bs = gf_bs_new(u->data, u->dataSize, GF_BITSTREAM_READ);
+	gf_isom_box_dump_start((GF_Box *)u, "UncompressedFrameConfigBox", trace);
+	//full box
+	get_and_print("version", 8)
+	get_and_print("flags", 24)
+
+	nb_comps = gf_bs_read_u16(bs);
+	gf_bs_skip_bytes(bs, 5*nb_comps);
+
+	get_and_print("sampling_type", 8)
+	get_and_print("interleave_type", 8)
+	get_and_print("block_size", 8)
+	get_and_print("components_little_endian", 1)
+	get_and_print("block_pad_lsb", 1)
+	get_and_print("block_little_endian", 1)
+	get_and_print("block_reversed", 1)
+	get_and_print("pad_unknown", 1)
+	get_and_print("reserved", 3)
+	get_and_print("pixel_size", 8)
+	get_and_print("row_align_size", 32)
+	get_and_print("tile_align_size", 32)
+	get_and_print("num_tile_cols_minus_one", 32)
+	get_and_print("num_tile_rows_minus_one", 32)
+
+	gf_fprintf(trace, ">\n");
+	gf_bs_seek(bs, 6);
+	for (i=0; i<nb_comps; i++) {
+		gf_fprintf(trace, "<ComponentInfo");
+		get_and_print("index", 16)
+		get_and_print("bit_depth_minus_one", 8)
+		get_and_print("format", 8)
+		get_and_print("align_size", 8)
+		gf_fprintf(trace, "/>\n");
+	}
+
+	gf_bs_del(bs);
+	gf_isom_box_dump_done("UncompressedFrameConfigBox", (GF_Box *)u, trace);
+	return GF_OK;
+}
+
+static char *ctyp_names[] = {"Monochrome", "Y", "U/Cb", "V/Cr", "Red", "Green", "Blue", "Alpha", "Depth", "Disparity", "Palette", "FilterArray",
+	"padded", "Gamma", "X-ray", "VUV", "UVC", "UVB", "UVA", "NIR", "SWIR", "MWIR", "LWIR", "Panchromatic",
+	"SAR complex", "SAR magnitude", "SAR phase",
+	"ISAR complex", "ISAR magnitude", "ISAR phase"};
+
+static const char *get_comp_type_name(u32 ctype)
+{
+	u32 nb_cnames = GF_ARRAY_LENGTH(ctyp_names);
+	if (ctype<nb_cnames) return ctyp_names[ctype];
+	return "unknwon";
+}
+
+static GF_Err dump_cmpd(GF_UnknownBox *u, FILE * trace)
+{
+	u32 nb_comps, i;
+	GF_BitStream *bs = gf_bs_new(u->data, u->dataSize, GF_BITSTREAM_READ);
+	gf_isom_box_dump_start((GF_Box *)u, "ComponentDefinitionBox", trace);
+
+	nb_comps = gf_bs_read_u16(bs);
+	gf_fprintf(trace, ">\n");
+	for (i=0; i<nb_comps; i++) {
+		gf_fprintf(trace, "<Component");
+		u32 ctype = gf_bs_read_u16(bs);
+		if (ctype<0x8000) {
+			gf_fprintf(trace, " type=\"%u\" name=\"%s\"", ctype, get_comp_type_name(ctype));
+		} else {
+			char *comp_uri = gf_bs_read_utf8(bs);
+			if (comp_uri) {
+				gf_fprintf(trace, " URI=\"%s\"", comp_uri);
+				gf_free(comp_uri);
+			}
+		}
+		gf_fprintf(trace, "/>\n");
+	}
+	gf_bs_del(bs);
+	gf_isom_box_dump_done("ComponentDefinitionBox", (GF_Box *)u, trace);
+	return GF_OK;
+}
+
+typedef struct {
+	u32 type;
+	u32 bits;
+} CompInfo;
+
+static GF_Err dump_cpal(GF_UnknownBox *u, FILE * trace)
+{
+	u32 val, nb_comps, nb_vals, j, i;
+	CompInfo *types=NULL;
+	GF_BitStream *bs = gf_bs_new(u->data, u->dataSize, GF_BITSTREAM_READ);
+	gf_isom_box_dump_start((GF_Box *)u, "ComponentPaletteBox", trace);
+
+	//full box
+	get_and_print("version", 8)
+	get_and_print("flags", 24)
+	gf_fprintf(trace, ">\n");
+
+	nb_comps = gf_bs_read_u16(bs);
+	types = gf_malloc(sizeof(CompInfo) * nb_comps);
+	if (!types) {
+		gf_bs_del(bs);
+		gf_isom_box_dump_done("ComponentDefinitionBox", (GF_Box *)u, trace);
+		return GF_OUT_OF_MEM;
+	}
+	for (i=0; i<nb_comps; i++) {
+		gf_fprintf(trace, "<Component");
+		get_and_print("index", 16)
+		types[i].bits = 1 + gf_bs_read_int(bs, 8);
+		types[i].type = gf_bs_read_int(bs, 8);
+		gf_fprintf(trace, " bit_depth=\"%u\" type=\"%u\" name=\"%s\"/>\n", types[i].bits, types[i].type, get_comp_type_name(types[i].type) );
+	}
+	nb_vals = gf_bs_read_u32(bs);
+	for (j=0; j<nb_vals; j++) {
+		gf_fprintf(trace, "<ComponentValue");
+		for (i=0; i<nb_comps; i++) {
+			char szTmp[100];
+			szTmp[0] = 0;
+			switch (types[i].type) {
+			case 0:
+				sprintf(szTmp, " C%d=\"%u\"", i+1, gf_bs_read_int(bs, types[i].bits));
+				break;
+			case 1:
+				if (types[i].bits==32)
+					sprintf(szTmp, " C%d=\"%f\"", i+1, gf_bs_read_float(bs));
+				else if (types[i].bits==64)
+					sprintf(szTmp, " C%d=\"%f\"", i+1, gf_bs_read_double(bs));
+				else
+					sprintf(szTmp, " C%d=\"0x%X\"", i+1, gf_bs_read_int(bs, types[i].bits));
+				break;
+			case 2:
+				if (types[i].bits==64)
+					sprintf(szTmp, " C%d=\"%f + %fi\"", i+1, gf_bs_read_float(bs), gf_bs_read_float(bs));
+				else if (types[i].bits==128)
+					sprintf(szTmp, " C%d=\"%f + %fi\"", i+1, gf_bs_read_double(bs), gf_bs_read_double(bs));
+				else
+					sprintf(szTmp, " C%d=\"0x%X + 0x%Xi\"", i+1, gf_bs_read_int(bs, types[i].bits/2), gf_bs_read_int(bs, types[i].bits/2) );
+				break;
+			default:
+				sprintf(szTmp, " C%d=\"invalid", i+1);
+				break;
+			}
+			gf_fprintf(trace, "%s", szTmp);
+		}
+		gf_fprintf(trace, "/>\n");
+	}
+
+	gf_bs_del(bs);
+	gf_free(types);
+	gf_isom_box_dump_done("ComponentDefinitionBox", (GF_Box *)u, trace);
+	return GF_OK;
+
+}
+
+static GF_Err dump_cpat(GF_UnknownBox *u, FILE * trace)
+{
+	u32 val, pw, ph, j, i;
+	GF_BitStream *bs = gf_bs_new(u->data, u->dataSize, GF_BITSTREAM_READ);
+	gf_isom_box_dump_start((GF_Box *)u, "ComponentPatternBox", trace);
+
+	//full box
+	get_and_print("version", 8)
+	get_and_print("flags", 24)
+	get_and_print("pattern_width", 16)
+	pw = val;
+	get_and_print("pattern_height", 16)
+	ph = val;
+	gf_fprintf(trace, ">\n");
+	for (i=0; i<pw; i++) {
+		for (j=0; j<ph; j++) {
+			gf_fprintf(trace, "<Component x=\"%d\" y=\"%d\"", i, j);
+			get_and_print("index", 16)
+			gf_fprintf(trace, " gain\"%g\"/>\n", gf_bs_read_double(bs) );
+		}
+	}
+	gf_bs_del(bs);
+	gf_isom_box_dump_done("ComponentPatternBox", (GF_Box *)u, trace);
+	return GF_OK;
+}
+
+static GF_Err dump_gmcc(GF_UnknownBox *u, FILE * trace)
+{
+	u32 val, pos;
+	GF_BitStream *bs = gf_bs_new(u->data, u->dataSize, GF_BITSTREAM_READ);
+	gf_isom_box_dump_start((GF_Box *)u, "GPACMetaCodecWrapperConfigBox", trace);
+
+	get_4cc_and_print("gpac_codec_id", 32)
+	get_4cc_and_print("meta_codec_id", 32)
+	u8 *cname = gf_bs_read_utf8(bs);
+	if (cname) {
+		gf_fprintf(trace, " codec_name=\"%s\"", cname);
+		gf_free(cname);
+	}
+	get_and_print("meta_opaque", 32)
+	pos = (u32) gf_bs_get_position(bs);
+	dump_data_attribute(trace, "decoderSpecificInfo", u->data+pos, u->dataSize-pos);
+	gf_bs_del(bs);
+	gf_fprintf(trace, ">\n");
+	gf_isom_box_dump_done("GPACMetaCodecWrapperConfigBox", (GF_Box *)u, trace);
+	return GF_OK;
+}
+
+static GF_Err dump_dvc1(GF_UnknownBox *u, FILE * trace)
+{
+	u32 val, pos;
+	GF_BitStream *bs = gf_bs_new(u->data, u->dataSize, GF_BITSTREAM_READ);
+	gf_isom_box_dump_start((GF_Box *)u, "VC1ConfigurationBox", trace);
+
+	get_and_print("profile", 4)
+	get_and_print("level", 3)
+	gf_bs_read_int(bs, 1);
+	get_and_print("level", 3)
+	get_and_print("cbr", 1)
+	gf_bs_read_int(bs, 6);
+	get_and_print("no_interlace", 1)
+	get_and_print("no_multiple_seq", 1)
+	get_and_print("no_multiple_entry", 1)
+	get_and_print("no_slice_code", 1)
+	get_and_print("no_b_frames", 1)
+	gf_bs_read_int(bs, 1);
+	get_and_print("framerate", 32)
+
+	pos = (u32) gf_bs_get_position(bs);
+	gf_bs_del(bs);
+
+	gf_fprintf(trace, " VOS=\"");
+	dump_data_hex(trace, u->data+pos, u->dataSize-pos);
+	gf_fprintf(trace, "\">\n");
+	gf_isom_box_dump_done("VC1ConfigurationBox", (GF_Box *)u, trace);
+	return GF_OK;
+}
+#undef get_and_print
+
+
 GF_Err unkn_box_dump(GF_Box *a, FILE * trace)
 {
 	Bool str_dump = GF_FALSE;
@@ -1474,6 +1775,20 @@ GF_Err unkn_box_dump(GF_Box *a, FILE * trace)
 	} else if (u->original_4cc==GF_4CC('m','e','a','n') && (u->dataSize>4) && !u->data[0] && !u->data[1] && !u->data[2] && !u->data[3]) {
 		name = "iTunesMean";
 		str_dump = GF_TRUE;
+	} else if (u->original_4cc==GF_QT_SUBTYPE_ALAC) {
+		return dump_alac(u, trace);
+	} else if (u->original_4cc==GF_4CC('u','n','c','C')) {
+		return dump_uncc(u, trace);
+	} else if (u->original_4cc==GF_4CC('c','m','p','d')) {
+		return dump_cmpd(u, trace);
+	} else if (u->original_4cc==GF_4CC('c','p','a','l')) {
+		return dump_cpal(u, trace);
+	} else if (u->original_4cc==GF_4CC('c','p','a','t')) {
+		return dump_cpat(u, trace);
+	} else if (u->original_4cc==GF_4CC('G','M','C','C')) {
+		return dump_gmcc(u, trace);
+	} else if (u->original_4cc==GF_4CC('d','v','c','1')) {
+		return dump_dvc1(u, trace);
 	}
 
 	gf_isom_box_dump_start(a, name, trace);
@@ -2123,7 +2438,8 @@ GF_Err twrp_box_dump(GF_Box *a, FILE * trace)
 
 GF_Err meta_box_dump(GF_Box *a, FILE * trace)
 {
-	gf_isom_box_dump_start(a, "MetaBox", trace);
+	GF_MetaBox *ptr = (GF_MetaBox *)a;
+	gf_isom_box_dump_start_ex(a, "MetaBox", trace, ptr->is_qt ? GF_FALSE : GF_TRUE);
 	gf_fprintf(trace, ">\n");
 	gf_isom_box_dump_done("MetaBox", a, trace);
 	return GF_OK;
@@ -2132,15 +2448,18 @@ GF_Err meta_box_dump(GF_Box *a, FILE * trace)
 
 GF_Err xml_box_dump(GF_Box *a, FILE * trace)
 {
+	GF_Err e=GF_OK;
 	GF_XMLBox *p = (GF_XMLBox *)a;
 	gf_isom_box_dump_start(a, "XMLBox", trace);
 	gf_fprintf(trace, ">\n");
 	gf_fprintf(trace, "<![CDATA[\n");
-	if (p->xml)
-		gf_fwrite(p->xml, strlen(p->xml), trace);
+	if (p->xml) {
+		u32 len = (u32) strlen(p->xml);
+		if (gf_fwrite(p->xml, len, trace)!=len) e = GF_IO_ERR;
+	}
 	gf_fprintf(trace, "]]>\n");
 	gf_isom_box_dump_done("XMLBox", a, trace);
-	return GF_OK;
+	return e;
 }
 
 
@@ -3431,11 +3750,12 @@ GF_Err dump_ttxt_sample_srt(FILE *dump, GF_TextSample *txt, GF_Tx3gSampleEntryBo
 					if (txt->styles->styles[k].startCharOffset>char_num) continue;
 					if (txt->styles->styles[k].endCharOffset<char_num+1) continue;
 
-					if (txt->styles->styles[k].style_flags & (GF_TXT_STYLE_ITALIC | GF_TXT_STYLE_BOLD | GF_TXT_STYLE_UNDERLINED | GF_TXT_STYLE_STRIKETHROUGH)) {
+					if (txt->styles->styles[k].style_flags & (GF_TXT_STYLE_ITALIC | GF_TXT_STYLE_BOLD | GF_TXT_STYLE_UNDERLINED | GF_TXT_STYLE_STRIKETHROUGH))
 						new_styles = txt->styles->styles[k].style_flags;
+					if (txt->styles->styles[k].text_color)
 						new_color = txt->styles->styles[k].text_color;
-						break;
-					}
+
+					break;
 				}
 			}
 			if (new_styles != styles) {
@@ -3455,7 +3775,15 @@ GF_Err dump_ttxt_sample_srt(FILE *dump, GF_TextSample *txt, GF_Tx3gSampleEntryBo
 				if (new_color ==txtd->default_style.text_color) {
 					gf_fprintf(dump, "</font>");
 				} else {
-					gf_fprintf(dump, "<font color=\"%s\">", gf_color_get_name(new_color) );
+					const char *cname = gf_color_get_name(new_color);
+					if (cname) {
+						gf_fprintf(dump, "<font color=\"%s\">", cname);
+					} else {
+						if (new_color >> 24 < 0xFF)
+							gf_fprintf(dump, "<font color=\"#%X\">", new_color);
+						else
+							gf_fprintf(dump, "<font color=\"#%06X\">", new_color&0x00FFFFFF);
+					}
 				}
 				color = new_color;
 			}
@@ -4480,10 +4808,14 @@ GF_Err dac3_box_dump(GF_Box *a, FILE * trace)
 		a->type = GF_ISOM_BOX_TYPE_DEC3;
 		gf_isom_box_dump_start(a, "EC3SpecificBox", trace);
 		a->type = GF_ISOM_BOX_TYPE_DAC3;
-		gf_fprintf(trace, "nb_streams=\"%d\" data_rate=\"%d\">\n", p->cfg.nb_streams, p->cfg.brcode);
+		gf_fprintf(trace, "nb_streams=\"%d\" data_rate=\"%d\">\n", p->cfg.nb_streams, p->cfg.brcode*1000);
 		for (i=0; i<p->cfg.nb_streams; i++) {
 			gf_fprintf(trace, "<EC3StreamConfig fscod=\"%d\" bsid=\"%d\" bsmod=\"%d\" acmod=\"%d\" lfon=\"%d\" asvc=\"%d\" num_sub_dep=\"%d\" chan_loc=\"%d\"/>\n",
 			        p->cfg.streams[i].fscod, p->cfg.streams[i].bsid, p->cfg.streams[i].bsmod, p->cfg.streams[i].acmod, p->cfg.streams[i].lfon, p->cfg.streams[i].asvc, p->cfg.streams[i].nb_dep_sub, p->cfg.streams[i].chan_loc);
+		}
+		if (p->cfg.atmos_ec3_ext || p->cfg.complexity_index_type) {
+			gf_fprintf(trace, "<ExtendedConfig flag_ec3_extension_type_a=\"%d\" complexity_index_type_a=\"%d\"/>\n",
+				p->cfg.atmos_ec3_ext, p->cfg.complexity_index_type);
 		}
 		gf_isom_box_dump_done("EC3SpecificBox", a, trace);
 	} else {
@@ -5781,6 +6113,9 @@ GF_Err trgt_box_dump(GF_Box *a, FILE * trace)
 {
 	GF_TrackGroupTypeBox *ptr = (GF_TrackGroupTypeBox *) a;
 	a->type = ptr->group_type;
+	//don't allow UNKN or UUID as type (possible buffer overflow when typecasting to GF_UnknownBox)
+	if ((a->type==GF_ISOM_BOX_TYPE_UNKNOWN) || (a->type==GF_ISOM_BOX_TYPE_UUID))
+		a->type = GF_4CC('u','k','n','w');
 	gf_isom_box_dump_start(a, "TrackGroupTypeBox", trace);
 	a->type = GF_ISOM_BOX_TYPE_TRGT;
 	gf_fprintf(trace, "track_group_id=\"%d\">\n", ptr->track_group_id);
@@ -5801,6 +6136,9 @@ GF_Err grptype_box_dump(GF_Box *a, FILE * trace)
 	u32 i;
 	GF_EntityToGroupTypeBox *ptr = (GF_EntityToGroupTypeBox *) a;
 	a->type = ptr->grouping_type;
+	//don't allow UNKN or UUID as type (possible buffer overflow when typecasting to GF_UnknownBox)
+	if ((a->type==GF_ISOM_BOX_TYPE_UNKNOWN) || (a->type==GF_ISOM_BOX_TYPE_UUID))
+		a->type = GF_4CC('u','k','n','w');
 	gf_isom_box_dump_start(a, "EntityToGroupTypeBox", trace);
 	a->type = GF_ISOM_BOX_TYPE_GRPT;
 	gf_fprintf(trace, "group_id=\"%d\">\n", ptr->group_id);
@@ -6527,6 +6865,34 @@ GF_Err proj_type_box_dump(GF_Box *a, FILE * trace)
 		gf_fprintf(trace, " crc=\"%08X\" encoding=\"%s\" left=\"%d\" right=\"%d\">\n", ptr->crc, gf_4cc_to_str(ptr->encoding_4cc) );
 		gf_isom_box_dump_done("MeshProjectionBox", a, trace);
 	}
+	return GF_OK;
+}
+
+GF_Err keys_box_dump(GF_Box *a, FILE * trace)
+{
+	u32 i;
+	GF_MetaKey *k;
+	GF_MetaKeysBox *ptr = (GF_MetaKeysBox *)a;
+	gf_isom_box_dump_start(a, "KeysBox", trace);
+	gf_fprintf(trace, ">\n");
+
+	i=0;
+	while ( (k = (GF_MetaKey*)gf_list_enum(ptr->keys, &i))) {
+		gf_fprintf(trace, " <Key ns=\"%s\"", gf_4cc_to_str(k->ns) );
+		if (k->data) {
+			if (gf_utf8_is_legal(k->data, k->size)) {
+				gf_fprintf(trace, " name=\"");
+				dump_data_string(trace, k->data, k->size);
+				gf_fprintf(trace, "\"");
+			} else if (k->size<100) {
+				dump_data_attribute(trace, "name", k->data, k->size);
+			} else {
+				gf_fprintf(trace, " nameSize=\"%u\"", k->size);
+			}
+		}
+		gf_fprintf(trace, "/>\n");
+	}
+	gf_isom_box_dump_done("KeysBox", NULL, trace);
 	return GF_OK;
 }
 

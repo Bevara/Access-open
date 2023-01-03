@@ -534,16 +534,6 @@ void gf_m2ts_mux_table_get_next_packet(GF_M2TS_Mux *mux, GF_M2TS_Mux_Stream *str
 	assert(section);
 
 	bs = mux->pck_bs;
-	gf_bs_reassign_buffer(bs, packet, 188);
-
-	gf_bs_write_int(bs,	0x47, 8); // sync
-	gf_bs_write_int(bs,	0, 1);    // error indicator
-	if (stream->current_section_offset == 0) {
-		gf_bs_write_int(bs,	1, 1);    // payload start indicator
-	} else {
-		/* No section concatenation yet!!!*/
-		gf_bs_write_int(bs,	0, 1);    // payload start indicator
-	}
 
 	if (!stream->current_section_offset) payload_length = 183;
 	else payload_length = 184;
@@ -580,6 +570,15 @@ void gf_m2ts_mux_table_get_next_packet(GF_M2TS_Mux *mux, GF_M2TS_Mux_Stream *str
 		else stream->continuity_counter--;
 	}
 
+	gf_bs_reassign_buffer(bs, packet, 188);
+	gf_bs_write_int(bs,	0x47, 8); // sync
+	gf_bs_write_int(bs,	0, 1);    // error indicator
+	if (stream->current_section_offset == 0) {
+		gf_bs_write_int(bs,	1, 1);    // payload start indicator
+	} else {
+		/* No section concatenation yet!!!*/
+		gf_bs_write_int(bs,	0, 1);    // payload start indicator
+	}
 	gf_bs_write_int(bs,	0, 1);    /*priority indicator*/
 	gf_bs_write_int(bs,	stream->pid, 13); /*pid*/
 	gf_bs_write_int(bs,	0, 2);    /*scrambling indicator*/
@@ -815,6 +814,7 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 			nb_streams++;
 			GF_AVCConfig *avcc = NULL;
 			GF_HEVCConfig *hvcc = NULL;
+			GF_AV1Config *av1c = NULL;
 
 			switch (es->mpeg2_stream_type) {
 			case GF_M2TS_AUDIO_AC3:
@@ -828,9 +828,13 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 			case GF_M2TS_VIDEO_VC1:
 			case GF_M2TS_AUDIO_DTS:
 			case GF_M2TS_AUDIO_OPUS:
-			case GF_M2TS_VIDEO_AV1:
 				//reg desc
 				es_info_length += 2 + 4;
+				type = GF_M2TS_PRIVATE_DATA;
+				break;
+			case GF_M2TS_VIDEO_AV1:
+				//reg desc + private data specifier desc
+				es_info_length += 2 + 4 + 2 + 4;
 				type = GF_M2TS_PRIVATE_DATA;
 				break;
 			case GF_M2TS_VIDEO_HEVC:
@@ -857,9 +861,14 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 					es_info_length += 2 + 2+3;
 				}
 				else if (es->force_reg_desc) {
-					es_info_length += 2 + 4;
-					if (!es->ifce->ra_code)
-						es_info_length += 4;
+					es_info_length += 2 + 4; //desc size + reg 4CC
+					if (!es->ifce->ra_code) {
+						if (es->ifce->gpac_meta_dsi) {
+							es_info_length += es->ifce->gpac_meta_dsi_size;
+						} else {
+							es_info_length += 4; //codecID
+						}
+					}
 					type = GF_M2TS_PRIVATE_DATA;
 				}
 				break;
@@ -872,6 +881,10 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 			if (es->ifce->decoder_config && (es->mpeg2_stream_type==GF_M2TS_VIDEO_HEVC) && !es->ifce->depends_on_stream) {
 				hvcc = gf_odf_hevc_cfg_read(es->ifce->decoder_config, es->ifce->decoder_config_size, GF_FALSE);
 				if (hvcc) es_info_length += 15;
+			}
+			if (es->ifce->decoder_config && (es->mpeg2_stream_type==GF_M2TS_VIDEO_AV1)) {
+				av1c = gf_odf_av1_cfg_read(es->ifce->decoder_config, es->ifce->decoder_config_size);
+				if (av1c) es_info_length += 2 + 4;
 			}
 
 			gf_bs_write_int(bs,	type, 8);
@@ -984,18 +997,25 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 				gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
 				gf_bs_write_int(bs,	4, 8);
 				gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_AV1);
+				gf_bs_write_int(bs, GF_M2TS_DVB_PRIVATE_DATA_SPECIFIER_DESCRIPTOR, 8);
+				gf_bs_write_int(bs, 4, 8);
+				gf_bs_write_u32(bs, GF_4CC('A', 'O', 'M', 'S'));
 				break;
 
 			default:
 				if (es->force_reg_desc && es->ifce && es->ifce->codecid) {
-					gf_bs_write_int(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR, 8);
+					gf_bs_write_u8(bs,	GF_M2TS_REGISTRATION_DESCRIPTOR);
 					if (es->ifce->ra_code) {
-						gf_bs_write_int(bs,	4, 8);
-						gf_bs_write_int(bs,	es->ifce->ra_code, 32);
+						gf_bs_write_u8(bs,	4);
+						gf_bs_write_u32(bs,	es->ifce->ra_code);
+					} else if (es->ifce->gpac_meta_dsi_size) {
+						gf_bs_write_u8(bs, 4 + es->ifce->gpac_meta_dsi_size);
+						gf_bs_write_u32(bs,	GF_M2TS_RA_STREAM_GPAC);
+						gf_bs_write_data(bs, es->ifce->gpac_meta_dsi, es->ifce->gpac_meta_dsi_size);
 					} else {
-						gf_bs_write_int(bs,	8, 8);
-						gf_bs_write_int(bs,	GF_M2TS_RA_STREAM_GPAC, 32);
-						gf_bs_write_int(bs,	es->ifce->codecid, 32);
+						gf_bs_write_u8(bs, 8);
+						gf_bs_write_u32(bs, GF_M2TS_RA_STREAM_GPAC);
+						gf_bs_write_u32(bs, es->ifce->codecid);
 					}
 				}
 				break;
@@ -1061,6 +1081,30 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 					gf_bs_write_int(bs, 0, 3);
 					gf_bs_write_int(bs, 0, 8);
 				}
+			}
+			if (av1c) {
+				gf_bs_write_int(bs, 0x80 /* TODO check value */, 8);
+				gf_bs_write_int(bs, 4, 8); // specifier tag and AV1 config
+				gf_bs_write_int(bs, av1c->marker, 1);
+				gf_bs_write_int(bs, av1c->version, 7);
+				gf_bs_write_int(bs, av1c->seq_profile, 3);
+				gf_bs_write_int(bs, av1c->seq_level_idx_0, 5);
+				gf_bs_write_int(bs, av1c->seq_tier_0, 1);
+				gf_bs_write_int(bs, av1c->high_bitdepth, 1);
+				gf_bs_write_int(bs, av1c->twelve_bit, 1);
+				gf_bs_write_int(bs, av1c->monochrome, 1);
+				gf_bs_write_int(bs, av1c->chroma_subsampling_x, 1);
+				gf_bs_write_int(bs, av1c->chroma_subsampling_y, 1);
+				gf_bs_write_int(bs, av1c->chroma_sample_position, 2);
+				gf_bs_write_int(bs, 3, 2); // hdr_wcg_idc
+				gf_bs_write_int(bs, 0, 1); // reserved_zeros
+				gf_bs_write_int(bs, av1c->initial_presentation_delay_present, 1);
+				if (av1c->initial_presentation_delay_present) {
+					gf_bs_write_int(bs, av1c->initial_presentation_delay_minus_one, 4);
+				} else {
+					gf_bs_write_int(bs, 0, 4); // reserved_zeros
+				}
+				gf_odf_av1_cfg_del(av1c);
 			}
 
 
@@ -1965,8 +2009,6 @@ void gf_m2ts_mux_pes_get_next_packet(GF_M2TS_Mux_Stream *stream, char *packet)
 	u32 adaptation_field_control, payload_length, payload_to_copy, padding_length, hdr_len, pos, copy_next;
 
 	assert(stream->pid);
-	bs = stream->program->mux->pck_bs;
-	gf_bs_reassign_buffer(bs, packet, 188);
 
 	if (stream->pcr_only_mode) {
 		payload_length = 184 - 8;
@@ -2107,6 +2149,11 @@ void gf_m2ts_mux_pes_get_next_packet(GF_M2TS_Mux_Stream *stream, char *packet)
 		else stream->continuity_counter--;
 	}
 
+	bs = stream->program->mux->pck_bs;
+	gf_bs_reassign_buffer(bs, packet, 188);
+
+	//small opt for formatting TS header for PES, don't use bitstream for header, slightly faster
+#if 0
 	gf_bs_write_int(bs,	0x47, 8); // sync byte
 	gf_bs_write_int(bs,	0, 1);    // error indicator
 	gf_bs_write_int(bs,	hdr_len ? 1 : 0, 1); // start ind
@@ -2115,6 +2162,14 @@ void gf_m2ts_mux_pes_get_next_packet(GF_M2TS_Mux_Stream *stream, char *packet)
 	gf_bs_write_int(bs,	0, 2);    // scrambling
 	gf_bs_write_int(bs,	adaptation_field_control, 2);    // we do not use adaptation field for sections
 	gf_bs_write_int(bs,	stream->continuity_counter, 4);   // continuity counter
+#else
+	packet[0] = 0x47; // sync byte
+	packet[1] = (stream->pid>>8) & 0x1F; //high bits of PID
+	if (hdr_len) packet[1] |= 0x40; // start ind
+	packet[2] = stream->pid & 0xFF; //low bits of PID
+	packet[3] = (adaptation_field_control<<4) | (stream->continuity_counter & 0xF); //AF + CC
+	gf_bs_seek(bs, 4);
+#endif
 
 	if (stream->continuity_counter < 15) stream->continuity_counter++;
 	else stream->continuity_counter=0;
@@ -2617,10 +2672,13 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 			stream->mpeg2_stream_type = GF_M2TS_VIDEO_AV1;
 			stream->force_single_au = GF_TRUE;
 			break;
-
 		default:
-			if (!ifce->ra_code) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts video type for codec %s, signaling as PES private using codec 4CC %s in registration descriptor\n", gf_codecid_name(ifce->codecid), gf_4cc_to_str(ifce->codecid) ));
+			if (!ifce->ra_code && !stream->force_reg_desc) {
+				if (ifce->gpac_meta_dsi) {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts audio type for codec %s, signaling as PES private using GPAC 4CC in registration descriptor\n", ifce->gpac_meta_name ? ifce->gpac_meta_name : gf_codecid_name(ifce->codecid) ));
+				} else {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts video type for codec %s, signaling as PES private using codec 4CC %s in registration descriptor\n", gf_codecid_name(ifce->codecid), gf_4cc_to_str(ifce->codecid) ));
+				}
 			}
 
 			stream->mpeg2_stream_type = GF_M2TS_PRIVATE_DATA;
@@ -2667,9 +2725,23 @@ static void gf_m2ts_program_stream_format_updated(GF_M2TS_Mux_Stream *stream)
 			else
 				stream->mpeg2_stream_type = GF_M2TS_AUDIO_EC3;
 			break;
+
+		case GF_CODECID_DTS_CA:
+		case GF_CODECID_DTS_X:
+		case GF_CODECID_DTS_HD_HR:
+		case GF_CODECID_DTS_HD_MASTER:
+		case GF_CODECID_DTS_LBR:
+			stream->mpeg2_stream_type = GF_M2TS_AUDIO_DTS;
+			break;
+
+
 		default:
-			if (!ifce->ra_code) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts audio type for codec %s, signaling as PES private using codec 4CC in registration descriptor\n", gf_codecid_name(ifce->codecid) ));
+			if (!ifce->ra_code && !stream->force_reg_desc) {
+				if (ifce->gpac_meta_dsi) {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts audio type for codec %s, signaling as PES private using GPAC 4CC in registration descriptor\n", ifce->gpac_meta_name ? ifce->gpac_meta_name : gf_codecid_name(ifce->codecid) ));
+				} else {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS Muxer] Unsupported mpeg2-ts audio type for codec %s, signaling as PES private using codec 4CC in registration descriptor\n", gf_codecid_name(ifce->codecid) ));
+				}
 			}
 			stream->mpeg2_stream_type = GF_M2TS_PRIVATE_DATA;
 			stream->force_single_au = GF_TRUE;
@@ -3159,7 +3231,7 @@ static Bool gf_m2ts_stream_too_early(GF_M2TS_Mux_Stream *stream, GF_M2TS_Mux *mu
 	}
 	//if PCR stream is over, flush
 	if (stream->program->pcr->ifce) {
-		if (stream->program->pcr->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER))
+		if (stream->program->pcr->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER|GF_ESI_STREAM_SPARSE))
 			return GF_FALSE;
 	}
 	//PCR is in pure pcr mode (no associated data), check is any stream is less than PCR
@@ -3171,7 +3243,7 @@ static Bool gf_m2ts_stream_too_early(GF_M2TS_Mux_Stream *stream, GF_M2TS_Mux *mu
 		while (a_stream) {
 			//a_stream time less than stream time, we must wait on stream to process a_stream
 			if ((a_stream != stream)
-				&& a_stream->ifce && !(a_stream->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER))
+				&& a_stream->ifce && !(a_stream->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER|GF_ESI_STREAM_SPARSE))
 				&& gf_m2ts_time_less(&a_stream->time, &stream->time)
 			) {
 				return GF_TRUE;
@@ -3181,7 +3253,7 @@ static Bool gf_m2ts_stream_too_early(GF_M2TS_Mux_Stream *stream, GF_M2TS_Mux *mu
 		return GF_FALSE;
 	}
 	//PCR done or flush, we're not too early
-	else if (stream->program->pcr->ifce && (stream->program->pcr->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER)))
+	else if (stream->program->pcr->ifce && (stream->program->pcr->ifce->caps & (GF_ESI_STREAM_FLUSH|GF_ESI_STREAM_IS_OVER|GF_ESI_STREAM_SPARSE)))
 		return GF_FALSE;
 
 	//not PCR, we're too early

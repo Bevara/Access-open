@@ -815,6 +815,7 @@ GF_Err unkn_box_write(GF_Box *s, GF_BitStream *bs)
 	u32 type;
 	GF_UnknownBox *ptr = (GF_UnknownBox *)s;
 	if (!s) return GF_BAD_PARAM;
+	if (ptr->original_4cc == GF_ISOM_BOX_TYPE_UUID) return GF_BAD_PARAM;
 	type = s->type;
 	ptr->type = ptr->original_4cc;
 	e = gf_isom_box_write_header(s, bs);
@@ -1526,6 +1527,7 @@ GF_Err gnrm_box_write(GF_Box *s, GF_BitStream *bs)
 	GF_GenericSampleEntryBox *ptr = (GF_GenericSampleEntryBox *)s;
 
 	//careful we are not writing the box type but the entry type so switch for write
+	if (ptr->EntryType == GF_ISOM_BOX_TYPE_UUID) return GF_BAD_PARAM;
 	ptr->type = ptr->EntryType;
 	e = gf_isom_box_write_header(s, bs);
 	if (e) return e;
@@ -1576,6 +1578,7 @@ GF_Err gnrv_box_write(GF_Box *s, GF_BitStream *bs)
 	GF_GenericVisualSampleEntryBox *ptr = (GF_GenericVisualSampleEntryBox *)s;
 
 	//careful we are not writing the box type but the entry type so switch for write
+	if (ptr->EntryType == GF_ISOM_BOX_TYPE_UUID) return GF_BAD_PARAM;
 	ptr->type = ptr->EntryType;
 	e = gf_isom_box_write_header(s, bs);
 	if (e) return e;
@@ -1627,6 +1630,7 @@ GF_Err gnra_box_write(GF_Box *s, GF_BitStream *bs)
 	GF_GenericAudioSampleEntryBox *ptr = (GF_GenericAudioSampleEntryBox *)s;
 
 	//careful we are not writing the box type but the entry type so switch for write
+	if (ptr->EntryType == GF_ISOM_BOX_TYPE_UUID) return GF_BAD_PARAM;
 	ptr->type = ptr->EntryType;
 	e = gf_isom_box_write_header(s, bs);
 	if (e) return e;
@@ -2916,6 +2920,12 @@ GF_Err mdat_box_read(GF_Box *s, GF_BitStream *bs)
 {
 	GF_MediaDataBox *ptr = (GF_MediaDataBox *)s;
 	if (ptr == NULL) return GF_BAD_PARAM;
+	if (ptr->type==GF_ISOM_BOX_TYPE_IMDA) {
+		ptr->type = GF_ISOM_BOX_TYPE_MDAT;
+		ptr->is_imda = 1;
+		ISOM_DECREASE_SIZE(s, 4)
+		ptr->imda_id = gf_bs_read_u32(bs);
+	}
 
 	ptr->dataSize = s->size;
 	ptr->bsOffset = gf_bs_get_position(bs);
@@ -2946,8 +2956,16 @@ GF_Err mdat_box_write(GF_Box *s, GF_BitStream *bs)
 {
 	GF_Err e;
 	GF_MediaDataBox *ptr = (GF_MediaDataBox *)s;
-	e = gf_isom_box_write_header(s, bs);
-	if (e) return e;
+	if (ptr->is_imda) {
+		s->type = GF_ISOM_BOX_TYPE_IMDA;
+		e = gf_isom_box_write_header(s, bs);
+		s->type = GF_ISOM_BOX_TYPE_MDAT;
+		if (e) return e;
+		gf_bs_write_u32(bs, ptr->imda_id);
+	} else {
+		e = gf_isom_box_write_header(s, bs);
+		if (e) return e;
+	}
 
 	//make sure we have some data ...
 	//if not, we handle that independently (edit files)
@@ -2961,6 +2979,8 @@ GF_Err mdat_box_size(GF_Box *s)
 {
 	GF_MediaDataBox *ptr = (GF_MediaDataBox *)s;
 	ptr->size += ptr->dataSize;
+	if (ptr->is_imda)
+		ptr->size += 4;
 	return GF_OK;
 }
 
@@ -4106,6 +4126,7 @@ GF_Err audio_sample_entry_box_size(GF_Box *s)
 		return GF_OK;
 
 	gf_isom_check_position(s, (GF_Box *)ptr->esd, &pos);
+	gf_isom_check_position(s, (GF_Box *)ptr->cfg_mha, &pos);
 	gf_isom_check_position(s, (GF_Box *)ptr->cfg_3gpp, &pos);
 	gf_isom_check_position(s, (GF_Box *)ptr->cfg_opus, &pos);
 	gf_isom_check_position(s, (GF_Box *)ptr->cfg_ac3, &pos);
@@ -5906,6 +5927,7 @@ void stts_box_del(GF_Box *s)
 GF_Err stts_box_read(GF_Box *s, GF_BitStream *bs)
 {
 	u32 i;
+	Bool logged=GF_FALSE;
 	GF_TimeToSampleBox *ptr = (GF_TimeToSampleBox *)s;
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
@@ -5935,7 +5957,10 @@ GF_Err stts_box_read(GF_Box *s, GF_BitStream *bs)
 
 		if (!ptr->entries[i].sampleDelta) {
 			if ((i+1<ptr->nb_entries) ) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Found stts entry with sample_delta=0 - forbidden ! Fixing to 1\n" ));
+				if (!logged) {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Found stts entry with sample_delta=0 - forbidden ! Fixing to 1\n" ));
+					logged=GF_TRUE;
+				}
 				ptr->entries[i].sampleDelta = 1;
 			} else if (ptr->entries[i].sampleCount>1) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] more than one stts entry at the end of the track with sample_delta=0 - forbidden ! Fixing to 1\n" ));
@@ -7237,6 +7262,7 @@ GF_Err reftype_box_write(GF_Box *s, GF_BitStream *bs)
 	GF_Err e;
 	u32 i;
 	GF_TrackReferenceTypeBox *ptr = (GF_TrackReferenceTypeBox *)s;
+	if (ptr->reference_type == GF_ISOM_BOX_TYPE_UUID) return GF_BAD_PARAM;
 	ptr->type = ptr->reference_type;
 	e = gf_isom_box_write_header(s, bs);
 	ptr->type = GF_ISOM_BOX_TYPE_REFT;
@@ -8104,6 +8130,19 @@ GF_Err udta_on_child_box(GF_Box *s, GF_Box *a, Bool is_rem)
 		gf_list_del_item(map->boxes, a);
 		return GF_OK;
 	}
+	u32 i, count = gf_list_count(map->boxes);
+	for (i=0; i<count; i++) {
+		GF_Box *b = gf_list_get(map->boxes, i);
+		u32 btype = b->type;
+		if (b->type==GF_ISOM_BOX_TYPE_UNKNOWN) btype = ((GF_UnknownBox*)b)->original_4cc;
+		if (btype != box_type) continue;
+		if (box_type == GF_ISOM_BOX_TYPE_UUID) {
+			if (memcmp( ((GF_UUIDBox *)a)->uuid, ((GF_UUIDBox *)b)->uuid, 16)) continue;
+		}
+		gf_isom_box_del(b);
+		gf_list_rem(map->boxes, i);
+		break;
+	}
 	return gf_list_add(map->boxes, a);
 }
 
@@ -8784,9 +8823,26 @@ void dac3_box_del(GF_Box *s)
 
 GF_Err dac3_box_read(GF_Box *s, GF_BitStream *bs)
 {
+	GF_Err e;
+	u64 pos;
 	GF_AC3ConfigBox *ptr = (GF_AC3ConfigBox *)s;
 	if (ptr == NULL) return GF_BAD_PARAM;
-	return gf_odf_ac3_config_parse_bs(bs, ptr->cfg.is_ec3, &ptr->cfg);
+	pos = gf_bs_get_position(bs);
+	e = gf_odf_ac3_config_parse_bs(bs, ptr->cfg.is_ec3, &ptr->cfg);
+	if (e) return e;
+	pos = gf_bs_get_position(bs) - pos;
+	ISOM_DECREASE_SIZE(ptr, pos);
+
+	if (ptr->size>=2) {
+		ptr->size-=2;
+		gf_bs_read_int(bs, 7);
+		ptr->cfg.atmos_ec3_ext = gf_bs_read_int(bs, 1);
+		ptr->cfg.complexity_index_type = gf_bs_read_u8(bs);
+	}
+	//the rest is reserved
+	gf_bs_skip_bytes(bs, ptr->size);
+	ptr->size = 0;
+	return GF_OK;
 }
 
 
@@ -8802,7 +8858,15 @@ GF_Err dac3_box_write(GF_Box *s, GF_BitStream *bs)
 	if (ptr->cfg.is_ec3) s->type = GF_ISOM_BOX_TYPE_DAC3;
 	if (e) return e;
 	
-	return gf_odf_ac3_cfg_write_bs(&ptr->cfg, bs);
+	e = gf_odf_ac3_cfg_write_bs(&ptr->cfg, bs);
+	if (e) return e;
+
+	if (ptr->cfg.atmos_ec3_ext || ptr->cfg.complexity_index_type) {
+		gf_bs_write_int(bs, 0, 7);
+		gf_bs_write_int(bs, ptr->cfg.atmos_ec3_ext, 1);
+		gf_bs_write_u8(bs, ptr->cfg.complexity_index_type);
+	}
+	return GF_OK;
 }
 
 GF_Err dac3_box_size(GF_Box *s)
@@ -8819,6 +8883,9 @@ GF_Err dac3_box_size(GF_Box *s)
 		}
 	} else {
 		s->size += 3;
+	}
+	if (ptr->cfg.atmos_ec3_ext || ptr->cfg.complexity_index_type) {
+		s->size += 2;
 	}
 	return GF_OK;
 }
@@ -10615,6 +10682,7 @@ GF_Err trgt_box_write(GF_Box *s, GF_BitStream *bs)
 	GF_Err e;
 	GF_TrackGroupTypeBox *ptr = (GF_TrackGroupTypeBox *) s;
 	if (!s) return GF_BAD_PARAM;
+	if (ptr->group_type == GF_ISOM_BOX_TYPE_UUID) return GF_BAD_PARAM;
 	s->type = ptr->group_type;
 	e = gf_isom_full_box_write(s, bs);
 	s->type = GF_ISOM_BOX_TYPE_TRGT;
@@ -11889,11 +11957,16 @@ GF_Err dvcC_box_read(GF_Box *s, GF_BitStream *bs)
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] dvcC reserved bits are not zero\n"));
 		}
 	}
-	if (ptr->DOVIConfig.dv_profile==8) {
-		if (!ptr->DOVIConfig.dv_bl_signal_compatibility_id || (ptr->DOVIConfig.dv_bl_signal_compatibility_id>2) ) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] dvcC profile 8 but compatibility ID %d is not 1 or 2, patching to 2\n", ptr->DOVIConfig.dv_bl_signal_compatibility_id));
-			ptr->DOVIConfig.dv_bl_signal_compatibility_id = 2;
-		}
+	switch (ptr->DOVIConfig.dv_bl_signal_compatibility_id) {
+	case 0:
+	case 1:
+	case 2:
+	case 4:
+	case 6:
+		break;
+	default:
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] dvcC compatibility ID %d is not valid (only 0, 1, 2, 4 or 6 defined), patching to 0\n", ptr->DOVIConfig.dv_bl_signal_compatibility_id));
+		ptr->DOVIConfig.dv_bl_signal_compatibility_id = 0;
 	}
 	return GF_OK;
 }
@@ -12603,7 +12676,8 @@ void csgp_box_del(GF_Box *a)
 	if (p->patterns) {
 		u32 i;
 		for (i=0; i<p->pattern_count; i++) {
-			gf_free(p->patterns[i].sample_group_description_indices);
+			if (p->patterns[i].sample_group_description_indices)
+				gf_free(p->patterns[i].sample_group_description_indices);
 		}
 		gf_free(p->patterns);
 	}
@@ -12636,7 +12710,7 @@ GF_Err csgp_box_read(GF_Box *s, GF_BitStream *bs)
 	index_size = get_size_by_code( (ptr->flags & 0x3) );
 
 	if (((pattern_size==4) && (scount_size!=4)) || ((pattern_size!=4) && (scount_size==4))) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] compact sample gorup pattern_size and sample_count_size mare not both 4 bits\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] compact sample group pattern_size and sample_count_size mare not both 4 bits\n"));
 		return GF_ISOM_INVALID_FILE;
 	}
 
@@ -12650,13 +12724,15 @@ GF_Err csgp_box_read(GF_Box *s, GF_BitStream *bs)
 
 
 	if ( (ptr->size / ( (pattern_size + scount_size) / 8 ) < ptr->pattern_count) || (u64)ptr->pattern_count > (u64)SIZE_MAX/sizeof(GF_CompactSampleGroupPattern) ) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] compact sample gorup pattern_count value (%lu) invalid\n", ptr->pattern_count));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] compact sample group pattern_count value (%lu) invalid\n", ptr->pattern_count));
 		return GF_ISOM_INVALID_FILE;
 	}
 
 	ptr->patterns = gf_malloc(sizeof(GF_CompactSampleGroupPattern) * ptr->pattern_count);
 	if (!ptr->patterns) return GF_OUT_OF_MEM;
+	memset(ptr->patterns, 0, sizeof(GF_CompactSampleGroupPattern) * ptr->pattern_count);
 
+	u64 patterns_sizes=0;
 	bits = 0;
 	for (i=0; i<ptr->pattern_count; i++) {
 		ptr->patterns[i].length = gf_bs_read_int(bs, pattern_size);
@@ -12667,8 +12743,15 @@ GF_Err csgp_box_read(GF_Box *s, GF_BitStream *bs)
 			ISOM_DECREASE_SIZE(ptr, bits);
 			bits=0;
 		}
+		patterns_sizes+=ptr->patterns[i].length;
+		if (patterns_sizes * index_size > ptr->size*8) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] compact sample group pattern cumulated sizes "LLU" larger than box size "LLU"\n", patterns_sizes, ptr->size));
+			ptr->patterns[i].sample_group_description_indices = NULL;
+			return GF_ISOM_INVALID_FILE;
+		}
+
 		if ( (u64)ptr->patterns[i].length > (u64)SIZE_MAX/sizeof(u32) ) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] compact sample gorup pattern #%d value (%lu) invalid\n", i, ptr->patterns[i].length));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] compact sample group pattern #%d value (%lu) invalid\n", i, ptr->patterns[i].length));
 			ptr->patterns[i].sample_group_description_indices = NULL;
 			return GF_ISOM_INVALID_FILE;
 		}
@@ -12872,8 +12955,12 @@ GF_Err xtra_box_read(GF_Box *s, GF_BitStream *bs)
 			prop_type = gf_bs_read_u16(bs);
 			prop_size -= 6;
 			ISOM_DECREASE_SIZE_NO_ERR(ptr, prop_size)
-			data2 = gf_malloc(sizeof(char) * (prop_size));
+			//add 3 extra bytes for UTF16 case string dump (3 because we need 0-aligned short value)
+			data2 = gf_malloc(sizeof(char) * (prop_size+3));
 			gf_bs_read_data(bs, data2, prop_size);
+			data2[prop_size] = 0;
+			data2[prop_size+1] = 0;
+			data2[prop_size+2] = 0;
 			tag_size-=prop_size;
 		} else {
 			prop_size = 0;

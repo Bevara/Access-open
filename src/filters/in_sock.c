@@ -65,6 +65,7 @@ typedef struct
 	u32 reorder_pck;
 	u32 reorder_delay;
 #endif
+	GF_PropStringList ssm, ssmx;
 
 	GF_SockInClient sock_c;
 	GF_List *clients;
@@ -119,7 +120,6 @@ static GF_Err sockin_initialize(GF_Filter *filter)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[SockIn] Failed to open socket for %s\n", ctx->src));
 		return GF_IO_ERR;
 	}
-	gf_sk_group_register(ctx->active_sockets, ctx->sock_c.socket);
 
 	/*setup port and src*/
 	port = ctx->port;
@@ -131,9 +131,10 @@ static GF_Err sockin_initialize(GF_Filter *filter)
 		str[0] = 0;
 	}
 
+
 	/*do we have a source ?*/
 	if (gf_sk_is_multicast_address(url)) {
-		e = gf_sk_setup_multicast(ctx->sock_c.socket, url, port, 0, 0, ctx->ifce);
+		e = gf_sk_setup_multicast_ex(ctx->sock_c.socket, url, port, 0, 0, ctx->ifce, (const char **)ctx->ssm.vals, ctx->ssm.nb_items, (const char **)ctx->ssmx.vals, ctx->ssmx.nb_items);
 		ctx->listen = GF_FALSE;
 	} else if ((sock_type==GF_SOCK_TYPE_UDP) 
 #ifdef GPAC_HAS_SOCK_UN 
@@ -168,6 +169,8 @@ static GF_Err sockin_initialize(GF_Filter *filter)
 		return e;
 	}
 
+	gf_sk_group_register(ctx->active_sockets, ctx->sock_c.socket);
+
 	GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[SockIn] opening %s%s\n", ctx->src, ctx->listen ? " in server mode" : ""));
 
 	if (ctx->block_size<2000)
@@ -180,6 +183,9 @@ static GF_Err sockin_initialize(GF_Filter *filter)
 	}
 	gf_sk_set_buffer_size(ctx->sock_c.socket, 0, ctx->block_size);
 	gf_sk_set_block_mode(ctx->sock_c.socket, (!ctx->is_udp && ctx->block) ? GF_FALSE : GF_TRUE);
+
+	if (!ctx->is_udp)
+		gf_filter_set_blocking(filter, GF_TRUE);
 
 	ctx->buffer = gf_malloc(ctx->block_size + 1);
 	if (!ctx->buffer) return GF_OUT_OF_MEM;
@@ -414,7 +420,7 @@ static GF_Err sockin_read_client(GF_Filter *filter, GF_SockInCtx *ctx, GF_SockIn
 	return GF_OK;
 }
 
-static GF_Err sockin_check_eos(GF_SockInCtx *ctx)
+static GF_Err sockin_check_eos(GF_Filter *filter, GF_SockInCtx *ctx)
 {
 	u32 now;
 	if (!ctx->timeout) return GF_OK;
@@ -440,6 +446,7 @@ static GF_Err sockin_check_eos(GF_SockInCtx *ctx)
 			GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[SockIn] No data received for %d ms, assuming end of stream\n", ctx->timeout));
 		} else {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[SockIn] No data received after %d ms, aborting\n", ctx->timeout));
+			gf_filter_setup_failure(filter, GF_IP_NETWORK_FAILURE);
 			return GF_IP_NETWORK_FAILURE;
 		}
 	}
@@ -458,8 +465,12 @@ static GF_Err sockin_process(GF_Filter *filter)
 	e = gf_sk_group_select(ctx->active_sockets, 1, GF_SK_SELECT_READ);
 	if (e==GF_IP_NETWORK_EMPTY) {
 		if (ctx->is_udp) {
-			e = sockin_check_eos(ctx);
+			e = sockin_check_eos(filter, ctx);
 			if (e) return e;
+			if (!ctx->sock_c.nb_bytes) {
+				gf_filter_ask_rt_reschedule(filter, 10000);
+				return GF_OK;
+			}
 		} else if (!gf_list_count(ctx->clients)) {
 			gf_filter_ask_rt_reschedule(filter, 1000);
 			return GF_OK;
@@ -567,6 +578,9 @@ static const GF_FilterArgs SockInArgs[] =
 	{ OFFS(reorder_pck), "number of packets delay for RTP reordering (M2TS over RTP) ", GF_PROP_UINT, "100", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(reorder_delay), "number of ms delay for RTP reordering (M2TS over RTP)", GF_PROP_UINT, "10", NULL, GF_FS_ARG_HINT_ADVANCED},
 #endif
+
+	{ OFFS(ssm), "list of IP to include for source-specific multicast", GF_PROP_STRING_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(ssmx), "list of IP to exclude for source-specific multicast", GF_PROP_STRING_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -613,6 +627,13 @@ GF_FilterRegister SockInRegister = {
 
 const GF_FilterRegister *sockin_register(GF_FilterSession *session)
 {
+	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
+#ifdef GPAC_HAS_SOCK_UN
+		gf_opts_set_key("temp_in_proto", SockInRegister.name, "tcp,udp,tcpu,udpu");
+#else
+		gf_opts_set_key("temp_in_proto", SockInRegister.name, "tcp,udp");
+#endif
+	}
 	return &SockInRegister;
 }
 

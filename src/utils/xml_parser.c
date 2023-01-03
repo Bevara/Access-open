@@ -27,8 +27,6 @@
 #include <gpac/utf.h>
 #include <gpac/network.h>
 
-#ifndef GPAC_DISABLE_CORE_TOOLS
-
 #ifndef GPAC_DISABLE_ZLIB
 /*since 0.2.2, we use zlib for xmt/x3d reading to handle gz files*/
 #include <zlib.h>
@@ -2087,8 +2085,11 @@ GF_Err gf_xml_dom_rem_child(GF_XMLNode *node, GF_XMLNode *child) {
 	if (idx == -1) return GF_BAD_PARAM;
 	return gf_list_rem(node->content, idx);
 }
+#endif //unused
 
-GF_XMLNode* gf_xml_dom_node_new(const char* ns, const char* name) {
+
+GF_XMLNode *gf_xml_dom_node_new(const char* ns, const char* name)
+{
 	GF_XMLNode* node;
 	GF_SAFEALLOC(node, GF_XMLNode);
 	if (!node) return NULL;
@@ -2107,10 +2108,12 @@ GF_XMLNode* gf_xml_dom_node_new(const char* ns, const char* name) {
 			gf_free(node);
 			return NULL;
 		}
+		node->type = GF_XML_NODE_TYPE;
+	} else {
+		node->type = GF_XML_TEXT_TYPE;
 	}
 	return node;
 }
-#endif //unused
 
 #include <gpac/base_coding.h>
 
@@ -2186,7 +2189,7 @@ GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, const char *parent_url, 
 				value = GF_4CC(att->value[0], att->value[1], att->value[2], att->value[3]);
 				nb_bits = 32;
 			} else if (!stricmp(att->name, "ID128")) {
-				GF_Err e = gf_bin128_parse(att->value, word128);
+				e = gf_bin128_parse(att->value, word128);
                 if (e != GF_OK) {
                     GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[XML/NHML] Cannot parse ID128\n"));
                     goto exit;
@@ -2215,6 +2218,9 @@ GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, const char *parent_url, 
 				}
 			} else if (!stricmp(att->name, "base64Prefix")) {
 				base64_prefix_bits = atoi(att->value);
+			} else if (!stricmp(att->name, "id")) {
+			} else {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[XML/NHML] Unkown attribute %s, ignoring\n", att->name));
 			}
 		}
 
@@ -2438,8 +2444,6 @@ GF_Err gf_xml_get_element_check_namespace(const GF_XMLNode *n, const char *expec
 	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[XML] Unresolved namespace \"%s\" for node \"%s\"\n", n->ns, n->name));
 	return GF_BAD_PARAM;
 }
-
-#endif /*GPAC_DISABLE_CORE_TOOLS*/
 
 void gf_xml_dump_string(FILE* file, const char *before, const char *str, const char *after)
 {

@@ -11,7 +11,12 @@ extension.open_local_file = function () {
 
     filebrowse.on_display_size = function (width, height) {
         if (gwskin.mobile_device) {
-            this.set_size(width, height);
+			dh = 0;
+			if (gwskin.display_cutout) {
+				dh = gwskin.default_control_height;
+			}
+            this.set_size(width, height-dh);
+            this.move(0, -dh/2);
         } else {
             var w = width / 2;
             if (w < 200) w = width - 20;
@@ -195,9 +200,12 @@ extension.open_local_file = function () {
         }
 
         popup.on_display_size = function (w, h) {
-            this.edit.set_size(w, 2 * gwskin.default_text_font_size);
-            this.set_size(w, 2 * gwskin.default_text_font_size + gwskin.default_icon_height);
-            this.move(0, h / 2 - this.height / 2);
+			let ed_h = 2 * gwskin.default_text_font_size;
+			if (gwskin.mobile_device) ed_h *= 1.5;
+            this.edit.set_size(w, ed_h);
+            this.set_size(w, ed_h + gwskin.default_icon_height);
+//            this.move(0, h / 2 - this.height / 2);
+			this.move(0, 0);
         }
 
         popup.on_display_size(gw_display_width, gw_display_height);
@@ -208,6 +216,7 @@ extension.open_local_file = function () {
                 this.dlg.enable();
             }
         }
+        popup._init_focus = popup.edit.edit;
         popup.show();
     }
 

@@ -38,7 +38,7 @@
 
 
 #define ISOM_FILE_EXT "mp4|mpg4|m4a|m4i|3gp|3gpp|3g2|3gp2|iso|ismv|m4s|heif|heic|iff|avci|avif|mj2|mov|qt"
-#define ISOM_FILE_MIME "application/x-isomedia|application/mp4|video/mp4|audio/mp4|video/3gpp|audio/3gpp|video/3gp2|audio/3gp2|video/iso.segment|audio/iso.segment|image/heif|image/heic|image/avci|video/quicktime"
+#define ISOM_FILE_MIME "video/mp4|audio/mp4|application/mp4|video/3gpp|audio/3gpp|video/3gp2|audio/3gp2|video/iso.segment|audio/iso.segment|image/heif|image/heic|image/avci|video/jp2|video/quicktime"
 
 enum{
 	NALU_NONE,
@@ -99,6 +99,7 @@ typedef struct
 	u32 nb_samples, samples_in_stsd;
 	u32 nb_frames_per_sample;
 	u64 ts_shift;
+	u64 si_min_ts_plus_one;
 	Bool has_subs;
 
 	Bool skip_bitrate_update;
@@ -123,7 +124,7 @@ typedef struct
 	s32 ts_delay, negctts_shift;
 	Bool insert_tfdt, probe_min_ctts;
 	u64 first_dts_in_seg, next_seg_cts, cts_next;
-	u64 offset_dts;
+	s64 tfdt_offset;
 	u32 samples_in_frag;
 	Bool patch_tfdt;
 
@@ -138,6 +139,7 @@ typedef struct
 	u32 constant_IV_size;
 	Bool cenc_multikey;
 	Bool cenc_frag_protected;
+	u32 skip_byte_block, crypt_byte_block;
 
 	Bool fake_track;
 
@@ -215,6 +217,7 @@ enum
 {
 	MP4MX_PSSH_MOOV=0,
 	MP4MX_PSSH_MOOF,
+	MP4MX_PSSH_BOTH,
 	MP4MX_PSSH_SKIP,
 };
 
@@ -286,6 +289,7 @@ typedef struct
 #endif
 	Bool mfra;
 	Bool forcesync, refrag, pad_sparse;
+	Bool force_dv, tsalign;
 	u32 itags;
 	Double start;
 
@@ -326,7 +330,7 @@ typedef struct
 	Bool sidx_size_exact;
 
 	u32 *seg_sizes;
-	u32 nb_seg_sizes, alloc_seg_sizes;
+	u32 nb_seg_sizes, alloc_seg_sizes, config_retry_start;
 	Bool config_timing;
 
 	u32 major_brand_set;
@@ -368,7 +372,13 @@ typedef struct
 
 	u64 wait_dts_plus_one;
 	u32 wait_dts_timescale;
+	Bool force_seg_sync;
+	u32 seg_flush_state;
+	u64 flush_idx_start_range, flush_idx_end_range;
+	Bool flush_ll_hls;
 } GF_MP4MuxCtx;
+
+static void mp4_mux_update_init_edit(GF_MP4MuxCtx *ctx, TrackWriter *tkw, u64 min_ts_service, Bool skip_adjust);
 
 static void mp4_mux_set_hevc_groups(GF_MP4MuxCtx *ctx, TrackWriter *tkw);
 
@@ -521,12 +531,13 @@ static void mp4_mux_make_inband_header(GF_MP4MuxCtx *ctx, TrackWriter *tkw, Bool
 			if (!tkw->nal_unit_size) tkw->nal_unit_size = tkw->vvcc->nal_unit_size;
 			mp4_mux_write_ps_list(bs, mp4_mux_get_nalus_ps(tkw->vvcc->param_array, GF_VVC_NALU_APS_PREFIX), tkw->vvcc->nal_unit_size);
 		} else {
-			if (!for_non_rap)
+			if (!for_non_rap) {
+				mp4_mux_write_ps_list(bs, mp4_mux_get_nalus_ps(tkw->vvcc->param_array, GF_VVC_NALU_OPI), tkw->vvcc->nal_unit_size);
+				mp4_mux_write_ps_list(bs, mp4_mux_get_nalus_ps(tkw->vvcc->param_array, GF_VVC_NALU_DEC_PARAM), tkw->vvcc->nal_unit_size);
 				mp4_mux_write_ps_list(bs, mp4_mux_get_nalus_ps(tkw->vvcc->param_array, GF_VVC_NALU_VID_PARAM), tkw->vvcc->nal_unit_size);
-			if (!tkw->nal_unit_size) tkw->nal_unit_size = tkw->vvcc->nal_unit_size;
-
-			if (!for_non_rap)
 				mp4_mux_write_ps_list(bs, mp4_mux_get_nalus_ps(tkw->vvcc->param_array, GF_VVC_NALU_SEQ_PARAM), tkw->vvcc->nal_unit_size);
+			}
+			if (!tkw->nal_unit_size) tkw->nal_unit_size = tkw->vvcc->nal_unit_size;
 
 			mp4_mux_write_ps_list(bs, mp4_mux_get_nalus_ps(tkw->vvcc->param_array, GF_VVC_NALU_PIC_PARAM), tkw->vvcc->nal_unit_size);
 			mp4_mux_write_ps_list(bs, mp4_mux_get_nalus_ps(tkw->vvcc->param_array, GF_VVC_NALU_APS_PREFIX), tkw->vvcc->nal_unit_size);
@@ -667,6 +678,43 @@ static void mp4_mux_set_tags(GF_MP4MuxCtx *ctx, TrackWriter *tkw)
 		tag_idx = gf_itags_find_by_name(tag_name);
 		if (tag_idx>=0) {
 			itag = gf_itags_get_itag(tag_idx);
+		} else if (!strnicmp(tag_name, "qtt_", 4)) {
+			tag_name += 4;
+
+			switch (tag->type) {
+			case GF_PROP_DATA:
+			case GF_PROP_CONST_DATA:
+			case GF_PROP_DATA_NO_COPY:
+			{
+				GF_QT_UDTAKey key;
+				key.type = GF_QT_KEY_OPAQUE;
+				key.name = tag_name;
+				key.ns = GF_4CC('m','d','t','a');
+				char *sep = strchr(tag_name, '@');
+				if (sep) {
+					key.name = sep+1;
+					key.ns = GF_4CC(tag_name[0], tag_name[1],tag_name[2],tag_name[3]);
+				}
+				key.value.data.data = tag->value.data.ptr;
+				key.value.data.data_len = tag->value.data.size;
+				e = gf_isom_set_qt_key(ctx->file, &key);
+			}
+				break;
+			case GF_PROP_POINTER:
+				e = GF_NOT_SUPPORTED;
+				break;
+			default:
+			{
+				char szDump[GF_PROP_DUMP_ARG_SIZE];
+				const char *str = gf_props_dump_val(tag, szDump, GF_PROP_DUMP_DATA_NONE, NULL);
+				e = gf_media_isom_apply_qt_key(ctx->file, tag_name, str);
+			}
+				break;
+			}
+			if (e) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Failed to set QT tag: %s\n", gf_error_to_string(e)));
+			}
+			continue;
 		} else {
 			if (ctx->itags==TAG_STRICT)
 				continue;
@@ -1025,6 +1073,15 @@ static GF_Err mp4_mux_setup_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_tr
 			needs_sample_entry = 2;
 	}
 
+	//store current cenc pattern if any
+	p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_CENC_PATTERN);
+	if (p) {
+		tkw->skip_byte_block = p->value.frac.num;
+		tkw->crypt_byte_block = p->value.frac.den;
+	} else {
+		tkw->skip_byte_block = tkw->crypt_byte_block = 0;
+	}
+
 	//TODO: try to merge PPS/SPS for AVC and HEVC rather than creating a new sample description
 
 	switch (tkw->codecid) {
@@ -1051,6 +1108,7 @@ static GF_Err mp4_mux_setup_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_tr
 	case GF_CODECID_AC3:
 	case GF_CODECID_EAC3:
 	case GF_CODECID_OPUS:
+	case GF_CODECID_TRUEHD:
 		if (!dsi && !enh_dsi) return GF_OK;
 		break;
 	case GF_CODECID_APCH:
@@ -1117,6 +1175,12 @@ static GF_Err mp4_mux_setup_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_tr
 	if (ctx->llhls_mode) {
 		ctx->tfdt_traf = GF_TRUE;
 		ctx->store = MP4MX_MODE_SFRAG;
+	}
+
+	if (ctx->dash_mode == MP4MX_DASH_ON) {
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_FORCE_SEG_SYNC);
+		if (p && p->value.boolean)
+			ctx->force_seg_sync = GF_TRUE;
 	}
 
 	if (!ctx->cdur_set) {
@@ -1918,6 +1982,17 @@ sample_entry_setup:
 		comp_name = "Dolby TrueHD";
 		break;
 
+	case GF_CODECID_DTS_CA:
+	case GF_CODECID_DTS_X:
+	case GF_CODECID_DTS_HD_HR:
+	case GF_CODECID_DTS_HD_MASTER:
+	case GF_CODECID_DTS_LBR:
+		m_subtype = GF_ISOM_SUBTYPE_DTSC;
+		break;
+	case GF_CODECID_ALAC:
+		m_subtype = GF_QT_SUBTYPE_ALAC;
+		break;
+
 
 	case GF_CODECID_BIFS:
 /* ==  GF_CODECID_OD_V1:*/
@@ -2633,11 +2708,15 @@ sample_entry_setup:
 
 		tkw->skip_bitrate_update = GF_TRUE;
 	} else if (use_webvtt) {
+#ifndef GPAC_DISABLE_VTT
 		e = gf_isom_new_webvtt_description(ctx->file, tkw->track_num, NULL, NULL, &tkw->stsd_idx, dsi ? dsi->value.data.ptr : NULL);
 		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error creating new %s sample description: %s\n", gf_4cc_to_str(m_subtype), gf_error_to_string(e) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error creating new %s sample description: %s\n", gf_4cc_to_str(m_subtype), gf_error_to_string(e)));
 			return e;
 		}
+#else
+		return GF_NOT_SUPPORTED;
+#endif
 		tkw->skip_bitrate_update = GF_TRUE;
 	} else if (use_mj2) {
 		e = gf_isom_new_mj2k_description(ctx->file, tkw->track_num, NULL, NULL, &tkw->stsd_idx, dsi ? dsi->value.data.ptr : NULL, dsi ? dsi->value.data.size : 0);
@@ -2696,14 +2775,23 @@ sample_entry_setup:
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error creating new DIMS sample description: %s\n", gf_error_to_string(e) ));
 			return e;
 		}
-	} else if (codec_id==GF_CODECID_MPHA) {
+	} else if ((codec_id==GF_CODECID_MPHA) || (codec_id==GF_CODECID_MHAS)) {
 		//not ready yet
-		if (!dsi) return GF_OK;
-
-		e = gf_isom_new_mpha_description(ctx->file, tkw->track_num, NULL, NULL, &tkw->stsd_idx, dsi->value.data.ptr, dsi->value.data.size);
+		u8 *pdsi=NULL;
+		u32 dsi_len=0;
+		if (codec_id==GF_CODECID_MPHA) {
+			if (!dsi) return GF_OK;
+			pdsi = dsi->value.data.ptr;
+			dsi_len = dsi->value.data.size;
+		}
+		e = gf_isom_new_mpha_description(ctx->file, tkw->track_num, NULL, NULL, &tkw->stsd_idx, pdsi, dsi_len, m_subtype);
 		if (e) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error creating new MPEG-H Audio sample description: %s\n", gf_error_to_string(e) ));
 			return e;
+		}
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_MHA_COMPATIBLE_PROFILES);
+		if (p) {
+			gf_isom_set_mpegh_compatible_profiles(ctx->file, tkw->track_num, tkw->stsd_idx, p->value.uint_list.vals, p->value.uint_list.nb_items);
 		}
 	} else if (codec_id==GF_CODECID_TRUEHD) {
 		u32 fmt=0, prate=0;
@@ -2725,7 +2813,7 @@ sample_entry_setup:
 			return e;
 		}
 	} else if (use_gen_sample_entry) {
-		u8 isor_ext_buf[14];
+		u8 isor_ext_buf[14], *gpac_meta_dsi=NULL;
 		u32 len = 0;
 		GF_GenericSampleDescription udesc;
 		memset(&udesc, 0, sizeof(GF_GenericSampleDescription));
@@ -2765,7 +2853,7 @@ sample_entry_setup:
 			if (p) {
 				m_subtype = p->value.uint;
 			} else {
-				p = gf_filter_pid_get_property(pid, GF_PROP_PID_FFMPEG_CODEC_ID);
+				p = gf_filter_pid_get_property(pid, GF_PROP_PID_META_DEMUX_CODEC_ID);
 				if (p && p->type==GF_PROP_UINT)
 					m_subtype = p->value.uint;
 			}
@@ -2794,17 +2882,57 @@ sample_entry_setup:
 			udesc.ext_box_wrap = GF_4CC('g', 'l', 'b', 'l');
 			unknown_generic = GF_FALSE;
 		}
+		if (codec_id==GF_CODECID_SMPTE_VC1) {
+			udesc.codec_tag = GF_4CC('v', 'c', '-', '1');
+			unknown_generic = GF_FALSE;
+			if (udesc.extension_buf)
+				udesc.ext_box_wrap = GF_4CC('d', 'v', 'c', '1');
+		}
 
 		if (unknown_generic) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] muxing unknown codec ID %s, using generic sample entry with 4CC \"%s\"\n", gf_codecid_name(codec_id), gf_4cc_to_str(m_subtype) ));
+			//check if this is a meta codec (unmapped codec from ffmpeg or other)
+			p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_META_DEMUX_CODEC_ID);
+			const GF_PropertyValue *p2 = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_META_DEMUX_CODEC_NAME);
+			if (p || p2) {
+				u32 cid = (p && (p->type==GF_PROP_UINT)) ? p->value.uint : m_subtype;
+				const char *cname = p2 ? p2->value.string : NULL;
+				GF_BitStream *bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+
+				gf_bs_write_u32(bs, codec_id);
+				gf_bs_write_u32(bs, cid);
+				gf_bs_write_utf8(bs, cname ? cname : gf_4cc_to_str(cid));
+				p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_META_DEMUX_OPAQUE);
+				gf_bs_write_u32(bs, p ? p->value.uint : 0);
+
+				if (dsi && (dsi->type != GF_PROP_DATA) && (dsi->type != GF_PROP_CONST_DATA))
+					dsi = NULL;
+
+				if (dsi) {
+					gf_bs_write_data(bs, dsi->value.data.ptr, dsi->value.data.size);
+				}
+				gf_bs_get_content(bs, &gpac_meta_dsi, &udesc.extension_buf_size);
+				udesc.extension_buf = gpac_meta_dsi;
+				udesc.ext_box_wrap = GF_FALSE;
+
+				gf_bs_del(bs);
+
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] muxing %s, using generic sample entry with 4CC \"GMCW\" and \"GMCC\" config box\n", gf_codecid_name(codec_id)));
+				udesc.codec_tag = GF_4CC('G', 'M', 'C', 'W');
+				udesc.ext_box_wrap = GF_4CC('G', 'M', 'C', 'C');
+			} else {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] muxing unknown codec ID %s, using generic sample entry with 4CC \"%s\"\n", gf_codecid_name(codec_id), gf_4cc_to_str(m_subtype) ));
+			}
 		}
 		
 		e = gf_isom_new_generic_sample_description(ctx->file, tkw->track_num, (char *)src_url, NULL, &udesc, &tkw->stsd_idx);
+		if (gpac_meta_dsi) gf_free(gpac_meta_dsi);
+
 		if (e) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Error creating new sample description for stream type %d codecid %d: %s\n", tkw->stream_type, codec_id, gf_error_to_string(e) ));
 			return e;
 		}
 		tkw->use_dref = src_url ? GF_TRUE : GF_FALSE;
+
 	} else {
 		assert(0);
 	}
@@ -2992,6 +3120,13 @@ multipid_stsd_setup:
 		if (p && p->value.sint)
 			tkw->check_seek_ts = GF_TRUE;
 
+
+		p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_DURATION);
+		if (p && p->value.lfrac.den) {
+			tkw->pid_dur = p->value.lfrac;
+			if (tkw->pid_dur.num<0) tkw->pid_dur.num = -tkw->pid_dur.num;
+		}
+
 	} else if (codec_id==GF_CODECID_HEVC_TILES) {
 		mp4_mux_write_track_refs(ctx, tkw, "isom:tbas", GF_ISOM_REF_TBAS, GF_TRUE);
 	}
@@ -3110,7 +3245,6 @@ sample_entry_done:
 				else
 					colr_mode = GF_4CC('n','c','l','x');
 
-
 				//other conditions were set above, here we force 1:1 pasp box even if no sar or 1:1
 				if (!sar.den || (sar.num == 1)) {
 					gf_isom_set_pixel_aspect_ratio(ctx->file, tkw->track_num, tkw->stsd_idx, -1, -1, GF_TRUE);
@@ -3150,8 +3284,13 @@ sample_entry_done:
 				if (colour_primaries || transfer_characteristics || matrix_coefficients) {
 					gf_isom_set_visual_color_info(ctx->file, tkw->track_num, tkw->stsd_idx, GF_4CC('n','c','l','x'), colour_primaries, transfer_characteristics, matrix_coefficients, full_range_flag, NULL, 0);
 				}
-
 			}
+			//check if we have an icc profile
+			p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_ICC_PROFILE);
+			if (p && (p->type==GF_PROP_DATA) && p->value.data.ptr) {
+				gf_isom_set_visual_color_info(ctx->file, tkw->track_num, tkw->stsd_idx, 0, 0, 0, 0, GF_FALSE, p->value.data.ptr, p->value.data.size);
+			}
+
 
 			p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_CONTENT_LIGHT_LEVEL);
 			const GF_PropertyValue *p2 = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_MASTER_DISPLAY_COLOUR);
@@ -3187,10 +3326,12 @@ sample_entry_done:
 				GF_DOVIDecoderConfigurationRecord *dvcc = gf_odf_dovi_cfg_read_bs(bs);
 				gf_bs_del(bs);
 				if (dvcc) {
+					if (ctx->force_dv)
+						dvcc->force_dv = 1;
 					gf_isom_set_dolby_vision_profile(ctx->file, tkw->track_num, tkw->stsd_idx, dvcc);
 
 					if (!dvcc->bl_present_flag) {
-						u32 i, ref_id = 0;
+						u32 ref_id = 0;
 
 						p = gf_filter_pid_get_property(pid, GF_PROP_PID_DEPENDENCY_ID);
 						if (p) ref_id = p->value.uint;
@@ -3229,6 +3370,17 @@ sample_entry_done:
 		if (ctx->tktpl && p && p->value.data.ptr) {
 			gf_isom_update_sample_description_from_template(ctx->file, tkw->track_num, tkw->stsd_idx, p->value.data.ptr, p->value.data.size);
 		}
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_CHAP_TIMES);
+		const GF_PropertyValue *p2 = gf_filter_pid_get_property(pid, GF_PROP_PID_CHAP_NAMES);
+		if (p && p2 && (p->value.uint_list.nb_items == p2->value.string_list.nb_items)) {
+			u32 j;
+			gf_isom_remove_chapter(ctx->file, 0, 0);
+			for (j=0; j<p->value.uint_list.nb_items; j++) {
+				gf_isom_add_chapter(ctx->file, 0, p->value.uint_list.vals[j], p2->value.string_list.vals[j]);
+			}
+		}
+
 	}
 
 	if (tkw->is_encrypted) {
@@ -3403,14 +3555,12 @@ sample_entry_done:
 					gf_isom_remove_edits(ctx->file, tkw->track_num);
 					tkw->patch_tfdt = GF_TRUE;
 				} else {
-					s64 dur = 100*p->value.longsint;
-					dur *= (u32) ctx->moovts;
-					dur /= tkw->src_timescale;
-					if ((ctx->moovts < (s32) tkw->src_timescale) && (dur>150)) {
-						dur /= 100;
-						dur ++;
-					} else {
-						dur /= 100;
+					s64 dur = gf_timestamp_rescale_signed(p->value.longsint, tkw->src_timescale, ctx->moovts);
+					s64 diff_low = (s64) p->value.longuint - dur * tkw->src_timescale / ctx->moovts;
+					//we are loosing precision, check if true value is closer to next representable value in movie timescale
+					if (diff_low>0) {
+						s64 diff_high = (dur+1) * tkw->src_timescale / ctx->moovts - (s64) p->value.longuint;
+						if (diff_high < diff_low) dur++;
 					}
 					if (remove_edits) {
 						gf_isom_remove_edits(ctx->file, tkw->track_num);
@@ -3421,7 +3571,7 @@ sample_entry_done:
 					}
 				}
 			}
-			tkw->ts_delay = p->value.sint;
+			tkw->ts_delay = (s32) p->value.longsint;
 		} else if (tkw->stream_type==GF_STREAM_VISUAL) {
 			tkw->probe_min_ctts = GF_TRUE;
 		}
@@ -3630,10 +3780,7 @@ static GF_Err mp4_mux_cenc_update(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filter
 	const GF_PropertyValue *p;
 	GF_Err e;
 	Bool pck_is_encrypted;
-	u32 skip_byte_block=0, crypt_byte_block=0;
 	u32 IV_size=0;
-	u32 scheme_type=0;
-	u32 scheme_version=0;
 	u8 *fake_sai = NULL;
 	u8 *sai = NULL;
 	u32 sai_size = 0;
@@ -3643,11 +3790,6 @@ static GF_Err mp4_mux_cenc_update(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filter
 	if (tkw->cenc_state == CENC_SETUP_ERROR)
 		return GF_SERVICE_ERROR;
 
-	p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_CENC_PATTERN);
-	if (p) {
-		skip_byte_block = p->value.frac.num;
-		crypt_byte_block = p->value.frac.den;
-	}
 
 	if (pck) {
 		p = gf_filter_pck_get_property(pck, GF_PROP_PCK_CENC_SAI);
@@ -3658,15 +3800,17 @@ static GF_Err mp4_mux_cenc_update(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filter
 	}
 
 
-	p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_PROTECTION_SCHEME_TYPE);
-	if (p) scheme_type = p->value.uint;
-	p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_PROTECTION_SCHEME_VERSION);
-	if (p) scheme_version = p->value.uint;
-
 	//initial setup
 	if (tkw->cenc_state==CENC_NEED_SETUP) {
+		u32 scheme_type=0;
+		u32 scheme_version=0;
 		u32 cenc_stsd_mode=0;
 		u32 container_type = GF_ISOM_BOX_TYPE_SENC;
+
+		p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_PROTECTION_SCHEME_TYPE);
+		if (p) scheme_type = p->value.uint;
+		p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_PROTECTION_SCHEME_VERSION);
+		if (p) scheme_version = p->value.uint;
 
 		p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_CENC_STSD_MODE);
 		if (p) cenc_stsd_mode = p->value.uint;
@@ -3697,11 +3841,13 @@ static GF_Err mp4_mux_cenc_update(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filter
 				tkw->clear_stsd_idx = clone_stsd_idx;
 			}
 		}
+		tkw->def_crypt_byte_block = tkw->crypt_byte_block;
+		tkw->def_skip_byte_block = tkw->skip_byte_block;
 
 		tkw->cenc_state = CENC_SETUP_DONE;
 		tkw->def_cenc_key_info_crc = tkw->cenc_key_info_crc;
 		if (tkw->cenc_ki) {
-			e = gf_isom_set_cenc_protection(ctx->file, tkw->track_num, tkw->stsd_idx, scheme_type, scheme_version, pck_is_encrypted, crypt_byte_block, skip_byte_block, tkw->cenc_ki->value.data.ptr, tkw->cenc_ki->value.data.size);
+			e = gf_isom_set_cenc_protection(ctx->file, tkw->track_num, tkw->stsd_idx, scheme_type, scheme_version, pck_is_encrypted, tkw->def_crypt_byte_block, tkw->def_skip_byte_block, tkw->cenc_ki->value.data.ptr, tkw->cenc_ki->value.data.size);
 		} else {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Missing CENC Key config, cannot mux\n"));
 			tkw->cenc_state = CENC_SETUP_ERROR;
@@ -3713,11 +3859,8 @@ static GF_Err mp4_mux_cenc_update(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filter
 			return e;
 		}
 
-		if (ctx->psshs == MP4MX_PSSH_MOOV)
+		if ((ctx->psshs == MP4MX_PSSH_MOOV) || (ctx->psshs == MP4MX_PSSH_BOTH))
 			mp4_mux_cenc_insert_pssh(ctx, tkw, NULL, GF_FALSE);
-
-		tkw->def_crypt_byte_block = crypt_byte_block;
-		tkw->def_skip_byte_block = skip_byte_block;
 
 		if (!tkw->has_brands && (scheme_type==GF_ISOM_OMADRM_SCHEME))
 			gf_isom_modify_alternate_brand(ctx->file, GF_ISOM_BRAND_OPF2, GF_TRUE);
@@ -3778,15 +3921,15 @@ static GF_Err mp4_mux_cenc_update(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filter
 		//multikey ALWAYS uses seig
 		if (tkw->cenc_ki->value.data.ptr[0])
 			needs_seig = GF_TRUE;
-		else if (tkw->def_crypt_byte_block != crypt_byte_block)
+		else if (tkw->def_crypt_byte_block != tkw->crypt_byte_block)
 			needs_seig = GF_TRUE;
-		else if (tkw->def_skip_byte_block != skip_byte_block)
+		else if (tkw->def_skip_byte_block != tkw->skip_byte_block)
 			needs_seig = GF_TRUE;
 		else if (tkw->def_cenc_key_info_crc != tkw->cenc_key_info_crc)
 			needs_seig = GF_TRUE;
 
 		if (needs_seig) {
-			e = gf_isom_set_sample_cenc_group(ctx->file, tkw->track_num, sample_num, 1, crypt_byte_block, skip_byte_block, tkw->cenc_ki->value.data.ptr, tkw->cenc_ki->value.data.size);
+			e = gf_isom_set_sample_cenc_group(ctx->file, tkw->track_num, sample_num, 1, tkw->crypt_byte_block, tkw->skip_byte_block, tkw->cenc_ki->value.data.ptr, tkw->cenc_ki->value.data.size);
 			tkw->has_seig = GF_TRUE;
 		} else if (tkw->has_seig) {
 			e = gf_isom_set_sample_cenc_default_group(ctx->file, tkw->track_num, sample_num);
@@ -4027,6 +4170,13 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 		tkw->sample.CTS_Offset = (s32) ((s64) cts - (s64) tkw->sample.DTS);
 	}
 
+	//do our best to patch init ts if timing config aborted
+	if (tkw->si_min_ts_plus_one) {
+		u64 si_min_ts = tkw->si_min_ts_plus_one - 1;
+		tkw->si_min_ts_plus_one = 0;
+		tkw->ts_shift = tkw->sample.DTS;
+		mp4_mux_update_init_edit(ctx, tkw, si_min_ts, GF_FALSE);
+	}
 	//tkw->ts_shift is in source timescale, apply it before rescaling TSs/duration
 	if (tkw->ts_shift) {
 		if (ctx->is_rewind) {
@@ -4155,16 +4305,16 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 		sample_desc_index = tkw->clear_stsd_idx;
 	}
 
-	if (tkw->sparse_inject && (prev_dts!=GF_FILTER_NO_TS) && (prev_dts!=GF_FILTER_NO_TS) && tkw->prev_duration) {
+	if (tkw->sparse_inject && (prev_dts!=GF_FILTER_NO_TS) && (tkw->sample.DTS!=GF_FILTER_NO_TS) && tkw->prev_duration) {
 		u64 est_time = prev_dts + tkw->prev_duration;
 		if (est_time < tkw->sample.DTS) {
-			u64 ins_dur;
+			u32 ins_dur;
 			GF_ISOSample s;
 			memset(&s, 0, sizeof(GF_ISOSample));
 			s.DTS = est_time;
 
 			s.IsRAP = SAP_TYPE_1;
-			ins_dur = tkw->sample.DTS - est_time;
+			ins_dur = (u32) (tkw->sample.DTS - est_time);
 			if (for_fragment) {
 				e = gf_isom_fragment_add_sample(ctx->file, tkw->track_id, &s, tkw->stsd_idx, ins_dur, 0, 0, 0);
 			} else {
@@ -4179,7 +4329,7 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 		if (data_offset != GF_FILTER_NO_BO) {
 			e = gf_isom_add_sample_reference(ctx->file, tkw->track_num, sample_desc_index, &tkw->sample, data_offset);
 			if (e) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Failed to add sample DTS "LLU" as reference: %s\n", tkw->sample.DTS, gf_error_to_string(e) ));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Failed to add sample DTS "LLU" from %s as reference: %s\n", tkw->sample.DTS, gf_filter_pid_get_name(tkw->ipid), gf_error_to_string(e) ));
 			}
 		} else {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Cannot add sample reference at DTS "LLU" , input sample data is not continous in source\n", tkw->sample.DTS ));
@@ -4271,7 +4421,7 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 		}
 
 		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Failed to add sample DTS "LLU" - prev DTS "LLU": %s\n", tkw->sample.DTS, prev_dts, gf_error_to_string(e) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Failed to add sample DTS "LLU" from %s - prev DTS "LLU": %s\n", tkw->sample.DTS, gf_filter_pid_get_name(tkw->ipid), prev_dts, gf_error_to_string(e) ));
 		} else {
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[MP4Mux] added sample DTS "LLU" - prev DTS "LLU" - prev size %d\n", tkw->sample.DTS, prev_dts, prev_size));
 		}
@@ -4280,7 +4430,6 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 			e = mp4_mux_cenc_update(ctx, tkw, pck, for_fragment ? CENC_ADD_FRAG : CENC_ADD_NORMAL, tkw->sample.dataLength, insert_subsample_dsi_size);
 			if (e) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Failed to set sample CENC information: %s\n", gf_error_to_string(e) ));
-				return e;
 			}
 		}
 	}
@@ -4523,7 +4672,7 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 static GF_Err mp4_mux_process_item(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_FilterPacket *pck)
 {
 	GF_Err e;
-	u32 meta_type, item_id, size, item_type, nb_items, media_brand;
+	u32 meta_type, item_id, size, item_type, nb_items, media_brand = GF_ISOM_BRAND_HEIF;
 	GF_ImageItemProperties image_props;
 	GF_ImageItemProtection cenc_info;
 	const char *data, *item_name=NULL;
@@ -4693,6 +4842,14 @@ static GF_Err mp4_mux_process_item(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filte
 		}
 		media_brand = GF_ISOM_BRAND_VVIC;
 		break;
+	case GF_CODECID_RAW:
+		p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_PIXFMT);
+		if (p && (p->value.uint==GF_PIXEL_UNCV)) {
+			image_props.config_ba = dsi->value.data.ptr;
+			image_props.config_ba_size = dsi->value.data.size;
+			item_type = GF_4CC('u','n','c','i');
+			break;
+		}
 	default:
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error: Codec %s not supported to create HEIF image items\n", gf_codecid_name(tkw->codecid) ));
 		return GF_NOT_SUPPORTED;
@@ -4838,6 +4995,7 @@ static void mp4_mux_flush_frag_hls(GF_MP4MuxCtx *ctx)
 {
 	GF_FilterEvent evt;
 	TrackWriter *tkw = NULL;
+
 	//send event on first track only
 	tkw = gf_list_get(ctx->tracks, 0);
 	GF_FEVT_INIT(evt, GF_FEVT_FRAGMENT_SIZE, tkw->ipid);
@@ -5002,7 +5160,7 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 	for (i=0; i<count; i++) {
 		u32 def_pck_dur;
 		u32 def_samp_size=0;
-		u32 def_is_rap;
+		u8 def_is_rap;
 #ifdef GF_ENABLE_CTRN
 		u32 inherit_traf_from_track = 0;
 #endif
@@ -5060,10 +5218,10 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 		switch (tkw->stream_type) {
 		case GF_STREAM_AUDIO:
 		case GF_STREAM_TEXT:
-			def_is_rap = GF_TRUE;
+			def_is_rap = GF_ISOM_FRAG_DEF_IS_SYNC;
 			p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_HAS_SYNC);
 			if (p && p->value.boolean)
-				def_is_rap = GF_FALSE;
+				def_is_rap = 0;
 			break;
 		case GF_STREAM_VISUAL:
 			switch (tkw->codecid) {
@@ -5081,19 +5239,23 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 				if (!ref_tkw) ref_tkw = tkw;
 				break;
 			}
-			def_is_rap = GF_FALSE;
+			def_is_rap = 0;
 			break;
 
 		default:
-			def_is_rap = GF_FALSE;
+			def_is_rap = 0;
 			break;
+		}
+		//CMAF 7.5.17, if non-sync sample are present stss SHALL be present and empty...
+		if (ctx->cmaf && !def_is_rap) {
+			def_is_rap |= GF_ISOM_FRAG_USE_SYNC_TABLE;
 		}
 
 		mp4_mux_set_hevc_groups(ctx, tkw);
 
 		//use 1 for the default sample description index. If no multi stsd, this is always the case
 		//otherwise we need to update the stsd idx in the traf headers
-		e = gf_isom_setup_track_fragment(ctx->file, tkw->track_id, tkw->stsd_idx, def_pck_dur, def_samp_size, (u8) def_is_rap, 0, 0, ctx->nofragdef ? GF_TRUE : GF_FALSE);
+		e = gf_isom_setup_track_fragment(ctx->file, tkw->track_id, tkw->stsd_idx, def_pck_dur, def_samp_size, def_is_rap, 0, 0, ctx->nofragdef ? GF_TRUE : GF_FALSE);
 		if (e) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MP4Mux] Unable to setup fragmentation for track ID %d: %s\n", tkw->track_id, gf_error_to_string(e) ));
 			return e;
@@ -5110,7 +5272,7 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 
 
 		if (ctx->tfdt.den && ctx->tfdt.num) {
-			tkw->offset_dts = gf_timestamp_rescale(ctx->tfdt.num, ctx->tfdt.den, tkw->tk_timescale);
+			tkw->tfdt_offset = gf_timestamp_rescale(ctx->tfdt.num, ctx->tfdt.den, tkw->tk_timescale);
 		}
 
 		if (tkw->fake_track) {
@@ -5375,7 +5537,7 @@ static GF_Err mp4_mux_start_fragment(GF_MP4MuxCtx *ctx, GF_FilterPacket *pck)
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] Unable set fragment options: %s\n", gf_error_to_string(e) ));
 		}
 		tkw->fragment_done = GF_FALSE;
-		tkw->insert_tfdt = (has_tfdt || ctx->tfdt_traf) ? GF_TRUE : ctx->insert_tfdt;
+		tkw->insert_tfdt = (has_tfdt || ctx->tfdt_traf || tkw->tfdt_offset) ? GF_TRUE : ctx->insert_tfdt;
 		tkw->dur_in_frag = 0;
 
 		if (ctx->trun_inter) {
@@ -5552,7 +5714,13 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 
 		ctx->segment_started = GF_TRUE;
 		ctx->insert_tfdt = GF_TRUE;
-		ctx->insert_pssh = (ctx->psshs == MP4MX_PSSH_MOOF) ? GF_TRUE : GF_FALSE;
+		switch (ctx->psshs) {
+		case MP4MX_PSSH_MOOF:
+		case MP4MX_PSSH_BOTH:
+			ctx->insert_pssh = GF_TRUE; break;
+		default:
+			ctx->insert_pssh = GF_FALSE; break;
+		}
 
 		gf_isom_start_segment(ctx->file, ctx->single_file ? NULL : "_gpac_isobmff_redirect", GF_FALSE);
 	}
@@ -5729,6 +5897,13 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 			if (tkw->cts_next < ncts)
 				tkw->cts_next = ncts;
 
+			//compute ts after delay/skip for fragment interleaving
+			u64 check_ts;
+			if ((tkw->ts_delay<0) && (cts < -tkw->ts_delay))
+				check_ts = 0;
+			else
+				check_ts = cts+tkw->ts_delay;
+
 			//we have samples and either a request to flush fragment or a emsg, start new fragment
 			if (tkw->samples_in_frag && (orig_frag_bounds || (gf_filter_pck_get_property_str(pck, "grp_EMSG")!=NULL))) {
 				tkw->fragment_done = GF_TRUE;
@@ -5742,7 +5917,7 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 				if (tkw->dur_in_frag && gf_timestamp_greater_or_equal(tkw->dur_in_frag, tkw->src_timescale, ctx->cdur.num, ctx->cdur.den)) {
 					frag_done = GF_TRUE;
 				} else if ((ctx->store==MP4MX_MODE_SFRAG)
-					&& gf_timestamp_greater_or_equal(cts - tkw->ts_delay, tkw->src_timescale, ctx->adjusted_next_frag_start, ctx->cdur.den)
+					&& gf_timestamp_greater_or_equal(check_ts, tkw->src_timescale, ctx->adjusted_next_frag_start, ctx->cdur.den)
 				) {
 					GF_FilterSAPType sap = mp4_mux_get_sap(ctx, pck);
 					if ((sap && sap<GF_FILTER_SAP_3)) {
@@ -5750,7 +5925,7 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 					}
 				}
 				if (frag_done) {
-					ctx->adjusted_next_frag_start = gf_timestamp_rescale(cts - tkw->ts_delay, tkw->src_timescale, ctx->cdur.den);
+					ctx->adjusted_next_frag_start = gf_timestamp_rescale(check_ts, tkw->src_timescale, ctx->cdur.den);
 //
 					tkw->fragment_done = GF_TRUE;
 					nb_done ++;
@@ -5764,7 +5939,7 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 					ctx->frag_timescale = tkw->src_timescale;
 				}
 			} else if (!ctx->flush_seg && !ctx->dash_mode
-				&& gf_timestamp_greater_or_equal(cts - tkw->ts_delay, tkw->src_timescale, ctx->adjusted_next_frag_start, ctx->cdur.den)
+				&& gf_timestamp_greater_or_equal(check_ts, tkw->src_timescale, ctx->adjusted_next_frag_start, ctx->cdur.den)
 			 ) {
 				GF_FilterSAPType sap = mp4_mux_get_sap(ctx, pck);
 				//consider roll SAP as sap1 for the fragmentation
@@ -5776,7 +5951,7 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 					tkw->samples_in_frag = 0;
 					nb_done ++;
 					if (ctx->store==MP4MX_MODE_SFRAG) {
-						ctx->adjusted_next_frag_start = gf_timestamp_rescale(cts - tkw->ts_delay, tkw->src_timescale, ctx->cdur.den);
+						ctx->adjusted_next_frag_start = gf_timestamp_rescale(check_ts, tkw->src_timescale, ctx->cdur.den);
 					}
 					break;
 				}
@@ -5789,7 +5964,7 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 					tkw->samples_in_frag = 0;
 					nb_done ++;
 					if (ctx->store==MP4MX_MODE_SFRAG) {
-						ctx->adjusted_next_frag_start = gf_timestamp_rescale(cts - tkw->ts_delay, tkw->src_timescale, ctx->cdur.den);
+						ctx->adjusted_next_frag_start = gf_timestamp_rescale(check_ts, tkw->src_timescale, ctx->cdur.den);
 					}
 					break;
 				}
@@ -5800,10 +5975,19 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 				if (odts==GF_FILTER_NO_TS)
 					odts = gf_filter_pck_get_cts(pck);
 
-				if (tkw->offset_dts) odts += tkw->offset_dts;
+				if (tkw->tfdt_offset) {
+					//first sample, set offset dts such that first sample dts - offset_dts = target time
+					if (tkw->nb_samples==0) {
+						u64 target = tkw->tfdt_offset;
+						tkw->tfdt_offset = odts - target;
+
+					}
+					odts = odts - tkw->tfdt_offset;
+				}
 
 				tkw->insert_tfdt = GF_FALSE;
 				if (tkw->patch_tfdt)
+					//if patch_tfdt is true, tkw->ts_delay is always >0
 					gf_isom_set_traf_base_media_decode_time(ctx->file, tkw->track_id, odts + tkw->ts_delay);
 				else
 					gf_isom_set_traf_base_media_decode_time(ctx->file, tkw->track_id, odts);
@@ -5913,6 +6097,12 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[MP4Mux] Done writing segment %d - estimated next fragment times start %g end %g\n", ctx->dash_seg_num_plus_one - 1, ((Double)next_ref_ts)/ref_timescale, ((Double)ctx->next_frag_start)/ctx->cdur.den ));
 
 			if (ctx->dash_mode != MP4MX_DASH_VOD) {
+				//we need to wait for packet to be written
+				if (ctx->seg_flush_state) {
+					ctx->flush_idx_start_range = offset + idx_start_range;
+					ctx->flush_idx_end_range = idx_end_range ? offset + idx_end_range : 0;
+					return GF_OK;
+				}
 				mp4_mux_flush_seg(ctx, GF_FALSE, offset + idx_start_range, idx_end_range ? offset + idx_end_range : 0);
 			} else if (ctx->vodcache==MP4MX_VODCACHE_REPLACE) {
 				mp4_mux_flush_seg(ctx, GF_FALSE, 0, 0);
@@ -5933,6 +6123,14 @@ static GF_Err mp4_mux_process_fragmented(GF_Filter *filter, GF_MP4MuxCtx *ctx)
 		//cannot flush in DASH mode if using sidx (vod single sidx or live 1 sidx/seg)
 		else if (!ctx->dash_mode || ((ctx->subs_sidx<0) && (ctx->dash_mode<MP4MX_DASH_VOD) && !ctx->cloned_sidx) ) {
 			gf_isom_flush_fragments(ctx->file, GF_FALSE);
+
+			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[MP4Mux] Done writing fragment - next fragment start time %g\n", ((Double)ctx->next_frag_start)/ctx->cdur.den ));
+
+			//we need to wait for packet to be written
+			if (ctx->seg_flush_state) {
+				if (ctx->llhls_mode) ctx->flush_ll_hls = GF_TRUE;
+				return GF_OK;
+			}
 
 			if (ctx->llhls_mode) {
 				mp4_mux_flush_frag_hls(ctx);
@@ -6016,23 +6214,99 @@ check_eos:
 	return GF_OK;
 }
 
+struct _service_info
+{
+	u32 service_id;
+	u64 first_ts_min;
+	u32 nb_non_sparse, nb_non_sparse_ready;
+	u32 nb_sparse, nb_sparse_ready;
+};
+static struct _service_info *get_service_info(GF_List *services, TrackWriter *tkw)
+{
+	struct _service_info *si;
+	const GF_PropertyValue *p = gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_SERVICE_ID);
+	u32 ID, i, count=gf_list_count(services);
+	ID = p ? p->value.uint : 0;
+
+	for (i=0; i<count; i++) {
+		si = gf_list_get(services, i);
+		if (si->service_id == ID) return si;
+	}
+	GF_SAFEALLOC(si, struct _service_info)
+	si->service_id = ID;
+	si->first_ts_min = (u64) -1;
+	gf_list_add(services, si);
+	return si;
+}
+static void del_service_info(GF_List *services)
+{
+	while (gf_list_count(services)) {
+		struct _service_info *si = gf_list_pop_back(services);
+		gf_free(si);
+	}
+	gf_list_del(services);
+}
+
+static void mp4_mux_update_init_edit(GF_MP4MuxCtx *ctx, TrackWriter *tkw, u64 min_ts_service, Bool skip_adjust)
+{
+	//compute offsets
+	s64 dts_diff = gf_timestamp_rescale(min_ts_service, 1000000, tkw->src_timescale);
+
+	if (!skip_adjust) {
+		dts_diff = (s64) tkw->ts_shift - dts_diff;
+	}
+	if (ctx->is_rewind) dts_diff = -dts_diff;
+	//negative could happen due to rounding, ignore them
+	if (dts_diff<=0) return;
+
+	// dts_diff > 0, we need to delay the track
+	u64 dur = gf_timestamp_rescale(dts_diff, tkw->src_timescale, ctx->moovts);
+	if (dur) {
+		gf_isom_remove_edits(ctx->file, tkw->track_num);
+
+		gf_isom_set_edit(ctx->file, tkw->track_num, 0, dur, dts_diff, GF_ISOM_EDIT_EMPTY);
+		gf_isom_set_edit(ctx->file, tkw->track_num, dur, 0, 0, GF_ISOM_EDIT_NORMAL);
+		tkw->empty_init_dur = (u64) dur;
+	}
+}
+
 static void mp4_mux_config_timing(GF_MP4MuxCtx *ctx)
 {
-	u32 i, count = gf_list_count(ctx->tracks);
+	if ((ctx->store>=MP4MX_MODE_FRAG) && !ctx->tsalign) {
+		ctx->config_timing = GF_FALSE;
+		return;
+	}
+	GF_List *services = gf_list_new();
+	u32 i, count;
+	Bool not_ready, blocking_refs, has_ready;
+
+retry_all:
+	count = gf_list_count(ctx->tracks);
+	not_ready = GF_FALSE;
+	blocking_refs = GF_FALSE;
+	has_ready = GF_FALSE;
+
+	for (i=0; i<gf_list_count(services);i++) {
+		struct _service_info *si = gf_list_get(services, i);
+		si->nb_non_sparse = si->nb_non_sparse_ready = 0;
+		si->nb_sparse = si->nb_sparse_ready = 0;
+	}
+
 	//compute min dts of first packet on each track - this assume all tracks are synchronized, might need adjustment for MPEG4 Systems
-	u64 first_ts_min = (u64) -1;
 	for (i=0; i<count; i++) {
 		u64 ts, dts_min;
 		GF_FilterPacket *pck;
 		TrackWriter *tkw = gf_list_get(ctx->tracks, i);
 		if (tkw->fake_track) continue;
+		//get associated service
+		struct _service_info *si = get_service_info(services, tkw);
 
 		//already setup (happens when new PIDs are declared after a packet has already been written on other PIDs)
 		if (tkw->nb_samples) {
 			dts_min = gf_timestamp_rescale(tkw->ts_shift, tkw->src_timescale, 1000000);
 
-			if (first_ts_min > dts_min) {
-				first_ts_min = (u64) dts_min;
+			if (si->first_ts_min > dts_min) {
+				si->first_ts_min = (u64) dts_min;
 			}
 			continue;
 		}
@@ -6044,10 +6318,14 @@ retry_pck:
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] PID has no input packet and configuration not known after 10 retries, aborting initial timing sync\n"));
 				continue;
 			}
-			return;
+			not_ready = GF_TRUE;
+			tkw->ts_shift = 0;
+			continue;
 		}
 
 		if (pck) {
+			if (gf_filter_pck_is_blocking_ref(pck))
+				blocking_refs = GF_TRUE;
 			if (tkw->wait_sap) {
 				GF_FilterSAPType sap = gf_filter_pck_get_sap(pck);
 				Bool seek = gf_filter_pck_get_seek_flag(pck);
@@ -6077,6 +6355,15 @@ retry_pck:
 				}
 			}
 		}
+		switch (tkw->stream_type) {
+		case GF_STREAM_VISUAL:
+		case GF_STREAM_AUDIO:
+			si->nb_non_sparse++;
+			break;
+		default:
+			si->nb_sparse++;
+			break;
+		}
 
 		if (!pck) {
 			if (gf_filter_pid_is_eos(tkw->ipid)) {
@@ -6093,14 +6380,24 @@ retry_pck:
 					gf_filter_pck_discard(tkw->dgl_copy);
 					tkw->dgl_copy = NULL;
 				}
+				switch (tkw->stream_type) {
+				case GF_STREAM_VISUAL:
+				case GF_STREAM_AUDIO:
+					si->nb_non_sparse_ready++;
+					break;
+				default:
+					si->nb_sparse_ready++;
+					break;
+				}
 				continue;
 			}
-			return;
+			tkw->ts_shift = 0;
+			tkw->si_min_ts_plus_one = 1;
+			continue;
 		}
 		//we may have reorder tracks after the get_packet, redo
 		if (gf_list_find(ctx->tracks, tkw) != i) {
-			mp4_mux_config_timing(ctx);
-			return;
+			goto retry_all;
 		}
 		ts = gf_filter_pck_get_dts(pck);
 		if (ts==GF_FILTER_NO_TS)
@@ -6110,43 +6407,72 @@ retry_pck:
 
 		dts_min = gf_timestamp_rescale(ts, tkw->src_timescale, 1000000);
 
-		if (first_ts_min > dts_min) {
-			first_ts_min = (u64) dts_min;
+		if (si->first_ts_min > dts_min) {
+			si->first_ts_min = (u64) dts_min;
+			has_ready = GF_TRUE;
 		}
+
+		switch (tkw->stream_type) {
+		case GF_STREAM_VISUAL:
+		case GF_STREAM_AUDIO:
+			si->nb_non_sparse_ready++;
+			break;
+		default:
+			si->nb_sparse_ready++;
+			break;
+		}
+
 		tkw->ts_shift = ts;
+		tkw->si_min_ts_plus_one = 0;
 	}
-	if (first_ts_min==(u64)-1)
-		first_ts_min = 0;
+
+	for (i=0; i<gf_list_count(services); i++) {
+		struct _service_info *si = gf_list_get(services, i);
+		//if some non-sparse streams are not ready, try to wait
+		if (si->nb_non_sparse) {
+			if (si->nb_non_sparse > si->nb_non_sparse_ready) not_ready = GF_TRUE;
+		}
+		//otherwise (only sparse stream), wait until first
+		else if (si->nb_sparse) {
+			if (!si->nb_sparse_ready) not_ready = GF_TRUE;
+		}
+	}
+
+	if (not_ready) {
+		if (blocking_refs && has_ready) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] Blocking input packets present, aborting initial timing sync\n"));
+		}
+		//this may be quite long until we have a packet in case input pid is video encoding 
+		else if (ctx->config_retry_start && (gf_sys_clock() - ctx->config_retry_start > 10000)) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MP4Mux] No input packets present on one or more inputs for more than 10s, aborting initial timing sync\n"));
+		} else {
+			ctx->config_retry_start = gf_sys_clock();
+			del_service_info(services);
+			return;
+		}
+	}
+	ctx->config_retry_start = 0;
+	for (i=0; i<gf_list_count(services); i++) {
+		struct _service_info *si = gf_list_get(services, i);
+		if (si->first_ts_min==(u64)-1)
+			si->first_ts_min = 0;
+	}
 
 	//for all packets with dts greater than min dts, we need to add a pause
 	for (i=0; i<count; i++) {
-		s64 dts_diff, dur;
 		TrackWriter *tkw = gf_list_get(ctx->tracks, i);
+		struct _service_info *si = get_service_info(services, tkw);
+		if (tkw->si_min_ts_plus_one) {
+			tkw->si_min_ts_plus_one = si->first_ts_min + 1;
+			continue;
+		}
 
-		//compute offsets
-		dts_diff = gf_timestamp_rescale(first_ts_min, 1000000, tkw->src_timescale);
 		//if single text track don't reset back to 0
-		if ((count==1) && (tkw->stream_type == GF_STREAM_TEXT)) {
-
-		} else {
-			dts_diff = (s64) tkw->ts_shift - dts_diff;
-		}
-		if (ctx->is_rewind) dts_diff = -dts_diff;
-		//negative could happen due to rounding, ignore them
-		if (dts_diff<=0) continue;
-
-		// dts_diff > 0, we need to delay the track
-		dur = gf_timestamp_rescale(dts_diff, tkw->src_timescale, ctx->moovts);
-		if (dur) {
-			gf_isom_remove_edits(ctx->file, tkw->track_num);
-
-			gf_isom_set_edit(ctx->file, tkw->track_num, 0, dur, dts_diff, GF_ISOM_EDIT_EMPTY);
-			gf_isom_set_edit(ctx->file, tkw->track_num, dur, 0, 0, GF_ISOM_EDIT_NORMAL);
-			tkw->empty_init_dur = (u64) dur;
-		}
+		mp4_mux_update_init_edit(ctx, tkw, si->first_ts_min, ((count==1) && (tkw->stream_type == GF_STREAM_TEXT)) ? GF_TRUE : GF_FALSE);
 	}
 
 	ctx->config_timing = GF_FALSE;
+	del_service_info(services);
 }
 
 void mp4_mux_format_report(GF_Filter *filter, GF_MP4MuxCtx *ctx, u64 done, u64 total)
@@ -6251,6 +6577,7 @@ void mp4_mux_format_report(GF_Filter *filter, GF_MP4MuxCtx *ctx, u64 done, u64 t
 	if (status) gf_free(status);
 }
 
+static void mp4_mux_flush_seg_events(GF_MP4MuxCtx *ctx);
 
 GF_Err mp4_mux_process(GF_Filter *filter)
 {
@@ -6270,6 +6597,10 @@ GF_Err mp4_mux_process(GF_Filter *filter)
 	//fragmented mode
 	if (ctx->store>=MP4MX_MODE_FRAG) {
 		u32 done=0;
+		if (ctx->seg_flush_state==1) return GF_OK;
+		else if (ctx->seg_flush_state==2)
+			mp4_mux_flush_seg_events(ctx);
+
 		GF_Err e = mp4_mux_process_fragmented(filter, ctx);
 		if (e==GF_EOS) done=100;
 		mp4_mux_format_report(filter, ctx, done, done);
@@ -6279,6 +6610,7 @@ GF_Err mp4_mux_process(GF_Filter *filter)
 	//regular mode
 	nb_suspended = 0;
 	for (i=0; i<count; i++) {
+		GF_Err e;
 		TrackWriter *tkw = gf_list_get(ctx->tracks, i);
 		GF_FilterPacket *pck = gf_filter_pid_get_packet(tkw->ipid);
 
@@ -6294,6 +6626,9 @@ GF_Err mp4_mux_process(GF_Filter *filter)
 			}
 			if (tkw->aborted) {
 				nb_eos++;
+			}
+			if (ctx->store==MP4MX_MODE_FASTSTART) {
+				nb_skip++;
 			}
 			continue;
 		}
@@ -6330,7 +6665,7 @@ GF_Err mp4_mux_process(GF_Filter *filter)
 
 		//basic regulation in case we do on-the-fly interleaving
 		//we need to regulate because sources do not produce packets at the same rate
-		if ((ctx->store==MP4MX_MODE_FASTSTART) && ctx->cdur.num) {
+		if (ctx->store==MP4MX_MODE_FASTSTART) {
 			u64 cts = gf_filter_pck_get_cts(pck);
 			if (ctx->is_rewind)
 				cts = tkw->ts_shift - cts;
@@ -6351,15 +6686,16 @@ GF_Err mp4_mux_process(GF_Filter *filter)
 			mp4_mux_cenc_update(ctx, tkw, pck, CENC_CONFIG, 0, 0);
 
 		if (tkw->is_item) {
-			mp4_mux_process_item(ctx, tkw, pck);
+			e = mp4_mux_process_item(ctx, tkw, pck);
 		} else {
-			mp4_mux_process_sample(ctx, tkw, pck, GF_FALSE);
+			e = mp4_mux_process_sample(ctx, tkw, pck, GF_FALSE);
 		}
 
 		gf_filter_pid_drop_packet(tkw->ipid);
 		if (tkw->aborted) {
 			nb_eos++;
 		}
+		if (e) return e;
 	}
 	mp4_mux_format_report(filter, ctx, 0, 0);
 
@@ -6375,7 +6711,7 @@ GF_Err mp4_mux_process(GF_Filter *filter)
 		return GF_EOS;
 	}
 	//done with this interleaving window, start next one
-	else if (nb_skip + nb_eos == count) {
+	else if (nb_skip + nb_eos >= count) {
 		ctx->faststart_ts_regulate.num += ctx->cdur.num;
 	} else if (ctx->importer) {
 		u64 prog_done=0, prog_total=0;
@@ -6409,6 +6745,47 @@ static GF_Err mp4_mux_on_data_patch(void *cbk, u8 *data, u32 block_size, u64 fil
 	gf_filter_pck_set_byte_offset(pck, file_offset);
 	gf_filter_pck_send(pck);
 	return GF_OK;
+}
+
+static void mp4_mux_flush_seg_events(GF_MP4MuxCtx *ctx)
+{
+	if (ctx->flush_ll_hls) {
+		mp4_mux_flush_frag_hls(ctx);
+	}
+
+	if (!ctx->dash_mode || ctx->flush_seg) {
+		mp4_mux_flush_seg(ctx, GF_FALSE, ctx->flush_idx_start_range, ctx->flush_idx_end_range);
+	}
+
+	ctx->fragment_started = GF_FALSE;
+
+	if (ctx->flush_seg) {
+		ctx->segment_started = GF_FALSE;
+		ctx->flush_seg = GF_FALSE;
+		ctx->dash_seg_num_plus_one = 0;
+		ctx->nb_segs++;
+		ctx->nb_frags_in_seg=0;
+	}
+	ctx->seg_flush_state = 0;
+	ctx->flush_idx_start_range = 0;
+	ctx->flush_idx_end_range = 0;
+	ctx->flush_ll_hls = GF_FALSE;
+}
+
+static void mp4_mux_on_packet_destruct(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPacket *pck)
+{
+	GF_MP4MuxCtx *ctx = gf_filter_get_udta(filter);
+	//no need to lock filter here, only this callback modifies the state
+	ctx->seg_flush_state = 2;
+	gf_filter_post_process_task(filter);
+}
+
+static void mp4_mux_on_last_block_start(void *cbk)
+{
+	GF_Filter *filter = (GF_Filter *) cbk;
+	GF_MP4MuxCtx *ctx = gf_filter_get_udta(filter);
+	if (ctx->force_seg_sync)
+		ctx->seg_flush_state = 1;
 }
 
 static GF_Err mp4_mux_on_data(void *cbk, u8 *data, u32 block_size)
@@ -6475,7 +6852,11 @@ static GF_Err mp4_mux_on_data(void *cbk, u8 *data, u32 block_size)
 	}
 
 	//allocate new one
-	ctx->dst_pck = gf_filter_pck_new_alloc(ctx->opid, block_size, &output);
+	if (ctx->seg_flush_state) {
+		ctx->dst_pck = gf_filter_pck_new_alloc_destructor(ctx->opid, block_size, &output, mp4_mux_on_packet_destruct);
+	} else {
+		ctx->dst_pck = gf_filter_pck_new_alloc(ctx->opid, block_size, &output);
+	}
 	if (!ctx->dst_pck) return GF_OUT_OF_MEM;
 
 	memcpy(output, data, block_size);
@@ -6502,7 +6883,7 @@ static GF_Err mp4_mux_on_data(void *cbk, u8 *data, u32 block_size)
 	ctx->first_pck_sent = GF_TRUE;
 	ctx->current_size += block_size;
 	//non-frag mode, send right away
-	if (ctx->store<MP4MX_MODE_FRAG) {
+	if ((ctx->store<MP4MX_MODE_FRAG) || ctx->seg_flush_state) {
 		mp4mux_send_output(ctx);
 	}
 	return GF_OK;
@@ -6542,7 +6923,7 @@ static GF_Err mp4_mux_initialize(GF_Filter *filter)
 		ctx->file = gf_isom_open("_gpac_isobmff_redirect", open_mode, NULL);
 		if (!ctx->file) return GF_OUT_OF_MEM;
 
-		gf_isom_set_write_callback(ctx->file, mp4_mux_on_data, mp4_mux_on_data_patch, filter, ctx->block_size);
+		gf_isom_set_write_callback(ctx->file, mp4_mux_on_data, mp4_mux_on_data_patch, mp4_mux_on_last_block_start,  filter, ctx->block_size);
 
 		gf_isom_set_progress_callback(ctx->file, mp4_mux_progress_cbk, filter);
 
@@ -6558,6 +6939,11 @@ static GF_Err mp4_mux_initialize(GF_Filter *filter)
 
 	if (!ctx->moovts)
 		ctx->moovts=600;
+
+	if ((ctx->store==MP4MX_MODE_FASTSTART) && (!ctx->cdur.num || !ctx->cdur.den)) {
+		ctx->cdur.num = 1;
+		ctx->cdur.den = 1;
+	}
 	if (!ctx->cdur.den) {
 		ctx->cdur.num = 0;
 		ctx->cdur.den = 1000;
@@ -6594,6 +6980,9 @@ static GF_Err mp4_mux_initialize(GF_Filter *filter)
 		if (ctx->otyp) flags |= GF_ISOM_COMP_WRAP_FTYPE;
 		gf_isom_enable_compression(ctx->file, ctx->compress, flags);
 	}
+
+	if ((ctx->store>=MP4MX_MODE_FRAG) && !ctx->tsalign)
+		ctx->insert_tfdt = GF_TRUE;
 
 	if (ctx->cmaf) {
 		//cf table 3, 4, 5 of CMAF
@@ -7098,7 +7487,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	"- inter: perform precise interleave of the file using [-cdur]() (requires temporary storage of all media)\n"
 	"- flat: write samples as they arrive and `moov` at end (fastest mode)\n"
 	"- fstart: write samples as they arrive and `moov` before `mdat`\n"
-	"- tight:  uses per-sample interleaving of all tracks (requires temporary storage of all media)\n"
+	"- tight: uses per-sample interleaving of all tracks (requires temporary storage of all media)\n"
 	"- frag: fragments the file using cdur duration\n"
 	"- sfrag: fragments the file using cdur duration but adjusting to start with SAP1/3", GF_PROP_UINT, "inter", "inter|flat|fstart|tight|frag|sfrag", 0},
 	{ OFFS(cdur), "chunk duration for flat and interleaving modes or fragment duration for fragmentation modes\n"
@@ -7122,7 +7511,8 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	{ OFFS(psshs), "set `pssh` boxes store mode\n"
 	"- moof: in first moof of each segments\n"
 	"- moov: in movie box\n"
-	"- none: pssh is discarded", GF_PROP_UINT, "moov", "moov|moof|none", GF_FS_ARG_HINT_ADVANCED},
+	"- both: in movie box and in first moof of each segment\n"
+	"- none: pssh is discarded", GF_PROP_UINT, "moov", "moov|moof|both|none", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(sgpd_traf), "store sample group descriptions in traf (duplicated for each traf). If not used, sample group descriptions are stored in the movie box", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(vodcache), "enable temp storage for VoD dash modes\n"
 		"- on: use temp storage of complete file for sidx and ssix injection\n"
@@ -7200,6 +7590,9 @@ static const GF_FilterArgs MP4MuxArgs[] =
 		, GF_PROP_UINT, "no", "no|cmfc|cmf2", GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(start), "set playback start offset for MP4Box import only. A negative value means percent of media duration with -1 equal to duration", GF_PROP_DOUBLE, "0.0", NULL, GF_FS_ARG_HINT_HIDE},
 	{ OFFS(pad_sparse), "inject sample with no data (size 0) to keep durations in unknown sparse text and metadata tracks", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(force_dv), "force DV sample entry types even when AVC/HEVC compatibility is signaled", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(tsalign), "enable timeline realignment to 0 for first sample in fragmented mode", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
+
 	{0}
 };
 
@@ -7240,6 +7633,7 @@ GF_FilterRegister MP4MuxRegister = {
 	"# Tagging\n"
 	"When tagging is enabled, the filter will watch the property `CoverArt` and all custom properties on incoming PID.\n"
 	"The built-in tag names are indicated by `MP4Box -h tags`.\n"
+	"QT tags can be specified using `qtt_NAME` property names, and will be added using formatting specified in `MP4Box -h tags`.\n"
 	"Other tag class may be specified using `tag_NAME` property names, and will be added if [-tags]() is set to `all` using:\n"
 	"- `NAME` as a box 4CC if `NAME` is four characters long\n"
 	"- `NAME` as a box 4CC if `NAME` is 3 characters long, and will be prefixed by 0xA9\n"

@@ -64,7 +64,12 @@ loop execution of session, creating a session at each loop, mainly used for test
 .TP
 .B \-runfor (int)
 .br
-run for the given amount of milliseconds
+run for the given amount of milliseconds, exit with full session flush
+.br
+.TP
+.B \-runforf (int)
+.br
+run for the given amount of milliseconds, exit with fast session flush
 .br
 .TP
 .B \-runforx (int)
@@ -177,19 +182,23 @@ Note: The @ character can be used in place of the * character. String parameter 
 .br
 * modules: print available modules
 .br
+* creds: print credential help
+.br
 * filters: print name of all available filters
 .br
 * filters:*: print name of all available filters, including meta filters
 .br
 * codecs: print the supported builtin codecs - use -hx to include unmapped codecs (ffmpeg, ...)
 .br
+* formats: print the supported formats (-ha: print filter names, -hx: include meta filters (ffmpeg,...), -hh: print mime types)
+.br
+* protocols: print the supported protocol schemes (-ha: print filter names, -hx: include meta filters (ffmpeg,...), -hh: print all)
+.br
 * props: print the supported builtin PID and packet properties
 .br
 * props PNAME: print the supported builtin PID and packet properties mentioning PNAME
 .br
 * colors: print the builtin color names and their values
-.br
-* exts: print the builtin extensions and mime types - use -hx to include meta filters (ffmpeg, ...)
 .br
 * layouts: print the builtin CICP audio channel layout names and their values
 .br
@@ -260,6 +269,11 @@ write all filter options and all meta filter arguments in the config file unless
 .B \-xopt
 .br
 unrecognized options and filters declaration following this option are ignored - used to pass arguments to GUI
+.br
+.TP
+.B \-creds (string)
+.br
+setup credentials as used by servers
 .br
 
 .br
@@ -354,6 +368,21 @@ disable internal caching of filter graph connections. If disabled, the graph wil
 .B \-no-reservoir
 .br
 disable memory recycling for packets and properties. This uses much less memory but stresses the system memory allocator much more
+.br
+.TP
+.B \-buffer-gen (int, default: 1000)
+.br
+default buffer size in microseconds for generic pids
+.br
+.TP
+.B \-buffer-dec (int, default: 1000000)
+.br
+default buffer size in microseconds for decoder input pids
+.br
+.TP
+.B \-buffer-units (int, default: 1)
+.br
+default buffer size in frames when timing is not available
 .br
 .SH Using Aliases
 .PL
@@ -453,28 +482,149 @@ Alias documentation will then appear in gpac help.
 .br
 
 .br
-.SH Configuration file
+.SH User Credentials
 .LP
 .br
-GPAC uses a configuration file to modify default options of libgpac and filters. This configuration file is located in $HOME/.gpac/GPAC.cfg.
+Some servers in GPAC can use user-based and group-based authentication.
 .br
-Applications in GPAC can also specify a different configuration file through the .I -p option to indicate a profile. This allows different configurations for different usages and simplifies command line typing.
+The information is stored by default in the file users.cfg located in the GPAC profile directory.
+.br
+The file can be overwritten using the .I -users option.
+.br
+
+.br
+By default, this file does not exist until at least one user has been configured.
+.br
+
+.br
+The .I creds option allows inspecting or modifying the users and groups information. The syntax for the option value is:
+.br
+* `show` or no value: prints the users.cfg file
+.br
+* `reset`: deletes the users.cfg file (i.e. deletes all users and groups)
+.br
+* `NAME`: show information of user NAME
+.br
+* `+NAME`: adds user NAME
+.br
+* `+NAME:I1=V1[,I2=V2]`: sets info I1 with value V1 to user NAME. the info name password resets password without prompt.
+.br
+* `-NAME`: removes user NAME
+.br
+* `_NAME`: force password change of user NAME
+.br
+* `@NAME`: show information of group NAME
+.br
+* `@+NAME[:u1[,u2]]`: adds group NAME if not existing and adds specified users to group
+.br
+* `@-NAME:u1[,u2]`: removes specified users from group NAME
+.br
+* `@-NAME`: removes group NAME
+.br
+
+.br
+By default all added users are members of the group users.
+.br
+Passwords are not stored, only a SHA256 hash is stored.
+.br
+
+.br
+Servers using authentication rules can use a configuration file instead of a directory name.
+.br
+This configuration file is organized in sections, each section name descibing a directory.
 .br
 Example
 .br
-gpac -p=foo []
+[somedir]
+.br
+ru=foo
+.br
+rg=bar
 .br
 
+.br
+
+.br
+The following keys are defined per directory, but may be ignored by the server depending on its operation mode:
+.br
+* ru: comma-separated list of user names with read access to the directory
+.br
+* rg: comma-separated list of group names with read access to the directory
+.br
+* wu: comma-separated list of user names with write access to the directory
+.br
+* wg: comma-separated list of group names with write access to the directory
+.br
+* mcast: comma-separated list of user names with multicast creation rights (RTSP server only)
+.br
+* filters: comma-separated list of filter names for which the directory is valid. If not found or all, applies to all filters
+.br
+
+.br
+Rights can be configured on sub-directories by adding sections for the desired directories.
+.br
+Example
+.br
+[d1]
+.br
+rg=bar
+.br
+[d1/d2]
+.br
+ru=foo
+.br
+
+.br
+With this configuration:
+.br
+- the directory d1 will be readable by all members of group bar
+.br
+- the directory d1/d2 will be readable by user foo only
+.br
+
+.br
+Servers in GPAC currently only support the Basic HTTP authentication scheme, and should preferably be run over TLS.
+.br
+.SH Configuration file
+.LP
+.br
+GPAC uses a configuration file to modify default options of libgpac and filters. This file is called GPAC.cfg and is located:
+.br
+- on Windows platforms, in C:\Users\FOO\AppData\Roaming\GPAC or in C:\Program Files\GPAC.
+.br
+- on iOS platforms, in a .gpac folder in the app storage directory.
+.br
+- on Android platforms, in /sdcard/GPAC/ if this directory exists, otherwise in /data/data/io.gpac.gpac/GPAC.
+.br
+- on other platforms, in a $HOME/.gpac/.
+.br
+
+.br
+Applications in GPAC can also specify a different configuration file through the .I -p profile option. EX gpac -p=foo []
 .br
 This will load configuration from $HOME/.gpac/foo/GPAC.cfg, creating it if needed.
 .br
 The reserved name 0 is used to disable configuration file writing.
 .br
-By default the configuration file only holds a few system specific options and directories. It is possible to serialize the entire set of options to the configuration file, using .I -wc .I -wf. This should be avoided as the resulting configuration file size will be quite large, hence larger memory usage for the applications.
+
 .br
-The options specified in the configuration file may be overridden by the values in restrict.cfg file located in GPAC share system directory (e.g. /usr/share/gpac), if present; this allows enforcing system-wide configuration values.
+The configuration file is structured in sections, each made of one or more keys:
 .br
-Note: The methods describe in this section apply to any application in GPAC transferring their arguments to libgpac. This is the case for gpac, MP4Box, MP4Client/Osmo4.
+- section foo is declared as [foo]\n
+.br
+- key bar with value N is declared as bar=N\n. The key value N is not interpreted and always handled as ASCII text.
+.br
+
+.br
+By default the configuration file only holds a few system specific options and directories. It is possible to serialize the entire set of options to the configuration file, using .I -wc .I -wf.
+.br
+This should be avoided as the resulting configuration file size will be quite large, hence larger memory usage for the applications.
+.br
+The options specified in the configuration file may be overridden by the values in restrict.cfg file located in GPAC share system directory (e.g. /usr/share/gpac or C:\Program Files\GPAC), if present; this allows enforcing system-wide configuration values.
+.br
+Note: The methods describe in this section apply to any application in GPAC transferring their arguments to libgpac. This is the case for gpac and MP4Box.
+.br
+
 .br
 .SH Core options
 .LP
@@ -483,7 +633,9 @@ The options from libgpac core can also be assigned though the config file from s
 .br
 Example
 .br
-[core]threads=2
+[core]
+.br
+threads=2
 .br
 
 .br
@@ -498,7 +650,9 @@ It is possible to alter the default value of a filter option by modifying the co
 .br
 Example
 .br
-[filter@rtpin]interleave=yes
+[filter@rtpin]
+.br
+interleave=yes
 .br
 
 .br
@@ -543,7 +697,7 @@ This is equivalent to specifying -o dump.264:profile=Baseline.
 .br
   
 .br
-For both syntax, it is possible to specify the filter registry name of the option, using --FNAME:OPTNAME=VAL or --FNAME@OPTNAME=VAL.
+For both syntaxes, it is possible to specify the filter registry name of the option, using --FNAME:OPTNAME=VAL or --FNAME@OPTNAME=VAL.
 .br
 In this case the option will only be set for filters which are instances of registry FNAME. This is used when several registries use same option names.
 .br
@@ -666,6 +820,31 @@ disable compliance tests for inputs (ISOBMFF for now). This will likely result i
 dump unhandled promise rejections
 .br
 .TP
+.B \-startup-file (string)
+.br
+startup file of compositor in GUI mode
+.br
+.TP
+.B \-docs-dir (string)
+.br
+default documents directoty (for GUI on iOS and Android)
+.br
+.TP
+.B \-last-dir (string)
+.br
+last working directory (for GUI)
+.br
+.TP
+.B \-no-poll
+.br
+disable poll and use select for socket groups
+.br
+.TP
+.B \-no-tls-rcfg
+.br
+disble automatic TCP to TLS reconfiguration
+.br
+.TP
 .B \-cache (string)
 .br
 cache directory location
@@ -711,14 +890,14 @@ indicate if HTTP cache should be clean upon launch/exit
 specify cache size in bytes
 .br
 .TP
-.B \-head-timeout (int, default: 5000)
+.B \-tcp-timeout (int, default: 5000)
 .br
-set HTTP head request timeout in milliseconds
+time in milliseconds to wait for HTTP/RTSP connect before error
 .br
 .TP
-.B \-req-timeout (int, default: 20000)
+.B \-req-timeout (int, default: 10000)
 .br
-set HTTP/RTSP request timeout in milliseconds
+time in milliseconds to wait on HTTP/RTSP request before error
 .br
 .TP
 .B \-no-timeout
@@ -759,6 +938,11 @@ force using threads for async download requests rather than session scheduler
 .B \-cte-rate-wnd (int, default: 20)
 .br
 set window analysis length in milliseconds for chunk-transfer encoding rate estimation
+.br
+.TP
+.B \-cred (string)
+.br
+path to 128 bits key for credential storage
 .br
 .TP
 .B \-no-h2
@@ -862,6 +1046,21 @@ disable internal caching of filter graph connections. If disabled, the graph wil
 disable memory recycling for packets and properties. This uses much less memory but stresses the system memory allocator much more
 .br
 .TP
+.B \-buffer-gen (int, default: 1000)
+.br
+default buffer size in microseconds for generic pids
+.br
+.TP
+.B \-buffer-dec (int, default: 1000000)
+.br
+default buffer size in microseconds for decoder input pids
+.br
+.TP
+.B \-buffer-units (int, default: 1)
+.br
+default buffer size in frames when timing is not available
+.br
+.TP
 .B \-switch-vres
 .br
 select smallest video resolution larger than scene size, otherwise use current video resolution
@@ -925,7 +1124,17 @@ set output texture ID when using glfbo output. The OpenGL context shall be initi
 .TP
 .B \-video-output (string)
 .br
-indicate the name of the video output module to use (see gpac -h modules). The reserved name glfbo is used in player mode to draw in the OpenGL texture identified by .I glfbo-txid.  In this mode, the application is responsible for sending event to the terminal
+indicate the name of the video output module to use (see gpac -h modules). The reserved name glfbo is used in player mode to draw in the OpenGL texture identified by .I glfbo-txid.  In this mode, the application is responsible for sending event to the compositor
+.br
+.TP
+.B \-dfb-sys (string, default: x11)
+.br
+system DirectFB (x11, sdl, vnc, fbdev, osx ordevmem)
+.br
+.TP
+.B \-dfb-flip (string, default: waitsync)
+.br
+vsync mode for DirectFB (waitsync, wait, sync or swap)
 .br
 .TP
 .B \-audio-output (string)
@@ -1044,6 +1253,11 @@ hack for PIFF PSEC files generated by 0.9.0 and 1.0 MP4Box with wrong subsample_
 .B \-vvdec-annexb
 .br
 hack for old vvdec+libavcodec supporting only annexB format
+.br
+.TP
+.B \-heif-hevc-urn
+.br
+use HEVC URN for alpha and depth in HEIF instead of MPEG-B URN (HEIF first edition)
 .br
 .SH libgpac logs options:
 .LP
@@ -1173,7 +1387,7 @@ This moves all log to info level, dash to debug level and disable color logs
 .br
 use new line at each progress messages
 .br
-.SH General
+.SH Overview
 .LP
 .br
 Filters are configurable processing units consuming and producing data packets. These packets are carried between filters through a data channel called PID. A PID is in charge of allocating/tracking data packets, and passing the packets to the destination filter(s). A filter output PID may be connected to zero or more filters. This fan-out is handled internally by GPAC (no such thing as a tee filter in GPAC).
@@ -1202,6 +1416,8 @@ Each filter exposes a set of argument to configure itself, using property types 
 * unsigned 32 bit integer: formatted as number or hexadecimal using the format 0xAABBCCDD.
 .br
 * N-dimension (vectors): formatted as DIM1xDIM2[xDIM3[xDIM4]] values, without unit multiplier.
+.br
+  * For 2D integer vectors, the following resolution names can be used: 360, 480, 576, 720, 1080, hd, 2k, 2160, 4k, 4320, 8k
 .br
 * string: formatted as:
 .br
@@ -1449,7 +1665,7 @@ For each filter DST accepting a connection from the PID, directly or with interm
 .br
 - if DST filter has link directives, use them to allow or reject PID connection.
 .br
-- otherwise, if complete mode is enabled, allow connection.
+- otherwise, if complete mode is enabled, allow connection..
 .br
 - otherwise (implicit mode):
 .br
@@ -1458,6 +1674,12 @@ For each filter DST accepting a connection from the PID, directly or with interm
  - otherwise, if DST is not a sink and is not the first matching filter with no link directive, reject connection.
 .br
  - otherwise (DST is a sink) and no previous connections to a non-sink filter, allow connection.
+.br
+
+.br
+In all linking modes, a filter can prevent being linked to a filter with no link directives by setting RSID option on the filter.
+.br
+This is typically needed when dynamically inserting/removing filters in an existing session where some filters have no ID defined and are not desired for the inserted chain.
 .br
 
 .br
@@ -1634,6 +1856,8 @@ A sourceID name can be further extended using fragment identifier (# by default)
 * name#TYPEN: accepts only N (1-based index) PID of matching type from source (e.g. video2 to only accept second video PID)
 .br
 * name#TAG=VAL: accepts the PID if its parent filter has no tag or a tag matching VAL
+.br
+* name#ITAG=VAL: accepts the PID if its parent filter has no inherited tag or an inherited tag matching VAL
 .br
 * name#P4CC=VAL: accepts only PIDs with builtin property of type P4CC and value VAL.
 .br
@@ -1874,6 +2098,10 @@ A filter may be assigned a tag (any string) using :TAG=name option. This tag doe
 .br
   
 .br
+A filter may also be assigned an inherited tag (any string) using :ITAG=name option. Such tags are inherited, and are typically used to track dynamically loaded filters.
+.br
+  
+.br
 .SH URL templating
 .LP
 .br
@@ -1894,6 +2122,8 @@ KEYWORD is case sensitive, and may be present multiple times in the string. Supp
 * p4cc=ABCD: uses PID property with 4CC value ABCD
 .br
 * pname=VAL: uses PID property with name VAL
+.br
+* cts, dts, dur, sap: uses properties of first packet in PID at template resolution time
 .br
 * OTHER: locates property 4CC for the given name, or property name if no 4CC matches.
 .br
@@ -2095,7 +2325,9 @@ Warning: Only local files are allowed.
 .br
 An option file is a simple text file containing one or more options or PID properties on one or more lines.
 .br
-A line beginning with "//" is a comment and is ignored.
+- A line beginning with "//" is a comment and is ignored (not configurable).
+.br
+- A line beginning with ":" indicates an escaped option (the entire line is parsed as a single option).
 .br
 Options in an option file may point to other option files, with a maximum redirection level of 5.
 .br
@@ -2122,6 +2354,14 @@ Defined keywords:
 .br
 * $GJS: replaced by the first path from global share directory and paths set through .I -js-dirs that contains the file name following the macro, e.g. $GJS/source.js
 .br
+* $GDOCS: replaced by system path to:
+.br
+  - application document directory for iOS
+.br
+  - EXTERNAL_STORAGE environment variable if present or /sdcard otherwise for Android
+.br
+  - user home directory for other platforms
+.br
 * $GLANG: replaced by the global config language option .I -lang
 .br
 * $GUA: replaced by the global config user agent option .I -user-agent
@@ -2146,25 +2386,63 @@ As seen previously, the following options may be set on any filter, but are not 
 .br
 * FID: filter identifier
 .br
-* SID: filter source(s)
+* SID: filter source(s) (string value)
 .br
-* N: filter name
+* N=NAME: filter name (string value)
 .br
-* FS: sub-session identifier
+* FS: sub-session identifier (unsigned int value)
 .br
-* TAG: filter tag
+* RSID: require sourceID to be present on target filters (no value)
 .br
-* clone: filter cloning flag
+* TAG: filter tag (string value)
 .br
-* nomux: enable/disable direct file copy
+* ITAG: filter inherited tag (string value)
 .br
-* gfreg: preferred filter registry names for link solving
+* FBT: buffer time in microseconds (unsigned int value)
 .br
-* gfloc: following options are local to filter declaration (not inherited)
+* FBU: buffer units (unsigned int value)
 .br
-* gfopt: following options are not tracked
+* FBD: decode buffer time in microseconds (unsigned int value)
 .br
-* gpac: argument separator for URLs
+* clone: filter cloning flag (no value)
+.br
+* nomux: enable/disable direct file copy (no value)
+.br
+* gfreg: preferred filter registry names for link solving (string value)
+.br
+* gfloc: following options are local to filter declaration, not inherited (no value)
+.br
+* gfopt: following options are not tracked (no value)
+.br
+* gpac: argument separator for URLs (no value)
+.br
+
+.br
+The buffer control options are used to change the default buffering of PIDs of a filter:
+.br
+- FBT controls the maximum buffer time of output PIDs of a filter
+.br
+- FBU controls the maximum number of packets in buffer of output PIDs of a filter when timing is not available
+.br
+- FBD controls the maximum buffer time of input PIDs of a decoder filter, ignored for other filters
+.br
+
+.br
+If another filter sends a buffer requirement messages, the maximum value of FBT (resp. FBD) and the user requested buffer time will be used for output buffer time (resp. decoding buffer time).
+.br
+
+.br
+These options can be set:
+.br
+* per filter instance: fA reframer:FBU=2
+.br
+* per filter class for the run: --reframer@FBU=2
+.br
+* in the GPAC config file in a per-filter section: [filter@reframer]FBU=2
+.br
+
+.br
+The default values are defined by the session default parameters -buffer-gen, buffer-units and -buffer-dec.
 .br
 
 .br
@@ -2677,7 +2955,7 @@ PID is hidden in visual/audio rendering
 .TP
 .B CropOrigin (VCXY,v2di,  )
 .br
-Position in source window, X,Y indicates coord in source
+Position in source window, X,Y indicate coordinates in source (0,0 for top-left)
 .br
 .TP
 .B OriginalSize (VOWH,v2di,  )
@@ -2711,7 +2989,7 @@ Video in this PID is an alpha map
 .TP
 .B Mirror (VMIR,uint,  )
 .br
-Mirror mode (0: no mirror, 1: along Y-axis, 2: along X-axis)
+Mirror mode (as bit mask with flags 0: no mirror, 1: along Y-axis, 2: along X-axis)
 .br
 .TP
 .B Rotate (VROT,uint,  )
@@ -3192,6 +3470,11 @@ Name of mux source(s), set by dasher to direct its outputs
 DASH mode to be used by multiplexer if any, set by dasher. 0 is no DASH, 1 is regular DASH, 2 is VoD
 .br
 .TP
+.B SegSync (DFSS,bool,D )
+.br
+Indicate segment must be completely flushed before sending segment/fragment size events
+.br
+.TP
 .B DashDur (DDUR,frac,D )
 .br
 DASH target segment duration in seconds
@@ -3332,6 +3615,11 @@ URI, KEYFORMAT and KEYFORMATVERSIONS for HLS full segment encryption creation, K
 Init Vector for HLS decode
 .br
 .TP
+.B CKUrl (CCKU,str,  )
+.br
+URL for ClearKey licence server
+.br
+.TP
 .B ColorPrimaries (CPRM,cprm,D )
 .br
 Color primaries
@@ -3370,6 +3658,11 @@ Content light level, payload of clli box (see ISO/IEC 14496-12), can be set as a
 .B MasterDisplayColour (MDCV,mem,D )
 .br
 Master display colour info, payload of mdcv box (see ISO/IEC 14496-12), can be set as a list of 10 integers in fragment declaration (e.g. "=dpx0,dpy0,dpx1,dpy1,dpx2,dpy2,wpx,wpy,max,min")
+.br
+.TP
+.B ICC (ICCP,mem,D )
+.br
+ICC profile (see ISO 15076-1 or ICC.1)
 .br
 .TP
 .B SrcMagic (PSMG,luint,D )
@@ -3417,9 +3710,9 @@ Serialized moof box corresponding to the start of a movie fragment or segment (w
 Set to true if packet is a complete DASH init segment file
 .br
 .TP
-.B RawGrab (PGRB,bool,D )
+.B RawGrab (PGRB,uint,D )
 .br
-PID is a raw media grabber (webcam, microphone, etc...)
+PID is a raw media grabber (webcam, microphone, etc...). Value 2 is used for front camera
 .br
 .TP
 .B KeepAfterEOS (PKAE,bool,D )
@@ -3512,7 +3805,7 @@ Clamping of frame for EQR as 0.32 fixed point (x is top, y is bottom, z is left 
 PID is a scene node decoder (AFX BitWrapper in BIFS)
 .br
 .TP
-.B OrigCryptoScheme (POCS,uint,  )
+.B OrigCryptoScheme (POCS,4cc,  )
 .br
 Original crypto scheme on a decrypted PID
 .br
@@ -3530,6 +3823,16 @@ PID is a HAS manifest
 .B Sparse (PSPA,bool,D )
 .br
 PID has potentially empty times between packets
+.br
+.TP
+.B ChapTimes (CHPT,uintl,D )
+.br
+Chapter start times
+.br
+.TP
+.B ChapNames (CHPN,strl,D )
+.br
+Chapter names
 .br
 .TP
 .B SkipBegin (PCKS,uint, P)
@@ -3810,25 +4113,16 @@ RGB+depth 32 bits (8 bits / component)
 RGB+depth+bit shape (8 bits / RGB component, 7 bit depth (low bits) + 1 bit shape)
 .br
 .TP
-.B rgbs (ext *.rgbs)
-.br
-RGB 24 bits stereo (side-by-side) - to be removed
-.br
-
-.br
-.TP
-.B rgbas (ext *.rgbas)
-.br
-RGBA 32 bits stereo (side-by-side) - to be removed
-.br
-
-.br
-.TP
 .B extgl (ext *.extgl)
 .br
 External OpenGL texture of unknown format, to be used with samplerExternalOES
 .br
 
+.br
+.TP
+.B uncv (ext *.uncv)
+.br
+Generic uncompressed format ISO/IEC 23001-17
 .br
 .SH Audio formats
 .LP
@@ -4534,6 +4828,16 @@ DVB Subtitles
 .br
 DVB-TeleText
 .br
+.TP
+.B div3
+.br
+MS-MPEG4 V3
+.br
+.TP
+.B caf
+.br
+Apple Lossless Audio
+.br
 .SH Stream types
 .LP
 .br
@@ -4646,10 +4950,10 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 2.1-DEV-rev112-g275394b43-master
+build: 2.3-DEV-rev0-gab012bbfb-master
 .br
 Copyright: (c) 2000-2022 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br
 .SH SEE ALSO
 .LP
-gpac-filters(1), MP4Client(1), MP4Box(1)
+gpac-filters(1),MP4Box(1)

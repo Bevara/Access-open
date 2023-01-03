@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre , Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Media Tools sub-project
@@ -160,7 +160,7 @@ void gf_dasher_clean_inputs(GF_DASHSegmenter *dasher)
 {
 	gf_list_reset(dasher->inputs);
 	if (dasher->fsess) {
-		gf_fs_print_unused_args(dasher->fsess, "smode");
+		gf_fs_print_unused_args(dasher->fsess, "smode,tkid");
 		gf_fs_del(dasher->fsess);
 		dasher->fsess = NULL;
 	}
@@ -606,6 +606,9 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 	case GF_DASH_BSMODE_INBAND_PPS:
 		e |= gf_dynstrcat(&args, "bs_switch=pps", ":");
 		break;
+	case GF_DASH_BSMODE_BOTH:
+		e |= gf_dynstrcat(&args, "bs_switch=both", ":");
+		break;
 	case GF_DASH_BSMODE_MERGED:
 		e |= gf_dynstrcat(&args, "bs_switch=on", ":");
 		break;
@@ -900,6 +903,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 
 	for (i=0; i<count; i++) {
 		u32 j;
+		char szSourceID[100];
 		GF_Filter *src = NULL;
 		GF_Filter *rt = NULL;
 		const char *url = NULL;
@@ -921,15 +925,30 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 		//if source is isobmf using extractors, we want to keep the extractors
 		e = gf_dynstrcat(&args, "smode=splitx", ":");
 
+		szSourceID[0] = 0;
 		if (frag) {
-			if (!strncmp(frag+1, "trackID=", 8)) {
-				sprintf(szArg, "tkid=%s", frag+9 );
-			} else {
-				sprintf(szArg, "tkid=%s", frag+1);
+			char *frag_val;
+			u32 fID = 0;
+			if (!strncmp(frag+1, "trackID=", 8)) frag_val = frag + 9;
+			else frag_val = frag + 1;
+
+			if (sscanf(frag_val, "%u", &fID)!=1)
+				fID=0;
+			//ID
+			if (fID) {
+				sprintf(szSourceID, "PID=%s", frag_val);
 			}
+			//media type
+			else {
+				sprintf(szSourceID, "%s", frag_val);
+			}
+			//we need tkid for demuxers able to fetch specific tracks (eg isobmf)
+			sprintf(szArg, "tkid=%s", frag_val);
 			e |= gf_dynstrcat(&args, szArg, ":");
 		} else if (di->track_id) {
-			sprintf(szArg, "tkid=%d", di->track_id );
+			sprintf(szSourceID, "PID=%d", di->track_id);
+			//we need tkid for isobmf
+			sprintf(szArg, "tkid=%d", di->track_id);
 			e |= gf_dynstrcat(&args, szArg, ":");
 		}
 
@@ -1080,7 +1099,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 
 		if (!di->filter_chain) {
 			//assign this source 
-			gf_filter_set_source(dasher->output, src, NULL);
+			gf_filter_set_source(dasher->output, src, szSourceID[0] ? szSourceID : NULL);
 			continue;
 		}
 		//create the filter chain between source (or rt if it was set) and dasher
@@ -1129,7 +1148,7 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 			}
 		}
 		if (prev_filter) {
-			gf_filter_set_source(dasher->output, prev_filter, NULL);
+			gf_filter_set_source(dasher->output, prev_filter, szSourceID[0] ? szSourceID : NULL);
 		}
 	}
 
@@ -1138,7 +1157,6 @@ static GF_Err gf_dasher_setup(GF_DASHSegmenter *dasher)
 
 GF_Err dash_state_check_timing(const char *dash_state, u64 *next_gen_ntp_ms, u32 *next_time_ms)
 {
-#ifndef GPAC_DISABLE_CORE_TOOLS
 	u64 next_gen_ntp = 0;
 	GF_Err e = GF_OK;
 	GF_DOMParser *mpd_parser;
@@ -1176,9 +1194,6 @@ GF_Err dash_state_check_timing(const char *dash_state, u64 *next_gen_ntp_ms, u32
 		}
 	}
 	return GF_OK;
-#else
-	return GF_NOT_SUPPORTED;
-#endif /*GPAC_DISABLE_CORE_TOOLS*/
 }
 
 GF_EXPORT
@@ -1233,7 +1248,7 @@ GF_Err gf_dasher_process(GF_DASHSegmenter *dasher)
 	GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("\n"));
 
 	if (dasher->no_cache) {
-		if (!e) gf_fs_print_unused_args(dasher->fsess, "smode");
+		if (!e) gf_fs_print_unused_args(dasher->fsess, "smode,tkid");
 		gf_fs_del(dasher->fsess);
 		dasher->fsess = NULL;
 	}

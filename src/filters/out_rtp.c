@@ -238,6 +238,8 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 		if (sdp_media) {
 			gf_fprintf(sdp_out, "%s", sdp_media);
 			gf_free(sdp_media);
+		} else {
+			continue;
 		}
 		if (base_pid_id) {
 			u32 j;
@@ -266,7 +268,7 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 		}
 
 		if (is_rtsp) {
-			gf_fprintf(sdp_out, "a=control:trackID=%d\n", stream->ctrl_id);
+			gf_fprintf(sdp_out, "a=control:%s=%d\n", stream->ctrl_name ? stream->ctrl_name : "trackID", stream->ctrl_id);
 		}
 	}
 	gf_fprintf(sdp_out, "\n");
@@ -532,6 +534,9 @@ GF_Err rtpout_init_streamer(GF_RTPOutStream *stream, const char *ipdest, Bool in
 	p = gf_filter_pid_get_property(stream->pid, GF_PROP_PID_DELAY);
 	stream->ts_delay = p ? p->value.longsint : 0;
 
+	stream->rtp_timescale = gf_rtp_streamer_get_timescale(stream->rtp);
+
+
 	payt++;
 	stream->microsec_ts_scale_frac.num = 1000000;
 	stream->microsec_ts_scale_frac.den = stream->timescale;
@@ -604,7 +609,7 @@ static u16 rtpout_check_next_port(GF_RTPOutCtx *ctx, u16 first_port)
 void rtpout_del_stream(GF_RTPOutStream *st)
 {
 	if (st->rtp) gf_rtp_streamer_del(st->rtp);
-	if (st->pck) gf_filter_pid_drop_packet(st->pid);
+	if (st->has_pck) gf_filter_pid_drop_packet(st->pid);
 	if (st->avcc)
 		gf_odf_avc_cfg_del(st->avcc);
 	if (st->hvcc)
@@ -822,6 +827,8 @@ static Bool rtpout_init_clock(GF_RTPOutCtx *ctx)
 		for (i=0; i<count; i++) {
 			GF_RTPOutStream *stream = gf_list_get(ctx->streams, i);
 			stream->rtp_ts_offset = gf_rand();
+			while (stream->rtp_ts_offset>0xFFFFFFF)
+				stream->rtp_ts_offset/=2;
 			GF_LOG(GF_LOG_INFO, GF_LOG_RTP, ("[RTPOut] RTP stream %d initial RTP TS set to %d\n", i+1, stream->rtp_ts_offset));
 		}
 	}
@@ -839,6 +846,21 @@ static Bool rtpout_init_clock(GF_RTPOutCtx *ctx)
 	return GF_TRUE;
 }
 
+static void rtpout_process_rtcp(void *cbk, u32 ssrc, u32 rtt_ms, u64 jitter_rtp_ts, u32 loss_rate)
+{
+	GF_RTPOutStream *stream = cbk;
+	if (ssrc) return;
+	u64 jitter_us = gf_timestamp_rescale(jitter_rtp_ts, stream->rtp_timescale, 1000000);
+	GF_LOG(GF_LOG_INFO, GF_LOG_RTP, ("[RTPOut] RTCP stats for PID %s: rtt %u ms jitter "LLU" us loss rate %d / 1000\n\n", gf_filter_pid_get_name(stream->pid), rtt_ms, jitter_us, loss_rate));
+
+	gf_filter_pid_set_rt_stats(stream->pid, rtt_ms, (u32) jitter_us, loss_rate);
+
+	if (stream->on_rtcp) {
+		stream->on_rtcp(stream->on_rtcp_udta);
+	}
+}
+
+
 GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Bool loop, s32 delay, u32 *active_stream_idx, u64 sys_clock_at_init, u64 *active_min_ts_microsec, u64 microsec_ts_init, Bool *wait_for_loop, u32 *repost_delay_us, Bool *first_RTCP_sent, u32 base_pid_id)
 {
 	GF_Err e = GF_OK;
@@ -847,7 +869,7 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 	s64 diff;
 	u64 clock;
 	const char *pck_data;
-	u32 pck_size;
+	u32 pck_size=0;
 	u32 dts, cts;
 
 	/*browse all inputs and locate most mature stream*/
@@ -858,33 +880,41 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 		*active_min_ts_microsec = (u64) -1;
 		for (i=0; i<count; i++) {
 			stream = gf_list_get(streams, i);
-			if (!stream->rtp) continue;
+			if (!stream->rtp) {
+				if (stream->state==RTPOUT_STREAM_STOP) nb_eos++;
+				continue;
+			}
+
+			//process rtcp (we only do that once we are done sending a full au
+			gf_rtp_streamer_read_rtcp(stream->rtp, rtpout_process_rtcp, stream);
 
 			/*load next AU*/
-			if (!stream->pck) {
+			if (!stream->has_pck) {
 				u64 ts;
-				stream->pck = gf_filter_pid_get_packet(stream->pid);
+				GF_FilterPacket *pck = gf_filter_pid_get_packet(stream->pid);
 
-				if (!stream->pck) {
-					if (gf_filter_pid_is_eos(stream->pid)) {
+				if (!pck) {
+					if (gf_filter_pid_is_eos(stream->pid) || (stream->state==RTPOUT_STREAM_STOP)) {
 						//flush stream
 						if (!stream->bye_sent) {
 							stream->bye_sent = GF_TRUE;
-							gf_rtp_streamer_send_au(stream->rtp, NULL, 0, 0, 0, GF_FALSE);
-							gf_rtp_streamer_send_bye(stream->rtp);
+							if (stream->rtp) {
+								gf_rtp_streamer_send_au(stream->rtp, NULL, 0, 0, 0, GF_FALSE);
+								gf_rtp_streamer_send_bye(stream->rtp);
+							}
 						}
 						nb_eos++;
 					}
 					continue;
 				}
-				stream->current_dts = gf_filter_pck_get_dts(stream->pck);
+				stream->current_dts = gf_filter_pck_get_dts(pck);
 				//if CTS is not set, use prev packet CTS
-				ts = gf_filter_pck_get_cts(stream->pck);
+				ts = gf_filter_pck_get_cts(pck);
 				if (ts==GF_FILTER_NO_TS) ts = stream->current_cts;
 				stream->current_cts = ts;
 
-				stream->current_sap = gf_filter_pck_get_sap(stream->pck);
-				duration = gf_filter_pck_get_duration(stream->pck);
+				stream->current_sap = gf_filter_pck_get_sap(pck);
+				duration = gf_filter_pck_get_duration(pck);
 				if (duration) stream->current_duration = duration;
 				if (stream->current_dts==GF_FILTER_NO_TS)
 					stream->current_dts = stream->current_cts;
@@ -907,10 +937,11 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 				if (stream->current_sap>GF_FILTER_SAP_3) stream->current_sap = 0;
 				stream->pck_num++;
 				*wait_for_loop = GF_FALSE;
+				stream->has_pck = GF_TRUE;
 			}
 
 			/*check timing*/
-			if (stream->pck) {
+			if (stream->has_pck) {
 				if (*active_min_ts_microsec > stream->microsec_dts) {
 					*active_min_ts_microsec = stream->microsec_dts;
 					*active_stream = stream;
@@ -978,17 +1009,19 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 		*repost_delay_us = (u32) repost_in;
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_RTP, ("[RTPOut] next RTP packet (stream %d DTS "LLU") scheduled in "LLU" us, requesting filter reschedule in "LLU" us - clock "LLU" us\n", *active_stream_idx, stream->current_dts, diff, repost_in, clock));
 		return GF_OK;
-	} else if (diff<=-1000) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_RTP, ("[RTPOut] RTP session stream %d - sending packet %d (DTS "LLU") too late by %d us - clock "LLU" us\n", *active_stream_idx, stream->pck_num, stream->current_dts, -diff, clock));
+	} else if (diff<=-2000) {
+		GF_LOG(GF_LOG_INFO, GF_LOG_RTP, ("[RTPOut] RTP session stream %d - sending packet %d (DTS "LLU") too late by %d us - clock "LLU" us\n", *active_stream_idx, stream->pck_num, stream->current_dts, -diff, clock));
+		*repost_delay_us=0;
 	} else if (diff>0){
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_RTP, ("[RTPOut] RTP session stream %d - sending packet %d (DTS "LLU") ahead of %d us - clock "LLU" us\n", *active_stream_idx, stream->pck_num, stream->current_dts, diff, clock));
 	}
 
 	/*send packets*/
-	pck_data = gf_filter_pck_get_data(stream->pck, &pck_size);
+	GF_FilterPacket *pck = gf_filter_pid_get_packet(stream->pid);
+	pck_data = pck ? gf_filter_pck_get_data(pck, &pck_size) : NULL;
 	if (!pck_size) {
 		gf_filter_pid_drop_packet(stream->pid);
-		stream->pck = NULL;
+		stream->has_pck = GF_FALSE;
 		*active_stream = NULL;
 		return GF_OK;
 	}
@@ -1033,7 +1066,7 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 
 		for (i=0; i<count; i++) {
 			GF_RTPOutStream *astream = gf_list_get(streams, i);
-			if (!astream->pck) break;
+			if (!astream->has_pck) break;
 
 			u32 ts = (u32) (astream->current_cts + astream->ts_offset + astream->rtp_ts_offset);
 			gf_rtp_streamer_send_rtcp(stream->rtp, GF_TRUE, ts, ntp_type, ntp_sec, ntp_frac);
@@ -1094,12 +1127,11 @@ GF_Err rtpout_process_rtp(GF_List *streams, GF_RTPOutStream **active_stream, Boo
 		e = gf_rtp_streamer_send_data(stream->rtp, (char *) pck_data, pck_size, pck_size, cts, dts, stream->current_sap ? 1 : 0, 1, 1, stream->pck_num, duration, stream->sample_desc_index);
 	}
 	gf_filter_pid_drop_packet(stream->pid);
-	stream->pck = NULL;
+	stream->has_pck = GF_FALSE;
 
 	if (e) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTPOut] Error sending RTP packet %d: %s\n", stream->pck_num, gf_error_to_string(e) ));
 	}
-
 	*active_stream = NULL;
 	return e;
 
@@ -1125,7 +1157,7 @@ static GF_Err rtpout_process(GF_Filter *filter)
 			for (i=0; i<count; i++) {
 				GF_RTPOutStream *stream = gf_list_get(ctx->streams, i);
 				gf_filter_pid_set_discard(stream->pid, GF_TRUE);
-				stream->pck = NULL;
+				stream->has_pck = GF_FALSE;
 			}
 			if (ctx->opid) gf_filter_pid_set_eos(ctx->opid);
 			return GF_EOS;
@@ -1211,12 +1243,14 @@ GF_FilterRegister RTPOutRegister = {
 	"  - mapping this media time to the system clock\n"
 	"- determine the earliest packet to send next on each input PID, adding [-delay]() if any\n"
 	"- finally compare the packet mapped timestamp __TS__ to the system clock __SC__. When __TS__ - __SC__ is less than [-tt](), the RTP packets for the source packet are sent\n"
+	"\n"
+	"The filter does not check for RTCP timeout and will run until all input PIDs reach end of stream.\n"
 	)
 	.private_size = sizeof(GF_RTPOutCtx),
 	.max_extra_pids = -1,
 	.args = RTPOutArgs,
 	//dynamic redirect since RTP may be dynamically loaded when solving .sdp destinations
-	.flags = GF_FS_REG_DYNAMIC_REDIRECT,
+	.flags = GF_FS_REG_DYNAMIC_REDIRECT | GF_FS_REG_TEMP_INIT,
 	.initialize = rtpout_initialize,
 	.finalize = rtpout_finalize,
 	SETCAPS(RTPOutCaps),
@@ -1228,6 +1262,9 @@ GF_FilterRegister RTPOutRegister = {
 
 const GF_FilterRegister *rtpout_register(GF_FilterSession *session)
 {
+	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
+		gf_opts_set_key("temp_out_proto", RTPOutRegister.name, "rtp");
+	}
 	return &RTPOutRegister;
 }
 

@@ -46,6 +46,7 @@ const GF_FilterRegister *ffavin_register(GF_FilterSession *session);
 const GF_FilterRegister *ffsws_register(GF_FilterSession *session);
 const GF_FilterRegister *ffmx_register(GF_FilterSession *session);
 const GF_FilterRegister *ffavf_register(GF_FilterSession *session);
+const GF_FilterRegister *ffbsf_register(GF_FilterSession *session);
 const GF_FilterRegister *inspect_register(GF_FilterSession *session);
 const GF_FilterRegister *probe_register(GF_FilterSession *session);
 const GF_FilterRegister *compose_filter_register(GF_FilterSession *session);
@@ -112,6 +113,7 @@ const GF_FilterRegister *vobsubdmx_register(GF_FilterSession *session);
 const GF_FilterRegister *avimux_register(GF_FilterSession *session);
 const GF_FilterRegister *aout_register(GF_FilterSession *session);
 const GF_FilterRegister *m4vmx_register(GF_FilterSession *session);
+const GF_FilterRegister *vc1mx_register(GF_FilterSession *session);
 const GF_FilterRegister *resample_register(GF_FilterSession *session);
 #if !defined(GPAC_CONFIG_ANDROID)
 const GF_FilterRegister *vout_register(GF_FilterSession *session);
@@ -180,6 +182,8 @@ const GF_FilterRegister *tx3g2vtt_register(GF_FilterSession *session);
 const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session);
 const GF_FilterRegister *ttmlconv_register(GF_FilterSession *session);
 const GF_FilterRegister *ttmlconv2_register(GF_FilterSession *session);
+const GF_FilterRegister *unframer_register(GF_FilterSession *session);
+const GF_FilterRegister *writeuf_register(GF_FilterSession *session);
 
 void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 {
@@ -256,6 +260,7 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, avimux_register(a_sess) );
 	gf_fs_add_filter_register(fsess, aout_register(a_sess) );
 	gf_fs_add_filter_register(fsess, m4vmx_register(a_sess) );
+	gf_fs_add_filter_register(fsess, vc1mx_register(a_sess) );
 	gf_fs_add_filter_register(fsess, resample_register(a_sess) );
 #if !defined(GPAC_CONFIG_ANDROID)
 	gf_fs_add_filter_register(fsess, vout_register(a_sess) );
@@ -316,6 +321,7 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, ffenc_register(a_sess) );
 	gf_fs_add_filter_register(fsess, ffmx_register(a_sess) );
 	gf_fs_add_filter_register(fsess, ffavf_register(a_sess) );
+	gf_fs_add_filter_register(fsess, ffbsf_register(a_sess) );
 
 	gf_fs_add_filter_register(fsess, jsfilter_register(a_sess) );
 	gf_fs_add_filter_register(fsess, routeout_register(a_sess) );
@@ -324,6 +330,9 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 	gf_fs_add_filter_register(fsess, cryptfout_register(a_sess) );
 	gf_fs_add_filter_register(fsess, restamp_register(a_sess) );
 	gf_fs_add_filter_register(fsess, oggmux_register(a_sess) );
+
+	gf_fs_add_filter_register(fsess, unframer_register(a_sess) );
+	gf_fs_add_filter_register(fsess, writeuf_register(a_sess) );
 
 #if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
 	gf_fs_add_filter_register(fsess, dtout_register(a_sess) );

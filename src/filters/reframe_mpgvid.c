@@ -30,6 +30,7 @@
 
 #ifndef GPAC_DISABLE_AV_PARSERS
 
+#define MIN_HDR_STORE	12
 typedef struct
 {
 	u64 pos;
@@ -86,6 +87,7 @@ typedef struct
 	MPGVidIdx *indexes;
 	u32 index_alloc_size, index_size;
 	u32 bitrate;
+	Bool trash_trailer;
 } GF_MPGVidDmxCtx;
 
 
@@ -176,11 +178,27 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 	GF_M4VParser *vparser;
 	GF_M4VDecSpecInfo dsi;
 	GF_Err e;
+	u32 probe_size=0;
 	u64 duration, cur_dur, rate;
 	const GF_PropertyValue *p;
 	if (!ctx->opid || ctx->timescale || ctx->file_loaded) return;
 
-	if (ctx->index<=0) {
+	if (ctx->index<0) {
+		if (gf_opts_get_bool("temp", "force_indexing")) {
+			ctx->index = 1.0;
+		} else {
+			p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_DOWN_SIZE);
+			if (!p || (p->value.longuint > 20000000)) {
+				GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[MPGVids] Source file larger than 20M, skipping indexing\n"));
+				if (!gf_sys_is_test_mode())
+					probe_size = 20000000;
+			} else {
+				ctx->index = -ctx->index;
+			}
+		}
+	}
+	if ((ctx->index<=0) && !probe_size) {
+		ctx->duration.num = 1;
 		ctx->file_loaded = GF_TRUE;
 		return;
 	}
@@ -226,11 +244,14 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[MPGVid] Could not parse video frame\n"));
 			continue;
 		}
+		if (probe_size && (pos>probe_size) && (ftype==1)) {
+			break;
+		}
 
 		duration += ctx->cur_fps.den;
 		cur_dur += ctx->cur_fps.den;
 		//only index at I-frame start
-		if (pos && (ftype==1) && (cur_dur >= ctx->index * ctx->cur_fps.num) ) {
+		if (!probe_size && pos && (ftype==1) && (cur_dur >= ctx->index * ctx->cur_fps.num) ) {
 			if (!ctx->index_alloc_size) ctx->index_alloc_size = 10;
 			else if (ctx->index_alloc_size == ctx->index_size) ctx->index_alloc_size *= 2;
 			ctx->indexes = gf_realloc(ctx->indexes, sizeof(MPGVidIdx)*ctx->index_alloc_size);
@@ -241,6 +262,7 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 			cur_dur = 0;
 		}
 	}
+
 	rate = gf_bs_get_position(bs);
 	gf_m4v_parser_del(vparser);
 	gf_fclose(stream);
@@ -265,6 +287,11 @@ static void mpgviddmx_check_dur(GF_Filter *filter, GF_MPGVidDmxCtx *ctx)
 
 static void mpgviddmx_enqueue_or_dispatch(GF_MPGVidDmxCtx *ctx, GF_FilterPacket *pck, Bool flush_ref, Bool is_eos)
 {
+	if (pck && ctx->trash_trailer) {
+		gf_filter_pck_discard(pck);
+		return;
+	}
+
 	if (!is_eos && (!ctx->width || !ctx->height))
 		flush_ref = GF_FALSE;
 
@@ -450,6 +477,13 @@ static Bool mpgviddmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt
 		ctx->in_seek = GF_TRUE;
 
 		if (ctx->start_range) {
+			if (ctx->index<0) {
+				ctx->index = -ctx->index;
+				ctx->file_loaded = GF_FALSE;
+				ctx->duration.den = ctx->duration.num = 0;
+				mpgviddmx_check_dur(filter, ctx);
+			}
+
 			for (i=1; i<ctx->index_size; i++) {
 				if ((ctx->indexes[i].start_time > ctx->start_range) || (i+1==ctx->index_size)) {
 					ctx->cts = (u64) (ctx->indexes[i-1].start_time * ctx->cur_fps.num);
@@ -616,6 +650,8 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 		}
 
 		gf_filter_pck_get_framing(pck, &ctx->input_is_au_start, &ctx->input_is_au_end);
+		//we force it to true to deal with broken avi packaging where a video AU is split across several AVI video frames
+		ctx->input_is_au_end = GF_FALSE;
 		//this will force CTS recomput of each frame
 		if (ctx->recompute_cts) ctx->input_is_au_start = GF_FALSE;
 		if (ctx->src_pck) gf_filter_pck_unref(ctx->src_pck);
@@ -696,8 +732,8 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 		//if not, dispatch these bytes as continuation of the data
 		if (ctx->bytes_in_header) {
 
-			memcpy(ctx->hdr_store + ctx->bytes_in_header, start, 8 - ctx->bytes_in_header);
-			current = mpgviddmx_next_start_code(ctx->hdr_store, 8);
+			memcpy(ctx->hdr_store + ctx->bytes_in_header, start, MIN_HDR_STORE - ctx->bytes_in_header);
+			current = mpgviddmx_next_start_code(ctx->hdr_store, MIN_HDR_STORE);
 
 			//no start code in stored buffer
 			if ((current<0) || (current >= (s32) ctx->bytes_in_header) )  {
@@ -827,9 +863,11 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 				current = 0;
 			}
 			gf_filter_pck_set_carousel_version(dst_pck, 1);
-
 			mpgviddmx_enqueue_or_dispatch(ctx, dst_pck, GF_FALSE, GF_FALSE);
 		}
+
+		//we're align to startcode, stop trashing packets
+		ctx->trash_trailer = GF_FALSE;
 
 		//not enough bytes to parse start code
 		if (remain<5) {
@@ -945,6 +983,21 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 					assert(remain>=4);
 					start += 4;
 					remain -= 4;
+				} else if (!ctx->width) {
+					gf_bs_reassign_buffer(ctx->bs, start, remain);
+					PL = ctx->dsi.VideoPL;
+					e = gf_m4v_parse_config(ctx->vparser, &ctx->dsi);
+					if (ctx->dsi.width) {
+						u32 obj_size = (u32) gf_m4v_get_object_start(ctx->vparser);
+						if (vosh_start<0) vosh_start = 0;
+						vosh_end = start - (u8 *)data + obj_size;
+						vosh_end -= vosh_start;
+						mpgviddmx_check_pid(filter, ctx,(u32)  vosh_end, data+vosh_start);
+						skip_pck = GF_TRUE;
+						assert(remain>=(s32) obj_size);
+						start += obj_size;
+						remain -= obj_size;
+					}
 				}
 				break;
 			}
@@ -1010,6 +1063,15 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 			start += fstart;
 			remain -= (s32) fstart;
 		}
+		//we may have VO or other packets before (fstart is on first of vop/gov/vol/vos)
+		else if (fstart && (fstart + size <= remain)) {
+			//start code (4 bytes) in header, adjst frame start and size
+			if (sc_type_forced) {
+				fstart += 4;
+				size-=4;
+			}
+			size += fstart;
+		}
 
 		//we skipped bytes already in store + end of start code present in packet, so the size of the first object
 		//needs adjustement
@@ -1037,22 +1099,29 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 		if (ftype) {
 			if (!is_coded) {
 				/*if prev is B and we're parsing a packed bitstream discard n-vop*/
-				if (ctx->forced_packed && ctx->b_frames) {
-					ctx->is_packed = GF_TRUE;
+				if ((ctx->forced_packed && ctx->b_frames)
+					/*policy is to import at variable frame rate, skip*/
+					|| ctx->vfr
+				) {
+					if (ctx->vfr) {
+						ctx->is_vfr = GF_TRUE;
+						mpgviddmx_update_time(ctx);
+					} else {
+						ctx->is_packed = GF_TRUE;
+					}
+
+					//part of the frame was in store, adjust size
+					if (bytes_from_store)
+						size-= bytes_from_store + hdr_offset;
+
 					assert(remain>=size);
 					start += size;
 					remain -= (s32) size;
+					//trash all packets until we align to a new startcode
+					ctx->trash_trailer = full_frame ? GF_FALSE : GF_TRUE;
 					continue;
 				}
-				/*policy is to import at variable frame rate, skip*/
-				if (ctx->vfr) {
-					ctx->is_vfr = GF_TRUE;
-					mpgviddmx_update_time(ctx);
-					assert(remain>=size);
-					start += size;
-					remain -= (s32) size;
-					continue;
-				}
+
 				/*policy is to keep non coded frame (constant frame rate), add*/
 			}
 
@@ -1098,13 +1167,12 @@ GF_Err mpgviddmx_process(GF_Filter *filter)
 				gf_filter_pck_set_byte_offset(dst_pck, byte_offset + start - (u8 *) data);
 			}
 		}
+
 		if (ftype) {
 			assert(pck_data[0] == 0);
 			assert(pck_data[1] == 0);
 			assert(pck_data[2] == 1);
-		}
 
-		if (ftype) {
 			gf_filter_pck_set_framing(dst_pck, GF_TRUE, (full_frame || ctx->input_is_au_end) ? GF_TRUE : GF_FALSE);
 			gf_filter_pck_set_cts(dst_pck, ctx->cts);
 			gf_filter_pck_set_dts(dst_pck, ctx->dts);
@@ -1147,8 +1215,8 @@ static GF_Err mpgviddmx_initialize(GF_Filter *filter)
 {
 	GF_MPGVidDmxCtx *ctx = gf_filter_get_udta(filter);
 	ctx->hdr_store_size = 0;
-	ctx->hdr_store_alloc = 8;
-	ctx->hdr_store = gf_malloc(sizeof(char)*8);
+	ctx->hdr_store_alloc = MIN_HDR_STORE;
+	ctx->hdr_store = gf_malloc(sizeof(char)*ctx->hdr_store_alloc);
 	return GF_OK;
 }
 
@@ -1273,7 +1341,7 @@ static const char * mpgvdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 static const GF_FilterCapability MPGVidDmxCaps[] =
 {
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "cmp|m1v|m2v"),
+	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "cmp|m1v|m2v|m4v"),
 	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "video/mp4v-es|video/mpgv-es"),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_MPEG4_PART2),
@@ -1303,7 +1371,7 @@ static const GF_FilterCapability MPGVidDmxCaps[] =
 static const GF_FilterArgs MPGVidDmxArgs[] =
 {
 	{ OFFS(fps), "import frame rate (0 default to FPS from bitstream or 25 Hz)", GF_PROP_FRACTION, "0/1000", NULL, 0},
-	{ OFFS(index), "indexing window length", GF_PROP_DOUBLE, "1.0", NULL, 0},
+	{ OFFS(index), "indexing window length. If 0, bitstream is not probed for duration. A negative value skips the indexing if the source file is larger than 20M (slows down importers) unless a play with start range > 0 is issued", GF_PROP_DOUBLE, "-1.0", NULL, 0},
 	{ OFFS(vfr), "set variable frame rate import", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(importer), "compatibility with old importer, displays import results", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(notime), "ignore input timestamps, rebuild from 0", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},

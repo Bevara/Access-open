@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Graph sub-project
@@ -221,7 +221,7 @@ struct __tag_scene_graph
 	/*global qp used in BIFS coding*/
 	GF_Node *global_qp;
 #endif
-
+	Bool *destroy_cookie;
 
 #ifndef GPAC_DISABLE_SVG
 	/*use stack as used in the dom_fire_event - this is only valid during an event fire, and may be NULL*/
@@ -918,7 +918,7 @@ void *gf_svg_get_property_pointer(SVG_Element *elt, void *input_attribute,
 Bool gf_svg_is_property(GF_Node *node, GF_FieldInfo *target_attribute);
 
 /*exported for LASeR paring*/
-u32 svg_parse_point(SVG_Point *p, char *value_string);
+u32 svg_parse_point(SVG_Point *p, char *value_string, GF_Err *out_e);
 
 /*activates node. This is used by LASeR:activate and whenever a node is inserted in the scene
 through DOM*/

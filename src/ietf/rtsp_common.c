@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / IETF RTP/RTSP/SDP sub-project
@@ -39,7 +39,7 @@ GF_Err gf_rtsp_read_reply(GF_RTSPSession *sess)
 	//fetch more data on the socket if needed
 	while (1) {
 		//Locate header / body
-		if (!BodyStart) gf_rtsp_get_body_info(sess, &BodyStart, &body_size);
+		if (!BodyStart) gf_rtsp_get_body_info(sess, &BodyStart, &body_size, GF_FALSE);
 
 		if (BodyStart) {
 			//enough data
@@ -51,47 +51,104 @@ GF_Err gf_rtsp_read_reply(GF_RTSPSession *sess)
 		}
 		//this is the tricky part: if we do NOT have a body start -> we refill
 		e = gf_rtsp_refill_buffer(sess);
-		if (e) return e;
+		if (e) {
+			//we have a buffer, nothing to follow and this is an http tunnel, this means no '=' at the end of the base64 string
+			//assume we got the entire message
+			if ((e==GF_IP_NETWORK_EMPTY) && (sess->CurrentPos<sess->CurrentSize) && (sess->tunnel_mode==RTSP_HTTP_SERVER)) {
+				return GF_OK;
+			}
+			return e;
+		}
 	}
 	return GF_OK;
 }
 
-void gf_rtsp_get_body_info(GF_RTSPSession *sess, u32 *body_start, u32 *body_size)
+void gf_rtsp_get_body_info(GF_RTSPSession *sess, u32 *body_start, u32 *body_size, Bool skip_tunnel)
 {
-	u32 i;
 	s32 start;
+	Bool is_post=GF_FALSE;
 	char *buffer;
 	char *cl_str;
 
 	*body_start = *body_size = 0;
 
 	buffer = sess->tcp_buffer + sess->CurrentPos;
-	start = gf_token_find(buffer, 0, sess->CurrentSize - sess->CurrentPos, "\r\n\r\n");
-	if (start<=0) {
+	if (!skip_tunnel && (sess->tunnel_mode==RTSP_HTTP_SERVER)) {
+		start = gf_token_find(buffer, 0, sess->CurrentSize - sess->CurrentPos, "=");
+		if (start<=0) return;
+		*body_start = start + 1;
+		if (buffer[start+1]=='=')
+			*body_start += 1;
 		return;
+	} else {
+		start = gf_token_find(buffer, 0, sess->CurrentSize - sess->CurrentPos, "\r\n\r\n");
+		if (start<=0) return;
+		//if found add the 2 "\r\n" and parse it
+		*body_start = start + 4;
 	}
-
-	//if found add the 2 "\r\n" and parse it
-	*body_start = start + 4;
+	if (!strncmp(buffer, "POST ", 5)) {
+		is_post = GF_TRUE;
+	}
 
 	//get the content length
 	cl_str = strstr(buffer, "Content-Length: ");
 	if (!cl_str) cl_str = strstr(buffer, "Content-length: ");
 
 	if (cl_str) {
-		char val[30];
+		char *sep;
 		cl_str += 16;
-		i = 0;
-		while (cl_str[i] != '\r') {
-			val[i] = cl_str[i];
-			i += 1;
+		sep = strchr(cl_str, '\r');
+		if (sep) {
+			sep[0] = 0;
+			*body_size = atoi(cl_str);
+			sep[0] = '\r';
 		}
-		val[i] = 0;
-		*body_size = atoi(val);
-	} else {
-		*body_size = 0;
 	}
+	if (is_post) *body_size = 0;
 }
+
+
+GF_Err gf_rstp_do_read_sock(GF_RTSPSession *sess, GF_Socket *sock, u8 *data, u32 data_size, u32 *out_read)
+{
+	GF_Err e;
+#ifdef GPAC_HAS_SSL
+	SSL *ssl_sock = (sock == sess->http) ? sess->ssl_http : sess->ssl;
+	if (ssl_sock) {
+		//receive on null buffer (select only, check if data available)
+		e = gf_sk_receive(sock, NULL, 0, NULL);
+		//empty and no pending bytes in SSL, network empty
+		if ((e==GF_IP_NETWORK_EMPTY) && !SSL_pending(sess->ssl))
+			return GF_IP_NETWORK_EMPTY;
+
+		int size = SSL_read(ssl_sock, data, data_size);
+		if (size < 0) {
+			*out_read = 0;
+			e = gf_sk_probe(sock);
+			if (!e) {
+				int err = SSL_get_error(ssl_sock, size);
+				if (err==SSL_ERROR_SSL) {
+					e = GF_IO_ERR;
+				} else if ((err==SSL_ERROR_WANT_READ) || (err==SSL_ERROR_WANT_WRITE)) {
+					e = GF_IP_NETWORK_EMPTY;
+				} else {
+					e = GF_IP_NETWORK_FAILURE;
+				}
+			}
+		} else if (!size) {
+			e = GF_IP_NETWORK_EMPTY;
+		} else {
+			e = GF_OK;
+			data[size] = 0;
+			*out_read = size;
+		}
+	} else
+#endif
+	{
+		e = gf_sk_receive(sock, data, data_size, out_read);
+	}
+	return e;
+}
+
 
 
 GF_Err gf_rtsp_refill_buffer(GF_RTSPSession *sess)
@@ -115,14 +172,13 @@ GF_Err gf_rtsp_refill_buffer(GF_RTSPSession *sess)
 	sess->CurrentSize = res;
 
 	//now read from current pos
-	e = gf_sk_receive(sess->connection, sess->tcp_buffer + sess->CurrentSize, sess->SockBufferSize - sess->CurrentSize, &res);
+	e = gf_rstp_do_read_sock(sess, sess->connection, sess->tcp_buffer + sess->CurrentSize, sess->SockBufferSize - sess->CurrentSize, &res);
 
 	if (!e) {
 		sess->CurrentSize += res;
 	}
 	return e;
 }
-
 
 GF_Err gf_rtsp_fill_buffer(GF_RTSPSession *sess)
 {
@@ -131,7 +187,11 @@ GF_Err gf_rtsp_fill_buffer(GF_RTSPSession *sess)
 	if (!sess->connection) return GF_IP_NETWORK_EMPTY;
 
 	if (sess->CurrentSize == sess->CurrentPos) {
-		e = gf_sk_receive(sess->connection, sess->tcp_buffer, sess->SockBufferSize, &sess->CurrentSize);
+		if (sess->tunnel_mode==RTSP_HTTP_SERVER) {
+			e = gf_rstp_do_read_sock(sess, sess->http, sess->tcp_buffer, sess->SockBufferSize, &sess->CurrentSize);
+		} else {
+			e = gf_rstp_do_read_sock(sess, sess->connection, sess->tcp_buffer, sess->SockBufferSize, &sess->CurrentSize);
+		}
 		sess->CurrentPos = 0;
 		sess->tcp_buffer[sess->CurrentSize] = 0;
 		if (e) sess->CurrentSize = 0;

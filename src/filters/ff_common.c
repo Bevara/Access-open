@@ -31,6 +31,7 @@
 
 #include <libavfilter/avfilter.h>
 #include <gpac/isomedia.h>
+#include <gpac/internal/media_dev.h>
 
 #if !defined(__GNUC__)
 # if defined(_WIN32_WCE) || defined (WIN32)
@@ -51,6 +52,7 @@ typedef struct
 	GF_List *all_filters;
 	u32 nb_arg_skip;
 	Bool free_help;
+	Bool is_building;
 } GF_FFRegistryExt;
 
 typedef struct
@@ -85,9 +87,10 @@ static const GF_FF_TAGREG FF2GPAC_Tags[] =
 
 void ffmpeg_tags_from_gpac(GF_FilterPid *pid, AVDictionary **metadata)
 {
+	const GF_PropertyValue *p;
 	u32 i=0;
 	while (FF2GPAC_Tags[i].ff_name) {
-		const GF_PropertyValue *p = NULL;
+		p = NULL;
 		if (FF2GPAC_Tags[i].gpac_p4cc) {
 			p = gf_filter_pid_get_property(pid, FF2GPAC_Tags[i].gpac_p4cc);
 		} else {
@@ -108,6 +111,10 @@ void ffmpeg_tags_from_gpac(GF_FilterPid *pid, AVDictionary **metadata)
 		}
 		i++;
 	}
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_ISOM_HANDLER);
+	if (p && (p->type==GF_PROP_STRING) && p->value.string && !strstr(p->value.string, "@GPAC")) {
+		av_dict_set(metadata, "title", p->value.string, 0);
+	}
 }
 
 void ffmpeg_tags_to_gpac(AVDictionary *metadata, GF_FilterPid *pid)
@@ -116,6 +123,19 @@ void ffmpeg_tags_to_gpac(AVDictionary *metadata, GF_FilterPid *pid)
 	while (metadata) {
 		ent = av_dict_get(metadata, "", ent, AV_DICT_IGNORE_SUFFIX);
 		if (!ent) break;
+		if (!strncmp(ent->key, "NUMBER_OF_FRAMES", 16)) {
+			gf_filter_pid_set_property(pid, GF_PROP_PID_NB_FRAMES, &PROP_UINT( atoi(ent->value) ) );
+			continue;
+		}
+		if (!strncmp(ent->key, "_STATISTICS_WRITING_APP", 23)) {
+			gf_filter_pid_set_property_str(pid, "tool", &PROP_STRING(ent->value));
+			continue;
+		}
+		if (!strncmp(ent->key, "_STATISTICS_WRITING_DATE_UTC", 28)) {
+			gf_filter_pid_set_property_str(pid, "created_utc", &PROP_STRING(ent->value));
+			continue;
+		}
+		Bool found=GF_FALSE;
 		u32 i=0;
 		while (FF2GPAC_Tags[i].ff_name) {
 			if (strcmp(FF2GPAC_Tags[i].ff_name, ent->key)) {
@@ -131,7 +151,17 @@ void ffmpeg_tags_to_gpac(AVDictionary *metadata, GF_FilterPid *pid)
 				if (FF2GPAC_Tags[i].gpac_tag == GF_ISOM_ITUNE_NAME)
 					gf_filter_pid_set_property(pid, GF_PROP_PID_ISOM_HANDLER, &PROP_STRING(ent->value) );
 			}
+			found = GF_TRUE;
 			break;
+		}
+		if (!found && stricmp(ent->key, "duration")) {
+			char *name=NULL;
+			gf_dynstrcat(&name, "meta:", NULL);
+			gf_dynstrcat(&name, ent->key, NULL);
+			if (name) {
+				gf_filter_pid_set_property_dyn(pid, name, &PROP_STRING(ent->value) );
+				gf_free(name);
+			}
 		}
 	}
 }
@@ -474,6 +504,9 @@ static const GF_FF_CIDREG FF2GPAC_CodecIDs[] =
 	{AV_CODEC_ID_ASS, GF_CODECID_SUBS_SSA, 0},
 	{AV_CODEC_ID_DVB_SUBTITLE, GF_CODECID_DVB_SUBS, 0},
 	{AV_CODEC_ID_DVB_TELETEXT, GF_CODECID_DVB_TELETEXT, 0},
+	{AV_CODEC_ID_MSMPEG4V3, GF_CODECID_MSPEG4_V3, 0},
+	{AV_CODEC_ID_DTS, GF_CODECID_DTS_CA, 0},
+	{AV_CODEC_ID_ALAC, GF_CODECID_ALAC, 0},
 	{0}
 };
 
@@ -489,6 +522,14 @@ u32 ffmpeg_codecid_from_gpac(u32 codec_id, u32 *ff_codectag)
 		}
 		i++;
 	}
+	//try unmapped codecs
+	if (gf_codecid_type(codec_id)==GF_STREAM_UNKNOWN) {
+		const AVCodec *c = avcodec_find_decoder(codec_id);
+		if (c) return c->id;
+		c = avcodec_find_decoder_by_name(gf_4cc_to_str(codec_id));
+		if (c) return c->id;
+	}
+
 	GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[FFMPEG] Unmapped GPAC codec %s\n", gf_codecid_name(codec_id) ));
 	return 0;
 }
@@ -579,7 +620,7 @@ static int gpac_to_ffmpeg_log_level(GF_LOG_Level level)
 
 static GF_LOG_Tool gpac_to_ffmpeg_log_tool(AVClass* avc)
 {
-	if (!avc) return GF_LOG_CORE;
+	if (!avc) return GF_LOG_MEDIA;
 	switch (avc->category) {
 	case AV_CLASS_CATEGORY_INPUT:
 	case AV_CLASS_CATEGORY_OUTPUT:
@@ -604,7 +645,7 @@ static GF_LOG_Tool gpac_to_ffmpeg_log_tool(AVClass* avc)
 	case AV_CLASS_CATEGORY_DEVICE_INPUT:
 		return GF_LOG_MMIO;
 	default:
-		return GF_LOG_CORE;
+		return GF_LOG_MEDIA;
 	}
 }
 
@@ -671,8 +712,11 @@ static void ffmpeg_register_free(GF_FilterSession *session, GF_FilterRegister *r
 	GF_FFRegistryExt *ffregext = reg->udta;
 	GF_List *all_filters = ffregext->all_filters;
 	u32 nb_skip_begin = ffregext->nb_arg_skip;
+	if (ffregext->is_building) return;
+
 #if !defined(GPAC_DISABLE_DOC)
-	if (ffregext->free_help) gf_free((char *)reg->help);
+	if (ffregext->free_help)
+		gf_free((char *)reg->help);
 #endif
 	gf_free(ffregext);
 	reg->udta = NULL;
@@ -709,7 +753,7 @@ static void ffmpeg_register_free(GF_FilterSession *session, GF_FilterRegister *r
 		if (arg->flags & GF_FS_ARG_META_ALLOC) gf_free((void *) arg->arg_desc);
 	}
 	if (reg->args) gf_free((void *) reg->args);
-
+	gf_free(reg);
 }
 
 GF_FilterArgs ffmpeg_arg_translate(const struct AVOption *opt)
@@ -723,6 +767,9 @@ GF_FilterArgs ffmpeg_arg_translate(const struct AVOption *opt)
 	arg.flags = GF_FS_ARG_META;
 	if (opt->name[0] == 0)
 		arg.flags = GF_FS_ARG_META;
+
+	if (!(opt->flags & AV_OPT_FLAG_READONLY))
+		arg.flags |= GF_FS_ARG_UPDATE;
 
 	switch (opt->type) {
 	case AV_OPT_TYPE_INT64:
@@ -825,6 +872,12 @@ GF_FilterArgs ffmpeg_arg_translate(const struct AVOption *opt)
 		arg.min_max_enum = enum_val;
 		}
 		break;
+#if AV_VERSION_INT(LIBAVUTIL_VERSION_MAJOR, LIBAVUTIL_VERSION_MINOR, 0) > AV_VERSION_INT(57,23, 0)
+	case AV_OPT_TYPE_CHLAYOUT:
+		arg.arg_type = GF_PROP_STRING;
+		arg.arg_default_val = gf_strdup(opt->default_val.str ? opt->default_val.str : "mono");
+		break;
+#endif
 	default:
 		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[FFMPEG] Unknown ffmpeg option type %d\n", opt->type));
 		break;
@@ -859,6 +912,9 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 	const AVInputFormat *fmt = NULL;
 	const AVOutputFormat *ofmt = NULL;
 	const AVCodec *codec = NULL;
+#ifdef FFMPEG_HAS_BSF
+	const AVBitStreamFilter *bsf = NULL;
+#endif
 #if (LIBAVFILTER_VERSION_MAJOR > 5)
 	const AVFilter *avf = NULL;
 #endif
@@ -891,6 +947,11 @@ static void ffmpeg_expand_register(GF_FilterSession *session, GF_FilterRegister 
 	else if (type==FF_REG_TYPE_AVF) {
 		fname = "ffavf";
 	}
+#ifdef FFMPEG_HAS_BSF
+	else if (type==FF_REG_TYPE_BSF) {
+		fname = "ffbsf";
+	}
+#endif
 	else return;
 
 
@@ -1065,7 +1126,16 @@ second_pass:
 			break;
 
 #endif
-		} else {
+		}
+#ifdef FFMPEG_HAS_BSF
+		else if (type==FF_REG_TYPE_BSF) {
+			bsf = av_bsf_iterate(&av_it);
+			if (!bsf) break;
+			av_class = bsf->priv_class;
+			subname = bsf->name;
+		}
+#endif
+		else {
 			break;
 		}
 		GF_SAFEALLOC(freg, GF_FilterRegister);
@@ -1075,7 +1145,9 @@ second_pass:
 		freg->caps = NULL;
 		freg->nb_caps = 0;
 		//no help
+#ifndef GPAC_DISABLE_DOC
 		freg->help = NULL;
+#endif
 
 		gf_list_add(all_filters, freg);
 
@@ -1084,7 +1156,17 @@ second_pass:
 #ifndef GPAC_DISABLE_DOC
 		freg->description = description;
 #endif
-		 if ((type==FF_REG_TYPE_ENCODE) || (type==FF_REG_TYPE_DECODE)) {
+
+#ifndef NO_AVIO_PROTO
+		if (protocol_pass && gf_opts_get_bool("temp", "get_proto_schemes")) {
+			if (type==FF_REG_TYPE_DEMUX)
+				gf_opts_set_key("temp_in_proto", freg->name, subname);
+			else if (type==FF_REG_TYPE_MUX)
+				gf_opts_set_key("temp_out_proto", freg->name, subname);
+		}
+#endif
+
+		if ((type==FF_REG_TYPE_ENCODE) || (type==FF_REG_TYPE_DECODE)) {
 		 	GF_FilterCapability *caps;
 		 	u32 cid = ffmpeg_codecid_to_gpac(codec->id);
 		 	freg->nb_caps = 3;
@@ -1205,6 +1287,64 @@ second_pass:
 			//TODO map codec IDs if known ?
 			freg->caps =  caps;
 		}
+#ifdef FFMPEG_HAS_BSF
+		else if (type==FF_REG_TYPE_BSF) {
+			GF_FilterCapability *caps;
+			u32 cur_cap, nb_codecs = 0;
+			i=0;
+			while (bsf->codec_ids) {
+				if (bsf->codec_ids[i]==AV_CODEC_ID_NONE) break;
+				i++;
+				nb_codecs++;
+			}
+
+			if (!nb_codecs) {
+				freg->nb_caps = 5;
+				caps = gf_malloc(sizeof(GF_FilterCapability)*freg->nb_caps);
+				memset(caps, 0, sizeof(GF_FilterCapability)*freg->nb_caps);
+				caps[0].code = GF_PROP_PID_STREAM_TYPE;
+				caps[0].val.type = GF_PROP_UINT;
+				caps[0].val.value.uint = GF_STREAM_VISUAL;
+				caps[0].flags = GF_CAPS_INPUT_OUTPUT;
+
+				caps[2].code = GF_PROP_PID_STREAM_TYPE;
+				caps[2].val.type = GF_PROP_UINT;
+				caps[2].val.value.uint = GF_STREAM_AUDIO;
+				caps[2].flags = GF_CAPS_INPUT_OUTPUT;
+
+				caps[4].code = GF_PROP_PID_STREAM_TYPE;
+				caps[4].val.type = GF_PROP_UINT;
+				caps[4].val.value.uint = GF_STREAM_TEXT;
+				caps[4].flags = GF_CAPS_INPUT_OUTPUT;
+			} else {
+				freg->nb_caps = 3*nb_codecs - 1;
+				caps = gf_malloc(sizeof(GF_FilterCapability)*freg->nb_caps);
+				memset(caps, 0, sizeof(GF_FilterCapability)*freg->nb_caps);
+
+				i=0;
+				cur_cap = 0;
+				while (bsf->codec_ids) {
+					u32 codec_id;
+					if (bsf->codec_ids[i]==AV_CODEC_ID_NONE) break;
+					codec_id = bsf->codec_ids[i];
+					i++;
+
+					caps[cur_cap].code = GF_PROP_PID_STREAM_TYPE;
+					caps[cur_cap].val.type = GF_PROP_UINT;
+					caps[cur_cap].val.value.uint = ff_streamtype( avcodec_get_type(codec_id) );
+					caps[cur_cap].flags = GF_CAPS_INPUT_OUTPUT;
+
+					caps[cur_cap+1].code = GF_PROP_PID_CODECID;
+					caps[cur_cap+1].val.type = GF_PROP_UINT;
+					caps[cur_cap+1].val.value.uint = ffmpeg_codecid_to_gpac(codec_id);
+					caps[cur_cap+1].flags = GF_CAPS_INPUT_OUTPUT;
+					//empty cap between each codecid
+					cur_cap += 3;
+				}
+			}
+			freg->caps =  caps;
+		}
+#endif
 
 		idx=0;
 		i=0;
@@ -1311,7 +1451,7 @@ second_pass:
 #endif
 }
 
-void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_reg, const GF_FilterArgs *default_args, u32 nb_def_args, u32 reg_type)
+GF_FilterRegister *ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_reg, const GF_FilterArgs *default_args, u32 nb_def_args, u32 reg_type)
 {
 	GF_FilterArgs *args;
 	u32 i=0, idx=0, nb_args;
@@ -1322,31 +1462,45 @@ void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_re
 	AVCodecContext *codec_ctx = NULL;
 	const AVClass *av_class = NULL;
 	GF_FFRegistryExt *ffregext;
-
+	GF_FilterRegister *new_reg;
 	ffmpeg_initialize();
 
+#ifndef GPAC_DISABLE_DOC
 	orig_reg->author = avfilter_configuration();
-	
+#endif
+
 	//by default no need to load option descriptions, everything is handled by av_set_opt in update_args
 	if (!load_meta_filters) {
 		orig_reg->args = default_args;
 		orig_reg->register_free = NULL;
-		return;
+		return orig_reg;
 	}
+
+	GF_SAFEALLOC(new_reg, GF_FilterRegister);
+	memcpy(new_reg, orig_reg, sizeof(GF_FilterRegister));
+	orig_reg = new_reg;
 
 	if (reg_type==FF_REG_TYPE_ENCODE) opt_type = AV_OPT_FLAG_ENCODING_PARAM;
 	else if (reg_type==FF_REG_TYPE_MUX) opt_type = AV_OPT_FLAG_ENCODING_PARAM;
 	else if (reg_type==FF_REG_TYPE_AVF) opt_type = 0xFFFFFFFF;
 
 	if ((reg_type==FF_REG_TYPE_ENCODE) || (reg_type==FF_REG_TYPE_DECODE)) {
+#ifndef GPAC_DISABLE_DOC
 		orig_reg->author = avcodec_configuration();
+#endif
 		codec_ctx = avcodec_alloc_context3(NULL);
 		av_class = codec_ctx->av_class;
 	} else if (reg_type==FF_REG_TYPE_AVF) {
 #if (LIBAVFILTER_VERSION_MAJOR > 5)
 		av_class = avfilter_get_class();
 #endif
-	} else {
+	}
+#ifdef FFMPEG_HAS_BSF
+	else if (reg_type==FF_REG_TYPE_BSF) {
+		av_class = av_bsf_get_class();
+	}
+#endif
+	else {
 		format_ctx = avformat_alloc_context();
 		av_class = format_ctx->av_class;
 	}
@@ -1469,15 +1623,17 @@ void ffmpeg_build_register(GF_FilterSession *session, GF_FilterRegister *orig_re
 		avformat_free_context(format_ctx);
 	}
 
-	GF_SAFEALLOC(ffregext, GF_FFRegistryExt);
-	if (!ffregext) return;
-	
-	orig_reg->udta = ffregext;
-	ffregext->nb_arg_skip = nb_def_args-1;
 	orig_reg->register_free = ffmpeg_register_free;
 
-	ffmpeg_expand_register(session, orig_reg, reg_type);
-
+	GF_SAFEALLOC(ffregext, GF_FFRegistryExt);
+	if (ffregext) {
+		orig_reg->udta = ffregext;
+		ffregext->nb_arg_skip = nb_def_args-1;
+		ffregext->is_building = GF_TRUE;
+		ffmpeg_expand_register(session, orig_reg, reg_type);
+		ffregext->is_building = GF_FALSE;
+	}
+	return orig_reg;
 }
 
 void ffmpeg_set_enc_dec_flags(const AVDictionary *options, AVCodecContext *ctx)
@@ -1542,7 +1698,7 @@ void ffmpeg_report_options(GF_Filter *filter, AVDictionary *options, AVDictionar
 			AVDictionaryEntry *unkn = av_dict_get(options, prev_e->key, NULL, 0);
 			if (unkn) unknown_opt = GF_TRUE;
 		}
-		gf_filter_report_meta_option(filter, prev_e->key, unknown_opt ? GF_FALSE : GF_TRUE);
+		gf_filter_report_meta_option(filter, prev_e->key, unknown_opt ? 0 : 1, NULL);
 	}
 	if (options)
 		av_dict_free(&options);
@@ -1629,6 +1785,11 @@ GF_Err ffmpeg_extradata_from_gpac(u32 gpac_codec_id, const u8 *dsi_in, u32 dsi_i
 		if (! *dsi_out) return GF_OUT_OF_MEM;
 		memcpy(*dsi_out, "OpusHead", 8);
 		memcpy(*dsi_out+8, dsi_in, dsi_in_size);
+	} else if ((gpac_codec_id==GF_CODECID_SMPTE_VC1) && (dsi_in_size>7)) {
+		*dsi_out_size = dsi_in_size-7;
+		*dsi_out = av_malloc(sizeof(char) * (dsi_in_size-7) );
+		if (! *dsi_out) return GF_OUT_OF_MEM;
+		memcpy(*dsi_out, dsi_in+7, dsi_in_size-7);
 	} else {
 		*dsi_out_size = dsi_in_size;
 		*dsi_out = av_malloc(sizeof(char) * dsi_in_size);
@@ -1692,6 +1853,9 @@ GF_Err ffmpeg_extradata_to_gpac(u32 gpac_codec_id, const u8 *data, u32 size, u8 
 		}
 		//fallthrough
 	}
+	if (gpac_codec_id==GF_CODECID_SMPTE_VC1) {
+		return gf_media_vc1_seq_header_to_dsi(data, size, dsi_out, dsi_out_size);
+	}
 
 	//default is direct mapping
 
@@ -1699,6 +1863,301 @@ GF_Err ffmpeg_extradata_to_gpac(u32 gpac_codec_id, const u8 *data, u32 size, u8 
 	*dsi_out = gf_malloc(size);
 	if (! *dsi_out) return GF_OUT_OF_MEM;
 	memcpy(*dsi_out, data, size);
+	return GF_OK;
+}
+
+#include <gpac/avparse.h>
+#include <gpac/internal/media_dev.h>
+
+void ffmpeg_generate_gpac_dsi(GF_FilterPid *out_pid, u32 gpac_codec_id, u32 color_primaries, u32 transfer_characteristics, u32 colorspace, const u8 *data, u32 size)
+{
+	GF_VPConfig *vpc=NULL;
+	GF_AC3Header ac3hdr;
+	u32 dsi_size=0;
+	u8 *dsi=NULL;
+	GF_BitStream *bs;
+	GF_Err e;
+	Bool flag=GF_FALSE;
+
+	switch (gpac_codec_id) {
+	case GF_CODECID_VP8:
+	case GF_CODECID_VP10:
+		vpc = gf_odf_vp_cfg_new();
+		vpc->profile = 1;
+		vpc->level = 10;
+		vpc->bit_depth = 8;
+		vpc->colour_primaries = color_primaries;
+		vpc->transfer_characteristics = transfer_characteristics;
+		vpc->matrix_coefficients = colorspace;
+		break;
+	case GF_CODECID_VP9:
+	{
+		Bool key_frame = GF_FALSE;
+		u32 width = 0, height = 0, renderWidth, renderHeight;
+		u32 num_frames_in_superframe = 0, superframe_index_size = 0, i;
+		u32 frame_sizes[VP9_MAX_FRAMES_IN_SUPERFRAME];
+		bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
+		e = gf_vp9_parse_superframe(bs, size, &num_frames_in_superframe, frame_sizes, &superframe_index_size);
+		if (!e) {
+			vpc = gf_odf_vp_cfg_new();
+			for (i = 0; i < num_frames_in_superframe; ++i) {
+				u64 pos2 = gf_bs_get_position(bs);
+				if (gf_vp9_parse_sample(bs, vpc, &key_frame, &width, &height, &renderWidth, &renderHeight) != GF_OK) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[VP9Dmx] Error parsing frame\n"));
+					gf_odf_vp_cfg_del(vpc);
+					vpc = NULL;
+					break;
+				}
+				gf_bs_seek(bs, pos2 + frame_sizes[i]);
+			}
+		}
+		gf_bs_del(bs);
+	}
+		break;
+	case GF_CODECID_EAC3:
+		flag = GF_TRUE;
+	case GF_CODECID_AC3:
+		bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
+		if (flag) {
+			if (gf_eac3_parser_bs(bs, &ac3hdr, GF_FALSE) == GF_TRUE) {
+				ac3hdr.is_ec3=GF_TRUE;
+				gf_odf_ac3_cfg_write(&ac3hdr, &dsi, &dsi_size);
+			}
+		} else {
+			if (gf_ac3_parser_bs(bs, &ac3hdr, GF_TRUE) == GF_TRUE) {
+				gf_odf_ac3_cfg_write(&ac3hdr, &dsi, &dsi_size);
+			}
+		}
+		gf_bs_del(bs);
+		break;
+	case GF_CODECID_TRUEHD:
+	{
+		u32 format, peak_rate, sync, valid=0;
+		bs = gf_bs_new(data, size, GF_BITSTREAM_READ);
+
+		/*nibble, frame size and time = */gf_bs_read_u32(bs);
+		sync = gf_bs_read_u32(bs);
+		if (sync == 0xF8726FBA) {
+			format = gf_bs_read_u32(bs);
+			u16 sig = gf_bs_read_u16(bs);
+			if (sig == 0xB752) {
+				gf_bs_read_u16(bs);
+				gf_bs_read_u16(bs);
+				gf_bs_read_int(bs, 1);
+				peak_rate = gf_bs_read_int(bs, 15);
+				valid = 1;
+			}
+		}
+		gf_bs_del(bs);
+
+		if (valid) {
+			bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+			gf_bs_write_u32(bs, format);
+			gf_bs_write_int(bs, peak_rate, 15);
+			gf_bs_write_int(bs, 0, 1);
+			gf_bs_write_u32(bs, 0);
+			gf_bs_get_content(bs, &dsi, &dsi_size);
+			gf_bs_del(bs);
+		}
+	}
+		break;
+	case GF_CODECID_MPEG1:
+	case GF_CODECID_MPEG2_422:
+	case GF_CODECID_MPEG2_SNR:
+	case GF_CODECID_MPEG2_HIGH:
+	case GF_CODECID_MPEG2_MAIN:
+	case GF_CODECID_MPEG2_SIMPLE:
+	case GF_CODECID_MPEG2_SPATIAL:
+		flag = GF_TRUE;
+	case GF_CODECID_MPEG4_PART2:
+	{
+		GF_M4VDecSpecInfo vcfg;
+		GF_M4VParser *mvp;
+		mvp = gf_m4v_parser_new((u8*)data, size, flag);
+		if (gf_m4v_parse_config(mvp, &vcfg) == GF_OK) {
+			dsi_size = (u32) gf_m4v_get_object_start(mvp);
+			dsi = gf_malloc(sizeof(u8) * dsi_size);
+			memcpy(dsi, data, dsi_size);
+		}
+		gf_m4v_parser_del(mvp);
+	}
+		break;
+	}
+
+	if (vpc) {
+		gf_odf_vp_cfg_write(vpc, &dsi, &dsi_size,  vpc->codec_initdata_size ? GF_TRUE : GF_FALSE);
+		gf_odf_vp_cfg_del(vpc);
+	}
+
+	if (dsi)
+		gf_filter_pid_set_property(out_pid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA_NO_COPY(dsi, dsi_size));
+}
+
+#if (LIBAVCODEC_VERSION_MAJOR > 56)
+
+GF_Err ffmpeg_codec_par_from_gpac(GF_FilterPid *pid, AVCodecParameters *codecpar, u32 ffmpeg_timescale)
+{
+	u32 streamtype=0;
+	u32 codec_id=0;
+	if (!pid || !codecpar) return GF_BAD_PARAM;
+	const GF_PropertyValue *p = gf_filter_pid_get_property(pid, GF_PROP_PID_STREAM_TYPE);
+	if (!p) return GF_BAD_PARAM;
+	streamtype = p->value.uint;
+	p = gf_filter_pid_get_property(pid, GF_PROP_PID_CODECID);
+	if (!p) return GF_BAD_PARAM;
+	codec_id = p->value.uint;
+
+	if (streamtype==GF_STREAM_VISUAL) {
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_WIDTH);
+		if (p) codecpar->width = p->value.uint;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_HEIGHT);
+		if (p) codecpar->height = p->value.uint;
+
+		if (codec_id==GF_CODECID_RAW) {
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_PIXFMT);
+			if (p) {
+				codecpar->format = ffmpeg_pixfmt_from_gpac(p->value.uint, GF_FALSE);
+				codecpar->codec_tag = avcodec_pix_fmt_to_codec_tag(codecpar->format);
+			}
+		}
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
+		if (p) {
+			codecpar->sample_aspect_ratio.num = p->value.frac.num;
+			codecpar->sample_aspect_ratio.den = p->value.frac.den;
+		}
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_PRIMARIES);
+		if (p) codecpar->color_primaries = p->value.uint;
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_RANGE);
+		if (p) codecpar->color_range = (p->value.uint==1) ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_TRANSFER);
+		if (p) codecpar->color_trc = p->value.uint;
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_MX);
+		if (p) codecpar->color_space = p->value.uint;
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_CHROMALOC);
+		if (p) codecpar->chroma_location = p->value.uint;
+	}
+	else if (streamtype==GF_STREAM_AUDIO) {
+		u64 ch_layout;
+		u32 samplerate=0;
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLE_RATE);
+		if (p) codecpar->sample_rate = samplerate = p->value.uint;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_NUM_CHANNELS);
+		if (p) codecpar->channels = p->value.uint;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLES_PER_FRAME);
+		if (p) codecpar->frame_size = p->value.uint;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_AUDIO_BPS);
+		if (p) codecpar->bits_per_raw_sample = p->value.uint;
+		if (codec_id==GF_CODECID_RAW) {
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_AUDIO_FORMAT);
+			if (p) codecpar->format =  ffmpeg_audio_fmt_from_gpac(p->value.uint);
+		}
+
+		ch_layout = GF_AUDIO_CH_FRONT_CENTER;
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_CHANNEL_LAYOUT);
+		if (p)
+			ch_layout = p->value.longuint;
+		else if (codecpar->channels==2)
+			ch_layout = GF_AUDIO_CH_FRONT_LEFT|GF_AUDIO_CH_FRONT_RIGHT;
+		codecpar->channel_layout = ffmpeg_channel_layout_from_gpac(ch_layout);
+
+		p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
+		if (p && (p->value.sint<0) && samplerate) {
+			s64 pad = -p->value.longsint;
+			if (ffmpeg_timescale && (ffmpeg_timescale!=samplerate)) {
+				pad *= samplerate;
+				pad /= ffmpeg_timescale;
+			}
+			codecpar->initial_padding = (s32) pad;
+		}
+		/*
+		//not mapped in gpac
+		int trailing_padding;
+		*/
+	}
+	return GF_OK;
+}
+
+GF_Err ffmpeg_codec_par_to_gpac(AVCodecParameters *codecpar, GF_FilterPid *opid, u32 ffmpeg_timescale)
+{
+	if (!opid || !codecpar) return GF_BAD_PARAM;
+
+	if (codecpar->width)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_WIDTH, &PROP_UINT(codecpar->width));
+	if (codecpar->height)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_WIDTH, &PROP_UINT(codecpar->height));
+	if (codecpar->sample_aspect_ratio.num) {
+		gf_filter_pid_set_property(opid, GF_PROP_PID_SAR, &PROP_FRAC_INT(codecpar->sample_aspect_ratio.num, codecpar->sample_aspect_ratio.den));
+	}
+	if (codecpar->color_primaries)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_PRIMARIES, &PROP_UINT(codecpar->color_primaries));
+
+	if (codecpar->color_range==AVCOL_RANGE_JPEG)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_TRUE));
+	else if (codecpar->color_range==AVCOL_RANGE_MPEG)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_FALSE));
+
+	if (codecpar->color_trc)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_TRANSFER, &PROP_UINT(codecpar->color_trc));
+
+	if (codecpar->color_space)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_MX, &PROP_UINT(codecpar->color_space));
+
+	if (codecpar->chroma_location)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_CHROMALOC, &PROP_UINT(codecpar->chroma_location));
+
+	if (codecpar->format>=0) {
+		if (codecpar->width) {
+			gf_filter_pid_set_property(opid, GF_PROP_PID_PIXFMT, &PROP_UINT( ffmpeg_pixfmt_to_gpac(codecpar->format, GF_FALSE)));
+		} else {
+			gf_filter_pid_set_property(opid, GF_PROP_PID_AUDIO_FORMAT, &PROP_UINT( ffmpeg_audio_fmt_to_gpac(codecpar->format)));
+		}
+	}
+
+	if (codecpar->sample_rate)
+		gf_filter_pid_set_property(opid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT(codecpar->sample_rate));
+
+	if (codecpar->channels) {
+		gf_filter_pid_set_property(opid, GF_PROP_PID_NUM_CHANNELS, &PROP_UINT(codecpar->channels));
+		if (codecpar->channel_layout) {
+			gf_filter_pid_set_property(opid, GF_PROP_PID_CHANNEL_LAYOUT, &PROP_LONGUINT( ffmpeg_channel_layout_to_gpac(codecpar->channel_layout) ));
+		}
+
+		if (codecpar->frame_size)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_SAMPLES_PER_FRAME, &PROP_UINT(codecpar->frame_size));
+
+		if (codecpar->bits_per_raw_sample)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_AUDIO_BPS, &PROP_UINT(codecpar->bits_per_raw_sample));
+	}
+	return GF_OK;
+}
+#endif
+
+GF_Err ffmpeg_update_arg(const char *log_name, void *ctx, AVDictionary **options, const char *arg_name, const GF_PropertyValue *arg_val)
+{
+	char dumpbuf[GF_PROP_DUMP_ARG_SIZE];
+	int ret;
+	const char *val = gf_props_dump_val(arg_val, dumpbuf, GF_PROP_DUMP_DATA_NONE, NULL);
+
+	if (!val && (arg_val->type == GF_PROP_STRING))
+		val = "1";
+
+	if (ctx) {
+		ret = av_opt_set(ctx, arg_name, val, AV_OPT_SEARCH_CHILDREN);
+	} else if (options) {
+		ret = av_dict_set(options, arg_name, val, 0);
+	} else {
+		return GF_BAD_PARAM;
+	}
+	if (ret<0) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[%s] Failed to set option %s to %s: %s\n", log_name, arg_name, arg_val, av_err2str(ret)));
+		return GF_BAD_PARAM;
+	}
 	return GF_OK;
 }
 

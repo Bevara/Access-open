@@ -495,6 +495,16 @@ static GF_Err cenc_parse_pssh(GF_CENCEncCtx *ctx, GF_CENCStream *cstr, const cha
 		}
 
 		bs = gf_bs_new(specInfo, specInfoSize, GF_BITSTREAM_READ);
+		u32 bsize = gf_bs_read_u32(bs);
+		u32 btype = gf_bs_read_u32(bs);
+		if ((bsize==specInfoSize) && (btype == GF_ISOM_BOX_TYPE_PSSH)) {
+			version = gf_bs_read_u8(bs);
+			/*flags*/ gf_bs_read_int(bs, 24);
+		} else {
+			gf_bs_seek(bs, 0);
+			btype = 0;
+		}
+
 		gf_bs_read_data(bs, (char *)systemID, 16);
 		if (version) {
 			KID_count = gf_bs_read_u32(bs);
@@ -520,6 +530,7 @@ static GF_Err cenc_parse_pssh(GF_CENCEncCtx *ctx, GF_CENCStream *cstr, const cha
 			KID_count = 0;
 			KIDs = NULL;
 		}
+
 		if (specInfoSize < 16 + (version ? 4 + 16*KID_count : 0)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[CENC/ISMA] Invalid PSSH blob in version %d: size %d key count %d - ignoring PSSH\n", version, specInfoSize, KID_count));
 
@@ -528,7 +539,11 @@ static GF_Err cenc_parse_pssh(GF_CENCEncCtx *ctx, GF_CENCStream *cstr, const cha
 			if (KIDs) gf_free(KIDs);
 			continue;
 		}
-		len = specInfoSize - 16 - (version ? 4 + 16*KID_count : 0);
+		if (btype)
+			len = gf_bs_read_u32(bs);
+		else
+			len = specInfoSize - 16 - (version ? 4 + 16*KID_count : 0);
+
 		data = (char *)gf_malloc(len*sizeof(char));
 		if (!data) {
 			e = GF_OUT_OF_MEM;
@@ -1029,6 +1044,9 @@ static GF_Err cenc_enc_configure(GF_CENCEncCtx *ctx, GF_CENCStream *cstr, const 
 	//if constantIV and not using CENC subsample, no CENC auxiliary info
 	if (!cstr->tci->keys[0].constant_IV_size || cstr->use_subsamples) {
 		gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_CENC_STORE, &PROP_4CC(cstr->tci->sai_saved_box_type) );
+	}
+	if (cstr->tci->roll_type && (cstr->tci->roll_type!=GF_KEYROLL_PERIODS)) {
+		gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_CENC_HAS_ROLL, &PROP_BOOL(GF_TRUE) );
 	}
 
 	//parse pssh even if reinit since we need to reassign pssh property
@@ -2184,7 +2202,7 @@ static GF_Err cenc_encrypt_packet(GF_CENCEncCtx *ctx, GF_CENCStream *cstr, GF_Fi
 	}
 
 	if (cstr->pssh_template_plus_one) {
-		u32 key_idx = cstr->pssh_template_plus_one-1;
+		key_idx = cstr->pssh_template_plus_one-1;
 		cstr->pssh_template_plus_one = 0;
 
 		if (cstr->pssh_templates) {
@@ -2244,10 +2262,6 @@ static GF_Err cenc_encrypt_packet(GF_CENCEncCtx *ctx, GF_CENCStream *cstr, GF_Fi
 					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ISMACrypt] Missing systemID, ignoring DRMInfoTemplate\n"));
 					continue;
 				}
-				if (!key_val) {
-					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ISMACrypt] Missing keyval, ignoring DRMInfoTemplate\n"));
-					continue;
-				}
 
 				j=0;
 				while ((bs_node = gf_list_enum(pssh_tpl->content, &j))) {
@@ -2261,28 +2275,37 @@ static GF_Err cenc_encrypt_packet(GF_CENCEncCtx *ctx, GF_CENCStream *cstr, GF_Fi
 							kid_att = att;
 					}
 				}
+				if (key_att && !key_val) {
+					if (!pssh_tpl->orig_pos) {
+						GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ISMACrypt] Missing keyval, injecting key in clear\n"));
+						pssh_tpl->orig_pos = 1;
+					}
+				}
 
 				if (kid_att) {
 					kid_att_backup = kid_att->value;
 					kid_att->value = szKID;
 				}
 
-				if (key_val && key_att) {
-					bin128 master_key, leaf_key;
+				if (key_att) {
+					bin128 leaf_key;
 					key_att_backup = key_att->value;
-					gf_bin128_parse(key_val->value, master_key);
-					GF_Crypt *crypto = gf_crypt_open(GF_AES_128, crypt_mode);
-					if (iv_val) {
-						bin128 IV;
-						gf_bin128_parse(iv_val->value, IV);
-						gf_crypt_init(crypto, master_key, IV);
-					} else {
-						gf_crypt_init(crypto, master_key, NULL);
-					}
 					memcpy(leaf_key, cstr->tci->keys[key_idx].key, 16);
-					gf_crypt_encrypt(crypto, leaf_key, 16);
-					gf_crypt_close(crypto);
+					if (key_val) {
+						bin128 master_key;
 
+						gf_bin128_parse(key_val->value, master_key);
+						GF_Crypt *crypto = gf_crypt_open(GF_AES_128, crypt_mode);
+						if (iv_val) {
+							bin128 IV;
+							gf_bin128_parse(iv_val->value, IV);
+							gf_crypt_init(crypto, master_key, IV);
+						} else {
+							gf_crypt_init(crypto, master_key, NULL);
+						}
+						gf_crypt_encrypt(crypto, leaf_key, 16);
+						gf_crypt_close(crypto);
+					}
 					szCryptKey[0]=0;
 					for (j=0; j<16; j++) {
 						char szTmp[3];
@@ -2654,6 +2677,14 @@ GF_FilterRegister CENCEncRegister = {
 const GF_FilterRegister *cenc_encrypt_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_CRYPTO
+
+#ifdef GPAC_ENABLE_COVERAGE
+	if (gf_sys_is_cov_mode()) {
+		bin128 test;
+		cenc_gen_bin128(test);
+	}
+#endif
+
 	return &CENCEncRegister;
 #else
 	return NULL;

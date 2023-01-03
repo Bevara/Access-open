@@ -134,16 +134,21 @@ static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 }
 
 static gf_on_progress_cbk prog_cbk = NULL;
-static void *user_cbk;
+static void *user_cbk = NULL;
+#if defined(GPAC_CONFIG_IOS) || defined(GPAC_CONFIG_ANDROID)
+static Bool gpac_no_color_logs = GF_TRUE;
+#else
 static Bool gpac_no_color_logs = GF_FALSE;
+#endif
 
 GF_EXPORT
 void gf_set_progress(const char *title, u64 done, u64 total)
 {
 	if (done>=total)
 		done=total;
-	if (prog_cbk) {
-		prog_cbk(user_cbk, title, done, total);
+	if (prog_cbk || user_cbk) {
+		if (prog_cbk)
+			prog_cbk(user_cbk, title, done, total);
 	}
 #ifndef _WIN32_WCE
 	else {
@@ -612,6 +617,7 @@ Bool gf_log_tool_level_on(GF_LOG_Tool log_tool, GF_LOG_Level log_level)
 	return GF_FALSE;
 }
 
+GF_EXPORT
 const char *gf_log_tool_name(GF_LOG_Tool log_tool)
 {
 	if (log_tool>=GF_LOG_TOOL_MAX) return "unknown";
@@ -795,10 +801,22 @@ GF_EXPORT
 void gf_log_lt(GF_LOG_Level ll, GF_LOG_Tool lt)
 {
 }
+
+Bool log_exit_on_error=GF_FALSE;
 GF_EXPORT
 Bool gf_log_set_strict_error(Bool strict)
 {
-	return GF_FALSE;
+	Bool old = log_exit_on_error;
+	log_exit_on_error = strict;
+	return old;
+}
+
+GF_EXPORT
+void gf_log_check_error(GF_LOG_Level loglev, GF_LOG_Tool logtool)
+{
+	if (log_exit_on_error && (loglev==GF_LOG_ERROR) && (logtool != GF_LOG_MEMORY)) {
+		exit(1);
+	}
 }
 
 GF_EXPORT
@@ -907,9 +925,7 @@ const char *gf_error_to_string(GF_Err e)
 		return "Network Unreachable";
 
 	case GF_IP_NETWORK_EMPTY:
-		return "Network Timeout";
-	case GF_IP_SOCK_WOULD_BLOCK:
-		return "Socket Would Block";
+		return "Network Empty";
 	case GF_IP_CONNECTION_CLOSED:
 		return "Connection to server closed";
 	case GF_IP_UDP_TIMEOUT:
@@ -1765,32 +1781,6 @@ const char *gf_lang_get_3cc(u32 idx)
 	return defined_languages[idx].three_char_code;
 }
 
-GF_EXPORT
-GF_Err gf_blob_get(const char *blob_url, u8 **out_data, u32 *out_size, u32 *out_flags)
-{
-	GF_Blob *blob = NULL;
-	if (strncmp(blob_url, "gmem://", 7)) return GF_BAD_PARAM;
-	if (sscanf(blob_url, "gmem://%p", &blob) != 1) return GF_BAD_PARAM;
-	if (!blob) return GF_BAD_PARAM;
-	if (blob->data && blob->mx)
-		gf_mx_p(blob->mx);
-	if (out_data) *out_data = blob->data;
-	if (out_size) *out_size = blob->size;
-	if (out_flags) *out_flags = blob->flags;
-	return GF_OK;
-}
-
-GF_EXPORT
-GF_Err gf_blob_release(const char *blob_url)
-{
-    GF_Blob *blob = NULL;
-    if (strncmp(blob_url, "gmem://", 7)) return GF_BAD_PARAM;
-    if (sscanf(blob_url, "gmem://%p", &blob) != 1) return GF_BAD_PARAM;
-    if (!blob) return GF_BAD_PARAM;
-    if (blob->data && blob->mx)
-        gf_mx_v(blob->mx);
-    return GF_OK;
-}
 
 GF_EXPORT
 GF_Err gf_dynstrcat(char **str, const char *to_append, const char *sep)
@@ -1839,7 +1829,7 @@ Bool gf_parse_lfrac(const char *value, GF_Fraction64 *frac)
 	sep = strchr(value, '.');
 	if (!sep) sep = strchr(value, ',');
 	if (!sep) {
-		frac->num = atoi(value);
+		frac->num = atol(value);
 		frac->den = 1;
 		return GF_TRUE;
 	}

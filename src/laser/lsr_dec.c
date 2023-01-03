@@ -300,11 +300,21 @@ static void lsr_read_extension(GF_LASeRCodec *lsr, const char *name)
 
 static void lsr_read_extend_class(GF_LASeRCodec *lsr, char **out_data, u32 *out_len, const char *name)
 {
-	u32 len;
+	u32 len, blen;
 	GF_LSR_READ_INT(lsr, len, lsr->info->cfg.extensionIDBits, "reserved");
 	len = lsr_read_vluimsbf5(lsr, "len");
-//	while (len) gf_bs_read_int(lsr->bs, 1);
-	gf_bs_read_long_int(lsr->bs, len);
+	while (len && !gf_bs_is_align(lsr->bs)) {
+		gf_bs_read_int(lsr->bs, len);
+		len--;
+	}
+	blen = len / 8;
+	gf_bs_skip_bytes(lsr->bs, blen);
+	len -= blen*8;
+
+	while (len) {
+		gf_bs_read_int(lsr->bs, 1);
+		len--;
+	}
 	if (out_data) *out_data = NULL;
 	if (out_len) *out_len = 0;
 }
@@ -810,7 +820,11 @@ static void lsr_read_id(GF_LASeRCodec *lsr, GF_Node *n)
 			if (gf_node_get_attribute_by_tag(listener, TAG_XMLEV_ATT_event, GF_FALSE, GF_FALSE, &info) == GF_OK) {
 				XMLEV_Event *ev = (XMLEV_Event *)info.far_ptr;
 				/*all non-UI get attched to root*/
-				if (ev && (ev->type>GF_EVENT_MOUSEWHEEL)) {
+				if (ev
+					&& (ev->type > GF_EVENT_MOUSEWHEEL)
+					&& (ev->type!=GF_EVENT_MOUSEOUT)
+					&& (ev->type!=GF_EVENT_MOUSEOVER)
+				) {
 					par = (GF_Node*) lsr->current_root;
 				}
 			}
@@ -838,9 +852,16 @@ static void lsr_read_id(GF_LASeRCodec *lsr, GF_Node *n)
 
 static Fixed lsr_translate_coords(GF_LASeRCodec *lsr, u32 val, u32 nb_bits)
 {
+	if (!nb_bits) return 0;
+	if (nb_bits>=32) return 0;
+
 #ifdef GPAC_FIXED_POINT
 	if (val >> (nb_bits-1) ) {
-		s32 neg = (s32) val - (1<<nb_bits);
+		s32 neg;
+		if (nb_bits == 31)
+			neg = (s32)val - 0x80000000;
+		else
+			neg = (s32)val - (1 << nb_bits);
 		if (neg < -FIX_ONE / 2)
 			return 2 * gf_divfix(INT2FIX(neg/2), lsr->res_factor);
 		return gf_divfix(INT2FIX(neg), lsr->res_factor);
@@ -851,10 +872,14 @@ static Fixed lsr_translate_coords(GF_LASeRCodec *lsr, u32 val, u32 nb_bits)
 	}
 #else
 	if (val >> (nb_bits-1) ) {
-		s32 neg = (s32) val - (1<<nb_bits);
-		return gf_divfix(INT2FIX(neg), lsr->res_factor);
+		s32 neg;
+		if (nb_bits == 31)
+			neg = (s32)val - 0x80000000;
+		else
+			neg = (s32)val - (1 << nb_bits);
+		return ((Fixed)neg) / lsr->res_factor;
 	} else {
-		return gf_divfix(INT2FIX(val), lsr->res_factor);
+		return ((Fixed)val) / lsr->res_factor;
 	}
 #endif
 }
@@ -862,8 +887,12 @@ static Fixed lsr_translate_coords(GF_LASeRCodec *lsr, u32 val, u32 nb_bits)
 static Fixed lsr_translate_scale(GF_LASeRCodec *lsr, u32 val)
 {
 	if (val >> (lsr->coord_bits-1) ) {
-		s32 v = val - (1<<lsr->coord_bits);
-		return INT2FIX(v) / 256 ;
+		s32 neg;
+		if (lsr->coord_bits >= 31)
+			neg = (s32)val - 0x80000000;
+		else
+			neg = (s32)val - (1 << lsr->coord_bits);
+		return INT2FIX(neg) / 256 ;
 	} else {
 		return INT2FIX(val) / 256;
 	}
@@ -4418,7 +4447,10 @@ static GF_Node *lsr_read_listener(GF_LASeRCodec *lsr, SVG_Element *parent)
 		/*FIXME - double check with XML events*/
 		if (!par && !observer) {
 			/*all non-UI get attched to root*/
-			if (ev && (ev->type>GF_EVENT_MOUSEWHEEL)) {
+			if (ev && (ev->type > GF_EVENT_MOUSEWHEEL)
+				&& (ev->type!=GF_EVENT_MOUSEOUT)
+				&& (ev->type!=GF_EVENT_MOUSEOVER)
+			) {
 				par = (SVG_Element*) lsr->current_root;
 			}
 			else if (parent) par = parent;

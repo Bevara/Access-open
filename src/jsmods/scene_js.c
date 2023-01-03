@@ -37,7 +37,6 @@
 
 #include <gpac/download.h>
 #include <gpac/network.h>
-#include <gpac/options.h>
 #include <gpac/xml.h>
 
 
@@ -46,7 +45,6 @@
 #include "../scenegraph/qjs_common.h"
 
 #include <gpac/internal/compositor_dev.h>
-#include <gpac/term_info.h>
 
 typedef struct
 {
@@ -149,6 +147,7 @@ enum {
 	GJS_SCENE_PROP_HAS_OPENGL,
 	GJS_SCENE_PROP_ZOOM,
 	GJS_SCENE_PROP_TEXT_SEL,
+	GJS_SCENE_PROP_DISP_ORIENTATION,
 
 };
 
@@ -259,7 +258,6 @@ static JSValue scenejs_getProperty(JSContext *ctx, JSValueConst this_val, int pr
 			return JS_NewInt32(ctx, compositor->osize.y);
 		return JS_NewInt32(ctx, compositor->video_out->max_screen_height);
 
-
 	case GJS_SCENE_PROP_FPS:
 		return JS_NewFloat64(ctx, gf_sc_get_fps(compositor, 0) );
 
@@ -277,6 +275,9 @@ static JSValue scenejs_getProperty(JSContext *ctx, JSValueConst this_val, int pr
 
 	case GJS_SCENE_PROP_SENSORS_ACTIVE:
 		return JS_NewBool(ctx, compositor->orientation_sensors_active);
+
+	case GJS_SCENE_PROP_FOCUS_HIGHLIGHT:
+		return JS_NewBool(ctx, !compositor->disable_focus_highlight);
 
 	case GJS_SCENE_PROP_ZOOM:
 		if (compositor->root_scene && compositor->root_scene->graph->script_action) {
@@ -297,6 +298,10 @@ static JSValue scenejs_getProperty(JSContext *ctx, JSValueConst this_val, int pr
 		str = (char *) gf_sc_get_selected_text(compositor);
 		if (!str) str = "";
 		return JS_NewString(ctx, str);
+
+
+	case GJS_SCENE_PROP_DISP_ORIENTATION:
+		return JS_NewInt32(ctx, compositor->disp_ori);
 	}
 	return JS_UNDEFINED;
 }
@@ -355,7 +360,7 @@ static JSValue scenejs_setProperty(JSContext *ctx, JSValueConst this_val, JSValu
 		gf_sc_set_option(compositor, GF_OPT_NAVIGATION_TYPE, 0);
 		break;
 	case GJS_SCENE_PROP_FOCUS_HIGHLIGHT:
-		compositor->disable_focus_highlight = JS_ToBool(ctx, value);
+		compositor->disable_focus_highlight = !JS_ToBool(ctx, value);
 		break;
 	case GJS_SCENE_PROP_SENSORS_ACTIVE:
 	{
@@ -370,6 +375,16 @@ static JSValue scenejs_setProperty(JSContext *ctx, JSValueConst this_val, JSValu
 			compositor->orientation_sensors_active = GF_FALSE;
 		}
 	}
+		break;
+	case GJS_SCENE_PROP_DISP_ORIENTATION:
+		if (JS_ToInt32(ctx, &ival, value)) return GF_JS_EXCEPTION(ctx);
+		if (compositor->video_out && compositor->video_out->ProcessEvent) {
+			GF_Event evt;
+			memset(&evt, 0, sizeof(GF_Event));
+			evt.size.type = GF_EVENT_SET_ORIENTATION;
+			evt.size.orientation = ival;
+			compositor->video_out->ProcessEvent(compositor->video_out, &evt);
+		}
 		break;
 	}
 	return JS_UNDEFINED;
@@ -395,7 +410,7 @@ static JSValue scenejs_get_option(JSContext *ctx, JSValueConst this_val, int arg
 		key_name = JS_ToCString(ctx, argv[1]);
 	}
 
-	if (sec_name && !stricmp(sec_name, "General") && key_name && !strcmp(key_name, "Version")) {
+	if (sec_name && !stricmp(sec_name, "core") && key_name && !strcmp(key_name, "version")) {
 		opt = gf_gpac_version();
 	} else if (sec_name && key_name) {
 		if (!strcmp(sec_name, "Compositor")) {
@@ -863,8 +878,8 @@ static JSValue odm_getProperty(JSContext *ctx, JSValueConst this_val, int magic)
 		} else if (scene->main_addon_selected) {
 			GF_Clock *ck = scene->root_od->ck;
 			if (ck) {
-				u32 now = gf_clock_time(ck) ;
-				u32 live = scene->obj_clock_at_main_activation + gf_sys_clock() - scene->sys_clock_at_main_activation;
+				u64 now = gf_clock_time_absolute(ck) ;
+				u64 live = scene->obj_clock_at_main_activation + gf_sys_clock() - scene->sys_clock_at_main_activation;
 				dval = ((Double) live) / 1000.0;
 				dval -= ((Double) now) / 1000.0;
 
@@ -959,7 +974,7 @@ static JSValue odm_getProperty(JSContext *ctx, JSValueConst this_val, int magic)
 			GF_ObjectManager *an_odm = gf_list_get(scene->resources, i);
 			if (an_odm && an_odm->addon && (an_odm->addon->addon_type==GF_ADDON_TYPE_MAIN)) {
 				if (an_odm->duration) {
-					Double now = gf_clock_time(scene->root_od->ck) / 1000.0;
+					Double now = gf_clock_time_absolute(scene->root_od->ck) / 1000.0;
 					now -= ((Double) an_odm->addon->media_pts) / 90000.0;
 					now += ((Double) an_odm->addon->media_timestamp) / an_odm->addon->media_timescale;
 					return JS_NewFloat64(ctx, now);
@@ -1367,6 +1382,33 @@ static JSValue gjs_odm_declare_addon(JSContext *ctx, JSValueConst this_val, int 
 	return JS_UNDEFINED;
 }
 
+static JSValue gjs_odm_get_chapters(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	GF_ObjectManager *odm = JS_GetOpaque(this_val, odm_class_id);
+	if (!odm) return GF_JS_EXCEPTION(ctx);
+
+	if (odm->subscene) odm = gf_list_get(odm->subscene->resources, 0);
+	if (!odm || ! odm->pid) return JS_NULL;
+
+	const GF_PropertyValue *times = gf_filter_pid_get_property(odm->pid, GF_PROP_PID_CHAP_TIMES);
+	const GF_PropertyValue *names = gf_filter_pid_get_property(odm->pid, GF_PROP_PID_CHAP_NAMES);
+	if (!times || !names || (times->value.uint_list.nb_items!=times->value.string_list.nb_items))
+		return JS_NULL;
+
+	JSValue ret = JS_NewArray(ctx);
+	u32 i, count=times->value.uint_list.nb_items;
+	for (i=0; i<count; i++) {
+		char *name;
+		JSValue obj = JS_NewObject(ctx);
+		JS_SetPropertyStr(ctx, obj, "start", JS_NewInt32(ctx, times->value.uint_list.vals[i]));
+		name = names->value.string_list.vals[i];
+		if (!name) name = "";
+		JS_SetPropertyStr(ctx, obj, "name", JS_NewString(ctx, name));
+		JS_SetPropertyUint32(ctx, ret, i, obj);
+	}
+	return ret;
+}
+
 static JSValue scenejs_get_object_manager(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
 	JSValue anobj;
@@ -1401,6 +1443,15 @@ static JSValue scenejs_get_object_manager(JSContext *ctx, JSValueConst this_val,
 				if (!strncmp(an_url, "file://", 7)) an_url = an_url + 7;
 				if (!strncmp(an_url, url, url_len))
 					break;
+
+				if (strstr(an_url, "://")) {
+					char *pc_url = gf_url_percent_encode(an_url);
+					if (!strncmp(pc_url, url, url_len)) {
+						gf_free(pc_url);
+						break;
+					}
+					gf_free(pc_url);
+				}
 			}
 			odm = NULL;
 		}
@@ -1693,6 +1744,7 @@ static const JSCFunctionListEntry scenejs_funcs[] = {
 	JS_CGETSET_MAGIC_DEF("sensors_active", scenejs_getProperty, scenejs_setProperty, GJS_SCENE_PROP_SENSORS_ACTIVE),
 	JS_CGETSET_MAGIC_DEF("zoom", scenejs_getProperty, NULL, GJS_SCENE_PROP_ZOOM),
 	JS_CGETSET_MAGIC_DEF("text_selection", scenejs_getProperty, NULL, GJS_SCENE_PROP_TEXT_SEL),
+	JS_CGETSET_MAGIC_DEF("orientation", scenejs_getProperty, scenejs_setProperty, GJS_SCENE_PROP_DISP_ORIENTATION),
 	JS_CFUNC_DEF("get_option", 0, scenejs_get_option),
 	JS_CFUNC_DEF("set_option", 0, scenejs_set_option),
 	JS_CFUNC_DEF("set_size", 0, scenejs_set_size),
@@ -1778,6 +1830,7 @@ static const JSCFunctionListEntry odm_funcs[] = {
 	JS_CFUNC_DEF("select", 0, gjs_odm_select),
 	JS_CFUNC_DEF("get_srd", 0, gjs_odm_get_srd),
 	JS_CFUNC_DEF("in_parent_chain", 0, gjs_odm_in_parent_chain),
+	JS_CFUNC_DEF("get_chapters", 0, gjs_odm_get_chapters),
 };
 
 #include "../filter_core/filter_session.h"

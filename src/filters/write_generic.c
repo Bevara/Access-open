@@ -31,8 +31,6 @@
 
 #include <gpac/internal/isomedia_dev.h>
 
-#ifndef GPAC_DISABLE_CORE_TOOLS
-
 enum
 {
 	DECINFO_NO=0,
@@ -88,6 +86,9 @@ typedef struct
 	Bool need_ttxt_footer;
 	u8 *write_buf;
 	u32 write_alloc;
+
+	Bool unframe_only;
+	Bool vc1_ilaced;
 } GF_GenDumpCtx;
 
 
@@ -390,8 +391,20 @@ GF_Err writegen_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 				if (!strcmp(szExt, "wav")) {
 					ctx->is_wav = GF_TRUE;
 					//request PCMs16 ?
-//					ctx->target_afmt = GF_AUDIO_FMT_S16;
-					ctx->target_afmt = sfmt;
+					switch (sfmt) {
+					case GF_AUDIO_FMT_FLTP:
+						ctx->target_afmt = GF_AUDIO_FMT_FLT;
+						break;
+					case GF_AUDIO_FMT_FLT:
+					case GF_AUDIO_FMT_S16:
+					case GF_AUDIO_FMT_S24:
+					case GF_AUDIO_FMT_S32:
+						ctx->target_afmt = sfmt;
+						break;
+					default:
+						ctx->target_afmt = GF_AUDIO_FMT_S16;
+						break;
+					}
 				} else {
 					ctx->target_afmt = gf_audio_fmt_parse(szExt);
 					strcpy(szExt, gf_audio_fmt_sname(ctx->target_afmt));
@@ -478,6 +491,12 @@ GF_Err writegen_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DURATION);
 	if (p && (p->value.lfrac.num>0)) ctx->duration = p->value.lfrac;
+
+	if (ctx->unframe_only) {
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE));
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, &PROP_UINT(stype));
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, &PROP_UINT(cid));
+	}
 
 	gf_filter_pid_set_framing_mode(pid, GF_TRUE);
 	return GF_OK;
@@ -644,7 +663,11 @@ static void writegen_write_wav_header(GF_GenDumpCtx *ctx)
 
 	gf_bs_write_data(ctx->bs, subchunk1ID, 4);
 	gf_bs_write_u32_le(ctx->bs, 16); //subchunk1 size
-	gf_bs_write_u16_le(ctx->bs, 1); //audio format
+	//audio format
+	if (afmt==GF_AUDIO_FMT_FLT)
+		gf_bs_write_u16_le(ctx->bs, 3);
+	else
+		gf_bs_write_u16_le(ctx->bs, 1);
 	gf_bs_write_u16_le(ctx->bs, nb_ch);
 	gf_bs_write_u32_le(ctx->bs, sample_rate);
 	gf_bs_write_u32_le(ctx->bs, sample_rate * nb_ch * bps / 8); //byte rate
@@ -670,6 +693,7 @@ GF_XMLAttribute *ttml_get_attr(GF_XMLNode *node, char *name)
 	}
 	return NULL;
 }
+
 static GF_XMLNode *ttml_locate_div(GF_XMLNode *body, const char *region_name, u32 div_idx)
 {
 	u32 i=0, loc_div_idx=0;
@@ -689,6 +713,17 @@ static GF_XMLNode *ttml_locate_div(GF_XMLNode *body, const char *region_name, u3
 	}
 	if (region_name) {
 		return ttml_locate_div(body, NULL, div_idx);
+	}
+	return NULL;
+}
+
+static GF_XMLNode *ttml_get_head(GF_XMLNode *root)
+{
+	u32 i=0;
+	GF_XMLNode *child;
+	while (root && (child = gf_list_enum(root->content, &i)) ) {
+		if (child->type) continue;
+		if (!strcmp(child->name, "head")) return child;
 	}
 	return NULL;
 }
@@ -721,6 +756,31 @@ static Bool ttml_same_attr(GF_XMLNode *n1, GF_XMLNode *n2)
 		if (!found) return GF_FALSE;
 	}
 	return GF_TRUE;
+}
+
+static void ttml_merge_head(GF_XMLNode *node_src, GF_XMLNode *node_dst)
+{
+	u32 i=0;
+	GF_XMLNode *child_src;
+	while ( (child_src = gf_list_enum(node_src->content, &i)) ) {
+		Bool found = GF_FALSE;
+		u32 j=0;
+		GF_XMLNode *child_dst;
+		while ( (child_dst = gf_list_enum(node_dst->content, &j)) ) {
+			if (!strcmp(child_src->name, child_dst->name) && ttml_same_attr(child_dst, child_src)) {
+				found = GF_TRUE;
+				break;
+			}
+		}
+		if (found) {
+			ttml_merge_head(child_src, child_dst);
+			continue;
+		}
+		i--;
+		gf_list_rem(node_src->content, i);
+		gf_list_add(node_dst->content, child_src);
+	}
+	return;
 }
 
 static GF_Err ttml_embed_data(GF_XMLNode *node, u8 *aux_data, u32 aux_data_size, u8 *subs_data, u32 subs_data_size)
@@ -858,7 +918,7 @@ static GF_Err writegen_push_ttml(GF_GenDumpCtx *ctx, char *data, u32 data_size, 
 	GF_DOMParser *dom;
 	u32 txt_size, nb_children;
 	u32 i, k, div_idx;
-	GF_XMLNode *root_pck, *p_global, *p_pck, *body_pck, *body_global;
+	GF_XMLNode *root_pck, *root_global, *p_global, *p_pck, *body_pck, *body_global, *head_pck, *head_global;
 
 	if (subs) {
 		if (subs->value.data.size < 14)
@@ -898,14 +958,36 @@ static GF_Err writegen_push_ttml(GF_GenDumpCtx *ctx, char *data, u32 data_size, 
 		if (e) goto exit;
 	}
 
+	//if previous root is empty, reset - we do this in 2 passes so that single-sample emty ttml can be dumped
+	if (ctx->ttml_root && (gf_list_count(ctx->ttml_root->content)==0)) {
+		gf_xml_dom_node_del(ctx->ttml_root);
+		ctx->ttml_root = NULL;
+	}
 	if (!ctx->ttml_root) {
 		ctx->ttml_root = gf_xml_dom_detach_root(dom);
 		goto exit;
 	}
+	root_global = ctx->ttml_root;
 
+	head_global = ttml_get_head(root_global);
+	head_pck = ttml_get_head(root_pck);
+	if (head_pck) {
+		if (!head_global) {
+			gf_list_del_item(root_pck->content, head_pck);
+			gf_list_add(root_global->content, head_pck);
+		} else {
+			ttml_merge_head(head_pck, head_global);
+		}
+	}
 
 	body_pck = ttml_get_body(root_pck);
-	body_global = ttml_get_body(ctx->ttml_root);
+	body_global = ttml_get_body(root_global);
+	if (body_pck && !body_global) {
+		gf_list_del_item(root_pck->content, body_pck);
+		gf_list_add(root_global->content, body_pck);
+		goto exit;
+	}
+
 	div_idx = 0;
 	nb_children = body_pck ? gf_list_count(body_pck->content) : 0;
 	for (k=0; k<nb_children; k++) {
@@ -1047,6 +1129,7 @@ static GF_Err writegen_flush_ttxt(GF_GenDumpCtx *ctx)
 #include <gpac/webvtt.h>
 static void webvtt_timestamps_dump(GF_BitStream *bs, u64 start_ts, u64 end_ts, u32 timescale, Bool write_srt)
 {
+#ifndef GPAC_DISABLE_VTT
 	char szTS[200];
 	szTS[0] = 0;
 	GF_WebVTTTimestamp start, end;
@@ -1074,6 +1157,7 @@ static void webvtt_timestamps_dump(GF_BitStream *bs, u64 start_ts, u64 end_ts, u
 	}
 	sprintf(szTS, "%02u:%02u%c%03u", end.min, end.sec, write_srt ? ',' : '.', end.ms);
 	gf_bs_write_data(bs, szTS, (u32) strlen(szTS) );
+#endif
 }
 
 GF_Err writegen_process(GF_Filter *filter)
@@ -1165,7 +1249,9 @@ GF_Err writegen_process(GF_Filter *filter)
 			gf_filter_pck_set_readonly(dst_pck);
 		}
 		gf_filter_pck_merge_properties(pck, dst_pck);
-		gf_filter_pck_set_framing(dst_pck, ctx->first, GF_FALSE);
+		if (!ctx->unframe_only)
+			gf_filter_pck_set_framing(dst_pck, ctx->first, GF_FALSE);
+
 		if (ctx->first) {
 			gf_filter_pck_set_property(dst_pck, GF_PROP_PCK_FILENUM, &PROP_UINT(ctx->sample_num) );
 			ctx->sample_num--;
@@ -1387,7 +1473,8 @@ GF_Err writegen_process(GF_Filter *filter)
 		gf_filter_pck_set_framing(dst_pck, ctx->first, ctx->need_ttxt_footer ? GF_FALSE : GF_TRUE);
 		ctx->first = GF_TRUE;
 	} else {
-		gf_filter_pck_set_framing(dst_pck, ctx->first, GF_FALSE);
+		if (!ctx->unframe_only)
+			gf_filter_pck_set_framing(dst_pck, ctx->first, GF_FALSE);
 		ctx->first = GF_FALSE;
 	}
 
@@ -1458,7 +1545,7 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MVC),
 	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "264|h264|avc|svc|mvc"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "264|h264|avc|svc|mvc|26l|h26l"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "video/avc|video/h264|video/svc|video/mvc"),
 	{0},
 
@@ -1468,7 +1555,7 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_LHVC),
 	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "265|h265|hvc|hevc|shvc|lhvc"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "265|h265|hvc|hevc|shvc|mhvc|lhvc"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "video/hevc|video/lhvc|video/shvc|video/mhvc"),
 	{0},
 
@@ -1488,7 +1575,7 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_MPEG4_PART2),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
-	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "cmp|m4ve|m4v"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "cmp|m4v"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "video/mp4v-es"),
 	{0},
 
@@ -1611,7 +1698,7 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AMR),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_AMR_WB),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "amr"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "amr|awb"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/amr"),
 	{0},
 
@@ -1682,7 +1769,7 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_QCELP),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "qcelp"),
-	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/qcelp"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/x-qcelp"),
 	{0},
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_THEORA),
@@ -1711,6 +1798,12 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "mhas"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/mpegh"),
 	{0},
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_SMPTE_VC1),
+	CAP_BOOL(GF_CAPS_INPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "vc1"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "video/vc1"),
+	{0},
 
 	//we accept unframed VVC (annex B format)
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
@@ -1724,7 +1817,7 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_TRUEHD),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "mlp"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "mlp|thd|truehd"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/truehd"),
 	{0},
 
@@ -1741,6 +1834,17 @@ static GF_FilterCapability GenDumpCaps[] =
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "y4m"),
 	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "video/x-yuv4mpeg"),
+	{0},
+
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_DTS_CA),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_DTS_X),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_DTS_HD_HR),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_DTS_HD_MASTER),
+	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_DTS_LBR),
+	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_FILE_EXT, "dts"),
+	CAP_STRING(GF_CAPS_OUTPUT, GF_PROP_PID_MIME, "audio/dts"),
 	{0},
 
 	//anything else: only for explicit dump (filter loaded on purpose), otherwise don't load for filter link resolution
@@ -1831,7 +1935,8 @@ GF_FilterRegister GenDumpRegister = {
 	.finalize = writegen_finalize,
 	SETCAPS(GenDumpCaps),
 	.configure_pid = writegen_configure_pid,
-	.process = writegen_process
+	.process = writegen_process,
+	.flags = GF_FS_REG_TEMP_INIT
 };
 
 static const GF_FilterCapability FrameDumpCaps[] =
@@ -1867,4 +1972,39 @@ const GF_FilterRegister *writegen_register(GF_FilterSession *session)
 	return &GenDumpRegister;
 }
 
-#endif /*GPAC_DISABLE_CORE_TOOLS*/
+
+static GF_Err writeuf_initialize(GF_Filter *filter)
+{
+	GF_GenDumpCtx *ctx = gf_filter_get_udta(filter);
+	ctx->unframe_only = GF_TRUE;
+	return GF_OK;
+}
+
+/* writeuf: same as writegen but declare unframed output cap rather than mime / ext , used to force unframed format for all streams handled by writegen */
+static GF_FilterCapability GenDumpXCaps[] =
+{
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT|GF_CAPFLAG_EXCLUDED, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_UINT(GF_CAPS_INPUT_OUTPUT|GF_CAPFLAG_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_NONE),
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_BOOL(GF_CAPS_OUTPUT, GF_PROP_PID_UNFRAMED, GF_TRUE),
+	//prevent connection of this filter to file outputs, we only connect to unframer or all reframers
+	CAP_STRING(GF_CAPS_OUTPUT|GF_CAPFLAG_OPTIONAL, GF_PROP_PID_FILE_EXT, "__ignore"),
+};
+
+
+const GF_FilterRegister WriteUFRegister = {
+	.name = "writeuf",
+	GF_FS_SET_DESCRIPTION("Stream to unframed format")
+	GF_FS_SET_HELP("Generic single stream to unframed format converter, used when converting PIDs. This filter should not be explicitly loaded.\n")
+	.private_size = sizeof(GF_GenDumpCtx),
+	.initialize = writeuf_initialize,
+	.finalize = writegen_finalize,
+	SETCAPS(GenDumpXCaps),
+	.configure_pid = writegen_configure_pid,
+	.process = writegen_process
+};
+const GF_FilterRegister *writeuf_register(GF_FilterSession *session)
+{
+
+	return &WriteUFRegister;
+}

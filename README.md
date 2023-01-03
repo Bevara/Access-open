@@ -24,9 +24,10 @@
 
 
 # GPAC Introduction
-Current version: 2.1-DEV
 
-Latest Release: 2.0
+Current version: 2.3-DEV
+
+Latest Release: 2.2
 
 GPAC is an open-source multimedia framework focused on modularity and standards compliance.
 GPAC provides tools to process, inspect, package, stream, playback and interact with media content. Such content can be any combination of audio, video, subtitles, metadata, scalable graphics, encrypted media, 2D/3D graphics and ECMAScript.
@@ -34,7 +35,7 @@ GPAC is best-known for its wide MP4/ISOBMFF capabilities and is popular among vi
 
 For more information, visit [GPAC website](http://gpac.io)
 
-GPAC is distributed under the LGPL v2.1 or later, and is also available, for most of it, under a [commercial license](https://www.gpac-licensing.com).
+GPAC is distributed under the LGPL v2.1 or later, and is also available, for most of it, under a [commercial license](https://www.motionspell.com/gpac-licensing).
 
 Please ! _cite_ ! our work in your research:
 - "GPAC Filters" (https://doi.org/10.1145/3339825.3394929) for recent versions (0.9 or above) 
@@ -70,17 +71,8 @@ MP4Box is a multi-purpose MP4 file manipulation for the prompt, featuring media 
 
 
 ## gpac 
-GPAC includes a filter engine in charge of stream management and used by most applications in GPAC - [read this post](https://wiki.gpac.io/Rearchitecture) for more discussion on how this impacts MP4Box and MP4Client.
+GPAC includes a filter engine in charge of stream management and used by most applications in GPAC - [read this post](https://wiki.gpac.io/Rearchitecture) for more discussion on how this impacts MP4Box.
 The gpac application is a direct interface to the filter engine of GPAC, allowing any combinaison of filters not enabled by other applications. See `gpac -h`, `man gpac`, `man gpac-filters` or [our wiki](https://wiki.gpac.io/Filters) for more details.
-
-## MP4Client (deprecated)
-MP4Client is a media player built upon libgpac, featuring a rich media interactive composition engine with MPEG-4 BIFS, SVG, VRML/X3D support.
-For GPAC configuration instruction, check `MP4Client -h` ,  `man MP4Client` or [our wiki](https://wiki.gpac.io/mp4client).
-
-__Warning__
-MP4Client is deprecated and will be removed in the next release. Start modifying your scripts:
-- replace `MP4Client URL` with `gpac -play URL` (audio/video playback only) or `gpac -mp4c URL` (if compositor is needed)
-- replace `MP4Client -gui URL` with `gpac -gui URL`.
 
 # Getting started
 ## Download
@@ -122,18 +114,10 @@ GPAC has a peculiar story: started as a startup in NYC, GPAC gained traction fro
 # Roadmap
 Users are encouraged to use the latest tag or the master branch.
 
-The v0.8.X release (the last one using the legacy architecture) is officially deprecated.
-
 ## V2.X
 Targets:
-- [ ] drop MP4Client and GF_Terminal API
-- [ ] User authentication for HTTP and RTSP servers
-- [ ] DASH event support
 - [ ] Web integration (emscripten, Remotery UI)
+- [ ] DASH event support
 - [ ] Better TTML2 / SMPTE ST 2052-1 support
-- [ ] configure buffer level per filter
 - [ ] GUI cleanup ?
-- [ ] deprecate `:filemode` in ROUTE
-- [ ] support ClearKey Content Protection (CCP)
-- [ ] FFMPEG subtitle support
 

@@ -28,6 +28,8 @@
 #include <gpac/internal/media_dev.h>
 #include <gpac/mpeg4_odf.h>
 
+#ifndef GPAC_DISABLE_AV_PARSERS
+
 typedef struct
 {
 	GF_FilterPid *opid;
@@ -744,6 +746,12 @@ restart:
 						return GF_OUT_OF_MEM;
 					}
 					memcpy(vvcc_out, vvcc, sizeof(GF_VVCConfig));
+					vvcc_out->general_constraint_info = gf_malloc(sizeof(u8)*vvcc_out->num_constraint_info);
+					if (!vvcc_out->general_constraint_info) {
+						gf_odf_vvc_cfg_del(vvcc);
+						return GF_OUT_OF_MEM;
+					}
+					memcpy(vvcc_out->general_constraint_info, vvcc->general_constraint_info, sizeof(u8)*vvcc_out->num_constraint_info);
 					vvcc_out->param_array = gf_list_new();
 					if (!vvcc_out->param_array) {
 						gf_odf_vvc_cfg_del(vvcc);
@@ -1481,7 +1489,13 @@ GF_FilterRegister BSSplitRegister = {
 	.process = bs_split_process
 };
 
+#endif
+
 const GF_FilterRegister *bs_split_register(GF_FilterSession *session)
 {
+#ifndef GPAC_DISABLE_AV_PARSERS
 	return (const GF_FilterRegister *) &BSSplitRegister;
+#else
+	return NULL;
+#endif
 }

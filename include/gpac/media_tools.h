@@ -86,12 +86,13 @@ GF_ESD *gf_media_map_item_esd(GF_ISOFile *mp4, u32 item_id);
  * Get RFC 6381 description for a given track.
 \param isom_file source ISOBMF file
 \param trackNumber track to check
+ \param sample_desc_index sample description index to check
 \param szCodec a pointer to an already allocated string of size RFC6381_CODEC_NAME_SIZE_MAX bytes.
 \param force_inband_xps force inband signaling of parameter sets.
 \param force_sbr forces using explicit signaling for SBR.
 \return error if any.
  */
-GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *isom_file, u32 trackNumber, char *szCodec, Bool force_inband_xps, Bool force_sbr);
+GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *isom_file, u32 trackNumber, u32 sample_desc_index, char *szCodec, Bool force_inband_xps, Bool force_sbr);
 #endif
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
@@ -148,6 +149,15 @@ void gf_media_update_bitrate(GF_ISOFile *isom_file, u32 trackNumber);
 \return error if any
 */
 GF_Err gf_media_av1_layer_size_get(GF_ISOFile *isom_file, u32 trackNumber, u32 sample_number, u8 op_index, u32 layer_size[3]);
+
+
+/*! sets keys from name and value, as defined in MP4Box -h tags
+\param isom_file the target ISO file
+\param name the tag name
+\param value the tag value
+\return error if any
+*/
+GF_Err gf_media_isom_apply_qt_key(GF_ISOFile *isom_file, const char *name, const char *value);
 
 #endif
 
@@ -719,12 +729,14 @@ typedef enum
 	GF_DASH_BSMODE_INBAND,
 	/*! out of band parameter sets except PPS and APS, used for VVC */
 	GF_DASH_BSMODE_INBAND_PPS,
+	/*! both inband and out of band parameter sets */
+	GF_DASH_BSMODE_BOTH, //Romain
 	/*! attempts to merge parameter sets in a single sample entry */
 	GF_DASH_BSMODE_MERGED,
 	/*! parameter sets are in different sample entries */
 	GF_DASH_BSMODE_MULTIPLE_ENTRIES,
 	/*! forces GF_DASH_BSMODE_INBAND even if only one file is used*/
-	GF_DASH_BSMODE_SINGLE
+	GF_DASH_BSMODE_SINGLE,
 } GF_DashSwitchingMode;
 
 
@@ -1220,7 +1232,7 @@ typedef struct __track_exporter
 	FILE *dump_file;
 	/*! filter session dump flags*/
 	u32 print_stats_graph;
-	/*! track type: 0: none specified, 1: video, 2: audio*/
+	/*! track type: 0: none specified, 1: video, 2: audio, 3: text*/
 	u32 track_type;
 } GF_MediaExporter;
 
@@ -1232,7 +1244,7 @@ typedef struct __track_exporter
 GF_Err gf_media_export(GF_MediaExporter *dump);
 
 #ifndef GPAC_DISABLE_VTT
-/*! dumps a webvtt tracl to a given file
+/*! dumps a webvtt track to a given file
 \param dumper media dumper object
 \param trackNumber the target track to dump
 \param merge if GF_TRUE, merge vtt cues while dumping them

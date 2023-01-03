@@ -24,7 +24,6 @@
 */
 
 #include "sdl_out.h"
-#include <gpac/user.h>
 
 #ifdef WIN32
 #include <windows.h>
@@ -486,6 +485,10 @@ GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 		flags = SDL_GL_WINDOW_FLAGS;
 		if (ctx->os_handle) flags &= ~SDL_WINDOW_RESIZABLE;
 		if (ctx->fullscreen) flags |= SDL_FULLSCREEN_FLAGS;
+#ifdef GPAC_CONFIG_IOS
+		flags |= SDL_FULLSCREEN_FLAGS | SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
+
 #else
 		flags = SDL_GL_WINDOW_FLAGS;
 		if (ctx->os_handle) flags &= ~SDL_RESIZABLE;
@@ -526,8 +529,9 @@ GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 				return GF_IO_ERR;
 			}
 			GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[SDL] Window created\n"));
+			dr->window_id = SDL_GetWindowID(ctx->screen);
 
-#if SDL_VERSION_ATLEAST(2,0,0) && !defined(GPAC_CONFIG_IOS)
+#if !defined(GPAC_CONFIG_IOS)
 			SDLVid_SetIcon(ctx);
 #endif
 
@@ -557,6 +561,27 @@ GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 			}
 			hw_reset = GF_TRUE;
 		}
+
+		if (flags & SDL_WINDOW_ALLOW_HIGHDPI) {
+			int w, h;
+			SDL_GL_GetDrawableSize(ctx->screen, &w, &h);
+#if SDL_VERSION_ATLEAST(2,0,9)
+			int _h;
+			switch (SDL_GetDisplayOrientation(0)) {
+			case SDL_ORIENTATION_LANDSCAPE:
+			case SDL_ORIENTATION_LANDSCAPE_FLIPPED:
+				break;
+			default:
+				_h = h;
+				h = w;
+				w = _h;
+				break;
+			}
+#endif
+			if ((u32) w > dr->max_screen_width) dr->max_screen_width = w;
+			if ((u32) h > dr->max_screen_height) dr->max_screen_height = h;
+		}
+
 
 		if (!ctx->disable_vsync)
 			ctx->disable_vsync = gf_opts_get_bool("core", "disable-vsync");
@@ -623,6 +648,7 @@ GF_Err SDLVid_ResizeWindow(GF_VideoOutput *dr, u32 width, u32 height)
 				gf_mx_v(ctx->evt_mx);
 				return GF_IO_ERR;
 			}
+			dr->window_id = SDL_GetWindowID(ctx->screen);
 
 #if SDL_VERSION_ATLEAST(2,0,0) && !defined(GPAC_CONFIG_IOS)
 			SDLVid_SetIcon(ctx);
@@ -685,6 +711,10 @@ static void SDLVid_SetCursor(GF_VideoOutput *dr, u32 cursor_type)
 #endif
 }
 
+#include <gpac/list.h>
+static GF_List *video_outputs = NULL;
+static u32 nb_video_outputs=0;
+
 static Bool SDLVid_InitializeWindow(SDLVidCtx *ctx, GF_VideoOutput *dr)
 {
 	u32 flags;
@@ -700,11 +730,18 @@ static Bool SDLVid_InitializeWindow(SDLVidCtx *ctx, GF_VideoOutput *dr)
 	putenv("directx");
 #endif
 
-	flags = SDL_WasInit(SDL_INIT_VIDEO);
-	if (!(flags & SDL_INIT_VIDEO)) {
-		if (SDL_InitSubSystem(SDL_INIT_VIDEO)) {
-			return GF_FALSE;
+	if (!video_outputs) {
+		flags = SDL_WasInit(SDL_INIT_VIDEO);
+		if (!(flags & SDL_INIT_VIDEO)) {
+			if (SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+				return GF_FALSE;
+			}
 		}
+		video_outputs = gf_list_new();
+	}
+	if (gf_list_find(video_outputs, dr)<0) {
+		gf_list_add(video_outputs, dr);
+		nb_video_outputs = gf_list_count(video_outputs);
 	}
 
 	ctx->curs_def = SDL_GetCursor();
@@ -802,13 +839,15 @@ static void SDLVid_ShutdownWindow(SDLVidCtx *ctx)
 {
 	SDLVid_DestroyObjects(ctx);
 	SDLVid_ResetWindow(ctx);
-	SDL_QuitSubSystem(SDL_INIT_VIDEO);
+#if SDL_VERSION_ATLEAST(2,0,0)
+	if (ctx->screen) SDL_DestroyWindow(ctx->screen);
+	ctx->screen = NULL;
+#endif
 }
 
 #if defined SDL_TEXTINPUTEVENT_TEXT_SIZE /*&& !defined GPAC_CONFIG_IOS*/
 #include <gpac/utf.h>
 #endif
-
 
 Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 {
@@ -816,9 +855,53 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 	GF_Event gpac_evt;
 
 #ifdef GPAC_CONFIG_IOS
-	while (SDL_WaitEventTimeout(&sdl_evt, 0)) {
+	while (SDL_WaitEventTimeout(&sdl_evt, 1)) {
 #else
-	while (SDL_PollEvent(&sdl_evt)) {
+	while (1) {
+
+		if (nb_video_outputs>1) {
+			u32 win_id=0;
+			if (!SDL_PollEvent(NULL)) return GF_TRUE;
+			SDL_PeepEvents(&sdl_evt, 1, SDL_PEEKEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
+			switch (sdl_evt.type) {
+			case SDL_WINDOWEVENT: win_id = sdl_evt.window.windowID; break;
+#ifdef SDL_TEXTINPUTEVENT_TEXT_SIZE
+			case SDL_TEXTINPUT: /* Since SDL 1.3, text-input is handled in a specific event */
+				win_id = sdl_evt.text.windowID; break;
+#endif
+			case SDL_KEYDOWN:
+			case SDL_KEYUP:
+				win_id = sdl_evt.key.windowID; break;
+			case SDL_MOUSEMOTION:
+				win_id = sdl_evt.motion.windowID; break;
+			case SDL_MOUSEBUTTONDOWN:
+			case SDL_MOUSEBUTTONUP:
+				win_id = sdl_evt.button.windowID; break;
+			case SDL_MOUSEWHEEL:
+				win_id = sdl_evt.wheel.windowID; break;
+#if SDL_VERSION_ATLEAST(2,0,5)
+			case SDL_DROPFILE:
+				win_id = sdl_evt.drop.windowID; break;
+#endif
+			}
+			//we may get events from destroyed windows still in the queue, flush them
+			if (win_id!=dr->window_id) {
+				Bool found=GF_FALSE;
+				u32 i;
+				for (i=0; i<nb_video_outputs; i++) {
+					GF_VideoOutput *dr2 = gf_list_get(video_outputs, i);
+					if (win_id==dr2->window_id) {
+						found=GF_TRUE;
+						break;
+					}
+				}
+				if (found) return GF_TRUE;
+				else if (win_id) {
+					fprintf(stderr, "Purging event from window id %d\n", win_id);
+				}
+			}
+		}
+		if (!SDL_PollEvent(&sdl_evt)) return GF_TRUE;
 #endif
 
 		switch (sdl_evt.type) {
@@ -827,30 +910,60 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			switch (sdl_evt.window.event) {
 			case SDL_WINDOWEVENT_SIZE_CHANGED:
 				gpac_evt.type = GF_EVENT_SIZE;
+#if SDL_VERSION_ATLEAST(2,0,10) && GPAC_CONFIG_IOS
+				{
+					int w, h;
+					SDL_GL_GetDrawableSize(ctx->screen, &w, &h);
+					gpac_evt.size.width = w;
+					gpac_evt.size.height = h;
+
+					ctx->high_dpi_w = w;
+					ctx->low_dpi_w = sdl_evt.window.data1;
+					ctx->high_dpi_h = h;
+					ctx->low_dpi_h = sdl_evt.window.data2;
+				}
+#else
 				gpac_evt.size.width = sdl_evt.window.data1;
 				gpac_evt.size.height = sdl_evt.window.data2;
+				gpac_evt.size.window_id = dr->window_id;
+#endif
+
+
+#if SDL_VERSION_ATLEAST(2,0,9)
+				switch (SDL_GetDisplayOrientation(0)) {
+				case SDL_ORIENTATION_UNKNOWN: gpac_evt.size.orientation = GF_DISPLAY_MODE_UNKNOWN; break;
+				case SDL_ORIENTATION_LANDSCAPE: gpac_evt.size.orientation = GF_DISPLAY_MODE_LANDSCAPE; break;
+				case SDL_ORIENTATION_LANDSCAPE_FLIPPED: gpac_evt.size.orientation = GF_DISPLAY_MODE_LANDSCAPE_INV; break;
+				case SDL_ORIENTATION_PORTRAIT: gpac_evt.size.orientation = GF_DISPLAY_MODE_PORTRAIT; break;
+				case SDL_ORIENTATION_PORTRAIT_FLIPPED: gpac_evt.size.orientation = GF_DISPLAY_MODE_PORTRAIT_INV; break;
+				}
+#endif
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				break;
 			case SDL_WINDOWEVENT_EXPOSED:
 			case SDL_WINDOWEVENT_SHOWN:
 				gpac_evt.type = GF_EVENT_REFRESH;
+				gpac_evt.show.window_id = dr->window_id;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				break;
 			case SDL_WINDOWEVENT_MOVED:
 				gpac_evt.type = GF_EVENT_MOVE;
 				gpac_evt.move.x = sdl_evt.window.data1;
 				gpac_evt.move.y = sdl_evt.window.data2;
+				gpac_evt.move.window_id = dr->window_id;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				break;
 			case SDL_WINDOWEVENT_CLOSE:
 				memset(&gpac_evt, 0, sizeof(GF_Event));
 				gpac_evt.type = GF_EVENT_QUIT;
+				gpac_evt.show.window_id = dr->window_id;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				return GF_FALSE;
 			case SDL_WINDOWEVENT_MINIMIZED:
 				memset(&gpac_evt, 0, sizeof(GF_Event));
 				gpac_evt.type = GF_EVENT_SHOWHIDE;
 				gpac_evt.show.show_type = 0;
+				gpac_evt.show.window_id = dr->window_id;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				return GF_FALSE;
 			}
@@ -871,6 +984,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 		case SDL_QUIT:
 			memset(&gpac_evt, 0, sizeof(GF_Event));
 			gpac_evt.type = GF_EVENT_QUIT;
+			gpac_evt.show.window_id = 0;
 			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			return GF_FALSE;
 
@@ -886,6 +1000,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 				gpac_evt.type = GF_EVENT_TEXTINPUT;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			}
+			gpac_evt.character.window_id = dr->window_id;
 			break;
 		}
 #endif /* SDL_TEXTINPUTEVENT_TEXT_SIZE */
@@ -893,6 +1008,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 		case SDL_KEYUP:
 			sdl_translate_key(sdl_evt.key.keysym.sym, &gpac_evt.key);
 			gpac_evt.type = (sdl_evt.key.type==SDL_KEYDOWN) ? GF_EVENT_KEYDOWN : GF_EVENT_KEYUP;
+			gpac_evt.key.window_id = dr->window_id;
 			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			if (gpac_evt.key.key_code==GF_KEY_CONTROL) ctx->ctrl_down = (sdl_evt.key.type==SDL_KEYDOWN) ? GF_TRUE : GF_FALSE;
 			else if (gpac_evt.key.key_code==GF_KEY_ALT) ctx->alt_down = (sdl_evt.key.type==SDL_KEYDOWN) ? GF_TRUE : GF_FALSE;
@@ -903,6 +1019,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 				if ((gpac_evt.key.key_code==GF_KEY_ENTER) || (gpac_evt.key.key_code==GF_KEY_BACKSPACE)) {
 					gpac_evt.type = GF_EVENT_TEXTINPUT;
 					gpac_evt.character.unicode_char = (gpac_evt.key.key_code==GF_KEY_ENTER) ? '\r' : '\b';
+					gpac_evt.character.window_id = dr->window_id;
 					dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				}
 			}
@@ -920,6 +1037,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			   ) {
 				gpac_evt.type = GF_EVENT_PASTE_TEXT;
 				gpac_evt.clipboard.text = (char *) SDL_GetClipboardText();
+				gpac_evt.clipboard.window_id = dr->window_id;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 				SDL_free(gpac_evt.clipboard.text);
 			}
@@ -944,6 +1062,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			        && ((sdl_evt.key.keysym.unicode=='\r') || (sdl_evt.key.keysym.unicode=='\n')  || (sdl_evt.key.keysym.unicode=='\b') || (sdl_evt.key.keysym.unicode=='\t') )
 			   ) {
 				gpac_evt.character.unicode_char = sdl_evt.key.keysym.unicode;
+				gpac_evt.character.window_id = dr->window_id;
 				gpac_evt.type = GF_EVENT_TEXTINPUT;
 				dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			}
@@ -951,20 +1070,42 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 #endif
 			break;
 
+		/* rescale mouse event (not multitouch) to highDPI coords - not yet supported in SDL, see https://github.com/libsdl-org/SDL/issues/2999*/
+
 		/*mouse*/
 		case SDL_MOUSEMOTION:
 			ctx->last_mouse_move = SDL_GetTicks();
 			gpac_evt.type = GF_EVENT_MOUSEMOVE;
-			gpac_evt.mouse.x = sdl_evt.motion.x;
-			gpac_evt.mouse.y = sdl_evt.motion.y;
+			gpac_evt.mouse.window_id = dr->window_id;
+
+#if SDL_VERSION_ATLEAST(2,0,0)
+			if (ctx->low_dpi_w && ctx->low_dpi_h) {
+				gpac_evt.mouse.x = (u32) ( (u64) sdl_evt.motion.x * ctx->high_dpi_w / ctx->low_dpi_w);
+				gpac_evt.mouse.y = (u32) ( (u64) sdl_evt.motion.y * ctx->high_dpi_h / ctx->low_dpi_h);
+			} else
+#endif
+			{
+				gpac_evt.mouse.x = sdl_evt.motion.x;
+				gpac_evt.mouse.y = sdl_evt.motion.y;
+			}
+
 			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			break;
 		case SDL_MOUSEBUTTONDOWN:
 		case SDL_MOUSEBUTTONUP:
 			ctx->last_mouse_move = SDL_GetTicks();
-			gpac_evt.mouse.x = sdl_evt.motion.x;
-			gpac_evt.mouse.y = sdl_evt.motion.y;
+#if SDL_VERSION_ATLEAST(2,0,0)
+			if (ctx->low_dpi_w && ctx->low_dpi_h) {
+				gpac_evt.mouse.x = (u32) ( (u64) sdl_evt.motion.x * ctx->high_dpi_w / ctx->low_dpi_w);
+				gpac_evt.mouse.y = (u32) ( (u64) sdl_evt.motion.y * ctx->high_dpi_h / ctx->low_dpi_h);
+			} else
+#endif
+			{
+				gpac_evt.mouse.x = sdl_evt.motion.x;
+				gpac_evt.mouse.y = sdl_evt.motion.y;
+			}
 			gpac_evt.type = (sdl_evt.type==SDL_MOUSEBUTTONUP) ? GF_EVENT_MOUSEUP : GF_EVENT_MOUSEDOWN;
+			gpac_evt.mouse.window_id = dr->window_id;
 			switch (sdl_evt.button.button) {
 			case SDL_BUTTON_LEFT:
 				gpac_evt.mouse.button = GF_MOUSE_LEFT;
@@ -996,6 +1137,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			the wheel was rotated...*/
 			gpac_evt.mouse.wheel_pos = INT2FIX(sdl_evt.wheel.y);
 			gpac_evt.type = GF_EVENT_MOUSEWHEEL;
+			gpac_evt.mouse.window_id = dr->window_id;
 			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			break;
 
@@ -1005,6 +1147,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			gpac_evt.mtouch.num_fingers = sdl_evt.mgesture.numFingers;
 			gpac_evt.mtouch.rotation = sdl_evt.mgesture.dTheta;
 			gpac_evt.mtouch.pinch = sdl_evt.mgesture.dDist;
+			gpac_evt.mtouch.window_id = dr->window_id;
 			gpac_evt.type = GF_EVENT_MULTITOUCH;
 			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 			break;
@@ -1013,6 +1156,7 @@ Bool SDLVid_ProcessMessageQueue(SDLVidCtx *ctx, GF_VideoOutput *dr)
 			gpac_evt.type = GF_EVENT_DROPFILE;
 			gpac_evt.open_file.nb_files = 1;
 			gpac_evt.open_file.files = &sdl_evt.drop.file;
+			gpac_evt.open_file.window_id = dr->window_id;
 			dr->on_event(dr->evt_cbk_hdl, &gpac_evt);
 
 
@@ -1099,8 +1243,8 @@ GF_Err SDLVid_Setup(struct _video_out *dr, void *os_handle, void *os_display, u3
 		show_window = GF_TRUE;
 	}
 
-	ctx->force_alpha = (init_flags & GF_TERM_WINDOW_TRANSPARENT) ? GF_TRUE : GF_FALSE;
-	ctx->hidden = (init_flags & GF_TERM_INIT_HIDE) ? GF_TRUE : GF_FALSE;
+	ctx->force_alpha = (init_flags & GF_VOUT_WINDOW_TRANSPARENT) ? GF_TRUE : GF_FALSE;
+	ctx->hidden = (init_flags & GF_VOUT_INIT_HIDE) ? GF_TRUE : GF_FALSE;
 
 	if (!ctx->hidden && show_window) {
 #if SDL_VERSION_ATLEAST(2,0,0)
@@ -1127,7 +1271,11 @@ GF_Err SDLVid_Setup(struct _video_out *dr, void *os_handle, void *os_display, u3
 	}
 #else
 	if (!SDLVid_InitializeWindow(ctx, dr)) {
-		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+		if (!gf_list_count(video_outputs)) {
+			SDL_QuitSubSystem(SDL_INIT_VIDEO);
+			gf_list_del(video_outputs);
+			video_outputs=NULL;
+		}
 		SDLOUT_CloseSDL();
 		return GF_IO_ERR;
 	}
@@ -1169,6 +1317,7 @@ static void SDLVid_Shutdown(GF_VideoOutput *dr)
 
 	SDLOUT_CloseSDL();
 	ctx->is_init = GF_FALSE;
+	dr->window_id = 0;
 }
 
 
@@ -1690,6 +1839,23 @@ static GF_Err SDLVid_ProcessEvent(GF_VideoOutput *dr, GF_Event *evt)
 #endif
 	}
 		return GF_OK;
+
+#if SDL_VERSION_ATLEAST(2,0,0)
+	case GF_EVENT_SET_ORIENTATION:
+	{
+		switch (evt->size.orientation) {
+		case GF_DISPLAY_MODE_PORTRAIT: SDL_SetHint(SDL_HINT_ORIENTATIONS, "Portrait"); break;
+		case GF_DISPLAY_MODE_PORTRAIT_INV: SDL_SetHint(SDL_HINT_ORIENTATIONS, "PortraitUpsideDown"); break;
+		case GF_DISPLAY_MODE_LANDSCAPE: SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeRight"); break;
+		case GF_DISPLAY_MODE_LANDSCAPE_INV: SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft"); break;
+		case GF_DISPLAY_MODE_UNKNOWN:
+			SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown");
+			break;
+		}
+		return GF_OK;
+	}
+#endif
+
 	}
 	return GF_OK;
 }
@@ -2072,6 +2238,15 @@ void SDL_DeleteVideo(void *ifce)
 	gf_th_del(ctx->sdl_th);
 #endif
 	gf_mx_del(ctx->evt_mx);
+
+	gf_list_del_item(video_outputs, dr);
+	nb_video_outputs = gf_list_count(video_outputs);
+	if (!nb_video_outputs) {
+		gf_list_del(video_outputs);
+		video_outputs = NULL;
+
+		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+	}
 	gf_free(ctx);
 	gf_free(dr);
 }

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2017
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / RTP/RTSP input filter
@@ -59,7 +59,7 @@ void rtpin_rtsp_process_commands(GF_RTPInRTSP *sess)
 	/*handle response or announce*/
 	if ( (com && (sess->flags & RTSP_WAIT_REPLY) ) /*|| (!com && sess->rtpin->handle_announce)*/) {
 		e = gf_rtsp_get_response(sess->session, sess->rtsp_rsp);
-		if (e!= GF_IP_NETWORK_EMPTY) {
+		if ((e!= GF_IP_NETWORK_EMPTY) && (e!= GF_IP_CONNECTION_CLOSED)) {
 			e = rtpin_rtsp_process_response(sess, com, e);
 			/*this is a service connect error -> plugin may be discarded */
 			if (e!=GF_OK) {
@@ -74,7 +74,9 @@ void rtpin_rtsp_process_commands(GF_RTPInRTSP *sess)
 			sess->flags &= ~RTSP_WAIT_REPLY;
 			sess->command_time = 0;
 		} else {
-			u32 time_out = sess->rtpin->rtsp_timeout;
+			u32 time_out = gf_opts_get_int("core", "req-timeout");
+			if (!time_out) time_out = 10000;
+
 			/*evaluate timeout*/
 			time = gf_sys_clock() - sess->command_time;
 
@@ -99,6 +101,19 @@ void rtpin_rtsp_process_commands(GF_RTPInRTSP *sess)
 				sess->command_time = 0;
 				gf_rtsp_reset_aggregation(sess->session);
 			}
+			//resend
+			else if (e == GF_IP_CONNECTION_CLOSED) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_RTP, ("[RTSP] Connection lost, resending last command\n"));
+				com->is_resend = GF_TRUE;
+				sess->flags &= ~RTSP_WAIT_REPLY;
+
+#ifdef GPAC_HAS_SSL
+				if (gf_rtsp_session_needs_ssl(sess->session) ) {
+					gf_rtsp_set_ssl_ctx(sess->session, gf_dm_ssl_init(sess->rtpin->dm, 0) );
+				}
+#endif
+				return;
+			}
 		}
 		return;
 	}
@@ -122,6 +137,8 @@ void rtpin_rtsp_process_commands(GF_RTPInRTSP *sess)
 	if (!com->User_Agent) com->User_Agent = (char *) sess->rtpin->user_agent;
 	com->Accept_Language = (char *) sess->rtpin->languages;
 
+	com->Authorization = sess->rtpin->auth_string;
+
 	/*if no session assigned but session-level ID was required, use it*/
 	if (!com->Session && com->user_flags) {
 		com->Session = sess->session_id;
@@ -135,6 +152,7 @@ void rtpin_rtsp_process_commands(GF_RTPInRTSP *sess)
 			goto exit;
 		}
 	}
+
 	/*preprocess play/stop/pause before sending (aggregation)*/
 	if (!strcmp(com->method, GF_RTSP_PLAY)
 	        || !strcmp(com->method, GF_RTSP_PAUSE)
@@ -144,11 +162,21 @@ void rtpin_rtsp_process_commands(GF_RTPInRTSP *sess)
 			e = GF_BAD_PARAM;
 			goto exit;
 		}
+		//session was destroyed, skip command
+		if (com->Session && !sess->session_id) {
+			e = GF_BAD_PARAM;
+			goto exit;
+		}
 	}
 	e = gf_rtsp_send_command(sess->session, com);
 	if (e) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTSPIn] Cannot send %s\n", com->method ));
-		rtpin_rtsp_process_response(sess, com, e);
+		if (e==GF_IP_CONNECTION_CLOSED) {
+			e = GF_OK;
+			com->is_resend = GF_TRUE;
+		} else {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTSPIn] Cannot send %s: %s\n", com->method, gf_error_to_string(e) ));
+			rtpin_rtsp_process_response(sess, com, e);
+		}
 	} else {
 		sess->command_time = gf_sys_clock();
 		sess->flags |= RTSP_WAIT_REPLY;
@@ -159,6 +187,8 @@ exit:
 	com->User_Agent = NULL;
 	com->Accept_Language = NULL;
 	com->Session = NULL;
+	com->Authorization = NULL;
+
 	/*remove command*/
 	if (e) {
 		gf_list_rem(sess->rtsp_commands, 0);
@@ -233,7 +263,7 @@ GF_RTPInRTSP *rtpin_rtsp_new(GF_RTPIn *rtp, char *session_control)
 	tmp->rtpin = rtp;
 	tmp->session = rtsp;
 
-	if (rtp->interleave) {
+	if (rtp->transport==RTP_TRANSPORT_TCP_ONLY) {
 		gf_rtsp_set_buffer_size(rtsp, rtp->block_size);
 	} else {
 		gf_rtsp_set_buffer_size(rtsp, RTSP_BUFFER_SIZE);
@@ -268,7 +298,12 @@ GF_Err rtpin_add_stream(GF_RTPIn *rtp, GF_RTPInStream *stream, char *session_con
 	/*setup through SDP with control - assume this is RTSP and try to create a session*/
 	if (stream->control) {
 		/*stream control is relative to main session*/
-		if (strnicmp(stream->control, "rtsp://", 7) && strnicmp(stream->control, "rtspu://", 8) && strnicmp(stream->control, "satip://", 8)) {
+		if (strnicmp(stream->control, "rtsp://", 7)
+			&& strnicmp(stream->control, "rtspu://", 8)
+			&& strnicmp(stream->control, "rtsps://", 8)
+			&& strnicmp(stream->control, "rtsph://", 8)
+			&& strnicmp(stream->control, "satip://", 8)
+		) {
 			/*locate session by control - if no control was provided for the session, use default
 			session*/
 			if (!in_session) in_session = rtpin_rtsp_check(rtp, session_control ? session_control : "*");
@@ -348,7 +383,8 @@ static void rtpin_rtsp_reset(GF_RTPInRTSP *sess, GF_Err e)
 		//first = 0;
 	}
 	/*reset session state*/
-	gf_rtsp_session_reset(sess->session, GF_TRUE);
+	if (sess->session)
+		gf_rtsp_session_reset(sess->session, GF_TRUE);
 	sess->flags &= ~RTSP_WAIT_REPLY;
 }
 

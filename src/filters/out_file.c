@@ -363,6 +363,7 @@ static void fileout_finalize(GF_Filter *filter)
 
 static GF_Err fileout_process(GF_Filter *filter)
 {
+	GF_Err e=GF_OK;
 	GF_FilterPacket *pck;
 	const GF_PropertyValue *fname, *p;
 	Bool start, end;
@@ -544,6 +545,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 
 						if (nb_write!=pck_size) {
 							GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, pck_size));
+							e = GF_IO_ERR;
 						}
 						cur_w = gf_ftell(ctx->file);
 
@@ -554,6 +556,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 						block = gf_malloc(ctx->mvbk);
 						if (!block) {
 							GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] unable to allocate block of %d bytes\n", ctx->mvbk));
+							e = GF_IO_ERR;
 						} else {
 							while (cur_r > bo) {
 								u32 move_bytes = ctx->mvbk;
@@ -565,6 +568,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 
 								if (nb_write!=move_bytes) {
 									GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Read error, got %d bytes but had %d to read\n", nb_write, move_bytes));
+									e = GF_IO_ERR;
 								}
 
 								gf_fseek(ctx->file, cur_w - move_bytes, SEEK_SET);
@@ -572,6 +576,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 
 								if (nb_write!=move_bytes) {
 									GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, move_bytes));
+									e = GF_IO_ERR;
 								}
 								cur_r -= move_bytes;
 								cur_w -= move_bytes;
@@ -586,12 +591,14 @@ static GF_Err fileout_process(GF_Filter *filter)
 
 					if (nb_write!=pck_size) {
 						GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, pck_size));
+						e = GF_IO_ERR;
 					}
 				}
 			} else {
 				nb_write = (u32) gf_fwrite(pck_data, pck_size, ctx->file);
 				if (nb_write!=pck_size) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, pck_size));
+					e = GF_IO_ERR;
 				}
 				ctx->nb_write += nb_write;
 
@@ -599,6 +606,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 					nb_write = (u32) gf_fwrite(pck_data, pck_size, ctx->hls_chunk);
 					if (nb_write!=pck_size) {
 						GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, pck_size));
+						e = GF_IO_ERR;
 					}
 				}
 			}
@@ -620,7 +628,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 					u32 j, write_h, lsize;
 					const u8 *out_ptr;
 					u32 out_stride = i ? stride_uv : stride;
-					GF_Err e = hwf->get_plane(hwf, i, &out_ptr, &out_stride);
+					e = hwf->get_plane(hwf, i, &out_ptr, &out_stride);
 					if (e) {
 						GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Failed to fetch plane data from hardware frame, cannot write\n"));
 						break;
@@ -636,6 +644,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 						nb_write = (u32) gf_fwrite(out_ptr, lsize, ctx->file);
 						if (nb_write!=lsize) {
 							GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[FileOut] Write error, wrote %d bytes but had %d to write\n", nb_write, lsize));
+							e = GF_IO_ERR;
 						}
 						ctx->nb_write += nb_write;
 						out_ptr += out_stride;
@@ -657,7 +666,7 @@ static GF_Err fileout_process(GF_Filter *filter)
 		snprintf(szStatus, 1024, "%s: wrote % 16"LLD_SUF" bytes", gf_file_basename(ctx->szFileName), (s64) ctx->nb_write);
 		gf_filter_update_status(filter, -1, szStatus);
 	}
-	return GF_OK;
+	return e;
 }
 
 static Bool fileout_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
@@ -746,7 +755,7 @@ GF_FilterRegister FileOutRegister = {
 	)
 	.private_size = sizeof(GF_FileOutCtx),
 	.args = FileOutArgs,
-	.flags = GF_FS_REG_FORCE_REMUX,
+	.flags = GF_FS_REG_FORCE_REMUX | GF_FS_REG_TEMP_INIT,
 	SETCAPS(FileOutCaps),
 	.probe_url = fileout_probe_url,
 	.initialize = fileout_initialize,
@@ -759,6 +768,9 @@ GF_FilterRegister FileOutRegister = {
 
 const GF_FilterRegister *fileout_register(GF_FilterSession *session)
 {
+	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
+		gf_opts_set_key("temp_out_proto", FileOutRegister.name, "file,gfio");
+	}
 	return &FileOutRegister;
 }
 

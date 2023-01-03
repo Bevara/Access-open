@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -33,8 +33,6 @@ extern "C" {
 #include <gpac/tools.h>
 #include <gpac/list.h>
 #include <gpac/bitstream.h>
-
-#ifndef GPAC_DISABLE_CORE_TOOLS
 
 /*!
 \file <gpac/xml.h>
@@ -342,6 +340,12 @@ GF_XMLAttribute *gf_xml_dom_create_attribute(const char* name, const char* value
 GF_Err gf_xml_dom_append_child(GF_XMLNode *node, GF_XMLNode *child);
 
 
+/*! Create a node.
+\param ns the target namespace or NULL if none
+\param name the target name or NULL to create text node
+\return new node, NULL if error. 
+ */
+GF_XMLNode *gf_xml_dom_node_new(const char* ns, const char* name);
 /*! Destroys a node, its attributes and its children
 
 \param node the node to free
@@ -424,7 +428,5 @@ GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, const char *parent_url, 
 #ifdef __cplusplus
 }
 #endif
-
-#endif /*GPAC_DISABLE_CORE_TOOLS*/
 
 #endif		/*_XML_PARSER_H_*/

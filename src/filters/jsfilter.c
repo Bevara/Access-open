@@ -179,6 +179,7 @@ enum
 	JSF_PID_MIN_PCK_DUR,
 	JSF_PID_IS_PLAYING,
 	JSF_PID_NEXT_TS,
+	JSF_PID_HAS_DECODER,
 };
 typedef struct
 {
@@ -412,7 +413,7 @@ GF_Err jsf_request_opengl(JSContext *c)
 
 	return gf_filter_request_opengl(jsf->filter);
 }
-GF_Err jsf_set_gl_active(JSContext *c)
+GF_Err jsf_set_gl_active(JSContext *c, Bool do_activate)
 {
 	GF_JSFilterCtx *jsf;
 	JSValue global = JS_GetGlobalObject(c);
@@ -423,7 +424,7 @@ GF_Err jsf_set_gl_active(JSContext *c)
 	jsf = JS_GetOpaque(filter_obj, jsf_filter_class_id);
 	JS_FreeValue(c, filter_obj);
 
-	return gf_filter_set_active_opengl_context(jsf->filter);
+	return gf_filter_set_active_opengl_context(jsf->filter, do_activate);
 }
 
 Bool jsf_is_packet(JSContext *c, JSValue obj)
@@ -2132,6 +2133,9 @@ static JSValue jsf_pid_get_prop(JSContext *ctx, JSValueConst this_val, int magic
 		dur = gf_filter_pid_get_next_ts(pctx->pid);
 		if (dur==GF_FILTER_NO_TS) return JS_NULL;
 		return JS_NewInt64(ctx, dur);
+
+	case JSF_PID_HAS_DECODER:
+		return JS_NewBool(ctx, gf_filter_pid_has_decoder(pctx->pid) );
 	}
     return JS_UNDEFINED;
 }
@@ -2436,7 +2440,7 @@ static JSValue jsf_pid_get_statistics(JSContext *ctx, JSValueConst this_val, int
 	SET_PROPB(disconnected)
 	SET_PROP32(average_process_rate)
 	SET_PROP32(max_process_rate)
-	SET_PROP32(avgerage_bitrate)
+	SET_PROP32(average_bitrate)
 	SET_PROP32(max_bitrate)
 	SET_PROP32(nb_processed)
 	SET_PROP32(max_process_time)
@@ -2467,9 +2471,16 @@ void jsf_pck_shared_del(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPacket *p
 		GF_JSPckCtx *pckc = gf_list_get(pctx->shared_pck, i);
 		if (pckc->pck == pck) {
 			if (!JS_IsUndefined(pckc->cbck_val)) {
-				JSValue res = JS_Call(pctx->jsf->ctx, pckc->cbck_val, pctx->jsobj, 0, NULL);
+				JSValue args[2];
+				args[0] = JS_DupValue(pctx->jsf->ctx, pctx->jsobj);
+				args[1] = JS_DupValue(pctx->jsf->ctx, pckc->jsobj);
+				JSValue res = JS_Call(pctx->jsf->ctx, pckc->cbck_val, pctx->jsobj, 1, args);
+				JS_FreeValue(pctx->jsf->ctx, args[0]);
+				JS_FreeValue(pctx->jsf->ctx, args[1]);
+
 				JS_FreeValue(pctx->jsf->ctx, res);
 				JS_FreeValue(pctx->jsf->ctx, pckc->cbck_val);
+				JS_FreeValue(pctx->jsf->ctx, pckc->jsobj);
 				pckc->cbck_val = JS_UNDEFINED;
 			}
 			JS_FreeValue(pctx->jsf->ctx, pckc->ref_val);
@@ -2484,6 +2495,79 @@ void jsf_pck_shared_del(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPacket *p
 	gf_js_lock(pctx->jsf->ctx, GF_FALSE);
 }
 
+typedef struct
+{
+	GF_JSPidCtx *pctx;
+	GF_JSPckCtx *pck_ctx;
+	JSValue fun;
+	GF_FilterFrameInterface f_ifce;
+} JSGLFIfce;
+
+static void jsf_pck_gl_ifce_del(GF_Filter *filter, GF_FilterPid *PID, GF_FilterPacket *pck)
+{
+	GF_JSPidCtx *pctx = gf_filter_pid_get_udta(PID);
+	gf_js_lock(pctx->jsf->ctx, GF_TRUE);
+	GF_FilterFrameInterface *f_ifce = gf_filter_pck_get_frame_interface(pck);
+	if (f_ifce) {
+		JSGLFIfce *jsgl = f_ifce->user_data;
+		JS_FreeValue(pctx->jsf->ctx, jsgl->fun);
+		JS_FreeValue(pctx->jsf->ctx, jsgl->pck_ctx->jsobj);
+		gf_free(jsgl);
+	}
+	gf_js_lock(pctx->jsf->ctx, GF_FALSE);
+
+	jsf_pck_shared_del(filter, PID, pck);
+}
+
+#if !defined(GPAC_DISABLE_3D) && !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
+Bool wgl_texture_get_id(JSContext *ctx, JSValueConst txval, u32 *tx_id);
+#endif
+
+static GF_Err jsf_pck_gl_get_texture(GF_FilterFrameInterface *frame, u32 plane_idx, u32 *gl_tex_format, u32 *gl_tex_id, GF_Matrix_unexposed * texcoordmatrix)
+{
+	JSValue arg[3], ret, v;
+	GF_Err e = GF_OK;
+	JSGLFIfce *jsgl = frame->user_data;
+	JSContext *ctx = jsgl->pctx->jsf->ctx;
+	if (!gl_tex_format || !gl_tex_id)
+		return GF_NOT_SUPPORTED;
+
+	gf_js_lock(ctx, GF_TRUE);
+
+	arg[0] = JS_DupValue(ctx, jsgl->pctx->jsobj);
+	arg[1] = JS_DupValue(ctx, jsgl->pck_ctx->jsobj);
+	arg[2] = JS_NewInt32(ctx, plane_idx);
+	ret = JS_Call(ctx, jsgl->fun, jsgl->pctx->jsobj, 3, arg);
+	if (JS_IsException(ret)) {
+		js_dump_error(ctx);
+		e = GF_NOT_SUPPORTED;
+	} else if (JS_IsNull(ret) || !JS_IsObject(ret)) {
+		e = GF_NOT_SUPPORTED;
+	} else {
+		v = JS_GetPropertyStr(ctx, ret, "id");
+		if (JS_IsObject(v)) {
+#if !defined(GPAC_DISABLE_3D) && !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
+			if (! wgl_texture_get_id(ctx, v, gl_tex_id))
+#endif
+				e = GF_NOT_SUPPORTED;
+		} else if (JS_ToInt32(ctx, gl_tex_id, v)) {
+			e = GF_NOT_SUPPORTED;
+		}
+		JS_FreeValue(ctx, v);
+		v = JS_GetPropertyStr(ctx, ret, "fmt");
+		if (JS_ToInt32(ctx, gl_tex_format, v))
+			e = GF_NOT_SUPPORTED;
+		JS_FreeValue(ctx, v);
+
+		//todo matrix
+	}
+	JS_FreeValue(ctx, arg[0]);
+	JS_FreeValue(ctx, arg[1]);
+	JS_FreeValue(ctx, ret);
+	gf_js_lock(ctx, GF_FALSE);
+	return e;
+}
+
 
 #if !defined(GPAC_DISABLE_3D) && !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X)
 JSValue webgl_get_frame_interface(JSContext *ctx, int argc, JSValueConst *argv, GF_FilterPid *for_pid, gf_fsess_packet_destructor *pck_del, GF_FilterFrameInterface **f_ifce);
@@ -2495,6 +2579,7 @@ static JSValue jsf_pid_new_packet(JSContext *ctx, JSValueConst this_val, int arg
 	u8 *data, *ab_data;
 	JSValue obj;
 	Bool use_shared=GF_FALSE;
+	Bool use_gl_ifce=GF_FALSE;
 	GF_JSPckCtx *pckc;
 	GF_JSPidCtx *pctx = JS_GetOpaque(this_val, jsf_pid_class_id);
 
@@ -2521,8 +2606,13 @@ static JSValue jsf_pid_new_packet(JSContext *ctx, JSValueConst this_val, int arg
 	pckc->ref_val = JS_UNDEFINED;
 	pckc->data_ab = JS_UNDEFINED;
 
-	if (argc>1)
-		use_shared = JS_ToBool(ctx, argv[1]);
+	if (argc>1) {
+		if (JS_IsFunction(ctx, argv[0])) {
+			use_gl_ifce = GF_TRUE;
+		} else {
+			use_shared = JS_ToBool(ctx, argv[1]);
+		}
+	}
 
 	if (!argc) {
 		pckc->pck = gf_filter_pck_new_alloc(pctx->pid, 0, NULL);
@@ -2550,8 +2640,11 @@ static JSValue jsf_pid_new_packet(JSContext *ctx, JSValueConst this_val, int arg
 			if (!pctx->shared_pck) pctx->shared_pck = gf_list_new();
 			gf_list_add(pctx->shared_pck, pckc);
 			pckc->flags = GF_JS_PCK_IS_SHARED;
-			if ((argc>2) && JS_IsFunction(ctx, argv[2]))
+			if ((argc>2) && JS_IsFunction(ctx, argv[2])) {
 				pckc->cbck_val = JS_DupValue(ctx, argv[2]);
+				//dup packet obj, it must be kept alive until destructor is called
+				pckc->jsobj = JS_DupValue(ctx, pckc->jsobj);
+			}
 		} else {
 			u8 *pdata=NULL;
 			pckc->pck = gf_filter_pck_new_alloc(pctx->pid, len, &pdata);
@@ -2594,8 +2687,11 @@ static JSValue jsf_pid_new_packet(JSContext *ctx, JSValueConst this_val, int arg
 			if (!pctx->shared_pck) pctx->shared_pck = gf_list_new();
 			gf_list_add(pctx->shared_pck, pckc);
 			pckc->flags = GF_JS_PCK_IS_SHARED;
-			if ((argc>2) && JS_IsFunction(ctx, argv[2]))
+			if ((argc>2) && JS_IsFunction(ctx, argv[2])) {
 				pckc->cbck_val = JS_DupValue(ctx, argv[2]);
+				//dup packet obj, it must be kept alive until destructor is called
+				pckc->jsobj = JS_DupValue(ctx, pckc->jsobj);
+			}
 		} else {
 			pckc->pck = gf_filter_pck_new_alloc(pctx->pid, (u32) ab_size, &data);
 			if (!data) {
@@ -2603,6 +2699,34 @@ static JSValue jsf_pid_new_packet(JSContext *ctx, JSValueConst this_val, int arg
 				return js_throw_err(ctx, GF_OUT_OF_MEM);
 			}
 			memcpy(data, ab_data, ab_size);
+		}
+		goto pck_done;
+	}
+	/*try GL interface*/
+	if (use_gl_ifce) {
+		JSGLFIfce *gl_ifce;
+		GF_SAFEALLOC(gl_ifce, JSGLFIfce);
+		gl_ifce->pctx = pctx;
+		gl_ifce->pck_ctx = pckc;
+		gl_ifce->fun = JS_DupValue(ctx, argv[0] );
+		gl_ifce->f_ifce.user_data = gl_ifce;
+		gl_ifce->f_ifce.get_gl_texture = jsf_pck_gl_get_texture;
+		gl_ifce->f_ifce.flags = GF_FRAME_IFCE_BLOCKING;
+		pckc->pck = gf_filter_pck_new_frame_interface(pctx->pid, &gl_ifce->f_ifce, jsf_pck_gl_ifce_del);
+		if (!pctx->shared_pck) pctx->shared_pck = gf_list_new();
+		gf_list_add(pctx->shared_pck, pckc);
+		//dup packet obj since se need it in the fetch texture callback
+		pckc->jsobj = JS_DupValue(ctx, pckc->jsobj);
+		if ((argc>1) && JS_IsFunction(ctx, argv[1])) {
+			pckc->cbck_val = JS_DupValue(ctx, argv[1]);
+			//dup packet obj, it must be kept alive until destructor is called
+			pckc->jsobj = JS_DupValue(ctx, pckc->jsobj);
+			if ((argc>2) && JS_ToBool(ctx, argv[2])) {
+				pckc->flags = GF_JS_PCK_IS_SHARED;
+			}
+		}
+		if ((argc>1) && JS_IsBool(argv[1]) && JS_ToBool(ctx, argv[1])) {
+			pckc->flags = GF_JS_PCK_IS_SHARED;
 		}
 		goto pck_done;
 	}
@@ -2806,6 +2930,7 @@ static const JSCFunctionListEntry jsf_pid_funcs[] = {
     JS_CGETSET_MAGIC_DEF("min_pck_dur", jsf_pid_get_prop, NULL, JSF_PID_MIN_PCK_DUR),
     JS_CGETSET_MAGIC_DEF("playing", jsf_pid_get_prop, NULL, JSF_PID_IS_PLAYING),
     JS_CGETSET_MAGIC_DEF("next_ts", jsf_pid_get_prop, NULL, JSF_PID_NEXT_TS),
+    JS_CGETSET_MAGIC_DEF("has_decoder", jsf_pid_get_prop, NULL, JSF_PID_HAS_DECODER),
     JS_CFUNC_DEF("send_event", 0, jsf_pid_send_event),
     JS_CFUNC_DEF("enum_properties", 0, jsf_pid_enum_properties),
     JS_CFUNC_DEF("get_prop", 0, jsf_pid_get_property),
@@ -2881,6 +3006,7 @@ enum
 	JSF_EVENT_USER_KEYCODE,
 	JSF_EVENT_USER_KEYNAME,
 	JSF_EVENT_USER_KEYMODS,
+	JSF_EVENT_USER_TEXT_CHAR,
 	JSF_EVENT_USER_MOUSE_X,
 	JSF_EVENT_USER_MOUSE_Y,
 	JSF_EVENT_USER_WHEEL,
@@ -2900,6 +3026,7 @@ enum
 	JSF_EVENT_USER_MOVE_ALIGN_X,
 	JSF_EVENT_USER_MOVE_ALIGN_Y,
 	JSF_EVENT_USER_CAPTION,
+	JSF_EVENT_USER_WINDOW_ID,
 };
 
 static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
@@ -3001,6 +3128,7 @@ static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
 			case JSF_EVENT_USER_MOUSE_Y:
 			case JSF_EVENT_USER_WHEEL:
 			case JSF_EVENT_USER_BUTTON:
+			case JSF_EVENT_USER_WINDOW_ID:
 				return GF_TRUE;
 			default:
 				break;
@@ -3013,6 +3141,7 @@ static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
 			case JSF_EVENT_USER_MT_ROTATION:
 			case JSF_EVENT_USER_MT_PINCH:
 			case JSF_EVENT_USER_MT_FINGERS:
+			case JSF_EVENT_USER_WINDOW_ID:
 				return GF_TRUE;
 			default:
 				break;
@@ -3028,7 +3157,9 @@ static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
 			case JSF_EVENT_USER_KEYNAME:
 			case JSF_EVENT_USER_KEYMODS:
 			case JSF_EVENT_USER_HWKEY:
+			case JSF_EVENT_USER_TEXT_CHAR:
 			case JSF_EVENT_USER_DROPFILES:
+			case JSF_EVENT_USER_WINDOW_ID:
 				return GF_TRUE;
 			default:
 				break;
@@ -3037,6 +3168,7 @@ static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
 		case GF_EVENT_DROPFILE:
 			switch (magic) {
 			case JSF_EVENT_USER_DROPFILES:
+			case JSF_EVENT_USER_WINDOW_ID:
 				return GF_TRUE;
 			default:
 				break;
@@ -3046,6 +3178,7 @@ static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
 		case GF_EVENT_COPY_TEXT:
 			switch (magic) {
 			case JSF_EVENT_USER_TEXT:
+			case JSF_EVENT_USER_WINDOW_ID:
 				return GF_TRUE;
 			default:
 				break;
@@ -3055,6 +3188,7 @@ static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
 			switch (magic) {
 			case JSF_EVENT_USER_WIDTH:
 			case JSF_EVENT_USER_HEIGHT:
+			case JSF_EVENT_USER_WINDOW_ID:
 				return GF_TRUE;
 			default:
 				break;
@@ -3067,14 +3201,26 @@ static Bool jsf_check_evt(u32 evt_type, u8 ui_type, int magic)
 			case JSF_EVENT_USER_MOVE_RELATIVE:
 			case JSF_EVENT_USER_MOVE_ALIGN_X:
 			case JSF_EVENT_USER_MOVE_ALIGN_Y:
+			case JSF_EVENT_USER_WINDOW_ID:
 				return GF_TRUE;
 			default:
 				break;
 			}
 			return GF_FALSE;
 		case GF_EVENT_SET_CAPTION:
-			if (magic==JSF_EVENT_USER_CAPTION) return GF_TRUE;
-			return GF_FALSE;
+			switch (magic) {
+			case JSF_EVENT_USER_CAPTION:
+			case JSF_EVENT_USER_WINDOW_ID:
+				return GF_TRUE;
+			default:
+				return GF_FALSE;
+			}
+			break;
+		case GF_EVENT_REFRESH:
+		case GF_EVENT_QUIT:
+		case GF_EVENT_SHOWHIDE:
+			if (magic==JSF_EVENT_USER_WINDOW_ID) return GF_TRUE;
+			break;
 		}
 	}
 	return GF_FALSE;
@@ -3348,6 +3494,29 @@ static JSValue jsf_event_get_prop(JSContext *ctx, JSValueConst this_val, int mag
 		return JS_NULL;
 #endif
 
+	case JSF_EVENT_USER_TEXT_CHAR:
+	{
+		u32 unic = evt->user_event.event.character.unicode_char;
+		char szSTR[5];
+		memset(szSTR, 0, 5);
+		if (unic<0x80) {
+			szSTR[0] = (char) unic&0xFF;
+		} else if (unic<0x0800) {
+			szSTR[0] = ((char) (unic>>6)&0x1F) | 0xC0;
+			szSTR[1] = ((char) (unic) & 0x3F) | 0x80;
+		} else if (unic<0x010000) {
+			szSTR[0] = ((char) (unic>>12)&0x0F) | 0xE0;
+			szSTR[1] = ((char) (unic>>6) & 0x3F) | 0x80;
+			szSTR[2] = ((char) (unic) & 0x3F) | 0x80;
+		} else {
+			szSTR[0] = ((char) (unic>>24)&0x07) | 0xF0;
+			szSTR[1] = ((char) (unic>>12) & 0x3F) | 0x80;
+			szSTR[2] = ((char) (unic>>6) & 0x3F) | 0x80;
+			szSTR[3] = ((char) (unic) & 0x3F) | 0x80;
+		}
+		return JS_NewString(ctx, szSTR);
+	}
+
 	case JSF_EVENT_USER_MOUSE_X:
 		if (evt->user_event.event.type==GF_EVENT_MULTITOUCH)
 			return JS_NewFloat64(ctx, FIX2FLT(evt->user_event.event.mtouch.x) );
@@ -3393,6 +3562,35 @@ static JSValue jsf_event_get_prop(JSContext *ctx, JSValueConst this_val, int mag
 
 	case JSF_EVENT_USER_CAPTION:
 		return JS_NewString(ctx, evt->user_event.event.caption.caption ? evt->user_event.event.caption.caption : "");
+
+	case JSF_EVENT_USER_WINDOW_ID:
+		switch (evt->user_event.event.type) {
+		case GF_EVENT_MULTITOUCH:
+			return JS_NewInt32(ctx, evt->user_event.event.mtouch.window_id);
+		case GF_EVENT_MOUSEUP:
+		case GF_EVENT_MOUSEDOWN:
+		case GF_EVENT_MOUSEMOVE:
+		case GF_EVENT_MOUSEWHEEL:
+			return JS_NewInt32(ctx, evt->user_event.event.mouse.window_id);
+		case GF_EVENT_SHOWHIDE:
+		case GF_EVENT_QUIT:
+		case GF_EVENT_REFRESH:
+			return JS_NewInt32(ctx, evt->user_event.event.show.window_id);
+		case GF_EVENT_MOVE:
+			return JS_NewInt32(ctx, evt->user_event.event.move.window_id);
+		case GF_EVENT_KEYUP:
+		case GF_EVENT_KEYDOWN:
+			return JS_NewInt32(ctx, evt->user_event.event.key.window_id);
+		case GF_EVENT_DROPFILE:
+			return JS_NewInt32(ctx, evt->user_event.event.open_file.window_id);
+		case GF_EVENT_PASTE_TEXT:
+		case GF_EVENT_COPY_TEXT:
+			return JS_NewInt32(ctx, evt->user_event.event.clipboard.window_id);
+		case GF_EVENT_TEXTINPUT:
+			return JS_NewInt32(ctx, evt->user_event.event.character.window_id);
+		case GF_EVENT_SIZE:
+			return JS_NewInt32(ctx, evt->user_event.event.size.window_id);
+		}
 	}
     return JS_UNDEFINED;
 }
@@ -3451,6 +3649,7 @@ static const JSCFunctionListEntry jsf_event_funcs[] =
     JS_CGETSET_MAGIC_DEF("keycode", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_KEYCODE),
     JS_CGETSET_MAGIC_DEF("keyname", jsf_event_get_prop, NULL, JSF_EVENT_USER_KEYNAME),
     JS_CGETSET_MAGIC_DEF("keymods", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_KEYMODS),
+    JS_CGETSET_MAGIC_DEF("char", jsf_event_get_prop, NULL, JSF_EVENT_USER_TEXT_CHAR),
     JS_CGETSET_MAGIC_DEF("mouse_x", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_MOUSE_X),
     JS_CGETSET_MAGIC_DEF("mouse_y", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_MOUSE_Y),
     JS_CGETSET_MAGIC_DEF("wheel", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_WHEEL),
@@ -3458,6 +3657,7 @@ static const JSCFunctionListEntry jsf_event_funcs[] =
     JS_CGETSET_MAGIC_DEF("hwkey", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_HWKEY),
     JS_CGETSET_MAGIC_DEF("dropfiles", jsf_event_get_prop, NULL, JSF_EVENT_USER_DROPFILES),
     JS_CGETSET_MAGIC_DEF("clipboard", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_TEXT),
+    JS_CGETSET_MAGIC_DEF("window", jsf_event_get_prop, NULL, JSF_EVENT_USER_WINDOW_ID),
 
     JS_CGETSET_MAGIC_DEF("mt_x", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_MOUSE_X),
     JS_CGETSET_MAGIC_DEF("mt_y", jsf_event_get_prop, jsf_event_set_prop, JSF_EVENT_USER_MOUSE_Y),
@@ -3528,6 +3728,7 @@ enum
 	JSF_PCK_SIZE,
 	JSF_PCK_DATA,
 	JSF_PCK_FRAME_IFCE,
+	JSF_PCK_FRAME_IFCE_GL,
 	JSF_PCK_HAS_PROPERTIES,
 };
 
@@ -3728,6 +3929,13 @@ static JSValue jsf_pck_get_prop(JSContext *ctx, JSValueConst this_val, int magic
 		if (gf_filter_pck_get_frame_interface(pck) != NULL)
 			return JS_NewBool(ctx, 1);
 		else return JS_NewBool(ctx, 0);
+	case JSF_PCK_FRAME_IFCE_GL:
+	{
+		GF_FilterFrameInterface *fifce  = gf_filter_pck_get_frame_interface(pck);
+		if (fifce && fifce->get_gl_texture)
+			return JS_NewBool(ctx, 1);
+		return JS_NewBool(ctx, 0);
+	}
 
 	case JSF_PCK_HAS_PROPERTIES:
 		return JS_NewBool(ctx, gf_filter_pck_has_properties(pck) );
@@ -4094,6 +4302,7 @@ static const JSCFunctionListEntry jsf_pck_funcs[] =
     JS_CGETSET_MAGIC_DEF("size", jsf_pck_get_prop, NULL, JSF_PCK_SIZE),
     JS_CGETSET_MAGIC_DEF("data", jsf_pck_get_prop, NULL, JSF_PCK_DATA),
     JS_CGETSET_MAGIC_DEF("frame_ifce", jsf_pck_get_prop, NULL, JSF_PCK_FRAME_IFCE),
+    JS_CGETSET_MAGIC_DEF("frame_ifce_gl", jsf_pck_get_prop, NULL, JSF_PCK_FRAME_IFCE_GL),
     JS_CGETSET_MAGIC_DEF("has_properties", jsf_pck_get_prop, NULL, JSF_PCK_HAS_PROPERTIES),
 
     JS_CFUNC_DEF("set_readonly", 0, jsf_pck_set_readonly),
@@ -4173,6 +4382,7 @@ static GF_Err jsfilter_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		//force cleanup of all refs
 		gf_js_call_gc(jsf->ctx);
 
+		JS_SetOpaque(pctx->jsobj, NULL);
 		JS_FreeValue(jsf->ctx, pctx->jsobj);
 		gf_list_del_item(jsf->pids, pctx);
 		gf_filter_pid_set_udta(pid, NULL);
@@ -4284,6 +4494,7 @@ void js_load_constants(JSContext *ctx, JSValue global_obj)
 	DEF_CONST(GF_STATS_DECODER_SOURCE)
 	DEF_CONST(GF_STATS_ENCODER_SINK)
 	DEF_CONST(GF_STATS_ENCODER_SOURCE)
+	DEF_CONST(GF_STATS_SINK)
 
 	DEF_CONST(GF_FILTER_CLOCK_NONE)
 	DEF_CONST(GF_FILTER_CLOCK_PCR)
@@ -4295,6 +4506,14 @@ void js_load_constants(JSContext *ctx, JSValue global_obj)
 	DEF_CONST(GF_FILTER_SAP_3)
 	DEF_CONST(GF_FILTER_SAP_4)
 	DEF_CONST(GF_FILTER_SAP_4_PROL)
+
+	DEF_CONST(GF_STATS_LOCAL)
+	DEF_CONST(GF_STATS_LOCAL_INPUTS)
+	DEF_CONST(GF_STATS_DECODER_SINK)
+	DEF_CONST(GF_STATS_DECODER_SOURCE)
+	DEF_CONST(GF_STATS_ENCODER_SINK)
+	DEF_CONST(GF_STATS_ENCODER_SOURCE)
+	DEF_CONST(GF_STATS_SINK)
 
 	DEF_CONST(GF_EOS);
 	DEF_CONST(GF_OK)
@@ -4327,7 +4546,6 @@ void js_load_constants(JSContext *ctx, JSValue global_obj)
 	DEF_CONST(GF_IP_NETWORK_FAILURE)
 	DEF_CONST(GF_IP_CONNECTION_CLOSED)
 	DEF_CONST(GF_IP_NETWORK_EMPTY)
-	DEF_CONST(GF_IP_SOCK_WOULD_BLOCK)
 	DEF_CONST(GF_IP_UDP_TIMEOUT)
 	DEF_CONST(GF_AUTHENTICATION_FAILURE)
 	DEF_CONST(GF_SCRIPT_NOT_READY)
@@ -4367,6 +4585,8 @@ void js_load_constants(JSContext *ctx, JSValue global_obj)
 	DEF_CONST(GF_EVENT_SET_CAPTION)
 	DEF_CONST(GF_EVENT_REFRESH)
 	DEF_CONST(GF_EVENT_QUIT)
+	DEF_CONST(GF_EVENT_CODEC_SLOW)
+	DEF_CONST(GF_EVENT_CODEC_OK)
 
 	DEF_CONST(GF_KEY_UNIDENTIFIED)
 	DEF_CONST(GF_KEY_ACCEPT)
@@ -4722,8 +4942,15 @@ static GF_Err jsfilter_initialize_ex(GF_Filter *filter, JSContext *custom_ctx)
 		flags = JS_EVAL_TYPE_MODULE;
 	}
 	jsf->disable_filter = GF_TRUE;
+	Bool temp_assign = GF_FALSE;
+	if (!jsf->filter->session->js_ctx) {
+		jsf->filter->session->js_ctx = jsf->ctx;
+		temp_assign = GF_TRUE;
+	}
 	ret = JS_Eval(jsf->ctx, (char *)buf, buf_len, jsf->js, flags);
 	gf_free(buf);
+	if (temp_assign)
+		jsf->filter->session->js_ctx = NULL;
 
 	if (JS_IsException(ret)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[JSF] Error loading script %s\n", jsf->js));
@@ -4782,7 +5009,6 @@ static void jsfilter_finalize(GF_Filter *filter)
 		gf_fs_unload_script(filter->session, jsf->ctx);
 
 	if (!jsf->is_custom) {
-		u32 i, count;
 		//we created the context, detach all other filters jsvals
 		gf_mx_p(jsf->filter->session->filters_mx);
 		count = gf_list_count(jsf->filter->session->filters);
@@ -4790,6 +5016,10 @@ static void jsfilter_finalize(GF_Filter *filter)
 			GF_Filter *a_f = gf_list_get(jsf->filter->session->filters, i);
 			if (a_f == jsf->filter) continue;;
 			jsfs_on_filter_destroyed(a_f);
+		}
+		if (!JS_IsUndefined(jsf->filter->jsval)) {
+			JS_FreeValue(jsf->ctx, jsf->filter->jsval);
+			jsf->filter->jsval = JS_UNDEFINED;
 		}
 		gf_mx_v(jsf->filter->session->filters_mx);
 		gf_js_delete_context(jsf->ctx);
@@ -4875,7 +5105,7 @@ static GF_Err jsfilter_update_arg(GF_Filter *filter, const char *arg_name, const
 			JS_DeleteProperty(jsf->ctx, global_obj, prop, 0);
 			JS_FreeValue(jsf->ctx, global_obj);
 			JS_FreeAtom(jsf->ctx, prop);
-			filter->disabled = GF_TRUE;
+			filter->disabled = GF_FILTER_DISABLED_HIDE;
 			jsf->filter_obj = JS_UNDEFINED;
 		}
 		gf_js_lock(jsf->ctx, GF_FALSE);
@@ -5001,7 +5231,7 @@ GF_FilterRegister JSFilterRegister = {
 	"  \n"
 	"For more information on how to use JS filters, please check https://wiki.gpac.io/jsfilter\n")
 	.private_size = sizeof(GF_JSFilterCtx),
-	.flags = GF_FS_REG_SCRIPT,
+	.flags = GF_FS_REG_SCRIPT | GF_FS_REG_TEMP_INIT,
 	.args = JSFilterArgs,
 	SETCAPS(JSFilterCaps),
 	.initialize = jsfilter_initialize,
@@ -5037,6 +5267,13 @@ JSValue jsfilter_initialize_custom(GF_Filter *filter, JSContext *ctx)
 	//signal reg is script, so we don't free the filter reg caps as with custom filters
 	((GF_FilterRegister *) filter->freg)->flags |= GF_FS_REG_SCRIPT;
 	return JS_DupValue(ctx, jsf->filter_obj);
+}
+
+GF_Filter *jsf_custom_filter_opaque(JSContext *ctx, JSValueConst this_val)
+{
+	GF_JSFilterCtx *jsf = JS_GetOpaque(this_val, jsf_filter_class_id);
+	if (!jsf || !jsf->is_custom) return NULL;
+	return jsf->filter;
 }
 
 #else

@@ -84,6 +84,7 @@ typedef struct
 	Bool is_cenc;
 	Bool is_cbc;
 	u32 KID_count;
+	Bool inband_keys;
 	bin128 *KIDs;
 	bin128 *keys;
 
@@ -104,6 +105,8 @@ typedef struct
 
 	Bool gpac_master_leaf;
 	bin128 master_key;
+
+	u32 clearkey_crc;
 } GF_CENCDecStream;
 
 typedef struct
@@ -636,6 +639,155 @@ static GF_Err cenc_dec_load_keys(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr)
 	return GF_OK;
 }
 
+typedef struct
+{
+	u8 *data;
+	u32 data_len;
+	Bool hdr_done;
+} ClearKeyParam;
+
+static void ck_http_io(void *usr_cbk, GF_NETIO_Parameter *par)
+{
+	switch (par->msg_type) {
+	case GF_NETIO_GET_METHOD:
+		par->name = "POST";
+		break;
+	case GF_NETIO_GET_HEADER:
+		if (! ((ClearKeyParam*)usr_cbk)->hdr_done) {
+			((ClearKeyParam*)usr_cbk)->hdr_done = GF_TRUE;
+			par->name = "Content-Type";
+			par->value = "application/json";
+		}
+		break;
+	case GF_NETIO_GET_CONTENT:
+		par->data = ((ClearKeyParam*)usr_cbk)->data;
+		par->size = ((ClearKeyParam*)usr_cbk)->data_len;
+		break;
+	default:
+		break;
+	}
+}
+
+static GF_Err rfmt_dec_b64(u8 *data, u8 *output, u32 osize)
+{
+	u32 len, i=0;
+	while (data[i]) {
+		if (data[i] == '-') data[i] = '+';
+		else if (data[i] == '_') data[i] = '/';
+		i++;
+	}
+	len = (u32) strlen(data);
+	switch (len%4) {
+	case 0: break;
+	case 2: strcat(data, "=="); break;
+	case 3: strcat(data, "="); break;
+	default: return GF_NON_COMPLIANT_BITSTREAM;
+	}
+	len = gf_base64_decode(data, (u32) strlen(data), output, osize);
+	if (len != 16) return GF_NON_COMPLIANT_BITSTREAM;
+	return GF_OK;
+}
+
+#define CK_MAX_BUF	1000
+static GF_Err cenc_dec_set_clearkey(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, char *ck_url, u8 *ck_kid)
+{
+	GF_Err e;
+	char data64[32], body[CK_MAX_BUF];
+	ClearKeyParam ckp;
+	memset(&ckp, 0, sizeof(ClearKeyParam));
+	u32 i, res = gf_base64_encode(ck_kid, 16, data64, 32);
+	data64[res]=0;
+	for (i=0; i<res; i++) {
+		if (data64[i]=='+') data64[i] = '-';
+		else if (data64[i]=='/') data64[i] = '_';
+	}
+	while (data64[res-1]=='=') {
+		data64[res-1]=0;
+		res--;
+		if (!res) break;
+	}
+	strcpy(body, "{\"kids\": [\"");
+	strcat(body, data64);
+	strcat(body, "\"], \"type\":\"temporary\"}");
+	ckp.data = body;
+	ckp.data_len = (u32) strlen(body);
+
+	u32 crc = gf_crc_32(ckp.data, ckp.data_len);
+	if (cstr->clearkey_crc == crc) return GF_OK;
+	cstr->clearkey_crc = crc;
+
+	GF_DownloadManager *dm = gf_filter_get_download_manager(ctx->filter);
+	GF_DownloadSession *sess = gf_dm_sess_new(dm, ck_url, GF_NETIO_SESSION_NOT_THREADED | GF_NETIO_SESSION_NOT_CACHED, ck_http_io, &ckp, &e);
+	if (e) return e;
+
+	u32 nb_read=0;
+	while (1) {
+		u32 nread=0;
+		e = gf_dm_sess_fetch_data(sess, body + nb_read, CK_MAX_BUF-nb_read, &nread);
+		nb_read += nread;
+		if (nb_read >= CK_MAX_BUF) e = GF_BUFFER_TOO_SMALL;
+
+		if ((e<0) && (e != GF_IP_NETWORK_EMPTY)) break;
+		if (e == GF_EOS) {
+			break;
+		}
+	}
+	gf_dm_sess_del(sess);
+	if (e<GF_OK) return e;
+
+	//extract kids and keys from json
+	u32 key_idx=0;
+	char *ptr = body;
+	while (1) {
+		char *k = strstr(ptr, "\"k\"");
+		char *kid = strstr(ptr, "\"kid\"");
+		if (!k || !kid) break;
+		k+=3;
+		kid+=5;
+		while (k[0] && (k[0] != '"')) k++;
+		while (kid[0] && (kid[0] != '"')) kid++;
+		if ((k[0] != '"') || (kid[0] != '"')) {
+			e = GF_NON_COMPLIANT_BITSTREAM;
+			break;
+		}
+
+		k++;
+		kid++;
+		char *s1 = strchr(k, '"');
+		char *s2 = strchr(kid, '"');
+		if (!s1 || !s2) {
+			e = GF_NON_COMPLIANT_BITSTREAM;
+			break;
+		}
+		s1[0] = 0;
+		s2[0] = 0;
+
+		u8 key_val[20], kid_val[20];
+		e = rfmt_dec_b64(k, key_val, 20);
+		if (e) break;
+		e = rfmt_dec_b64(kid, kid_val, 20);
+		if (e) break;
+
+		cstr->keys = gf_realloc(cstr->keys, sizeof(bin128)*(key_idx+1));
+		cstr->KIDs = gf_realloc(cstr->KIDs, sizeof(bin128)*(key_idx+1));
+		memcpy(cstr->keys[key_idx], key_val, sizeof(bin128));
+		memcpy(cstr->KIDs[key_idx], kid_val, sizeof(bin128));
+		key_idx++;
+		if (s1 < s2) ptr = s2+1;
+		else ptr = s1+1;
+	}
+	if (e) return e;
+	cstr->KID_count = key_idx;
+
+	if (!cstr->crypts) {
+		cstr->crypts = gf_malloc(sizeof(CENCDecKey));
+		memset(cstr->crypts, 0, sizeof(CENCDecKey));
+	}
+	memcpy(cstr->crypts[0].key, cstr->keys[0], sizeof(bin128));
+	cstr->crypts[0].key_valid = 1;
+	return GF_OK;
+}
+
 static GF_Err cenc_dec_set_hls_key(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, char *key_url, u8 *key_IV)
 {
 	GF_Err e;
@@ -784,13 +936,14 @@ static GF_Err cenc_dec_load_pssh(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, con
 
 		/*SystemID for GPAC Player: 67706163-6365-6E63-6472-6D746F6F6C31*/
 		if (!strcmp(szSystemID, "6770616363656E6364726D746F6F6C31")) {
-			if (version==2)
-				cstr->gpac_master_leaf = GF_TRUE;
-			else if (version==3)
-				is_leaf_key = GF_TRUE;
-			else if (version==1)
+			//no KID signaled (version 0), use inband setup
+			if (version==0) {
 				cstr->gpac_master_leaf = GF_FALSE;
-			else {
+				cstr->inband_keys = GF_TRUE;
+				cstr->KID_count = 0;
+				return GF_OK;
+			}
+			else if (version>1) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[CENC/ISMA] Unsupported GPAC DRM config (version %d)\n", version));
 				continue;
 			}
@@ -810,6 +963,7 @@ static GF_Err cenc_dec_load_pssh(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, con
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[CENC/ISMA] Invalid KID count %d in GPAC init blob\n", kid_count));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
+		gf_bin128_parse("0x6770616363656E6364726D746F6F6C31", cypherKey);
 
 		/*store key IDs*/
 		cstr->KID_count = kid_count;
@@ -819,6 +973,15 @@ static GF_Err cenc_dec_load_pssh(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, con
 
 		memmove(cstr->KIDs, pssh_data + pos, cstr->KID_count*sizeof(bin128));
 		gf_bs_skip_bytes(ctx->bs_r, cstr->KID_count*sizeof(bin128));
+
+		//no key announced yet (roll)
+		if ((cstr->KID_count==1) && !memcmp(cstr->KIDs[0], cypherKey, sizeof(bin128))) {
+			cstr->inband_keys = GF_TRUE;
+			cstr->gpac_master_leaf = GF_FALSE;
+			cstr->KID_count = 0;
+			return GF_OK;
+		}
+
 		priv_len = gf_bs_read_u32(ctx->bs_r);
 		pos = (u32) gf_bs_get_position(ctx->bs_r);
 
@@ -827,27 +990,48 @@ static GF_Err cenc_dec_load_pssh(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, con
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
 
+		if (gf_bs_available(ctx->bs_r) % 16 == 0) {
+			cypherOffset = 0;
+			if (cstr->gpac_master_leaf)
+				is_leaf_key = GF_TRUE;
+		} else {
+			cypherOffset = pssh_data[pos] + 1;
+			if (priv_len < cypherOffset) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[CENC/ISMA] Invalid cypher offset %d in GPAC init blob\n", cypherOffset));
+				return GF_NON_COMPLIANT_BITSTREAM;
+			}
+			if (!strncmp(pssh_data + pos + 1, "master", 6)) {
+				cstr->gpac_master_leaf = GF_TRUE;
+			}
+			else if (!strncmp(pssh_data + pos + 1, "leaf", 4)) {
+				is_leaf_key = GF_TRUE;
+			} else if (cypherOffset>1) {
+				cstr->gpac_master_leaf = GF_FALSE;
+				if (!is_pck_pssh) {
+					cstr->gpac_master_leaf = GF_FALSE;
+					cstr->inband_keys = (version==0) ? GF_TRUE : GF_FALSE;
+				}
+			} else if (cstr->gpac_master_leaf) {
+				is_leaf_key = GF_TRUE;
+			}
+		}
+
+
 		if (is_leaf_key) {
-			if (gf_bs_available(ctx->bs_r) < 16) {
+			if (gf_bs_available(ctx->bs_r) < 16 + cypherOffset	) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[CENC/ISMA] Invalid GPAC init blob for leaf key\n", kid_count));
 				return GF_NON_COMPLIANT_BITSTREAM;
 			}
-			memmove(cstr->keys, pssh_data + pos, cstr->KID_count*sizeof(bin128));
-		} else {
+			memmove(cstr->keys, pssh_data + pos + cypherOffset, cstr->KID_count*sizeof(bin128));
+		} else if (priv_len) {
+			Bool use_cbc = (!cstr->gpac_master_leaf && cstr->inband_keys) ? GF_TRUE : GF_FALSE;
 			/*GPAC DRM TEST system info, used to validate cypher offset in CENC packager
 				keyIDs as usual (before private data)
 				URL len on 8 bits
 				URL
 				keys, cyphered with our magic key :)
 			*/
-			cypherOffset = pssh_data[pos] + 1;
 
-			if (priv_len < cypherOffset) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[CENC/ISMA] Invalid cypher offset %d in GPAC init blob\n", cypherOffset));
-				return GF_NON_COMPLIANT_BITSTREAM;
-			}
-
-			gf_bin128_parse("0x6770616363656E6364726D746F6F6C31", cypherKey);
 			gf_bin128_parse("0x00000000000000000000000000000001", cypherIV);
 
 			enc_payload_len = priv_len - cypherOffset;
@@ -856,7 +1040,11 @@ static GF_Err cenc_dec_load_pssh(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, con
 				return GF_NON_COMPLIANT_BITSTREAM;
 			}
 
-			mc = gf_crypt_open(GF_AES_128, GF_CTR);
+			if (use_cbc) {
+				mc = gf_crypt_open(GF_AES_128, GF_CBC);
+			} else {
+				mc = gf_crypt_open(GF_AES_128, GF_CTR);
+			}
 			if (!mc) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[CENC/ISMA] Cannot open AES-128 CTR\n"));
 				return GF_IO_ERR;
@@ -864,7 +1052,7 @@ static GF_Err cenc_dec_load_pssh(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, con
 			enc_data = gf_malloc(priv_len - cypherOffset);
 			memcpy(enc_data, pssh_data + pos + cypherOffset, priv_len - cypherOffset);
 
-			gf_crypt_init(mc, cypherKey, cypherIV);
+			gf_crypt_init(mc, cypherKey, use_cbc ? NULL : cypherIV);
 			gf_crypt_decrypt(mc, enc_data, priv_len - cypherOffset);
 			gf_crypt_close(mc);
 
@@ -884,7 +1072,6 @@ static GF_Err cenc_dec_load_pssh(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, con
 			return GF_OK;
 		}
 		if (is_leaf_key) {
-			u32 j;
 			for (j=0; j<cstr->KID_count; j++) {
 				GF_Crypt *crypto = gf_crypt_open(GF_AES_128, GF_CBC);
 				if (!crypto) return GF_OUT_OF_MEM;
@@ -948,7 +1135,7 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 		u32 new_crc = gf_crc_32(cstr->cenc_ki->value.data.ptr, cstr->cenc_ki->value.data.size);
 
 		//change of key config and same pssh, setup single key
-		if ((new_crc != ki_crc) && (pssh_crc==cstr->pssh_crc)) {
+		if ((new_crc != ki_crc) && (pssh_crc==cstr->pssh_crc) && !cstr->inband_keys) {
 			e = cenc_dec_load_keys(ctx, cstr);
 			if (e) return e;
 		}
@@ -1038,6 +1225,16 @@ static GF_Err cenc_dec_setup_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, u3
 		e = cenc_dec_set_hls_key(ctx, cstr, cinfo_prop->value.string, prop->value.data.ptr);
 		if (!e) return GF_OK;
 	}
+
+	cinfo_prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_CLEARKEY_URI);
+	prop = gf_filter_pid_get_property(cstr->ipid, GF_PROP_PID_CLEARKEY_KID);
+
+	if (cinfo_prop && prop) {
+		e = cenc_dec_set_clearkey(ctx, cstr, cinfo_prop->value.string, prop->value.data.ptr);
+		if (!e) return GF_OK;
+		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[CENC] Failed to setup clearkey from download key %s: %s\n", cinfo_prop->value.string, gf_error_to_string(e)))
+	}
+
 
 	if (ctx->decrypt!=DECRYPT_FULL) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[CENC/ISMA] No keys found but playback forced\n"));
@@ -1548,7 +1745,6 @@ static GF_Err cenc_dec_process_cenc(GF_CENCDecCtx *ctx, GF_CENCDecStream *cstr, 
 	}
 
 send_packet:
-	gf_filter_pck_merge_properties(in_pck, out_pck);
 	gf_filter_pck_set_property(out_pck, GF_PROP_PCK_CENC_SAI, NULL);
 	gf_filter_pck_set_crypt_flags(out_pck, 0);
 
@@ -1721,7 +1917,6 @@ static GF_Err cenc_dec_process_hls_saes(GF_CENCDecCtx *ctx, GF_CENCDecStream *cs
 
 
 send_packet:
-	gf_filter_pck_merge_properties(in_pck, out_pck);
 	gf_filter_pck_set_property(out_pck, GF_PROP_PCK_CENC_SAI, NULL);
 	gf_filter_pck_set_crypt_flags(out_pck, 0);
 
@@ -1963,7 +2158,7 @@ static GF_Err cenc_dec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_CENC_PATTERN, NULL);
 	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_HLS_KMS, NULL);
 
-	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_ORIG_CRYPT_SCHEME, &PROP_UINT(scheme_type) );
+	gf_filter_pid_set_property(cstr->opid, GF_PROP_PID_ORIG_CRYPT_SCHEME, &PROP_4CC(scheme_type) );
 
 
 	cstr->is_nalu = GF_FALSE;;
@@ -2012,6 +2207,8 @@ static Bool cenc_dec_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		} else {
 			cenc_dec_access_isma(ctx, cstr, is_play);
 		}
+		if (!is_play)
+			cstr->crypt_init = GF_FALSE;
 		break;
 	default:
 		break;

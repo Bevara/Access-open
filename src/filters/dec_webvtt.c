@@ -76,6 +76,7 @@ typedef struct
 	s32 txtx, txty;
 	u32 fsize;
 	u32 vp_w, vp_h;
+	u32 nb_frames;
 } GF_VTTDec;
 
 void vttd_update_size_info(GF_VTTDec *ctx)
@@ -96,6 +97,10 @@ void vttd_update_size_info(GF_VTTDec *ctx)
 		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_HEIGHT);
 		if (p) h = p->value.uint;
 
+		if (ctx->scene->compositor->osize.x && ctx->scene->compositor->osize.y) {
+			w = ctx->scene->compositor->osize.x;
+			h = ctx->scene->compositor->osize.y;
+		}
 		if (!w) w = ctx->txtw;
 		if (!h) h = ctx->txth;
 		else if (h<=3*ctx->fontSize) h *= 2;
@@ -183,7 +188,7 @@ static GF_Err vttd_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
 	ctx->delay = p ? p->value.longsint : 0;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
-	ctx->timescale = p ? p->value.longsint : 1000;
+	ctx->timescale = p ? p->value.uint: 1000;
 
 	ctx->ipid = pid;
 	if (!ctx->opid) {
@@ -306,7 +311,7 @@ JSContext *vtt_script_get_context(GF_VTTDec *ctx, GF_SceneGraph *sg)
 	if (ctx->update_args) {
 		JSValue global = JS_GetGlobalObject(c);
 
-		u32 fs = MAX(ctx->fsize, ctx->fontSize);
+		u32 fs = (u32) MAX(ctx->fsize, ctx->fontSize);
 		u32 def_font_size = ctx->scene->compositor->subfs;
 		if (!def_font_size) {
 			if (ctx->vp_h > 2000) def_font_size = 80;
@@ -409,7 +414,6 @@ static GF_Err vttd_process(GF_Filter *filter)
 	GF_List *cues;
 	const char *pck_data;
 	u64 cts;
-	u32 obj_time;
 	u32 pck_size;
 	GF_VTTDec *ctx = (GF_VTTDec *) gf_filter_get_udta(filter);
 
@@ -434,18 +438,28 @@ static GF_Err vttd_process(GF_Filter *filter)
 	if (!ctx->odm->ck)
 		return GF_OK;
 
-	gf_odm_check_buffering(ctx->odm, ctx->ipid);
-	obj_time = gf_clock_time(ctx->odm->ck);
-
 	if (ctx->cue_end) {
-		u32 c_end = gf_timestamp_rescale(ctx->cue_end, ctx->timescale, 1000);
-		if (c_end <= obj_time) {
+		u64 old_cue_end = ctx->cue_end;
+		u32 obj_time = gf_clock_time(ctx->odm->ck);
+		if (gf_clock_diff(ctx->odm->ck, obj_time, (u32) ctx->cue_end)<=0) {
 			vttd_js_remove_cues(ctx, ctx->scenegraph->RootNode);
 			ctx->cue_end = 0;
 		}
 		if (!pck) {
-			if (ctx->cue_end && gf_filter_pid_is_eos(ctx->ipid))
-				gf_sc_sys_frame_pending(ctx->scene->compositor, 0.1, obj_time, filter);
+			if (gf_filter_pid_is_eos(ctx->ipid)) {
+				//single frame, don't reset compositor (avoid last blank frame generation)
+				if (ctx->nb_frames==1) {
+					gf_filter_pid_set_eos(ctx->opid);
+					return GF_EOS;
+				}
+				if (ctx->cue_end) {
+					gf_sc_sys_frame_pending(ctx->scene->compositor, (u32) ctx->cue_end, obj_time, filter);
+				} else {
+					gf_sc_check_sys_frame(ctx->scene, ctx->odm, ctx->ipid, filter, old_cue_end, 0);
+					gf_filter_pid_set_eos(ctx->opid);
+					return GF_EOS;
+				}
+			}
 			return GF_OK;
 		}
 	}
@@ -457,18 +471,18 @@ static GF_Err vttd_process(GF_Filter *filter)
 	delay += ctx->delay;
 
 	if (delay>=0) cts += delay;
-	else if (cts > -delay) cts -= -delay;
+	else if (cts > (u64) -delay) cts -= -delay;
 	else cts = 0;
+	cts = gf_timestamp_to_clocktime(cts, ctx->timescale);
 
-	//we still process any frame before our clock time even when buffering
-	if (gf_timestamp_greater(cts, ctx->timescale, obj_time, 1000)) {
-		gf_sc_sys_frame_pending(ctx->scene->compositor, ((Double) cts / ctx->timescale), obj_time, filter);
+	u32 dur = (u32) gf_timestamp_rescale( gf_filter_pck_get_duration(pck), ctx->timescale, 1000);
+	if (!gf_sc_check_sys_frame(ctx->scene, ctx->odm, ctx->ipid, filter, cts, dur))
 		return GF_OK;
-	}
+
 	pck_data = gf_filter_pck_get_data(pck, &pck_size);
 
-	ctx->cue_end = cts + gf_filter_pck_get_duration(pck);
-
+	ctx->cue_end = cts + gf_timestamp_rescale(gf_filter_pck_get_duration(pck), ctx->timescale, 1000);
+	ctx->nb_frames++;
 	cues = gf_webvtt_parse_cues_from_data(pck_data, pck_size, 0, 0);
 	vttd_js_remove_cues(ctx, ctx->scenegraph->RootNode);
 	if (gf_list_count(cues)) {
@@ -537,8 +551,8 @@ static const GF_FilterArgs VTTDecArgs[] =
 	{ OFFS(fontSize), "font size", GF_PROP_FLOAT, "20", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(color), "text color", GF_PROP_STRING, "white", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(lineSpacing), "line spacing as scaling factor to font size", GF_PROP_FLOAT, "1.0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
-	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, 0},
-	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, 0},
+	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -555,8 +569,14 @@ GF_FilterRegister VTTDecRegister = {
 	.name = "vttdec",
 	GF_FS_SET_DESCRIPTION("WebVTT decoder")
 	GF_FS_SET_HELP("This filter decodes WebVTT streams into a SVG scene graph of the compositor filter.\n"
-	"The scene graph creation is done through JavaScript.\n"
-	"The filter options are used to override the JS global variables of the WebVTT renderer.")
+		"The scene graph creation is done through JavaScript.\n"
+		"The filter options are used to override the JS global variables of the WebVTT renderer."
+		"\n"
+		"In stand-alone rendering (no associated video), the filter will use:\n"
+		"- `Width` and `Height` properties of input pid if any\n"
+		"- otherwise, `osize` option of compositor if set\n"
+		"- otherwise, [-txtw]() and [-txth]()\n"
+	)
 	.private_size = sizeof(GF_VTTDec),
 	.flags = GF_FS_REG_MAIN_THREAD,
 	.args = VTTDecArgs,

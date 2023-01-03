@@ -160,7 +160,7 @@ GF_AudioRenderer *gf_sc_ar_load(GF_Compositor *compositor, u32 init_flags)
 	ar->non_rt_output = 1;
 	ar->volume = MIN(100, compositor->avol);
 	ar->pan = MIN(100, compositor->apan);
-	if (! (init_flags & GF_TERM_NO_AUDIO) ) {
+	if (!compositor->noaudio ) {
 		gf_ar_setup_output_format(ar);
 	}
 	gf_mixer_set_max_speed(ar->mixer, compositor->max_aspeed);
@@ -230,7 +230,9 @@ void gf_sc_ar_add_src(GF_AudioRenderer *ar, GF_AudioInterface *source)
 	Bool recfg;
 	if (!ar) return;
 
+#ifndef GPAC_DISABLE_PLAYER
 	compositor_setup_aout(ar->compositor);
+#endif //GPAC_DISABLE_PLAYER
 
 	/*lock mixer*/
 	gf_mixer_lock(ar->mixer, GF_TRUE);
@@ -429,7 +431,6 @@ void gf_sc_ar_send_or_reconfig(GF_AudioRenderer *ar)
 		/*unlock mixer*/
 		gf_mixer_lock(ar->mixer, GF_FALSE);
 	}
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_AUDIO, ("[Compositor] sending audio packets\n"));
 	gf_ar_send_packets(ar);
 }
 

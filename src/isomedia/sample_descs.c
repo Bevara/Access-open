@@ -458,7 +458,7 @@ GF_Err gf_isom_opus_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_OpusCon
 	if (e) return e;
 
 	trak = gf_isom_get_track_from_file(the_file, trackNumber);
-	if (!trak || !trak->Media || !cfg) return GF_BAD_PARAM;
+	if (!trak || !trak->Media) return GF_BAD_PARAM;
 
 	//get or create the data ref
 	e = Media_FindDataRef(trak->Media->information->dataInformation->dref, URLname, URNname, &dataRefIndex);
@@ -712,6 +712,35 @@ GF_Err gf_isom_ac3_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_AC3Confi
 	e = gf_list_add(trak->Media->information->sampleTable->SampleDescription->child_boxes, entry);
 	*outDescriptionIndex = gf_list_count(trak->Media->information->sampleTable->SampleDescription->child_boxes);
 	return e;
+}
+
+GF_EXPORT
+GF_Err gf_isom_ac3_config_update(GF_ISOFile *the_file, u32 trackNumber, u32 sampleDescriptionIndex, GF_AC3Config *cfg)
+{
+	GF_TrackBox *trak;
+	GF_Err e;
+	GF_MPEGAudioSampleEntryBox *entry;
+
+	e = CanAccessMovie(the_file, GF_ISOM_OPEN_WRITE);
+	if (e) return e;
+
+	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	if (!trak || !trak->Media || !cfg || !sampleDescriptionIndex) return GF_BAD_PARAM;
+
+	if (!the_file->keep_utc)
+		trak->Media->mediaHeader->modificationTime = gf_isom_get_mp4time();
+
+	entry = gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, sampleDescriptionIndex-1);
+	if (!entry) return GF_BAD_PARAM;
+	if (!entry->cfg_ac3) return GF_BAD_PARAM;
+
+	if (entry->cfg_ac3->cfg.is_ec3) {
+		if (!cfg->is_ec3) return GF_BAD_PARAM;
+	} else {
+		if (cfg->is_ec3) return GF_BAD_PARAM;
+	}
+	memcpy(&entry->cfg_ac3->cfg, cfg, sizeof(GF_AC3Config));
+	return GF_OK;
 }
 
 GF_EXPORT
@@ -1671,7 +1700,7 @@ GF_Err gf_isom_tmcd_config_new(GF_ISOFile *the_file, u32 trackNumber, u32 fps_nu
 	return e;
 }
 
-GF_Err gf_isom_new_mpha_description(GF_ISOFile *movie, u32 trackNumber, const char *URLname, const char *URNname, u32 *outDescriptionIndex, u8 *dsi, u32 dsi_size)
+GF_Err gf_isom_new_mpha_description(GF_ISOFile *movie, u32 trackNumber, const char *URLname, const char *URNname, u32 *outDescriptionIndex, u8 *dsi, u32 dsi_size, u32 mha_subtype)
 {
 	GF_TrackBox *trak;
 	GF_Err e;
@@ -1680,13 +1709,24 @@ GF_Err gf_isom_new_mpha_description(GF_ISOFile *movie, u32 trackNumber, const ch
 
 	e = CanAccessMovie(movie, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
-	if (dsi_size<6) return GF_BAD_PARAM;
 
 	trak = gf_isom_get_track_from_file(movie, trackNumber);
 	if (!trak || !trak->Media) return GF_BAD_PARAM;
 
 	switch (trak->Media->handler->handlerType) {
 	case GF_ISOM_MEDIA_AUDIO:
+		break;
+	default:
+		return GF_BAD_PARAM;
+	}
+	switch (mha_subtype) {
+	case GF_ISOM_BOX_TYPE_MHA1:
+	case GF_ISOM_BOX_TYPE_MHA2:
+		if (!dsi || (dsi_size<6)) return GF_BAD_PARAM;
+		break;
+	case GF_ISOM_BOX_TYPE_MHM1:
+	case GF_ISOM_BOX_TYPE_MHM2:
+		if (dsi_size && (dsi_size<6)) return GF_BAD_PARAM;
 		break;
 	default:
 		return GF_BAD_PARAM;
@@ -1702,23 +1742,25 @@ GF_Err gf_isom_new_mpha_description(GF_ISOFile *movie, u32 trackNumber, const ch
 	if (!movie->keep_utc)
 		trak->Media->mediaHeader->modificationTime = gf_isom_get_mp4time();
 
-	mpa = (GF_MPEGAudioSampleEntryBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_MHA1);
+	mpa = (GF_MPEGAudioSampleEntryBox *) gf_isom_box_new(mha_subtype);
 	if (!mpa) return GF_OUT_OF_MEM;
 	mpa->dataReferenceIndex = dataRefIndex;
 	gf_list_add(trak->Media->information->sampleTable->SampleDescription->child_boxes, mpa);
 	if (outDescriptionIndex) *outDescriptionIndex = gf_list_count(trak->Media->information->sampleTable->SampleDescription->child_boxes);
 
-	mpa->cfg_mha = (GF_MHAConfigBox *) gf_isom_box_new_parent(&mpa->child_boxes, GF_ISOM_BOX_TYPE_MHAC);
-	if (!mpa->cfg_mha) return GF_OUT_OF_MEM;
-	mpa->cfg_mha->configuration_version = dsi[0];
-	mpa->cfg_mha->mha_pl_indication = dsi[1];
-	mpa->cfg_mha->reference_channel_layout = dsi[2];
-	mpa->cfg_mha->mha_config_size = dsi[3];
-	mpa->cfg_mha->mha_config_size <<= 8;
-	mpa->cfg_mha->mha_config_size |= dsi[4];
-	mpa->cfg_mha->mha_config = gf_malloc(sizeof(u8) * mpa->cfg_mha->mha_config_size);
-	if (!mpa->cfg_mha->mha_config) return GF_OUT_OF_MEM;
-	memcpy(mpa->cfg_mha->mha_config, dsi+5, dsi_size-5);
+	if (dsi) {
+		mpa->cfg_mha = (GF_MHAConfigBox *) gf_isom_box_new_parent(&mpa->child_boxes, GF_ISOM_BOX_TYPE_MHAC);
+		if (!mpa->cfg_mha) return GF_OUT_OF_MEM;
+		mpa->cfg_mha->configuration_version = dsi[0];
+		mpa->cfg_mha->mha_pl_indication = dsi[1];
+		mpa->cfg_mha->reference_channel_layout = dsi[2];
+		mpa->cfg_mha->mha_config_size = dsi[3];
+		mpa->cfg_mha->mha_config_size <<= 8;
+		mpa->cfg_mha->mha_config_size |= dsi[4];
+		mpa->cfg_mha->mha_config = gf_malloc(sizeof(u8) * mpa->cfg_mha->mha_config_size);
+		if (!mpa->cfg_mha->mha_config) return GF_OUT_OF_MEM;
+		memcpy(mpa->cfg_mha->mha_config, dsi+5, dsi_size-5);
+	}
 	return GF_OK;
 }
 

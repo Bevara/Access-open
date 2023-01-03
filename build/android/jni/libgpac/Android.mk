@@ -25,15 +25,8 @@ LOCAL_LDLIBS    += -lft2 -ljpegdroid -lopenjpeg -lpng -lfaad -lmad -lnghttp2 -lz
 #ffmpeg
 LOCAL_LDLIBS    += -lavcodec -lavformat -lswresample -lavfilter -lavutil -lavdevice -lswscale
 
-#mediacodec - removed  ljavaenv from original settings
+#mediacodec
 LOCAL_LDLIBS    += -llog -lOpenMAXAL -lmediandk -landroid
-
-#LOCAL_SHARED_LIBRARIES    += -L$(LOCAL_PATH)/../../../../extra_lib/lib/android/$(TARGET_ARCH_ABI)
-#LOCAL_SHARED_LIBRARIES    += -lGLESv2 -ldl
-#LOCAL_SHARED_LIBRARIES    += -lft2 -ljpegdroid -lopenjpeg -lpng -lz
-
-#LOCAL_EXPORT_LDLIBS= -lft2 -ljpeg -lopenjpeg -lpng -lz
-
 
 LOCAL_CFLAGS +=	-DGPAC_HAVE_CONFIG_H
 LOCAL_CFLAGS += -DNO_MALLINFO
@@ -191,6 +184,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/encrypt_cenc_isma.c \
 	../../../../src/filters/ff_common.c \
 	../../../../src/filters/ff_avf.c \
+	../../../../src/filters/ff_bsf.c \
 	../../../../src/filters/ff_dec.c \
 	../../../../src/filters/ff_dmx.c \
 	../../../../src/filters/ff_enc.c \
@@ -261,6 +255,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/tssplit.c \
 	../../../../src/filters/ttml_conv.c \
 	../../../../src/filters/unit_test_filter.c \
+	../../../../src/filters/unframer.c \
 	../../../../src/filters/vcrop.c \
 	../../../../src/filters/vflip.c \
 	../../../../src/filters/write_generic.c \
@@ -396,7 +391,6 @@ LOCAL_SRC_FILES := \
 	../../../../src/scene_manager/swf_parse.c \
 	../../../../src/scene_manager/swf_svg.c \
 	../../../../src/scene_manager/text_to_bifs.c \
-	../../../../src/terminal/terminal.c \
 	../../../../src/utils/alloc.c \
 	../../../../src/utils/base_encoding.c \
 	../../../../src/utils/bitstream.c \
@@ -420,6 +414,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/utils/path2d.c \
 	../../../../src/utils/path2d_stroker.c \
 	../../../../src/utils/sha1.c \
+	../../../../src/utils/sha256.c \
 	../../../../src/utils/token.c \
 	../../../../src/utils/uni_bidi.c \
 	../../../../src/utils/unicode.c \

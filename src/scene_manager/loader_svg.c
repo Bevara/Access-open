@@ -329,13 +329,15 @@ static void svg_post_process_href(GF_SVG_Parser *parser, GF_Node *elt, XMLRI *ir
 	}
 	if (iri->type != XMLRI_STRING) return;
 	e = gf_node_store_embedded_data(iri, parser->load->localPath, parser->load->fileName);
-	if (e) svg_report(parser, e, "Error storing embedded IRI data");
+	if (e)
+		svg_report(parser, e, "Error storing embedded IRI data");
 }
 
 static void svg_delete_deferred_anim(SVG_DeferredAnimation *anim, GF_List *deferred_animations)
 {
 	if (deferred_animations) gf_list_del_item(deferred_animations, anim);
 
+	if (anim->animation_elt) gf_node_unregister((GF_Node*)anim->animation_elt, NULL);
 	if (anim->target_id) gf_free(anim->target_id);
 	if (anim->to) gf_free(anim->to);
 	if (anim->from) gf_free(anim->from);
@@ -351,12 +353,14 @@ static Bool svg_parse_animation(GF_SVG_Parser *parser, GF_SceneGraph *sg, SVG_De
 	u32 tag;
 	u8 anim_value_type = 0;
 
+	if (!anim->animation_elt)
+		return GF_FALSE;
 	if (anim->resolve_stage==0) {
 		/* Stage 0: parsing the animation attribute values
 					for that we need to resolve the target first */
 
 		/* if we don't have a target, try to get it */
-		if (!anim->target)
+		if (!anim->target && anim->target_id)
 			anim->target = (SVG_Element *) gf_sg_find_node_by_name(sg, anim->target_id + 1);
 
 		/* if now we have a target, create the xlink:href attribute on the animation element and set it to the found target */
@@ -446,6 +450,7 @@ static Bool svg_parse_animation(GF_SVG_Parser *parser, GF_SceneGraph *sg, SVG_De
 		if (anim->to) {
 			/* now that we have a target, if there is a to value to parse, create the attribute and parse it */
 			gf_node_get_attribute_by_tag((GF_Node *)anim->animation_elt, TAG_SVG_ATT_to, GF_TRUE, GF_FALSE, &info);
+			if (!info.name) info.name = "to";
 			gf_svg_parse_attribute((GF_Node *)anim->animation_elt, &info, anim->to, anim_value_type);
 			if (anim_value_type==XMLRI_datatype) {
 				svg_post_process_href(parser, (GF_Node *) anim->target, (XMLRI*)((SMIL_AnimateValue *)info.far_ptr)->value);
@@ -454,6 +459,7 @@ static Bool svg_parse_animation(GF_SVG_Parser *parser, GF_SceneGraph *sg, SVG_De
 		if (anim->from) {
 			/* now that we have a target, if there is a from value to parse, create the attribute and parse it */
 			gf_node_get_attribute_by_tag((GF_Node *)anim->animation_elt, TAG_SVG_ATT_from, GF_TRUE, GF_FALSE, &info);
+			if (!info.name) info.name = "from";
 			gf_svg_parse_attribute((GF_Node *)anim->animation_elt, &info, anim->from, anim_value_type);
 			if (anim_value_type==XMLRI_datatype)
 				svg_post_process_href(parser,  (GF_Node *) anim->target, (XMLRI*)((SMIL_AnimateValue *)info.far_ptr)->value);
@@ -461,6 +467,7 @@ static Bool svg_parse_animation(GF_SVG_Parser *parser, GF_SceneGraph *sg, SVG_De
 		if (anim->by) {
 			/* now that we have a target, if there is a by value to parse, create the attribute and parse it */
 			gf_node_get_attribute_by_tag((GF_Node *)anim->animation_elt, TAG_SVG_ATT_by, GF_TRUE, GF_FALSE, &info);
+			if (!info.name) info.name = "by";
 			gf_svg_parse_attribute((GF_Node *)anim->animation_elt, &info, anim->by, anim_value_type);
 			if (anim_value_type==XMLRI_datatype)
 				svg_post_process_href(parser,  (GF_Node *) anim->target, (XMLRI*)((SMIL_AnimateValue *)info.far_ptr)->value);
@@ -468,6 +475,7 @@ static Bool svg_parse_animation(GF_SVG_Parser *parser, GF_SceneGraph *sg, SVG_De
 		if (anim->values) {
 			/* now that we have a target, if there is a 'values' value to parse, create the attribute and parse it */
 			gf_node_get_attribute_by_tag((GF_Node *)anim->animation_elt, TAG_SVG_ATT_values, GF_TRUE, GF_FALSE, &info);
+			if (!info.name) info.name = "values";
 			gf_svg_parse_attribute((GF_Node *)anim->animation_elt, &info, anim->values, anim_value_type);
 			if (anim_value_type==XMLRI_datatype) {
 				u32 i, count;
@@ -740,6 +748,7 @@ static SVG_Element *svg_parse_element(GF_SVG_Parser *parser, const char *name, c
 		}
 		/*default anim target is parent node*/
 		anim->animation_elt = elt;
+		gf_node_register((GF_Node*)elt, NULL);
 		if (!parent) {
 			if (parser->command) {
 				anim->target = anim->anim_parent = (SVG_Element*) parser->command->node;
@@ -757,6 +766,7 @@ static SVG_Element *svg_parse_element(GF_SVG_Parser *parser, const char *name, c
 		}
 		/*default anim target is parent node*/
 		anim->animation_elt = elt;
+		gf_node_register((GF_Node*)elt, NULL);
 		if (!parent) {
 			if (parser->command) {
 				anim->target = anim->anim_parent = (SVG_Element*) parser->command->node;
@@ -882,8 +892,9 @@ static SVG_Element *svg_parse_element(GF_SVG_Parser *parser, const char *name, c
 			if (!stricmp(att_name, "scale") ) {
 				if (gf_node_get_attribute_by_tag((GF_Node *)elt, TAG_SVG_ATT_transform, GF_TRUE, GF_TRUE, &info)==GF_OK) {
 					SVG_Point pt;
+					GF_Err e;
 					SVG_Transform *mat = (SVG_Transform *)info.far_ptr;
-					svg_parse_point(&pt, att->value);
+					svg_parse_point(&pt, att->value, &e);
 					gf_mx2d_add_scale(&mat->mat, pt.x, pt.y);
 					continue;
 				}
@@ -891,8 +902,9 @@ static SVG_Element *svg_parse_element(GF_SVG_Parser *parser, const char *name, c
 			if (!stricmp(att_name, "translation") ) {
 				if (gf_node_get_attribute_by_tag((GF_Node *)elt, TAG_SVG_ATT_transform, GF_TRUE, GF_TRUE, &info)==GF_OK) {
 					SVG_Point pt;
+					GF_Err e;
 					SVG_Transform *mat = (SVG_Transform *)info.far_ptr;
-					svg_parse_point(&pt, att->value);
+					svg_parse_point(&pt, att->value, &e);
 					gf_mx2d_add_translation(&mat->mat, pt.x, pt.y);
 					continue;
 				}
@@ -918,6 +930,7 @@ static SVG_Element *svg_parse_element(GF_SVG_Parser *parser, const char *name, c
 		/* General attribute creation and parsing */
 		if (gf_node_get_attribute_by_name((GF_Node *)elt, att_name, ns, GF_TRUE, GF_FALSE, &info)==GF_OK) {
 #ifndef SKIP_ATTS_PARSING
+			if (!info.name) info.name = att_name;
 			GF_Err e = gf_svg_parse_attribute((GF_Node *)elt, &info, att->value, 0);
 			if (e) {
 				svg_report(parser, e, "Error parsing attribute %s on node %s", att->name, name);
@@ -1067,7 +1080,7 @@ static SVG_Element *svg_parse_element(GF_SVG_Parser *parser, const char *name, c
 		/*if event is a key event, register it with root*/
 		if (!par && gf_node_get_attribute_by_tag((GF_Node *)listener, TAG_XMLEV_ATT_event, GF_FALSE, GF_FALSE, &info) == GF_OK) {
 			XMLEV_Event *ev = (XMLEV_Event *)info.far_ptr;
-			if ((ev->type>=GF_EVENT_KEYUP) && (ev->type<=GF_EVENT_TEXTINPUT)) par = (SVG_Element*) listener->sgprivate->scenegraph->RootNode;
+			if ((ev->type >= GF_EVENT_KEYUP) && (ev->type <= GF_EVENT_TEXTINPUT)) par = (SVG_Element*) listener->sgprivate->scenegraph->RootNode;
 		}
 
 		if (post_pone) {
@@ -1274,7 +1287,8 @@ static GF_Err lsr_parse_command(GF_SVG_Parser *parser, const GF_XMLAttribute *at
 		if (atInteger) parser->command->send_event_integer = atoi(atInteger);
 		if (atPoint) {
 			SVG_Point pt;
-			svg_parse_point(&pt, atPoint);
+			GF_Err e;
+			svg_parse_point(&pt, atPoint, &e);
 			parser->command->send_event_x = FIX2INT(pt.x);
 			parser->command->send_event_y = FIX2INT(pt.y);
 		}
@@ -2110,13 +2124,13 @@ GF_Err load_svg_run(GF_SceneLoader *load)
 
 	in_time = gf_sys_clock();
 	e = gf_xml_sax_parse_file(parser->sax_parser, (const char *)load->fileName, svg_progress);
+	svg_flush_animations(parser);
+	gf_sm_svg_flush_state(parser);
 	if (parser->last_error<0) e = parser->last_error;
-	
+
 	if (e<0) return svg_report(parser, e, "Unable to parse file %s: %s", load->fileName, gf_xml_sax_get_error(parser->sax_parser) );
 	GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("[Parser] Scene parsed and Scene Graph built in %d ms\n", gf_sys_clock() - in_time));
 
-	svg_flush_animations(parser);
-	gf_sm_svg_flush_state(parser);
 	return e;
 
 }

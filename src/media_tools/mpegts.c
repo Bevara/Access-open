@@ -332,6 +332,11 @@ static void gf_m2ts_metadata_descriptor_del(GF_M2TS_MetadataDescriptor *metad)
 
 static void gf_m2ts_es_del(GF_M2TS_ES *es, GF_M2TS_Demuxer *ts)
 {
+	//es is reused (PCR streams only, reuse at most one), remove reuse flag
+	if (es->flags & GF_M2TS_ES_IS_PCR_REUSE) {
+		es->flags &= ~GF_M2TS_ES_IS_PCR_REUSE;
+		return;
+	}
 	gf_list_del_item(es->program->streams, es);
 
 	if (ts->on_event)
@@ -1361,6 +1366,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		case GF_M2TS_AUDIO_AC3:
 		case GF_M2TS_AUDIO_EC3:
 		case GF_M2TS_AUDIO_DTS:
+		case GF_M2TS_AUDIO_TRUEHD:
 		case GF_M2TS_AUDIO_OPUS:
 		case GF_M2TS_MHAS_MAIN:
 		case GF_M2TS_MHAS_AUX:
@@ -1502,10 +1508,14 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 						/* cf https://smpte-ra.org/registered-mpeg-ts-ids */
 						switch (reg_desc_format) {
 						case GF_M2TS_RA_STREAM_AC3:
-							es->stream_type = GF_M2TS_AUDIO_AC3;
+							//don't overwrite if alread EAC3 or TrueHD
+							if ((es->stream_type != GF_M2TS_AUDIO_EC3) && (es->stream_type != GF_M2TS_AUDIO_TRUEHD))
+								es->stream_type = GF_M2TS_AUDIO_AC3;
 							break;
 						case GF_M2TS_RA_STREAM_EAC3:
-							es->stream_type = GF_M2TS_AUDIO_EC3;
+							//don't overwrite if alread AC3 or TrueHD
+							if ((es->stream_type != GF_M2TS_AUDIO_AC3) && (es->stream_type != GF_M2TS_AUDIO_TRUEHD))
+								es->stream_type = GF_M2TS_AUDIO_EC3;
 							break;
 						case GF_M2TS_RA_STREAM_VC1:
 							es->stream_type = GF_M2TS_VIDEO_VC1;
@@ -1528,11 +1538,17 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 							break;
 
 						case GF_M2TS_RA_STREAM_GPAC:
-							if (len==8) {
-								es->stream_type = GF_4CC(data[6], data[7], data[8], data[9]);
-								es->flags |= GF_M2TS_GPAC_CODEC_ID;
-								break;
+							if (len<8) break;
+							es->stream_type = GF_4CC(data[6], data[7], data[8], data[9]);
+							es->flags |= GF_M2TS_GPAC_CODEC_ID;
+							if ((len>12) && (es->flags & GF_M2TS_ES_IS_PES)) {
+								pes = (GF_M2TS_PES*)es;
+								pes->gpac_meta_dsi_size = len-4;
+								pes->gpac_meta_dsi = gf_realloc(pes->gpac_meta_dsi, pes->gpac_meta_dsi_size);
+								if (pes->gpac_meta_dsi)
+									memcpy(pes->gpac_meta_dsi, data+6, pes->gpac_meta_dsi_size);
 							}
+							break;
 						default:
 							GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("Unknown registration descriptor %s\n", gf_4cc_to_str(reg_desc_format) ));
 							break;
@@ -1841,11 +1857,6 @@ static void gf_m2ts_process_pat(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *ses, GF
 			gf_list_add(prog->streams, pmt);
 			pmt->pid = prog->pmt_pid;
 			pmt->program = prog;
-/*			if (ts->ess[pmt->pid]) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("Redefinition of pmt for pid %d\n", pid));
-				gf_m2ts_es_del(ts->ess[pmt->pid], ts);
-			}
-*/
 			ts->ess[pmt->pid] = (GF_M2TS_ES *)pmt;
 			pmt->sec = gf_m2ts_section_filter_new(gf_m2ts_process_pmt, 0);
 		}
@@ -2077,7 +2088,9 @@ void gf_m2ts_flush_pes(GF_M2TS_Demuxer *ts, GF_M2TS_PES *pes, u32 force_flush_ty
 			if (pesh.PTS) {
 				if (pesh.PTS == pes->PTS) {
 					same_pts = GF_TRUE;
-					if (!pes->is_resume) {
+					if ((pes->stream_type==GF_M2TS_AUDIO_TRUEHD) || (pes->stream_type==GF_M2TS_AUDIO_EC3)) {
+						same_pts = GF_FALSE;
+					} else if (!pes->is_resume) {
 						GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] PID %d - same PTS "LLU" for two consecutive PES packets \n", pes->pid, pes->PTS));
 					}
 				}
@@ -2093,7 +2106,10 @@ void gf_m2ts_flush_pes(GF_M2TS_Demuxer *ts, GF_M2TS_PES *pes, u32 force_flush_ty
 #ifndef GPAC_DISABLE_LOG
 				{
 					if (!pes->is_resume && pes->DTS && (pesh.DTS == pes->DTS)) {
-						GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] PID %d - same DTS "LLU" for two consecutive PES packets \n", pes->pid, pes->DTS));
+						if ((pes->stream_type==GF_M2TS_AUDIO_TRUEHD) || (pes->stream_type==GF_M2TS_AUDIO_EC3)) {
+						} else {
+							GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] PID %d - same DTS "LLU" for two consecutive PES packets \n", pes->pid, pes->DTS));
+						}
 					}
 					if (pesh.DTS < pes->DTS) {
 						GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] PID %d - DTS "LLU" less than previous DTS "LLU"\n", pes->pid, pesh.DTS, pes->DTS));
@@ -2583,7 +2599,7 @@ static GF_Err gf_m2ts_process_packet(GF_M2TS_Demuxer *ts, unsigned char *data)
 					GF_M2TS_PES *pes = (GF_M2TS_PES *) gf_list_get(program->streams, j);
 					if (pes->flags & GF_M2TS_INHERIT_PCR) {
 						ts->ess[hdr.pid] = (GF_M2TS_ES *) pes;
-						pes->flags |= GF_M2TS_FAKE_PCR;
+						pes->flags |= GF_M2TS_FAKE_PCR | GF_M2TS_ES_IS_PCR_REUSE;
 						break;
 					}
 					if (pes->flags & GF_M2TS_ES_IS_PES) {
@@ -3092,7 +3108,7 @@ void gf_m2ts_demux_del(GF_M2TS_Demuxer *ts)
 	if (ts->tdt_tot) gf_m2ts_section_filter_del(ts->tdt_tot);
 
 	for (i=0; i<GF_M2TS_MAX_STREAMS; i++) {
-		//bacause of pure PCR streams, en ES might be reassigned on 2 PIDs, one for the ES and one for the PCR
+		//because of pure PCR streams, an ES might be reassigned on 2 PIDs, one for the ES and one for the PCR
 		if (ts->ess[i] && (ts->ess[i]->pid==i)) {
 			gf_m2ts_es_del(ts->ess[i], ts);
 		}
@@ -3105,6 +3121,8 @@ void gf_m2ts_demux_del(GF_M2TS_Demuxer *ts)
 		while (gf_list_count(p->streams)) {
 			GF_M2TS_ES *es = (GF_M2TS_ES *)gf_list_last(p->streams);
 			gf_list_rem_last(p->streams);
+			//force destroy
+			es->flags &= ~GF_M2TS_ES_IS_PCR_REUSE;
 			gf_m2ts_es_del(es, ts);
 		}
 		gf_list_del(p->streams);
@@ -3160,7 +3178,7 @@ void gf_m2ts_demux_del(GF_M2TS_Demuxer *ts)
 void gf_m2ts_print_info(GF_M2TS_Demuxer *ts)
 {
 #ifdef GPAC_ENABLE_MPE
-	gf_m2ts_print_mpe_info(ts);
+	gf_dvb_mpe_print_info(ts);
 #endif
 }
 #endif
@@ -3187,6 +3205,8 @@ static Bool gf_m2ts_probe_buffer(char *buf, u32 size)
 			nb_pck = size/192;
 		else
 			nb_pck = size/188;
+		//incomplete last packet
+		if (ts->buffer_size) nb_pck--;
 		//probe success if after align we have nb_pck - 2 and at least 2 packets
 		if ((nb_pck<2) || (ts->pck_number + 2 < nb_pck))
 			e = GF_BAD_PARAM;

@@ -30,6 +30,8 @@
 
 #ifndef GPAC_DISABLE_AV_PARSERS
 
+#define LATM_DMX_MAX_SIZE	8192
+
 typedef struct
 {
 	u64 pos;
@@ -157,7 +159,7 @@ static Bool latm_dmx_sync_frame_bs(GF_BitStream *bs, GF_M4ADecSpecInfo *acfg, u3
 			size += tmp;
 			if (tmp!=255) break;
 		}
-		if (gf_bs_available(bs) < size) {
+		if ((gf_bs_available(bs) < size) || (size > LATM_DMX_MAX_SIZE)){
 			gf_bs_seek(bs, pos-3);
 			return GF_FALSE;
 		}
@@ -521,8 +523,8 @@ GF_Err latm_dmx_process(GF_Filter *filter)
 
 	while (1) {
 		pos = (u32) gf_bs_get_position(ctx->bs);
-		u8 latm_buffer[4096];
-		u32 latm_frame_size = 4096;
+		u8 latm_buffer[LATM_DMX_MAX_SIZE];
+		u32 latm_frame_size = LATM_DMX_MAX_SIZE;
 		if (!latm_dmx_sync_frame_bs(ctx->bs,&ctx->acfg, &latm_frame_size, latm_buffer, NULL)) break;
 
 		if (ctx->in_seek) {
@@ -613,7 +615,7 @@ static const char *latm_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 	while (1) {
 		u32 nb_skipped = 0;
 		if (!latm_dmx_sync_frame_bs(bs, &acfg, 0, NULL, &nb_skipped)) break;
-		if (! GF_M4ASampleRates[acfg.base_sr_index]) {
+		if (acfg.base_sr_index > sizeof(GF_M4ASampleRates) / sizeof(GF_M4ASampleRates[0]) || GF_M4ASampleRates[acfg.base_sr_index] == 0) {
 			nb_frames = 0;
 			break;
 		}
@@ -638,8 +640,8 @@ static const char *latm_dmx_probe_data(const u8 *data, u32 size, GF_FilterProbeS
 static const GF_FilterCapability LATMDmxCaps[] =
 {
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "latm"),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "audio/aac+latm"),
+	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "latm|usac|xheaac"),
+	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "audio/aac+latm|audio/xheaac+latm"),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG4),
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_CODECID, GF_CODECID_AAC_MPEG2_MP),

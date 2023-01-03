@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2008-2012
+ *			Copyright (c) Telecom ParisTech 2008-2022
  *					All rights reserved
  *
  *  This file is part of GPAC
@@ -74,6 +74,9 @@ This section documents the base data types of GPAC.
 /*Win32 IPv6 is evaluated at compile time, !! do not uncomment !!*/
 //#define GPAC_HAS_IPV6
 
+/*undefined at compil time if no poll support*/
+#define GPAC_HAS_POLL
+
 #define GPAC_HAS_GLU
 
 #ifndef GPAC_CONFIG_WIN32
@@ -129,7 +132,9 @@ This section documents the base data types of GPAC.
 #elif defined(GPAC_CONFIG_DARWIN) && !defined(GPAC_CONFIG_IOS)
 
 #define GPAC_HAS_IPV6
+//#if !defined(__arm64__)
 #define GPAC_HAS_SSL
+//#endif
 #define GPAC_HAS_SOCK_UN
 
 //64-bits OSX
@@ -145,6 +150,7 @@ This section documents the base data types of GPAC.
 #define GPAC_HAS_GLU
 #define GPAC_HAS_VTB
 #define GPAC_HAS_HTTP2
+#define GPAC_HAS_POLL
 
 #define GPAC_MEMORY_TRACKING
 
@@ -184,6 +190,7 @@ This section documents the base data types of GPAC.
 #define GPAC_HAS_STRLCPY
 #define GPAC_HAS_VTB
 #define GPAC_HAS_HTTP2
+#define GPAC_HAS_POLL
 
 /*Configuration for Symbian*/
 #elif defined(__SYMBIAN32__)
@@ -207,15 +214,15 @@ This section documents the base data types of GPAC.
 /*disables scene manager */
 //#define GPAC_DISABLE_SMGR
 
-/*disables core tools */
-//#define GPAC_DISABLE_CORE_TOOLS
-
 /*disables zlib */
 #ifndef GPAC_MP4BOX_MINI
 //#define GPAC_DISABLE_ZLIB
 #else
 #define GPAC_DISABLE_ZLIB
 #endif
+
+/*disables QuickJS libc*/
+//#define GPAC_DISABLE_QJS_LIBC
 
 /*disables SVG scene graph*/
 //#define GPAC_DISABLE_SVG

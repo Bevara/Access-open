@@ -73,6 +73,11 @@ restart:
 		if (!ai->stream->odm->state) ai->is_playing = GF_FALSE;
 		return NULL;
 	}
+	if (ai->stream->config_changed) {
+		gf_mo_release_data(ai->stream, 0, -1);
+		*size = 0;
+		return NULL;
+	}
 	ai->need_release = GF_TRUE;
 
 	//step mode, return the frame without sync check
@@ -87,7 +92,7 @@ restart:
 	obj_time += audio_delay_ms;
 
 	if (ai->compositor->audd<0) obj_time += -ai->compositor->audd;
-	else if (obj_time > ai->compositor->audd) obj_time -= ai->compositor->audd;
+	else if (obj_time > (u32) ai->compositor->audd) obj_time -= ai->compositor->audd;
 	else obj_time=0;
 
 	if (ai->compositor->bench_mode) {
@@ -116,14 +121,23 @@ restart:
 		}
 	}
 
+	//flush audio (compositor in non-player mode is exiting), don't check drift
+	if (ai->compositor->flush_audio) {
+		drift = 0;
+		audio_delay_ms = 0;
+	}
+
 #ifdef ENABLE_EARLY_FRAME_DETECTION
 	/*too early (silence insertions), skip*/
 	if (drift < 0) {
-		GF_LOG(GF_LOG_INFO, GF_LOG_AUDIO, ("[Audio Input] audio too early of %d (CTS %u at OTB %u with audio delay %d ms)\n", drift + audio_delay_ms, ts, obj_time, audio_delay_ms));
-		ai->need_release = GF_FALSE;
-		gf_mo_release_data(ai->stream, 0, -1);
-		*size = 0;
-		return NULL;
+		//if not playing, start if audio is due in less than 50ms
+		if (ai->is_playing || (drift < -50)) {
+			GF_LOG(GF_LOG_INFO, GF_LOG_AUDIO, ("[Audio Input] audio too early of %d (CTS %u at OTB %u with audio delay %d ms)\n", drift + audio_delay_ms, ts, obj_time, audio_delay_ms));
+			ai->need_release = GF_FALSE;
+			gf_mo_release_data(ai->stream, 0, -1);
+			*size = 0;
+			return NULL;
+		}
 	}
 #endif
 	/*adjust drift*/
@@ -143,7 +157,6 @@ restart:
 		else
 			resync_delay = -drift;
 
-		ai->is_playing = GF_TRUE;
 		if (resync_delay < 0) resync_delay = -resync_delay;
 
 		if (resync_delay > MIN_DRIFT_ADJUST) {
@@ -151,6 +164,7 @@ restart:
 			gf_mo_adjust_clock(ai->stream, drift);
 		}
 	}
+	ai->is_playing = GF_TRUE;
 	return frame;
 }
 
@@ -203,11 +217,14 @@ static Bool gf_audio_input_get_config(GF_AudioInterface *aifc, Bool for_recf)
 
 	gf_mo_get_audio_info(ai->stream, &aifc->samplerate, &aifc->afmt , &aifc->chan, &aifc->ch_layout, &aifc->forced_layout);
 
-	if (!for_recf)
+	if (!for_recf && !ai->stream->config_changed)
 		return aifc->samplerate ? GF_TRUE : GF_FALSE;
 
 	if (aifc->samplerate && aifc->chan && aifc->afmt && ((aifc->chan<=2) || aifc->ch_layout))  {
-		ai->stream->config_changed = GF_FALSE;
+		if (ai->stream->config_changed) {
+			ai->stream->config_changed = GF_FALSE;
+			return GF_FALSE;
+		}
 		return GF_TRUE;
 	}
 	//still not ready !

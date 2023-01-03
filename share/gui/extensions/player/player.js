@@ -50,6 +50,9 @@ extension = {
 	medialist_wnd: null,
     reverse_playback_supported: false,
 	view_stereo: 0,
+	orient_lock: 0,
+	init_w: 0,
+	init_h: 0,
 
     stats_wnd: null,
     stats_data: [],
@@ -74,7 +77,8 @@ extension = {
 
     ext_filter_event: function (evt) {
 		if (this.disabled) return false;
-		
+		let items;
+
         switch (evt.type) {
 		case GF_EVENT_MOUSEUP:
 			if ((gwskin.last_hit_x == evt.mouse_x) && (gwskin.last_hit_y == evt.mouse_y)) {
@@ -92,6 +96,13 @@ extension = {
 		case GF_EVENT_QUALITY_SWITCHED:
 			if (this.stats_wnd) {
 				this.stats_wnd.quality_changed();
+			}
+			return true;
+		case GF_EVENT_DBLCLICK:
+			if (gwskin.mobile_device && this.root_odm) {
+				let ori = this.orient_lock ? 0 : scene.orientation;
+				scene.orientation = ori;
+				this.orient_lock = !this.orient_lock;
 			}
 			return true;
 		case GF_EVENT_TIMESHIFT_UPDATE:
@@ -119,8 +130,24 @@ extension = {
 			}
 			return true;
 		case GF_EVENT_NAVIGATE:
-			this.set_movie_url(evt.target_url);
+            items = evt.url.split(',');
+            if (items.length==1) {
+    			this.set_movie_url(evt.url);
+                this.set_playlist_mode(false);
+            } else {
+                this.playlist_load(items, true);
+            }
 			return true;
+        case GF_EVENT_DROPFILE:
+            items = evt.dropfiles;
+            if (items.length==1) {
+                this.set_movie_url(items[0]);
+                this.set_playlist_mode(false);
+            } else {
+                this.playlist_load(items, true);
+            }
+            return true;
+
 		case GF_EVENT_KEYDOWN:
 			//alert('key is '+evt.keycode + ' hw code is ' + evt.hwkey);
 			if (evt.keycode == 'F1') {
@@ -181,7 +208,6 @@ extension = {
 
         this.movie.children[0].on_scene_size = function (evt) {
             var ext = this.extension;
-
             if (!this.callback_done) {
                 this.callback_done = true;
 
@@ -191,7 +217,13 @@ extension = {
                         scene.exit(1);                    
                     }
 
-                    var notif = gw_new_message(null, 'Error opening file!', 'Failed to open ' + this.url[0] + '\n\nReason: ' + Sys.error_string(evt.error));
+                    var url = this.url[0];
+                    if (url.startsWith('gpac://')) url = url.slice(7);
+                    names = url.split('%2f');
+                    if (names.length==1)
+						names = url.split('/');
+                    url = names[names.length-1];
+                    var notif = gw_new_message(null, 'Error opening file!', 'Failed to open "' + url + '"\n\n' + Sys.error_string(evt.error));
                     notif.show();
 
                     var url = ext.movie.children[0].url.length ? ext.movie.children[0].url[0] : '';
@@ -304,6 +336,11 @@ extension = {
                 w = evt.width;
                 h = evt.height;
 
+                if (this.extension.init_w && this.extension.init_h) {
+					w = this.extension.init_w;
+					h = this.extension.init_h;
+				}
+
                 if (w > scene.screen_width) {
 					h *= scene.screen_width;
 					h /= w;
@@ -353,12 +390,17 @@ extension = {
             e.height = evt.height;
             gwlib_filter_event(e);
         }
+        this.movie.children[0].on_codec_slow = function(evt) {
+			msg = gw_new_message(null, 'Codec too slow', 'Cannot play back at required speed ' + this.extension.movie_control.mediaSpeed);
+			msg.set_size(380, gwskin.default_icon_height + 2 * gwskin.default_text_font_size);
+			msg.show();
+		}
 
         this.movie.children[0].addEventListener('gpac_scene_attached', this.movie.children[0].on_scene_size, 0);
         this.movie.children[0].addEventListener('gpac_addon_found', this.movie.children[0].on_addon_found, 0);
         this.movie.children[0].addEventListener('gpac_streamlist_changed', this.movie.children[0].on_streamlist_changed, 0);
         this.movie.children[0].addEventListener('gpac_scene_size', this.movie.children[0].on_scene_size_modify, 0);
-
+        this.movie.children[0].addEventListener('gpac_codec_slow', this.movie.children[0].on_codec_slow, 0);
 
         this.movie.children[0].on_media_progress = function (evt) {
             if (evt.buffering) {
@@ -402,6 +444,7 @@ extension = {
                     this.extension.playlist_next();
                 } else {
                     this.extension.set_state(this.extension.GF_STATE_STOP);
+                    this.extension.set_time(0);
                 }
             }
         }
@@ -422,7 +465,6 @@ extension = {
             this.extension.reload_stats();
             this.extension.controler.layout();
         }
-
 
         this.movie.children[0].addEventListener('progress', this.movie.children[0].on_media_progress, 0);
         this.movie.children[0].addEventListener('playing', this.movie.children[0].on_media_playing, 0);
@@ -623,6 +665,10 @@ extension = {
             }
         }
 
+        wnd.chapters = gw_new_icon(wnd.infobar, 'chapters');
+        wnd.chapters.extension = this;
+        wnd.chapters.hide();
+
         wnd.loop = gw_new_icon(wnd.infobar, 'play_once');
         wnd.loop.extension = this;
         wnd.loop.add_icon(gwskin.images.play_loop);
@@ -658,26 +704,29 @@ extension = {
 
         wnd.snd_low = gw_new_icon(wnd.infobar, 'audio');
         wnd.snd_low.extension = this;
-        wnd.snd_ctrl = gw_new_slider(wnd.infobar);
-        wnd.snd_ctrl.extension = this;
-        wnd.snd_ctrl.stick_to_previous = true;
-        wnd.snd_low.add_icon('audio_mute');
-        wnd.snd_low.on_click = function () {
-            if (this.extension.muted) {
-                scene.volume = this.extension.muted;
-                this.extension.muted = 0;
-                this.switch_icon(0);
-            } else {
-                this.extension.muted = scene.volume ? scene.volume : 1;
-                scene.volume = 0;
-                this.switch_icon(1);
-            }
-        }
-        wnd.snd_ctrl.on_slide = function (value, type) {
-            if (this.extension.muted) this.extension.controler.snd_low.on_click();
-            scene.volume = value;
-        }
-        wnd.snd_ctrl.set_value(scene.volume);
+		wnd.snd_low.add_icon('audio_mute');
+		wnd.snd_low.on_click = function () {
+			if (this.extension.muted) {
+				scene.volume = this.extension.muted;
+				this.extension.muted = 0;
+				this.switch_icon(0);
+			} else {
+				this.extension.muted = scene.volume ? scene.volume : 1;
+				scene.volume = 0;
+				this.switch_icon(1);
+			}
+		}
+		wnd.snd_ctrl = null;
+        if (!gwskin.mobile_device) {
+			wnd.snd_ctrl = gw_new_slider(wnd.infobar);
+			wnd.snd_ctrl.extension = this;
+			wnd.snd_ctrl.stick_to_previous = true;
+			wnd.snd_ctrl.on_slide = function (value, type) {
+				if (this.extension.muted) this.extension.controler.snd_low.on_click();
+				scene.volume = value;
+			}
+			wnd.snd_ctrl.set_value(scene.volume);
+		}
 
         wnd.open = null;
         if (!gwskin.browser_mode) {
@@ -709,7 +758,7 @@ extension = {
 
         wnd.home = null;
         if (!gwskin.browser_mode) {
-            wnd.home = gw_new_icon(wnd.infobar, 'osmo');
+            wnd.home = gw_new_icon(wnd.infobar, 'gpac');
             wnd.home.extension = this;
             wnd.home.on_click = function () {
                 this.extension.controler.hide();
@@ -851,6 +900,11 @@ extension = {
 
                 if (this.extension.root_odm && !this.extension.dynamic_scene && !this.extension.root_odm.is_over)
                     is_over = false;
+
+
+				if (this.chapters.visible) {
+                    full_w += control_icon_size;
+				}
 
             } else {
                 this.stats.hide();
@@ -1003,44 +1057,34 @@ extension = {
             //check our args
             var i;
             //get URL when loading compositor in GUI mode with src option set
-            var url_arg = scene.get_option('temp', 'gui_load_url');
-            var prog_name = Sys.args[0]; 
-            var check_gpac_args = 1;
-            if (url_arg && (url_arg.indexOf('://') < 0) )
-                url_arg = 'gpac://' + url_arg;
+            var init_urls = [];
+            var url_arg = scene.get_option('temp', 'gui_load_urls');
 
-            //check mp4client or MP4Client
-            if (prog_name && (prog_name.indexOf('lient')>=0))
-                check_gpac_args = 0;
-            
+            if (url_arg && (url_arg.indexOf(',')>0)) {
+				init_urls = url_arg.split(',');
+            } else if (url_arg) {
+                init_urls.push(url_arg);
+            }
+
+            var prog_name = Sys.args[0];
+            var check_gpac_args = 1;
+
             for (i = 1; i < Sys.args.length; i++) {
                 var arg = Sys.args[i];
                 if (!arg) break;
 
-                if (check_gpac_args==1) {
-                    if (arg=='-xopt') check_gpac_args=2;
+                if (check_gpac_args) {
+                    if (arg=='-xopt') check_gpac_args = 0;
                     continue;
                 }
 
-                //that's our file
+                //that's a URL
                 if (arg.charAt(0) != '-') {
                     //do not reopen ourselves !
                     if (arg.indexOf('gui.bt') >= 0) continue;
 
-                    if (arg.indexOf('://') < 0) url_arg = 'gpac://' + arg;
-                    else url_arg = arg;
+                    init_urls.push(arg);
                     continue;
-                }
-
-                //MP4Client options taking 2 args
-                if (!check_gpac_args) {
-                    if ((arg == '-rti') || (arg == '-rtix') || (arg == '-p') || (arg == '-size') || (arg == '-lf') || (arg == '-log-file') || (arg == '-logs')
-                        || (arg == '-opt') || (arg == '-ifce') || (arg == '-views') || (arg == '-mosaic') || (arg == '-avi') || (arg == '-out') || (arg == '-ntp-shift')
-                        || (arg == '-fps') || (arg == '-scale') || (arg == '-run-for') || (arg == '-bl')
-                    ) {
-                        i++;
-                        continue;
-                    }
                 }
 
                 if (arg.startsWith('-service=')) {
@@ -1049,6 +1093,8 @@ extension = {
                     this.default_addon = arg.substring(7);
                 } else if (arg == '-loop') {
                     this.initial_loop = true;
+                } else if (arg == '-fs') {
+                    scene.fullscreen = true;
                 } else if ((arg == '-stats') || (arg == '-stat')) {
                     this.show_stats_init = true;
                 } else if (arg == '-gui-test') {
@@ -1056,8 +1102,15 @@ extension = {
                     this.show_stats_init = true;
                 } else if (arg.startsWith('-speed=')) {
                     this.initial_speed = Number(arg.substring(7));
-                } else if (arg.startsWith('-play-from=')) {
-                    this.initial_start = Number(arg.substring(11));
+                } else if (arg.startsWith('-start=')) {
+                    this.initial_start = Number(arg.substring(7));
+                } else if (arg.startsWith('-size=')) {
+					let s = arg.substring(6).split('x');
+					if (s.length==2) {
+						this.init_w = Number(s[0]);
+						this.init_h = Number(s[1]);
+						scene.set_size(this.init_w, this.init_h);
+					}
                 } else {
                     continue;
                 }
@@ -1070,7 +1123,9 @@ extension = {
             gwskin.media_clock = 0;
             gwskin.restore_session = this.create_restore_session(this);
 
-            if (url_arg != null) {
+            if (init_urls.length==1) {
+                url_arg = init_urls[0];
+                if (url_arg.indexOf('://') < 0) url_arg = 'gpac://' + url_arg;
                 this.set_playlist_mode(false);
                 var def_addon = this.default_addon;
                 this.set_movie_url(url_arg);
@@ -1079,6 +1134,9 @@ extension = {
                 return;
             }
             this.set_playlist_mode(true);
+            if (init_urls.length) {
+                this.playlist_load(init_urls, true);
+            }
         }
 
         this.controler.show();
@@ -1219,6 +1277,7 @@ extension = {
                 str = '-';
             }
         }
+
         if (this.test_mode && (value>3)) {
             scene.exit(3);                    
         }
@@ -1312,7 +1371,10 @@ extension = {
         if (state == this.state) return;
 
         if (state == this.GF_STATE_STOP) {
-            if (this.stats_wnd) this.stats_wnd.close_all();
+            if (this.stats_wnd) {
+                this.stats_wnd.close_all();
+                this.stats_wnd = null;
+            }
             this.stopped_url = '' + this.current_url;
             if (this.controlled_renderer) this.controlled_renderer.Stop();
             else {
@@ -1626,6 +1688,8 @@ extension = {
         this.services = [];
 
         var root_odm = this.root_odm;
+        let chaps = null;
+        this.controler.chapters.hide();
         if (root_odm) {
             for (var res_i = 0; res_i < root_odm.nb_resources; res_i++) {
                 var m = root_odm.get_resource(res_i);
@@ -1641,7 +1705,38 @@ extension = {
                     this.services.push(m);
                 }
             }
+			chaps = root_odm.get_chapters();
         }
+
+		if (chaps) {
+			if (!this.controler.chapters.visible) {
+				this.controler.chapters.show();
+				this.controler.layout();
+			}
+
+			this.controler.chapters.on_click = function () {
+
+				if (this.extension.channels_wnd) {
+					this.extension.channels_wnd.close();
+					return;
+				}
+				var wnd = gw_new_popup(this.extension.controler.channels, 'up');
+				this.extension.channels_wnd = wnd;
+				wnd.extension = this.extension;
+
+				wnd.on_close = function () {
+					this.extension.channels_wnd = null;
+				}
+
+				chaps.forEach(chap => {
+					wnd.add_menu_item(chap.name, function () {
+						this.extension.movie_control.mediaStartTime = chap.start/1000.0;
+					});
+				});
+				wnd.on_display_size(gw_display_width, gw_display_height);
+				wnd.show();
+			}
+		}
 
         if (this.services.length <= 1) {
             this.controler.channels.hide();

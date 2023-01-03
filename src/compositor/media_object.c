@@ -212,7 +212,7 @@ Bool gf_mo_get_visual_info(GF_MediaObject *mo, u32 *width, u32 *height, u32 *str
 {
 	if ((mo->type != GF_MEDIA_OBJECT_VIDEO) && (mo->type!=GF_MEDIA_OBJECT_TEXT)) return GF_FALSE;
 
-	if (mo->config_changed || !mo->width || !mo->height) {
+	if (mo->config_changed || !mo->width || !mo->height || !mo->pixelformat) {
 		gf_mo_update_caps(mo);
 	}
 	if (width) *width = mo->width;
@@ -316,6 +316,34 @@ void gf_mo_update_caps_ex(GF_MediaObject *mo, Bool check_unchanged)
 				if (mo->flip || mo->rotate) changed = GF_TRUE;
 				mo->flip = 0;
 				mo->rotate = 0;
+			}
+		}
+		//camera
+		v = gf_filter_pid_get_property(mo->odm->pid, GF_PROP_PID_RAWGRAB);
+		if (v) {
+			//front cam, flip
+			if (v->value.uint==2) {
+				u32 oflip = mo->flip;
+				if (mo->flip & 2) mo->flip &= ~2;
+				else mo->flip |= 2;
+				if (oflip != mo->flip) changed = GF_TRUE;
+			}
+
+			//front or back cam, auto-flip object based on device orientation
+			if (mo->odm->parentscene && mo->odm->parentscene->compositor->disp_ori) {
+				s32 nb_rot = mo->rotate;
+				switch (mo->odm->parentscene->compositor->disp_ori) {
+				case GF_DISPLAY_MODE_LANDSCAPE_INV: nb_rot+=2; break;
+				case GF_DISPLAY_MODE_LANDSCAPE: break;
+				case GF_DISPLAY_MODE_PORTRAIT: nb_rot+=3; break;
+				case GF_DISPLAY_MODE_PORTRAIT_INV: nb_rot+=1; break;
+				default: break;
+				}
+				nb_rot = nb_rot%4;
+				if (nb_rot != mo->rotate) {
+					changed = GF_TRUE;
+					mo->rotate = nb_rot;
+				}
 			}
 		}
 
@@ -425,7 +453,7 @@ void gf_mo_update_caps(GF_MediaObject *mo)
 	gf_mo_update_caps_ex(mo, GF_FALSE);
 
 }
-static u64 convert_ts_to_ms(GF_MediaObject *mo, u64 ts, u32 timescale, Bool *discard)
+static u32 convert_ts_to_ms(GF_MediaObject *mo, u64 ts, u32 timescale, Bool *discard)
 {
 	if (mo->odm->timestamp_offset) {
 		if (mo->odm->timestamp_offset >= 0) {
@@ -438,7 +466,7 @@ static u64 convert_ts_to_ms(GF_MediaObject *mo, u64 ts, u32 timescale, Bool *dis
 		}
 	}
 
-	ts = gf_timestamp_rescale(ts, timescale, 1000);
+	ts = gf_timestamp_to_clocktime(ts, timescale);
 	
 	//if addon, translate back into main content timing
 	if (mo->odm->parentscene && mo->odm->parentscene->root_od->addon) {
@@ -450,7 +478,7 @@ static u64 convert_ts_to_ms(GF_MediaObject *mo, u64 ts, u32 timescale, Bool *dis
 			ts = (u64) res;
 		}
 	}
-	return ts;
+	return (u32) ts;
 }
 
 
@@ -519,7 +547,8 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 	s64 diff;
 	Bool skip_resync;
 	u32 timescale=0;
-	u64 pck_ts=0, next_ts=0;
+	u64 ts;
+	u32 pck_ts_ms = 0, next_ts_ms = 0;
 	u32 retry_pull;
 	Bool is_first = GF_FALSE;
 	Bool move_to_next_only = GF_FALSE;
@@ -531,7 +560,7 @@ u8 *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_
 	if (ms_until_next) *ms_until_next = mo->ms_until_next;
 	if (outFrame) *outFrame = NULL;
 
-	if (!mo->odm || !mo->odm->pid || !mo->odm->state) {
+	if (!mo->odm || !mo->odm->pid) {
 		mo->frame = NULL;
 		mo->frame_ifce = NULL;
 		return NULL;
@@ -568,10 +597,12 @@ retry:
 	if (!mo->pck) {
 		mo->pck = gf_filter_pid_get_packet(mo->odm->pid);
 		if (!mo->pck) {
-			if (gf_filter_pid_is_eos(mo->odm->pid)) {
+			if (gf_filter_pid_is_eos(mo->odm->pid) || !mo->odm->state) {
 				if (!mo->is_eos) {
 					mo->is_eos = GF_TRUE;
+#ifndef GPAC_DISABLE_VRML
 					mediasensor_update_timing(mo->odm, GF_TRUE);
+#endif
 					gf_odm_on_eos(mo->odm, mo->odm->pid);
 					gf_odm_signal_eos_reached(mo->odm);
 				}
@@ -605,7 +636,7 @@ retry:
 	/*data = */gf_filter_pck_get_data(mo->pck, size);
 	timescale = gf_filter_pck_get_timescale(mo->pck);
 
-	pck_ts = convert_ts_to_ms(mo, gf_filter_pck_get_cts(mo->pck), timescale, &discard);
+	pck_ts_ms = convert_ts_to_ms(mo, gf_filter_pck_get_cts(mo->pck), timescale, &discard);
 	if (discard) {
 		gf_filter_pck_unref(mo->pck);
 		mo->pck = NULL;
@@ -624,15 +655,17 @@ retry:
 
 	while (retry_pull) {
 		retry_pull--;
-		next_ts = 0;
-		if (gf_filter_pid_get_first_packet_cts(mo->odm->pid, &next_ts) ) {
-			next_ts = 1 + convert_ts_to_ms(mo, next_ts, timescale, &discard);
+		next_ts_ms = 0;
+		if (gf_filter_pid_get_first_packet_cts(mo->odm->pid, &ts) ) {
+			next_ts_ms = 1 + convert_ts_to_ms(mo, ts, timescale, &discard);
 			break;
 		} else {
 			if (gf_filter_pid_is_eos(mo->odm->pid)) {
 				if (!mo->is_eos) {
 					*eos = mo->is_eos = GF_TRUE;
+#ifndef GPAC_DISABLE_VRML
 					mediasensor_update_timing(mo->odm, GF_TRUE);
+#endif
 					gf_odm_on_eos(mo->odm, mo->odm->pid);
 					force_decode_mode=0;
 					if (!mo->pck)
@@ -647,7 +680,7 @@ retry:
 		gf_filter_pid_try_pull(mo->odm->pid);
 	}
 	if (!retry_pull && (force_decode_mode==1)) {
-		GF_LOG(GF_LOG_INFO, GF_LOG_COMPTIME, ("[ODM%d] At %d could not force a pull from pid - POTENTIAL blank frame after TS %u\n", mo->odm->ID, gf_clock_time(mo->odm->ck), mo->timestamp));
+		GF_LOG(GF_LOG_INFO, GF_LOG_COMPTIME, ("[ODM%d] Could not force a pull from pid - POTENTIAL blank frame after TS %u\n", mo->odm->ID, mo->timestamp));
 	}
 
 	/*resync*/
@@ -665,8 +698,8 @@ retry:
 		diff_old -= mo->last_fetch_time;
 		if (diff_old < 0) diff_old = -diff_old;
 
-		diff_pck_old = (s32) pck_ts - (s32) old_timebase_time;
-		diff_pck_new = (s32) pck_ts - (s32) obj_time;
+		diff_pck_old = (s32) pck_ts_ms - (s32) old_timebase_time;
+		diff_pck_new = (s32) pck_ts_ms - (s32) obj_time;
 		if (ABS(diff_pck_old) > ABS(diff_pck_new)) {
 			//don't reset discontinuity flag for audio
 			if (resync>GF_MO_FETCH) {
@@ -693,19 +726,19 @@ retry:
 				mo->flags |= GF_MO_IN_RESYNC;
 			}
 			else if (mo->flags & GF_MO_IN_RESYNC) {
-				if (next_ts >= 1 + obj_time) {
+				if (next_ts_ms >= 1 + obj_time) {
 					skip_resync = GF_TRUE;
 					mo->flags &= ~GF_MO_IN_RESYNC;
 				}
 			}
-			else if (next_ts && (next_ts < pck_ts) ) {
+			else if (next_ts_ms && (next_ts_ms < pck_ts_ms) ) {
 				skip_resync = GF_TRUE;
 			}
 			//if the next AU is at most 300 ms from the current clock use no drop mode
-			else if (next_ts + 300 >= obj_time) {
+			else if (next_ts_ms + 300 >= obj_time) {
 				skip_resync = GF_TRUE;
-			} else if (next_ts) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] At %u frame TS %u next frame TS %d too late in no-drop mode, enabling drop - resync mode %d\n", mo->odm->ID, obj_time, pck_ts, next_ts, resync));
+			} else if (next_ts_ms) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] At %u frame TS %u next frame TS %d too late in no-drop mode, enabling drop - resync mode %d\n", mo->odm->ID, obj_time, pck_ts_ms, next_ts_ms, resync));
 				mo->flags |= GF_MO_IN_RESYNC;
 			}
 		}
@@ -719,22 +752,25 @@ retry:
 		//do it only if clock is started or if compositor step mode is set
 		//the time threshold for fetching is given by the caller
 		if ( (gf_clock_is_started(mo->odm->ck) || mo->odm->parentscene->compositor->use_step_mode)
-			&& (mo->timestamp==pck_ts) && next_ts && ( (next_ts <= 1 + obj_time + upload_time_ms) || (next_ts <= 1 + obj_time_orig + upload_time_ms) ) )
-		{
+			&& (mo->timestamp==pck_ts_ms)
+			&& next_ts_ms
+			&& ( (gf_clock_diff(mo->odm->ck, 1 + obj_time + upload_time_ms, next_ts_ms)<0) || (gf_clock_diff(mo->odm->ck, 1 + obj_time_orig + upload_time_ms, next_ts_ms)<0) )
+		) {
 			//drop current and go to next - we use the same loop as regular resync below
 			resync = GF_MO_FETCH_RESYNC;
 			move_to_next_only = GF_TRUE;
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] Switching to CU CTS %u (next %d) now %u\n", mo->odm->ID, pck_ts, next_ts, obj_time));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] Switching to CU CTS %u (next %d) now %u\n", mo->odm->ID, pck_ts_ms, next_ts_ms, obj_time));
 		}
 	}
 	if (resync!=GF_MO_FETCH) {
 		u32 nb_dropped = 0;
-		while (next_ts) {
+		u32 latest_ts=next_ts_ms;
+		while (next_ts_ms) {
 			if (!move_to_next_only) {
-				if (mo->odm->ck->speed > 0 ? pck_ts >= obj_time : pck_ts <= obj_time )
+				if ( gf_clock_diff(mo->odm->ck, obj_time, pck_ts_ms)>0)
 					break;
 
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] Try to drop frame TS %u next frame TS %u obj time %u\n", mo->odm->ID, pck_ts, next_ts, obj_time));
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] Try to drop frame TS %u next frame TS %u obj time %u\n", mo->odm->ID, pck_ts_ms, next_ts_ms, obj_time));
 
 				//nothing ready yet
 				if ( gf_filter_pid_first_packet_is_empty(mo->odm->pid) ) {
@@ -742,14 +778,14 @@ retry:
 				}
 
 				/*figure out closest time*/
-				if (mo->odm->ck->speed > 0 ? next_ts > obj_time : next_ts < obj_time) {
+				if (gf_clock_diff(mo->odm->ck, obj_time, next_ts_ms)>0) {
 					*eos = GF_FALSE;
 					break;
 				}
 
 				nb_dropped ++;
 				if (nb_dropped>=1) {
-					GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] At OTB %u dropped frame TS %u\n", mo->odm->ID, obj_time, pck_ts));
+					GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d] At OTB %u dropped frame TS %u\n", mo->odm->ID, obj_time, pck_ts_ms));
 
 					mo->odm->nb_dropped++;
 				}
@@ -763,13 +799,13 @@ retry:
 			gf_filter_pck_ref( &mo->pck);
 			check_temi(mo);
 
-			pck_ts = convert_ts_to_ms(mo, gf_filter_pck_get_cts(mo->pck), timescale, &discard);
+			pck_ts_ms = convert_ts_to_ms(mo, gf_filter_pck_get_cts(mo->pck), timescale, &discard);
 			//drop next packet from pid
 			gf_filter_pid_drop_packet(mo->odm->pid);
 
 			if (obj_time != obj_time_orig) {
-				s32 diff_pck_old = (s32) pck_ts - (s32) obj_time;
-				s32 diff_pck_new = (s32) pck_ts - (s32) obj_time_orig;
+				s32 diff_pck_old = (s32) pck_ts_ms - (s32) obj_time;
+				s32 diff_pck_new = (s32) pck_ts_ms - (s32) obj_time_orig;
 
 				if (ABS(diff_pck_old) > ABS(diff_pck_new)) {
 					GF_LOG(GF_LOG_INFO, GF_LOG_COMPTIME, ("[ODM%d] end of clock discontinuity, moving from old time base %d to new %d\n", mo->odm->ID, obj_time, obj_time_orig));
@@ -778,15 +814,30 @@ retry:
 				}
 			}
 
-			next_ts = 0;
-			if (gf_filter_pid_get_first_packet_cts(mo->odm->pid, &next_ts)) {
-				next_ts = convert_ts_to_ms(mo, next_ts, timescale, &discard);
+			next_ts_ms = 0;
+			if (gf_filter_pid_get_first_packet_cts(mo->odm->pid, &ts)) {
+				latest_ts = next_ts_ms = convert_ts_to_ms(mo, ts, timescale, &discard);
 			}
 			if (move_to_next_only)
 				break;
 		}
-	}
 
+		if (latest_ts) {
+			Bool too_slow = GF_FALSE;
+			if (mo->odm->ck->speed>0) {
+				if (latest_ts + 10000 < obj_time)
+					too_slow = GF_TRUE;
+			} else {
+				if (latest_ts > obj_time + 10000)
+					too_slow = GF_TRUE;
+			}
+			if (too_slow != mo->odm->too_slow) {
+				mo->odm->too_slow = too_slow;
+				if (mo->odm->parentscene)
+					gf_scene_notify_event(mo->odm->parentscene, too_slow ? GF_EVENT_CODEC_SLOW : GF_EVENT_CODEC_OK, NULL, NULL, GF_OK, GF_FALSE);
+			}
+		}
+	}
 
 	mo->frame = (char *) gf_filter_pck_get_data(mo->pck, &mo->size);
 	mo->framesize = mo->size - mo->RenderedLength;
@@ -802,16 +853,15 @@ retry:
 	}
 	mo->frame_ifce = gf_filter_pck_get_frame_interface(mo->pck);
 
-	diff = (s32) ( (mo->speed >= 0) ? ( (s64) pck_ts - (s64) obj_time) : ( (s64) obj_time - (s64) pck_ts) );
+	diff = gf_clock_diff(mo->odm->ck, obj_time, pck_ts_ms);
 	mo->ms_until_pres = FIX2INT(diff * mo->speed);
 
 	if (mo->is_eos) {
 		diff = 1000*gf_filter_pck_get_duration(mo->pck) / timescale;
 		if (!diff) diff = 100;
 	} else {
-		diff = next_ts ? next_ts : (pck_ts + 1000*gf_filter_pck_get_duration(mo->pck) / timescale);
-		diff = (s32) ( (mo->speed >= 0) ? ( (s64) diff - (s64) obj_time) : ( (s64) obj_time - (s64) diff) );
-
+		if (!next_ts_ms) next_ts_ms = pck_ts_ms + (u32) gf_timestamp_rescale(gf_filter_pck_get_duration(mo->pck), timescale, 1000);
+		diff = gf_clock_diff(mo->odm->ck, obj_time, next_ts_ms);
 		mo->odm->ck->has_seen_eos = GF_FALSE;
 	}
 	mo->ms_until_next = FIX2INT(diff * mo->speed);
@@ -822,16 +872,13 @@ retry:
 	if (mo->ms_until_next>500)
 		mo->ms_until_next=500;
 
-	if ((mo->timestamp != pck_ts) || is_first) {
+	if ((mo->timestamp != pck_ts_ms) || is_first) {
 		const GF_PropertyValue *v;
-		u32 media_time;
-		u64 dur = gf_filter_pck_get_duration(mo->pck);
-		dur *= 1000;
-		dur /= timescale;
-		mo->frame_dur = (u32) dur;
+		u64 media_time;
+		mo->frame_dur = (u32) gf_timestamp_rescale(gf_filter_pck_get_duration(mo->pck), timescale, 1000);
 		mo->last_fetch_time = obj_time;
 
-		mo->timestamp = (u32) pck_ts;
+		mo->timestamp = (u32) pck_ts_ms;
 		media_time = gf_clock_to_media_time(mo->odm->ck, mo->timestamp);
 
 		if (mo->odm->media_current_time <= media_time)
@@ -851,7 +898,7 @@ retry:
 			mediasensor_update_timing(mo->odm, GF_FALSE);
 #endif
 
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d (%s)] At OTB %u fetch frame TS %u size %d (previous TS %u) - %d unit in CB - UTC "LLU" ms - %d ms until CTS is due - %d ms until next frame\n", mo->odm->ID, mo->odm->scene_ns->url, gf_clock_time(mo->odm->ck), pck_ts, mo->framesize, mo->timestamp, gf_filter_pid_get_packet_count(mo->odm->pid), gf_net_get_utc(), mo->ms_until_pres, mo->ms_until_next ));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPTIME, ("[ODM%d (%s)] At OTB %u fetch frame TS %u size %d (previous TS %u) - %d unit in CB - UTC "LLU" ms - %d ms until CTS is due - %d ms until next frame\n", mo->odm->ID, mo->odm->scene_ns->url, gf_clock_time(mo->odm->ck), pck_ts_ms, mo->framesize, mo->timestamp, gf_filter_pid_get_packet_count(mo->odm->pid), gf_net_get_utc(), mo->ms_until_pres, mo->ms_until_next ));
 
 		v = gf_filter_pck_get_property(mo->pck, GF_PROP_PCK_SENDER_NTP);
 		if (v) {
@@ -870,7 +917,7 @@ retry:
 				mo->odm->last_drawn_frame_ntp_diff -= v->value.sint;
 			}
 			gf_filter_release_property(pe);
-			GF_LOG(GF_LOG_INFO, GF_LOG_COMPTIME, ("[ODM%d (%s)] Frame TS %u NTP diff with sender %d ms\n", mo->odm->ID, mo->odm->scene_ns->url, pck_ts, mo->odm->last_drawn_frame_ntp_diff));
+			GF_LOG(GF_LOG_INFO, GF_LOG_COMPTIME, ("[ODM%d (%s)] Frame TS %u NTP diff with sender %d ms\n", mo->odm->ID, mo->odm->scene_ns->url, pck_ts_ms, mo->odm->last_drawn_frame_ntp_diff));
 
 			if (mo->odm->parentscene->compositor->ntpsync
 				&& (mo->odm->last_drawn_frame_ntp_diff > (s32) mo->odm->parentscene->compositor->ntpsync)
@@ -1299,6 +1346,8 @@ void gf_mo_set_speed(GF_MediaObject *mo, Fixed speed)
 #endif
 
 	if (mo->odm->scene_ns && mo->odm->scene_ns->owner && (mo->odm->scene_ns->owner->flags & GF_ODM_INHERIT_TIMELINE))
+		return;
+	if (mo->odm->parentscene && mo->odm->parentscene->is_dynamic_scene)
 		return;
 
 	gf_odm_set_speed(mo->odm, speed, GF_TRUE);

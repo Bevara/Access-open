@@ -56,12 +56,13 @@
 static char *default_glsl_vertex = "\
 	attribute vec4 gfVertex;\n\
 	attribute vec4 gfTexCoord;\n\
+	uniform mat4 gfModViewProjMatrix;\n\
 	uniform mat4 gfTextureMatrix;\n\
 	uniform bool hasTextureMatrix;\n\
 	varying vec2 TexCoord;\n\
 	void main(void)\n\
 	{\n\
-		gl_Position = gl_ModelViewProjectionMatrix * gfVertex;\n\
+		gl_Position = gfModViewProjMatrix * gfVertex;\n\
 		if (hasTextureMatrix) {\n\
 			TexCoord = vec2(gfTextureMatrix * gfTexCoord);\n\
 		} else {\n\
@@ -89,20 +90,21 @@ enum
 	FLIP_BOTH2,
 };
 
+static u32 nb_vout_inst=0;
 
 typedef struct
 {
 	//options
 	char *drv;
 	GF_VideoOutMode disp;
-	Bool vsync, linear, fullscreen, drop, hide, step;
+	Bool vsync, linear, fullscreen, drop, hide, step, vjs, async;
 	GF_Fraction64 dur;
 	Double speed, hold;
 	u32 back, vflip, vrot;
 	GF_PropVec2i wsize, owsize;
 	GF_PropVec2i wpos;
 	Double start;
-	u32 buffer, mbuffer, rbuffer;
+	u32 buffer, mbuffer, rbuffer, wid;
 	GF_Fraction vdelay;
 	const char *out;
 	GF_PropUIntList dumpframes;
@@ -110,6 +112,7 @@ typedef struct
 	GF_PropVec4i olwnd;
 	GF_PropVec2i olsize;
 	GF_PropData oldata;
+	Double media_offset;
 
 	GF_Filter *filter;
 	GF_FilterPid *pid;
@@ -135,8 +138,9 @@ typedef struct
 	//if source is raw live grab (webcam/etc), we don't trust cts and always draw the frame
 	//this is needed for cases where we have a sudden jump in timestamps as is the case with ffmpeg: not doing so would
 	//hold the frame until its CTS is reached, triggering drops at capture time
-	Bool raw_grab;
-
+	u32 raw_grab;
+	GF_DisplayOrientationType screen_orientation;
+	
 #ifdef VOUT_USE_OPENGL
 	GLint glsl_program;
 	GF_SHADERID vertex_shader;
@@ -178,6 +182,7 @@ typedef struct
 
 	Bool force_reconfig_pid;
 	u32 pid_vflip, pid_vrot;
+	Bool too_slow;
 } GF_VideoOutCtx;
 
 static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx);
@@ -188,6 +193,7 @@ static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx);
 static void vout_make_gl_current(GF_VideoOutCtx *ctx)
 {
 	GF_Event evt;
+	memset(&evt, 0, sizeof(GF_Event));
 	evt.type = GF_EVENT_SET_GL;
 	ctx->video_out->ProcessEvent(ctx->video_out, &evt);
 }
@@ -239,15 +245,26 @@ static void vout_reset_overlay(GF_Filter *filter, GF_VideoOutCtx *ctx)
 static void vout_set_caption(GF_VideoOutCtx *ctx)
 {
 	GF_Event evt;
+	const GF_PropertyValue *p;
 	memset(&evt, 0, sizeof(GF_Event));
 	evt.type = GF_EVENT_SET_CAPTION;
-	evt.caption.caption = gf_filter_pid_orig_src_args(ctx->pid, GF_FALSE);
-	if (!evt.caption.caption) evt.caption.caption = gf_filter_pid_get_source_filter_name(ctx->pid);
-	if (evt.caption.caption) {
+
+	evt.caption.caption = "GPAC "GPAC_VERSION;
+	if (ctx->pid) {
+		p = gf_filter_pid_get_property_str(ctx->pid, "title");
+		evt.caption.caption = p ? p->value.string : NULL;
+
+		if (!evt.caption.caption) evt.caption.caption = gf_filter_pid_orig_src_args(ctx->pid, GF_FALSE);
+		if (!evt.caption.caption) evt.caption.caption = gf_filter_pid_get_source_filter_name(ctx->pid);
+
 		if (!strncmp(evt.caption.caption, "src=", 4)) evt.caption.caption += 4;
 		if (!strncmp(evt.caption.caption, "./", 2)) evt.caption.caption += 2;
-		ctx->video_out->ProcessEvent(ctx->video_out, &evt);
 	}
+	char sep_c = gf_filter_get_sep(ctx->filter, GF_FS_SEP_ARGS);
+	char *sep = strchr(evt.caption.caption, sep_c);
+	if (sep) sep[0] = 0;
+	ctx->video_out->ProcessEvent(ctx->video_out, &evt);
+	if (sep) sep[0] = sep_c;
 }
 
 static GF_Err resize_video_output(GF_VideoOutCtx *ctx, u32 dw, u32 dh)
@@ -371,7 +388,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		return GF_OK;
 	}
 	assert(!ctx->pid || (ctx->pid==pid));
-	if (!gf_filter_pid_check_caps(pid))
+	if (pid && !gf_filter_pid_check_caps(pid))
 		return GF_NOT_SUPPORTED;
 
 	w = h = pfmt = timescale = stride = 0;
@@ -414,7 +431,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	}
 	
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_RAWGRAB);
-	ctx->raw_grab = (p && p->value.boolean) ? GF_TRUE : GF_FALSE;
+	ctx->raw_grab = p ? p->value.uint : 0;
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_COLR_RANGE);
 	full_range = (p && p->value.boolean) ? GF_TRUE : GF_FALSE;
@@ -534,6 +551,9 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	} else if ((ctx->wsize.x>0) && (ctx->wsize.y>0)) {
 		ctx->display_width = ctx->wsize.x;
 		ctx->display_height = ctx->wsize.y;
+		ctx->display_changed = GF_TRUE;
+	} else {
+		//force program matrix recompute
 		ctx->display_changed = GF_TRUE;
 	}
 
@@ -687,23 +707,18 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	}
 
 #ifdef VOUT_USE_OPENGL
-	if (ctx->disp<MODE_2D) {
-		memset(&evt, 0, sizeof(GF_Event));
-		evt.type = GF_EVENT_SET_GL;
-		ctx->video_out->ProcessEvent(ctx->video_out, &evt);
+	if (ctx->glsl_program) {
+		vout_make_gl_current(ctx);
+		DEL_SHADER(ctx->vertex_shader);
+		DEL_SHADER(ctx->fragment_shader);
+		DEL_PROGRAM(ctx->glsl_program );
+		gf_gl_txw_reset(&ctx->tx);
 	}
-	
-	vout_make_gl_current(ctx);
-	DEL_SHADER(ctx->vertex_shader);
-	DEL_SHADER(ctx->fragment_shader);
-	DEL_PROGRAM(ctx->glsl_program );
-	gf_gl_txw_reset(&ctx->tx);
 
 	if (ctx->disp<MODE_2D) {
 		char *frag_shader_src = NULL;
-		GF_Matrix mx;
-		Float ft_hw, ft_hh;
 
+		GL_CHECK_ERR()
 		ctx->glsl_program = glCreateProgram();
 		ctx->vertex_shader = glCreateShader(GL_VERTEX_SHADER);
 		vout_compile_shader(ctx->vertex_shader, "vertex", default_glsl_vertex);
@@ -711,7 +726,18 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ctx->fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
 		gf_gl_txw_setup(&ctx->tx, ctx->pfmt, ctx->width, ctx->height, ctx->stride, ctx->uv_stride, ctx->linear, NULL, ctx->full_range, ctx->cmx);
 
+		GL_CHECK_ERR()
+
+#ifdef GPAC_USE_GLES2
+		gf_dynstrcat(&frag_shader_src, "#version 100\n"\
+			"#ifdef GL_FRAGMENT_PRECISION_HIGH\n"\
+			"precision highp float;\n"\
+			"#else\n"\
+			"precision mediump float;\n"\
+			"#endif\n", NULL);
+#else
 		gf_dynstrcat(&frag_shader_src, "#version 120\n", NULL);
+#endif
 
 		gf_gl_txw_insert_fragment_shader(ctx->tx.pix_fmt, "maintx", &frag_shader_src, GF_FALSE);
 		gf_dynstrcat(&frag_shader_src, "varying vec2 TexCoord;\n"
@@ -740,16 +766,6 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
 		glViewport(0, 0, ctx->width, ctx->height);
 
-		gf_mx_init(mx);
-		ft_hw = ((Float)ctx->width)/2;
-		ft_hh = ((Float)ctx->height)/2;
-		gf_mx_ortho(&mx, -ft_hw, ft_hw, -ft_hh, ft_hh, 50, -50);
-		glMatrixMode(GL_PROJECTION);
-		glLoadMatrixf(mx.m);
-
-		glMatrixMode(GL_MODELVIEW);
-		glLoadIdentity();
-
 		glClear(GL_DEPTH_BUFFER_BIT);
 		glDisable(GL_NORMALIZE);
 		glDisable(GL_DEPTH_TEST);
@@ -766,6 +782,8 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		}
 
 		load_gl_tx_matrix(ctx);
+
+		ctx->num_textures = ctx->tx.nb_textures;
 
 	} else
 #endif //VOUT_USE_OPENGL
@@ -821,6 +839,7 @@ static Bool vout_on_event(void *cbk, GF_Event *evt)
 				gf_filter_pid_send_event(ctx->pid, &fevt);
 			}
 		}
+		ctx->screen_orientation = evt->size.orientation;
 		break;
 	case GF_EVENT_CLICK:
 	case GF_EVENT_MOUSEUP:
@@ -867,6 +886,12 @@ static Bool vout_on_event(void *cbk, GF_Event *evt)
 		GF_FEVT_INIT(fevt, GF_FEVT_USER, ctx->pid);
 		fevt.user_event.event = *evt;
 		break;
+	case GF_EVENT_QUIT:
+		if (evt->show.window_id && (nb_vout_inst>1)) {
+			gf_filter_remove(ctx->filter);
+			return GF_FALSE;
+		}
+		break;
 	}
 	if (gf_filter_ui_event(ctx->filter, evt))
 		return GF_TRUE;
@@ -898,6 +923,8 @@ static Bool vout_on_event(void *cbk, GF_Event *evt)
 
 GF_VideoOutput *gf_filter_claim_opengl_provider(GF_Filter *filter);
 Bool gf_filter_unclaim_opengl_provider(GF_Filter *filter, GF_VideoOutput *vout);
+
+void gf_filter_load_script(GF_Filter *filter, const char *js_file, const char *filters_blacklist);
 
 static GF_Err vout_initialize(GF_Filter *filter)
 {
@@ -939,15 +966,15 @@ static GF_Err vout_initialize(GF_Filter *filter)
 
 	os_wnd_handler = os_disp_handler = NULL;
 	init_flags = 0;
-	sOpt = gf_opts_get_key("Temp", "OSWnd");
+	sOpt = gf_opts_get_key("temp", "window-handle");
 	if (sOpt) sscanf(sOpt, "%p", &os_wnd_handler);
-	sOpt = gf_opts_get_key("Temp", "OSDisp");
+	sOpt = gf_opts_get_key("temp", "window-display");
 	if (sOpt) sscanf(sOpt, "%p", &os_disp_handler);
-	sOpt = gf_opts_get_key("Temp", "InitFlags");
+	sOpt = gf_opts_get_key("temp", "window-flags");
 	if (sOpt) sscanf(sOpt, "%d", &init_flags);
 
 	if (ctx->hide)
-		init_flags |= GF_TERM_INIT_HIDE;
+		init_flags |= GF_VOUT_INIT_HIDE;
 
 	e = ctx->video_out->Setup(ctx->video_out, os_wnd_handler, os_disp_handler, init_flags);
 	if (e!=GF_OK) {
@@ -986,7 +1013,23 @@ static GF_Err vout_initialize(GF_Filter *filter)
 	}
 #endif
 
+	ctx->width = ctx->display_width = 320;
+	ctx->height = ctx->display_height = 240;
+	ctx->owsize.x = ctx->display_width;
+	ctx->owsize.y = ctx->display_height;
+	ctx->display_changed = GF_TRUE;
+	ctx->wid = ctx->video_out->window_id;
 	gf_filter_set_event_target(filter, GF_TRUE);
+
+	gf_filter_post_process_task(filter);
+
+	//load js on first vout only
+	if (ctx->vjs && !nb_vout_inst) {
+		gf_filter_load_script(filter, "$GSHARE/scripts/vout.js", "compositor");
+	}
+	nb_vout_inst++;
+
+	vout_set_caption(ctx);
 	return GF_OK;
 }
 
@@ -1020,6 +1063,7 @@ static void vout_finalize(GF_Filter *filter)
 		ctx->video_out = NULL;
 	}
 	if (ctx->dump_buffer) gf_free(ctx->dump_buffer);
+	nb_vout_inst--;
 
 }
 
@@ -1060,6 +1104,7 @@ static void vout_draw_overlay(GF_VideoOutCtx *ctx)
 	glMatrixMode(GL_TEXTURE);
 	glLoadIdentity();
 	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
 
 	glEnable(GL_TEXTURE_2D);
 	glEnable(GL_BLEND);
@@ -1126,6 +1171,21 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 		break;
 	}
 
+	u32 nb_rot=ctx->pid_vrot;
+	//camera grab and screen orientation is set, rotate video
+	if (ctx->raw_grab && ctx->screen_orientation) {
+		switch (ctx->screen_orientation) {
+		case GF_DISPLAY_MODE_LANDSCAPE_INV: nb_rot+=2; break;
+		case GF_DISPLAY_MODE_LANDSCAPE: break;
+		case GF_DISPLAY_MODE_PORTRAIT: nb_rot+=3; break;
+		case GF_DISPLAY_MODE_PORTRAIT_INV: nb_rot+=1; break;
+		default: break;
+		}
+		//front camera, flip along vertical (auto-mirror mode)
+		if (ctx->raw_grab == 2)
+			flip_v = GF_TRUE;
+	}
+
 	if (flip_h) {
 		GLfloat v = textureVertices[0];
 		textureVertices[0] = textureVertices[2] = textureVertices[4];
@@ -1137,7 +1197,7 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 		textureVertices[3] = textureVertices[5] = v;
 	}
 
-	for (i=0; i < ctx->pid_vrot; i++)  {
+	for (i=0; i < nb_rot; i++)  {
 		GLfloat vx = textureVertices[0];
 		GLfloat vy = textureVertices[1];
 
@@ -1193,12 +1253,15 @@ static void vout_draw_gl_quad(GF_VideoOutCtx *ctx, Bool flip_texture)
 
 		glReadPixels(0, 0, ctx->display_width, ctx->display_height, GL_RGB, GL_UNSIGNED_BYTE, ctx->dump_buffer);
 		GL_CHECK_ERR()
+		GF_Err e=GF_IO_ERR;
 		fout = gf_fopen(szFileName, "wb");
 		if (fout) {
-			gf_fwrite(ctx->dump_buffer, ctx->display_width*ctx->display_height*3, fout);
+			u32 dsize = ctx->display_width*ctx->display_height*3;
+			if (gf_fwrite(ctx->dump_buffer, dsize, fout) == dsize) e = GF_OK;
 			gf_fclose(fout);
-		} else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Error writing frame %d buffer to %s\n", ctx->nb_frames, szFileName));
+		}
+		if (e) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[VideoOut] Error writing frame %d buffer to %s: %s\n", ctx->nb_frames, szFileName, gf_error_to_string(e) ));
 		}
 	}
 }
@@ -1210,7 +1273,6 @@ static void vout_draw_gl_hw_textures(GF_VideoOutCtx *ctx, GF_FilterFrameInterfac
 		ctx->tx.internal_textures = GF_FALSE;
 	}
 	ctx->tx.frame_ifce = hwf;
-	gf_gl_txw_bind(&ctx->tx, "maintx", ctx->glsl_program, 0);
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
@@ -1229,6 +1291,7 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 	GF_FilterFrameInterface *frame_ifce;
 
 	vout_make_gl_current(ctx);
+	glUseProgram(ctx->glsl_program);
 
 	if (ctx->display_changed) {
 		u32 v_w, v_h;
@@ -1245,6 +1308,17 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 		} else {
 			v_w = w;
 			v_h = h;
+		}
+		if (ctx->raw_grab && ctx->screen_orientation) {
+			switch (ctx->screen_orientation) {
+			case GF_DISPLAY_MODE_PORTRAIT:
+			case GF_DISPLAY_MODE_PORTRAIT_INV:
+				v_w = h;
+				v_h = w;
+				break;
+			default:
+				break;
+			}
 		}
 
 		//if we fill width to display width and height is outside
@@ -1267,11 +1341,34 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 			gf_free(ctx->dump_buffer);
 			ctx->dump_buffer = NULL;
 		}
+		gf_mx_init(mx);
+		hw = ((Float)ctx->display_width)/2;
+		hh = ((Float)ctx->display_height)/2;
+		gf_mx_ortho(&mx, -hw, hw, -hh, hh, 10, -5);
+
+		int loc = glGetUniformLocation(ctx->glsl_program, "gfModViewProjMatrix");
+		if (loc>=0)
+			glUniformMatrix4fv(loc, 1, GL_FALSE, mx.m);
 
 		ctx->display_changed = GF_FALSE;
+
+		//also load proj matrix for overlay draw
+		glMatrixMode(GL_PROJECTION);
+		glLoadMatrixf(mx.m);
+		glMatrixMode(GL_MODELVIEW);
 	}
 
 	glViewport(0, 0, ctx->display_width, ctx->display_height);
+	if (ctx->has_alpha) {
+		Float r, g, b;
+		r = GF_COL_R(ctx->back); r /= 255;
+		g = GF_COL_G(ctx->back); g /= 255;
+		b = GF_COL_B(ctx->back); b /= 255;
+		glClearColor(r, g, b, 1.0);
+	} else {
+		glClearColor(0, 0, 0, 1.0);
+	}
+	glClear(GL_COLOR_BUFFER_BIT);
 
 	if (!pck)
 		goto exit;
@@ -1284,26 +1381,6 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 		goto exit;
 	}
 
-	gf_mx_init(mx);
-	hw = ((Float)ctx->display_width)/2;
-	hh = ((Float)ctx->display_height)/2;
-	gf_mx_ortho(&mx, -hw, hw, -hh, hh, 10, -5);
-	glMatrixMode(GL_PROJECTION);
-	glLoadMatrixf(mx.m);
-
-	glMatrixMode(GL_MODELVIEW);
-	glLoadIdentity();
-
-	if (ctx->has_alpha) {
-		Float r, g, b;
-		r = GF_COL_R(ctx->back); r /= 255;
-		g = GF_COL_G(ctx->back); g /= 255;
-		b = GF_COL_B(ctx->back); b /= 255;
-		glClearColor(r, g, b, 1.0);
-	} else {
-		glClearColor(0, 0, 0, 1.0);
-	}
-	glClear(GL_COLOR_BUFFER_BIT);
 
 	//we are not sure if we are the only ones using the gl context, reset our defaults
 	glDisable(GL_LIGHTING);
@@ -1324,8 +1401,6 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 		glClear(GL_COLOR_BUFFER_BIT);
 	}
 
-	glUseProgram(ctx->glsl_program);
-
 	if (frame_ifce && frame_ifce->get_gl_texture) {
 		vout_draw_gl_hw_textures(ctx, frame_ifce);
 	} else {
@@ -1337,9 +1412,10 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 		//and draw
 		vout_draw_gl_quad(ctx, GF_FALSE);
 	}
-	glUseProgram(0);
 
 exit:
+
+	glUseProgram(0);
 
 	//we don't lock since most of the time overlay is not set
 	if (ctx->oldata.ptr && (ctx->olsize.x>0) && (ctx->olsize.y>0)) {
@@ -1514,7 +1590,8 @@ void vout_draw_2d(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 			if (fout) {
 				u32 i;
 				for (i=0; i<backbuffer.height; i++) {
-					gf_fwrite(backbuffer.video_buffer + i*backbuffer.pitch_y, backbuffer.pitch_y, fout);
+					if (gf_fwrite(backbuffer.video_buffer + i*backbuffer.pitch_y, backbuffer.pitch_y, fout) != backbuffer.pitch_y)
+						e = GF_IO_ERR;
 				}
 				gf_fclose(fout);
 			} else {
@@ -1546,14 +1623,16 @@ static GF_Err vout_process(GF_Filter *filter)
 
 	if (ctx->force_vout) {
 		ctx->force_vout = GF_FALSE;
-		ctx->width = ctx->display_width = ctx->olwnd.z;
-		ctx->height = ctx->display_height = ctx->olwnd.w;
-		resize_video_output(ctx, ctx->width, ctx->height);
-		ctx->owsize.x = ctx->display_width;
-		ctx->owsize.y = ctx->display_height;
+		if (ctx->olwnd.z && ctx->olwnd.w) {
+			ctx->width = ctx->display_width = ctx->olwnd.z;
+			ctx->height = ctx->display_height = ctx->olwnd.w;
+			resize_video_output(ctx, ctx->width, ctx->height);
+			ctx->owsize.x = ctx->display_width;
+			ctx->owsize.y = ctx->display_height;
+		}
 	}
 	if (ctx->force_reconfig_pid) {
-		vout_configure_pid(filter, ctx->pid, GF_FALSE);
+		if (ctx->pid) vout_configure_pid(filter, ctx->pid, GF_FALSE);
 		ctx->force_reconfig_pid = GF_FALSE;
 	}
 	ctx->video_out->ProcessEvent(ctx->video_out, NULL);
@@ -1590,6 +1669,13 @@ static GF_Err vout_process(GF_Filter *filter)
 		//we don't lock here since we don't access the pointer
 		if (ctx->oldata.ptr && ctx->update_oldata)
 			return vout_draw_frame(ctx);
+
+		if (gf_filter_has_connect_errors(filter))
+			return GF_EOS;
+		//when we use vout+aout on audio only, we want the filter to still be active to process events
+		gf_filter_post_process_task(filter);
+		gf_filter_ask_rt_reschedule(filter, 10000);
+
 		return ctx->oldata.ptr ? GF_OK : GF_EOS;
 	}
 
@@ -1723,7 +1809,7 @@ static GF_Err vout_process(GF_Filter *filter)
 	if (!ctx->step && (ctx->vsync || ctx->drop)) {
 		u64 ref_clock = 0;
 		u64 cts = gf_filter_pck_get_cts(pck);
-		u64 clock_us, now = gf_sys_clock_high_res();
+		u64 clock_us=0, now = gf_sys_clock_high_res();
 		Bool check_clock = GF_FALSE;
 		GF_Fraction64 media_ts;
 		s64 delay;
@@ -1767,7 +1853,8 @@ static GF_Err vout_process(GF_Filter *filter)
 		}
 
 		//check if we have a clock hint from an audio output
-		gf_filter_get_clock_hint(filter, &clock_us, &media_ts);
+		if (ctx->async)
+			gf_filter_get_clock_hint(filter, &clock_us, &media_ts);
 		if (clock_us && media_ts.den) {
 			u32 safety;
 			//ref frame TS in video stream timescale
@@ -1863,8 +1950,21 @@ static GF_Err vout_process(GF_Filter *filter)
 				return GF_OK;
 			}
 			if (ABS(diff)>2000) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[VideoOut] At %d ms frame cts "LLU"/%d is "LLD" us too %s\n", gf_sys_clock(), cts, ctx->timescale, diff<0 ? -diff : diff, diff<0 ? "early" : "late"));
+				GF_LOG((diff<0) ? GF_LOG_DEBUG : GF_LOG_INFO, GF_LOG_MMIO, ("[VideoOut] At %d ms frame cts "LLU"/%d is "LLD" us too %s\n", gf_sys_clock(), cts, ctx->timescale, diff<0 ? -diff : diff, diff<0 ? "early" : "late"));
+
+				if ((diff>5000000) && !ctx->too_slow) {
+					GF_Event evt;
+					evt.type = GF_EVENT_CODEC_SLOW;
+					gf_filter_ui_event(ctx->filter, &evt);
+					ctx->too_slow = GF_TRUE;
+				}
 			} else {
+				if (ctx->too_slow) {
+					GF_Event evt;
+					evt.type = GF_EVENT_CODEC_OK;
+					gf_filter_ui_event(ctx->filter, &evt);
+					ctx->too_slow = GF_FALSE;
+				}
 				diff = 0;
 			}
 
@@ -1927,6 +2027,12 @@ static GF_Err vout_process(GF_Filter *filter)
 		gf_filter_pck_unref(ctx->last_pck);
 	ctx->last_pck = pck;
 	ctx->nb_frames++;
+	const GF_PropertyValue *p = gf_filter_pck_get_property(pck, GF_PROP_PCK_MEDIA_TIME);
+	if (p) {
+		Double a_ts = (Double)  gf_filter_pck_get_cts(pck);
+		a_ts /= ctx->timescale;
+		ctx->media_offset = a_ts - p->value.number;
+	}
 
 
 draw_frame:
@@ -1957,7 +2063,7 @@ draw_frame:
 static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx)
 {
 	ctx->force_release = GF_FALSE;
-	if ((ctx->pfmt && ctx->last_pck) || !ctx->pid) {
+	if ((ctx->pfmt && ctx->last_pck) || !ctx->pid || ctx->update_oldata) {
 #ifdef VOUT_USE_OPENGL
 		if (ctx->disp < MODE_2D) {
 			gf_rmt_begin_gl(vout_draw_gl);
@@ -2050,7 +2156,7 @@ GF_Err vout_update_arg(GF_Filter *filter, const char *arg_name, const GF_Propert
 		}
 		return GF_OK;
 	}
-	if (!strcmp(arg_name, "vrot")) {
+	if (!strcmp(arg_name, "vrot") || !strcmp(arg_name, "vflip")) {
 		if (ctx->disp<MODE_2D)
 			ctx->force_reconfig_pid = GF_TRUE;
 		return GF_OK;
@@ -2118,6 +2224,7 @@ static const GF_FilterArgs VideoOutArgs[] =
 	{ OFFS(dumpframes), "ordered list of frames to dump, 1 being first frame. Special value `0` means dump all frames", GF_PROP_UINT_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(out), "radical of dump frame filenames. If no extension provided, frames are exported as `$OUT_%d.PFMT`", GF_PROP_STRING, "dump", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(step), "step frame", GF_PROP_BOOL, "false", NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE},
+	{ OFFS(async), "sync video to audio output if any", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 
 	{ OFFS(olwnd), "overlay window position and size", GF_PROP_VEC4I, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE},
 	{ OFFS(olsize), "overlay texture size (must be RGBA)", GF_PROP_VEC2I, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE_SYNC},
@@ -2125,6 +2232,10 @@ static const GF_FilterArgs VideoOutArgs[] =
 	{ OFFS(owsize), "output window size (readonly)", GF_PROP_VEC2I, NULL, NULL, GF_ARG_HINT_EXPERT},
 	{ OFFS(buffer_done), "buffer done indication (readonly)", GF_PROP_BOOL, NULL, NULL, GF_ARG_HINT_EXPERT},
 	{ OFFS(rebuffer), "system time in us at which last rebuffer started, 0 if not rebuffering (readonly)", GF_PROP_LUINT, NULL, NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(vjs), "use default JS script for vout control", GF_PROP_BOOL, "true", NULL, GF_ARG_HINT_EXPERT},
+
+	{ OFFS(media_offset), "media offset (substract this value to CTS to get media time - readonly)", GF_PROP_DOUBLE, "0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(wid), "window id (readonly)", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 
 	{ OFFS(vflip), "flip video (GL only)\n"
 		"- no: no flipping\n"

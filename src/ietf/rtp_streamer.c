@@ -37,6 +37,7 @@
 /*for ISOBMFF subtypes*/
 #include <gpac/isomedia.h>
 
+#define RTCP_BUF_SIZE	10000
 struct __rtp_streamer
 {
 	GP_RTPPacketizer *packetizer;
@@ -46,7 +47,10 @@ struct __rtp_streamer
 	char *buffer;
 	u32 payload_len, buffer_alloc;
 
-	Double ts_scale;
+	u32 in_timescale;
+	char rtcp_buf[RTCP_BUF_SIZE];
+
+	GF_Err last_err;
 };
 
 
@@ -63,6 +67,7 @@ static void rtp_stream_on_packet_done(void *cbk, GF_RTPHeader *header)
 
 #ifndef GPAC_DISABLE_LOG
 	if (e) {
+		rtp->last_err = e;
 		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("[RTP] Error %s sending RTP packet SN %u - TS %u\n", gf_error_to_string(e), header->SequenceNumber, header->TimeStamp));
 	} else {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_RTP, ("RTP SN %u - TS %u - M %u - Size %u\n", header->SequenceNumber, header->TimeStamp, header->Marker, rtp->payload_len + 12));
@@ -99,8 +104,11 @@ GF_Err gf_rtp_streamer_init_rtsp(GF_RTPStreamer *rtp, u32 path_mtu, GF_RTSPTrans
 {
 	GF_Err res;
 
-	if (!rtp->channel) rtp->channel = gf_rtp_new();
-
+	if (!rtp->channel) {
+		rtp->channel = gf_rtp_new();
+		if (!rtp->channel) return GF_OUT_OF_MEM;
+		rtp->channel->TimeScale = rtp->packetizer->sl_config.timestampResolution;
+	}
 	res = gf_rtp_setup_transport(rtp->channel, tr, tr->destination);
 	if (res !=0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_RTP, ("Cannot setup RTP transport info: %s\n", gf_error_to_string(res) ));
@@ -120,6 +128,9 @@ static GF_Err rtp_stream_init_channel(GF_RTPStreamer *rtp, u32 path_mtu, const c
 	GF_Err res;
 
 	rtp->channel = gf_rtp_new();
+	if (!rtp->channel) return GF_OUT_OF_MEM;
+	rtp->channel->TimeScale = rtp->packetizer->sl_config.timestampResolution;
+
 	gf_rtp_set_ports(rtp->channel, 0);
 	memset(&tr, 0, sizeof(GF_RTSPTransport));
 
@@ -488,8 +499,7 @@ GF_RTPStreamer *gf_rtp_streamer_new(u32 streamType, u32 codecid, u32 timeScale,
 		}
 	}
 
-	stream->ts_scale = slc.timestampResolution;
-	stream->ts_scale /= timeScale;
+	stream->in_timescale = timeScale;
 
 	stream->buffer_alloc = MTU+12;
 	stream->buffer = (char*)gf_malloc(sizeof(char) * stream->buffer_alloc);
@@ -542,8 +552,11 @@ GF_Err gf_rtp_streamer_append_sdp_extended(GF_RTPStreamer *rtp, u16 ESID, const 
 	if (!out_sdp_buffer) return GF_BAD_PARAM;
 
 	gf_rtp_builder_get_payload_name(rtp->packetizer, payloadName, mediaName);
-	if (!for_rtsp)
+	if (!for_rtsp) {
+		//this can happen when forwarding a multicast SDP from RTSP, where only a subset of streams have been setup
+		if (!rtp->channel) return GF_OK;
 		gf_rtp_get_ports(rtp->channel, &port, NULL);
+	}
 
 	sprintf(sdp, "m=%s %d RTP/%s %u\n", mediaName, for_rtsp ? 0 : port, rtp->packetizer->slMap.IV_length ? "SAVP" : "AVP", rtp->packetizer->PayloadType);
 	if (nb_channels > 1)
@@ -781,16 +794,22 @@ GF_Err gf_rtp_streamer_append_sdp(GF_RTPStreamer *rtp, u16 ESID, const u8 *dsi, 
 GF_EXPORT
 GF_Err gf_rtp_streamer_send_data(GF_RTPStreamer *rtp, u8 *data, u32 size, u32 fullsize, u64 cts, u64 dts, Bool is_rap, Bool au_start, Bool au_end, u32 au_sn, u32 sampleDuration, u32 sampleDescIndex)
 {
-	rtp->packetizer->sl_header.compositionTimeStamp = (u64) (cts*rtp->ts_scale);
-	rtp->packetizer->sl_header.decodingTimeStamp = (u64) (dts*rtp->ts_scale);
+	GF_Err e;
+	if (!rtp->channel) return data ? GF_BAD_PARAM : GF_EOS;
+
+	rtp->packetizer->sl_header.compositionTimeStamp = gf_timestamp_rescale(cts, rtp->in_timescale, rtp->channel->TimeScale);
+	rtp->packetizer->sl_header.decodingTimeStamp = gf_timestamp_rescale(dts, rtp->in_timescale, rtp->channel->TimeScale);
 	rtp->packetizer->sl_header.randomAccessPointFlag = is_rap;
 	rtp->packetizer->sl_header.accessUnitStartFlag = au_start;
 	rtp->packetizer->sl_header.accessUnitEndFlag = au_end;
 	rtp->packetizer->sl_header.AU_sequenceNumber = au_sn;
-	sampleDuration = (u32) (sampleDuration * rtp->ts_scale);
+	sampleDuration = (u32) gf_timestamp_rescale(sampleDuration, rtp->in_timescale, rtp->channel->TimeScale);
 	if (au_start && size) rtp->packetizer->nb_aus++;
 
-	return gf_rtp_builder_process(rtp->packetizer, data, size, (u8) au_end, fullsize, sampleDuration, sampleDescIndex);
+	rtp->last_err = GF_OK;
+	e = gf_rtp_builder_process(rtp->packetizer, data, size, (u8) au_end, fullsize, sampleDuration, sampleDescIndex);
+	if (e) return e;
+	return rtp->last_err;
 }
 
 GF_EXPORT
@@ -816,10 +835,21 @@ GF_EXPORT
 GF_Err gf_rtp_streamer_send_rtcp(GF_RTPStreamer *streamer, Bool force_ts, u32 rtp_ts, u32 force_ntp_type, u32 ntp_sec, u32 ntp_frac)
 {
 	if (force_ts) streamer->channel->last_pck_ts = rtp_ts;
-	streamer->channel->forced_ntp_sec = force_ntp_type ? ntp_sec : 0;
-	streamer->channel->forced_ntp_frac = force_ntp_type ? ntp_frac : 0;
-	if (force_ntp_type==2)
-		streamer->channel->next_report_time = 0;
+	if (force_ntp_type) {
+		streamer->channel->forced_ntp_sec = ntp_sec;
+		streamer->channel->forced_ntp_frac = ntp_frac;
+		if (force_ntp_type==2) {
+			streamer->channel->next_report_time = 0;
+		}
+		//we are sendind RTCP before first packet was sent, set sent time to same values
+		if (!streamer->channel->last_pck_ntp_sec) {
+			streamer->channel->last_pck_ntp_sec = ntp_sec;
+			streamer->channel->last_pck_ntp_frac = ntp_frac;
+		}
+	} else {
+		streamer->channel->forced_ntp_sec = 0;
+		streamer->channel->forced_ntp_frac = 0;
+	}
 
 	GF_Err e = gf_rtp_send_rtcp_report(streamer->channel);
 	if (force_ntp_type) {
@@ -832,6 +862,7 @@ GF_Err gf_rtp_streamer_send_rtcp(GF_RTPStreamer *streamer, Bool force_ts, u32 rt
 GF_EXPORT
 GF_Err gf_rtp_streamer_send_bye(GF_RTPStreamer *streamer)
 {
+	if (!streamer->channel) return GF_OK;
 	return gf_rtp_send_bye(streamer->channel);
 }
 
@@ -852,6 +883,50 @@ GF_Err gf_rtp_streamer_set_interleave_callbacks(GF_RTPStreamer *streamer, gf_rtp
 {
 
  	return gf_rtp_set_interleave_callbacks(streamer->channel, RTP_TCPCallback, cbk1, cbk2);
+}
+
+GF_EXPORT
+GF_Err gf_rtp_streamer_read_rtcp(GF_RTPStreamer *streamer, gf_rtcp_rr_callback rtcp_cbk, void *udta)
+{
+	u32 i, frac, sec;
+	u32 size = gf_rtp_read_rtcp(streamer->channel, streamer->rtcp_buf, RTCP_BUF_SIZE);
+	if (!size || !rtcp_cbk) return GF_EOS;
+
+	gf_net_get_ntp(&sec, &frac);
+	GF_Err e = gf_rtp_decode_rtcp(streamer->channel, streamer->rtcp_buf, size, NULL);
+	if (e<0) return e;
+
+	for (i=0; i<streamer->channel->nb_rctp_rr; i++) {
+		GF_RTCP_Report *rr = &streamer->channel->rtcp_rr[i];
+		u32 ssrc = (rr->ssrc==streamer->channel->SSRC) ? 0 : rr->ssrc;
+		u32 lsr_sec = rr->last_sr>>16;
+		u32 lsr_frac = (rr->last_sr&0xFFFF)<<16;
+		u64 dlsr = rr->delay_last_sr * 1000;
+		dlsr /= 65536;
+		s64 diff = (sec&0x0000FFFF) * 1000;
+		diff -= lsr_sec*1000;
+		diff += ((frac>>16)*1000)/65536;
+		diff -= (lsr_frac*1000)/65536;
+		diff -= dlsr;
+
+		u32 rtt_ms = (diff>=0) ? (u32) diff : 0;
+		u32 loss_rate = (rr->frac_lost*1000)/255;
+
+		rtcp_cbk(udta, ssrc, rtt_ms, rr->jitter, loss_rate);
+	}
+	return GF_OK;
+}
+
+GF_EXPORT
+u32 gf_rtp_streamer_get_ssrc(GF_RTPStreamer *streamer)
+{
+	return (streamer && streamer->channel) ? streamer->channel->SSRC : 0;
+}
+
+GF_EXPORT
+u32 gf_rtp_streamer_get_timescale(GF_RTPStreamer *streamer)
+{
+	return (streamer && streamer->packetizer) ? streamer->packetizer->sl_config.timestampResolution : 0;
 }
 
 #endif /*GPAC_DISABLE_STREAMING && GPAC_DISABLE_ISOM*/

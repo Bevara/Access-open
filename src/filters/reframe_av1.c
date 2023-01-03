@@ -255,6 +255,7 @@ GF_Err av1dmx_check_format(GF_Filter *filter, GF_AV1DmxCtx *ctx, GF_BitStream *b
 		ctx->bsmode = RAW_VPX;
 		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_WIDTH);
 		if (p) ctx->state.width = p->value.uint;
+		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_HEIGHT);
 		if (p) ctx->state.height = p->value.uint;
 		return GF_OK;
 	}
@@ -293,6 +294,26 @@ GF_Err av1dmx_check_format(GF_Filter *filter, GF_AV1DmxCtx *ctx, GF_BitStream *b
 	return GF_OK;
 }
 
+GF_Err gf_bs_set_logger(GF_BitStream *bs, void (*on_bs_log)(void *udta, const char *field_name, u32 nb_bits, u64 field_val, s32 idx1, s32 idx2, s32 idx3), void *udta);
+static void av1dmx_bs_log(void *udta, const char *field_name, u32 nb_bits, u64 field_val, s32 idx1, s32 idx2, s32 idx3)
+{
+	GF_AV1DmxCtx *ctx = (GF_AV1DmxCtx *) udta;
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, (" %s", field_name));
+	if (idx1>=0) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx1));
+		if (idx2>=0) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx2));
+			if (idx3>=0) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx3));
+			}
+		}
+	}
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("=\""LLD, field_val));
+	if ((ctx->bsdbg==2) && ((s32) nb_bits > 1) )
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("(%u)", nb_bits));
+
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("\" "));
+}
 
 static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 {
@@ -344,6 +365,10 @@ static void av1dmx_check_dur(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	ctx->index_size = 0;
 
 	bs = gf_bs_from_file(stream, GF_BITSTREAM_READ);
+#ifndef GPAC_DISABLE_LOG
+	if (ctx->bsdbg && gf_log_tool_level_on(GF_LOG_MEDIA, GF_LOG_DEBUG))
+		gf_bs_set_logger(bs, av1dmx_bs_log, ctx);
+#endif
 
 	if (ctx->file_hdr_size) {
 		gf_bs_seek(bs, ctx->file_hdr_size);
@@ -460,7 +485,6 @@ static Bool av1dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			ctx->cts = 0;
 		}
 		if (! ctx->is_file) {
-			ctx->buf_size = 0;
 			return GF_FALSE;
 		}
 		ctx->start_range = evt->play.start_range;
@@ -506,6 +530,7 @@ static Bool av1dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		//don't cancel event
 		ctx->is_playing = GF_FALSE;
 		ctx->cts = 0;
+		ctx->buf_size = 0;
 		return GF_FALSE;
 
 	case GF_FEVT_SET_SPEED:
@@ -1033,27 +1058,6 @@ GF_Err av1dmx_parse_av1(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 
 }
 
-GF_Err gf_bs_set_logger(GF_BitStream *bs, void (*on_bs_log)(void *udta, const char *field_name, u32 nb_bits, u64 field_val, s32 idx1, s32 idx2, s32 idx3), void *udta);
-static void av1dmx_bs_log(void *udta, const char *field_name, u32 nb_bits, u64 field_val, s32 idx1, s32 idx2, s32 idx3)
-{
-	GF_AV1DmxCtx *ctx = (GF_AV1DmxCtx *) udta;
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, (" %s", field_name));
-	if (idx1>=0) {
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx1));
-		if (idx2>=0) {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx2));
-			if (idx3>=0) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("_%d", idx3));
-			}
-		}
-	}
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("=\""LLD, field_val));
-	if ((ctx->bsdbg==2) && ((s32) nb_bits > 1) )
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("(%u)", nb_bits));
-
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("\" "));
-}
-
 GF_Err av1dmx_process_buffer(GF_Filter *filter, GF_AV1DmxCtx *ctx, const char *data, u32 data_size, Bool is_copy)
 {
 	u32 last_obu_end = 0;
@@ -1345,7 +1349,7 @@ static const GF_FilterCapability AV1DmxCaps[] =
 static const GF_FilterArgs AV1DmxArgs[] =
 {
 	{ OFFS(fps), "import frame rate (0 default to FPS from bitstream or 25 Hz)", GF_PROP_FRACTION, "0/1000", NULL, 0},
-	{ OFFS(index), "indexing window length. If 0, bitstream is not probed for duration. A negative value skips the indexing if the source file is larger than 100M (slows down importers) unless a play with start range > 0 is issued", GF_PROP_DOUBLE, "-1.0", NULL, 0},
+	{ OFFS(index), "indexing window length. If 0, bitstream is not probed for duration. A negative value skips the indexing if the source file is larger than 20M (slows down importers) unless a play with start range > 0 is issued", GF_PROP_DOUBLE, "-1.0", NULL, 0},
 
 	{ OFFS(importer), "compatibility with old importer", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(deps), "import sample dependency information", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
@@ -1353,7 +1357,7 @@ static const GF_FilterArgs AV1DmxArgs[] =
 	{ OFFS(temporal_delim), "keep temporal delimiters in reconstructed frames", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 
 
-	{ OFFS(bsdbg), "debug NAL parsing in `parser@debug logs\n"
+	{ OFFS(bsdbg), "debug OBU parsing in `media@debug logs\n"
 		"- off: not enabled\n"
 		"- on: enabled\n"
 		"- full: enable with number of bits dumped", GF_PROP_UINT, "off", "off|on|full", GF_FS_ARG_HINT_EXPERT},

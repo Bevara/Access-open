@@ -23,8 +23,6 @@
  *
  */
 
-#ifndef GPAC_DISABLE_CORE_TOOLS
-
 #include <gpac/config_file.h>
 
 
@@ -49,7 +47,7 @@
 #include <mach-o/dyld.h> /*for _NSGetExecutablePath */
 
 #ifdef GPAC_CONFIG_IOS
-#define TEST_MODULE     "osmo4ios"
+#define TEST_MODULE     "gpac4ios"
 #else
 #define TEST_MODULE		"gm_"
 #endif
@@ -59,10 +57,7 @@
 #ifdef GPAC_CONFIG_LINUX
 #include <unistd.h>
 #endif
-#ifdef GPAC_CONFIG_ANDROID
-#define DEFAULT_ANDROID_PATH_APP	"/data/data/com.gpac.Osmo4"
-#define DEFAULT_ANDROID_PATH_CFG	"/sdcard/osmo"
-#endif
+
 #define CFG_FILE_NAME	"GPAC.cfg"
 
 #if defined(GPAC_CONFIG_WIN32)
@@ -261,18 +256,44 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 #endif
 }
 
-/*FIXME - the paths defined here MUST be coherent with the paths defined in applications/osmo4_android/src/com/gpac/Osmo4/GpacConfig.java'*/
 #elif defined(GPAC_CONFIG_ANDROID)
+static char android_app_data[512];
+static char android_external_storage[512];
+
+/*
+	Called by GPAC JNI wrappers. If not set, default to app_data=/data/data/io.gpac.gpac and ext_storage=/sdcard
+*/
+GF_EXPORT
+void gf_sys_set_android_paths(const char *app_data, const char *ext_storage)
+{
+	if (app_data && (strlen(app_data)<512)) {
+		strcpy(android_app_data, app_data);
+	}
+	if (ext_storage && (strlen(ext_storage)<512)) {
+		strcpy(android_external_storage, ext_storage);
+	}
+}
+
 
 static Bool get_default_install_path(char *file_path, u32 path_type)
 {
 	if (!file_path) return 0;
 
 	if (path_type==GF_PATH_APP) {
-		strcpy(file_path, DEFAULT_ANDROID_PATH_APP);
+		strcpy(file_path, android_app_data[0] ? android_app_data : "/data/data/io.gpac.gpac");
 		return 1;
 	} else if (path_type==GF_PATH_CFG) {
-		strcpy(file_path, DEFAULT_ANDROID_PATH_CFG);
+		const char *res = android_external_storage[0] ? android_external_storage : getenv("EXTERNAL_STORAGE");
+		if (!res) res = "/sdcard";
+		strcpy(file_path, res);
+		strcat(file_path, "/GPAC");
+		//GPAC folder exists in external storage, use profile from this location
+		if (gf_dir_exists(file_path)) {
+			return 1;
+		}
+		//otherwise use profile in app data store
+		strcpy(file_path, android_app_data[0] ? android_app_data : "/data/data/io.gpac.gpac");
+		strcat(file_path, "/GPAC");
 		return 1;
 	} else if (path_type==GF_PATH_SHARE) {
 		if (!get_default_install_path(file_path, GF_PATH_APP))
@@ -296,8 +317,8 @@ static Bool get_default_install_path(char *file_path, u32 path_type)
 #define SYMBIAN_GPAC_GUI_DIR	"\\private\\F01F9075\\gui"
 #define SYMBIAN_GPAC_MODULES_DIR	"\\sys\\bin"
 #else
-#define SYMBIAN_GPAC_CFG_DIR	"\\system\\apps\\Osmo4"
-#define SYMBIAN_GPAC_GUI_DIR	"\\system\\apps\\Osmo4\\gui"
+#define SYMBIAN_GPAC_CFG_DIR	"\\system\\apps\\GPAC"
+#define SYMBIAN_GPAC_GUI_DIR	"\\system\\apps\\GPAC\\gui"
 #define SYMBIAN_GPAC_MODULES_DIR	GPAC_CFG_DIR
 #endif
 
@@ -598,8 +619,9 @@ static void gf_ios_refresh_cache_directory( GF_Config *cfg, const char *file_pat
 	sep = strstr(res, ".gpac");
 	assert(sep);
 	sep[0] = 0;
-	gf_cfg_set_key(cfg, "General", "LastWorkingDir", res);
-	gf_cfg_set_key(cfg, "General", "iOSDocumentsDir", res);
+	gf_cfg_set_key(cfg, "core", "docs-dir", res);
+	if (!gf_cfg_get_key(cfg, "core", "last-dir"))
+		gf_cfg_set_key(cfg, "core", "last-dir", res);
 
 	strcat(res, "cache/");
 	cache_dir = res;
@@ -703,13 +725,36 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	if (get_default_install_path(szPath, GF_PATH_APP)) {
 		strcat(szPath, "/cache");
 		gf_cfg_set_key(cfg, "core", "cache", szPath);
+		strcat(szPath, "/.nomedia");
+		//create .nomedia in cache and in app dir
+		if (!gf_file_exists(szPath)) {
+			FILE *f = gf_fopen(szPath, "w");
+			if (f) gf_fclose(f);
+		}
+		get_default_install_path(szPath, GF_PATH_APP);
+		strcat(szPath, "/.nomedia");
+		if (!gf_file_exists(szPath)) {
+			FILE *f = gf_fopen(szPath, "w");
+			if (f) gf_fclose(f);
+		}
+		//add a tmp as well, tmpfile() does not work on android
+		get_default_install_path(szPath, GF_PATH_APP);
+		strcat(szPath, "/gpac_tmp");
+		gf_cfg_set_key(cfg, "core", "tmp", szPath);
+		strcat(szPath, "/.nomedia");
+		if (!gf_file_exists(szPath)) {
+			FILE *f = gf_fopen(szPath, "w");
+			if (f) gf_fclose(f);
+		}
 	}
 #else
 	/*get default temporary directoy */
 	gf_cfg_set_key(cfg, "core", "cache", gf_get_default_cache_directory_ex(GF_FALSE));
 #endif
 
+#if defined(WIN32)
 	gf_cfg_set_key(cfg, "core", "ds-disable-notif", "no");
+#endif
 
 	/*Setup font engine to FreeType by default, and locate TrueType font directory on the system*/
 	gf_cfg_set_key(cfg, "core", "font-reader", "FreeType Font Reader");
@@ -731,20 +776,30 @@ static GF_Config *create_default_config(char *file_path, const char *profile)
 	gf_cfg_set_key(cfg, "core", "video-output", "Android Video Output");
 	gf_cfg_set_key(cfg, "core", "audio-output", "Android Audio Output");
 #else
-	gf_cfg_set_key(cfg, "core", "video-output", "X11 Video Output");
+	//use SDL by default, will fallback to X11 if not found (our X11 wrapper is old and does not have all features of the SDL one)
+	gf_cfg_set_key(cfg, "core", "video-output", "SDL Video Output");
 	gf_cfg_set_key(cfg, "core", "audio-output", "SDL Audio Output");
 #endif
 
+
+#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID)
 	gf_cfg_set_key(cfg, "core", "switch-vres", "no");
 	gf_cfg_set_key(cfg, "core", "hwvmem", "auto");
+#endif
 
+#ifdef GPAC_CONFIG_ANDROID
+	const char *opt = android_external_storage[0] ? android_external_storage : getenv("EXTERNAL_STORAGE");
+	if (!opt) opt = "/sdcard";
+	gf_cfg_set_key(cfg, "core", "docs-dir", opt);
+	gf_cfg_set_key(cfg, "core", "last-dir", opt);
+#endif
 
 	/*locate GUI*/
 	if ( get_default_install_path(szPath, GF_PATH_SHARE) ) {
 		char gui_path[GF_MAX_PATH+100];
 		sprintf(gui_path, "%s%cgui%cgui.bt", szPath, GF_PATH_SEPARATOR, GF_PATH_SEPARATOR);
 		if (gf_file_exists(gui_path)) {
-			gf_cfg_set_key(cfg, "General", "StartupFile", gui_path);
+			gf_cfg_set_key(cfg, "core", "startup-file", gui_path);
 		}
 
 		/*shaders are at the same location*/
@@ -800,7 +855,7 @@ static void check_modules_dir(GF_Config *cfg)
 		char *sep;
 		char shader_path[GF_MAX_PATH];
 		strcat(path, "/gui/gui.bt");
-		gf_cfg_set_key(cfg, "General", "StartupFile", path);
+		gf_cfg_set_key(cfg, "core", "startup-file", path);
 		//get rid of "/gui/gui.bt"
 		sep = strrchr(path, '/');
 		sep[0] = 0;
@@ -820,7 +875,7 @@ static void check_modules_dir(GF_Config *cfg)
 
 	if ( get_default_install_path(path, GF_PATH_MODULES) ) {
 		opt = gf_cfg_get_key(cfg, "core", "module-dir");
-		//for OSX, we can have an install in /usr/... and an install in /Applications/Osmo4.app - always change
+		//for OSX, we can have an install in /usr/... and an install in /Applications/GPAC.app - always change
 #if defined(__DARWIN__) || defined(__APPLE__)
 		if (!opt || strcmp(opt, path))
 			gf_cfg_set_key(cfg, "core", "module-dir", path);
@@ -860,14 +915,14 @@ static void check_modules_dir(GF_Config *cfg)
 	}
 
 	/*if startup file was disabled, do not attempt to correct it*/
-	if (gf_cfg_get_key(cfg, "General", "StartupFile")==NULL) return;
+	if (gf_cfg_get_key(cfg, "core", "startup-file")==NULL) return;
 
 	if ( get_default_install_path(path, GF_PATH_SHARE) ) {
-		opt = gf_cfg_get_key(cfg, "General", "StartupFile");
+		opt = gf_cfg_get_key(cfg, "core", "startup-file");
 		if (strstr(opt, "gui.bt") && strcmp(opt, path) && strstr(path, ".app") ) {
 #if defined(__DARWIN__) || defined(__APPLE__)
 			strcat(path, "/gui/gui.bt");
-			gf_cfg_set_key(cfg, "General", "StartupFile", path);
+			gf_cfg_set_key(cfg, "core", "startup-file", path);
 #endif
 		}
 	}
@@ -875,6 +930,49 @@ static void check_modules_dir(GF_Config *cfg)
 #endif
 }
 
+#ifdef GPAC_CONFIG_ANDROID
+
+static Bool delete_tmp_files(void *cbck, char *item_name, char *item_path, GF_FileEnumInfo *file_info)
+{
+	if (gf_file_delete(item_path) != GF_OK) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CACHE, ("[CORE] Failed to cleanup temp file %s\n", item_path));
+	}
+	return GF_FALSE;
+}
+#endif
+
+static void check_default_cred_file(GF_Config *cfg, char szPath[GF_MAX_PATH])
+{
+	char key[16];
+	u64 v1, v2;
+	const char *opt = gf_cfg_get_key(cfg, "core", "cred");
+	if (opt) return;
+	strcat(szPath, "/creds.key");
+	if (gf_file_exists(szPath)) return;
+
+	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[core] Creating default credential key in %s, use -cred=PATH/TO_FILE to overwrite\n", szPath));
+
+	v1 = gf_rand(); v1<<=32; v1 |= gf_rand();
+	v2 = gf_rand(); v2<<=32; v2 |= gf_rand();
+	v1 |= gf_sys_clock_high_res();
+#ifndef GPAC_64_BITS
+	v2 |= (u64) (u32) cfg;
+	v2 ^= (u64) (u32) szPath;
+#else
+	v2 |= (u64) cfg;
+	v2 ^= (u64) szPath;
+#endif
+	* ( (u64*) &key[0] ) = v1;
+	* ( (u64*) &key[8] ) = v2;
+	FILE *crd = gf_fopen(szPath, "w");
+	if (!crd) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[core] Failed to create credential key in %s, credentials will not be stored\n", szPath));
+		return;
+	}
+	fwrite(key, 16, 1, crd);
+	fclose(crd);
+	gf_cfg_set_key(cfg, "core", "cred", szPath);
+}
 
 /*!
 \brief configuration file initialization
@@ -901,7 +999,6 @@ static GF_Config *gf_cfg_init(const char *profile)
 		if (prof_opt) {
 			prof_len -= (u32) strlen(prof_opt);
 			if (strstr(prof_opt, "reload")) force_new_cfg = GF_TRUE;
-
 			prof_opt[0] = 0;
 		}
 	}
@@ -943,13 +1040,24 @@ static GF_Config *gf_cfg_init(const char *profile)
 	cfg = gf_cfg_new(szPath, CFG_FILE_NAME);
 	//config file not compatible with old arch, check it:
 	if (cfg) {
+		const char *key;
 		u32 nb_old_sec = gf_cfg_get_key_count(cfg, "Compositor");
 		nb_old_sec += gf_cfg_get_key_count(cfg, "MimeTypes");
 		nb_old_sec += gf_cfg_get_key_count(cfg, "Video");
 		nb_old_sec += gf_cfg_get_key_count(cfg, "Audio");
 		nb_old_sec += gf_cfg_get_key_count(cfg, "Systems");
+		nb_old_sec += gf_cfg_get_key_count(cfg, "General");
 		if (! gf_cfg_get_key_count(cfg, "core"))
 			nb_old_sec += 1;
+
+		//check GUI is valid, if not recreate a config
+		key = gf_cfg_get_key(cfg, "core", "startup-file");
+		if (key && !gf_file_exists(key))
+			force_new_cfg = GF_TRUE;
+
+		//check if reset flag is set in existing config
+		if (gf_cfg_get_key(cfg, "core", "reset"))
+			force_new_cfg = GF_TRUE;
 
 		if (nb_old_sec || force_new_cfg) {
 			if (nb_old_sec && (!profile || strcmp(profile, "0"))) {
@@ -957,6 +1065,19 @@ static GF_Config *gf_cfg_init(const char *profile)
 			}
 			gf_cfg_del(cfg);
 			cfg = create_default_config(szPath, profile);
+		} else {
+			//check fonts are valid, if not reload fonts
+			Bool rescan_fonts = GF_FALSE;
+			key = gf_cfg_get_key_name(cfg, "FontCache", 0);
+			if (!key)
+				rescan_fonts = GF_TRUE;
+			else {
+				key = gf_cfg_get_key(cfg, "FontCache", key);
+				if (key && !gf_file_exists(key))
+					rescan_fonts = GF_TRUE;
+			}
+			if (rescan_fonts)
+				gf_opts_set_key("core", "rescan-fonts", "yes");
 		}
 	}
 	//no config file found
@@ -978,6 +1099,7 @@ skip_cfg:
 #endif
 
 	check_modules_dir(cfg);
+	check_default_cred_file(cfg, szPath);
 
 	if (!gf_cfg_get_key(cfg, "core", "store-dir")) {
 		if (profile && !strcmp(profile, "0")) {
@@ -997,6 +1119,18 @@ skip_cfg:
 
 exit:
 	if (prof_opt) prof_opt[0] = ':';
+
+	//clean tmp
+#ifdef GPAC_CONFIG_ANDROID
+	if (cfg) {
+		const char *tmp = gf_cfg_get_key(cfg, "core", "tmp");
+		if (tmp && !strstr(tmp, "/gpac_tmp")) tmp=NULL;
+		if (tmp) {
+			gf_enum_directory(tmp, GF_FALSE, delete_tmp_files, (void*)cfg, NULL);
+		}
+	}
+#endif
+
 	return cfg;
 }
 
@@ -1133,6 +1267,12 @@ GF_Err gf_opts_discard_changes()
 	return gf_cfg_discard_changes(gpac_global_config);
 }
 
+GF_EXPORT
+GF_Err gf_opts_save()
+{
+	return gf_cfg_save(gpac_global_config);
+}
+
 #include <gpac/main.h>
 
 GF_GPACArg GPAC_Args[] = {
@@ -1217,6 +1357,14 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("bs-cache-size", NULL, "cache size for bitstream read and write from file (0 disable cache, slower IOs)", "512", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-check", NULL, "disable compliance tests for inputs (ISOBMFF for now). This will likely result in random crashes", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("unhandled-rejection", NULL, "dump unhandled promise rejections", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("startup-file", NULL, "startup file of compositor in GUI mode", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("docs-dir", NULL, "default documents directoty (for GUI on iOS and Android)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("last-dir", NULL, "last working directory (for GUI)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+#ifdef GPAC_HAS_POLL
+ GF_DEF_ARG("no-poll", NULL, "disable poll and use select for socket groups", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+#endif
+ GF_DEF_ARG("no-tls-rcfg", NULL, "disble automatic TCP to TLS reconfiguration", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+
  GF_DEF_ARG("cache", NULL, "cache directory location", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-on", NULL, "enable HTTP proxy", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-name", NULL, "set HTTP proxy address", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
@@ -1226,8 +1374,8 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("offline-cache", NULL, "enable offline HTTP caching (no re-validation of existing resource in cache)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("clean-cache", NULL, "indicate if HTTP cache should be clean upon launch/exit", NULL, NULL, GF_ARG_BOOL, GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("cache-size", NULL, "specify cache size in bytes", "100M", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
- GF_DEF_ARG("head-timeout", NULL, "set HTTP head request timeout in milliseconds", "5000", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
- GF_DEF_ARG("req-timeout", NULL, "set HTTP/RTSP request timeout in milliseconds", "20000", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("tcp-timeout", NULL, "time in milliseconds to wait for HTTP/RTSP connect before error", "5000", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("req-timeout", NULL, "time in milliseconds to wait on HTTP/RTSP request before error", "10000", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("no-timeout", NULL, "ignore HTTP 1.1 timeout in keep-alive", "false", NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("broken-cert", NULL, "enable accepting broken SSL certificates", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("user-agent", "ua", "set user agent name for HTTP/RTSP", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
@@ -1236,6 +1384,7 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("query-string", NULL, "insert query string (without `?`) to URL on requests", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("dm-threads", NULL, "force using threads for async download requests rather than session scheduler", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("cte-rate-wnd", NULL, "set window analysis length in milliseconds for chunk-transfer encoding rate estimation", "20", NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
+ GF_DEF_ARG("cred", NULL, "path to 128 bits key for credential storage", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
 
 #ifdef GPAC_HAS_HTTP2
  GF_DEF_ARG("no-h2", NULL, "disable HTTP2", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HTTP),
@@ -1268,6 +1417,10 @@ GF_DEF_ARG("full-link", NULL, "throw error if any PID in the filter graph cannot
  GF_DEF_ARG("no-graph-cache", NULL, "disable internal caching of filter graph connections. If disabled, the graph will be recomputed at each link resolution (lower memory usage but slower)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
  GF_DEF_ARG("no-reservoir", NULL, "disable memory recycling for packets and properties. This uses much less memory but stresses the system memory allocator much more", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_FILTERS),
 
+ GF_DEF_ARG("buffer-gen", NULL, "default buffer size in microseconds for generic pids", "1000", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
+ GF_DEF_ARG("buffer-dec", NULL, "default buffer size in microseconds for decoder input pids", "1000000", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
+ GF_DEF_ARG("buffer-units", NULL, "default buffer size in frames when timing is not available", "1", NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_FILTERS),
+
  GF_DEF_ARG("switch-vres", NULL, "select smallest video resolution larger than scene size, otherwise use current video resolution", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("hwvmem", NULL, "specify (2D rendering only) memory type of main video backbuffer. Depending on the scene type, this may drastically change the playback speed\n"
  "- always: always on hardware\n"
@@ -1285,9 +1438,11 @@ GF_DEF_ARG("full-link", NULL, "throw error if any PID in the filter graph cannot
  GF_DEF_ARG("glfbo-txid", NULL, "set output texture ID when using `glfbo` output. The OpenGL context shall be initialized and gf_term_process shall be called with the OpenGL context active", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
  GF_DEF_ARG("video-output", NULL, "indicate the name of the video output module to use (see `gpac -h modules`)."
 	" The reserved name `glfbo` is used in player mode to draw in the OpenGL texture identified by [-glfbo-txid](). "
-	" In this mode, the application is responsible for sending event to the terminal"
+	" In this mode, the application is responsible for sending event to the compositor"
  , NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
- GF_DEF_ARG("audio-output", NULL, "indicate the name of the audio output module to use", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
+ GF_DEF_ARG("dfb-sys", NULL, "system DirectFB (x11, sdl, vnc, fbdev, osx ordevmem)", "x11", NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
+ GF_DEF_ARG("dfb-flip", NULL, "vsync mode for DirectFB (waitsync, wait, sync or swap)", "waitsync", NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_VIDEO),
+ GF_DEF_ARG("audio-output", NULL, "indicate the name of the audio output module to use", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_AUDIO),
  GF_DEF_ARG("alsa-devname", NULL, "set ALSA dev name", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_AUDIO),
  GF_DEF_ARG("force-alsarate", NULL, "force ALSA and OSS output sample rate", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_AUDIO),
  GF_DEF_ARG("ds-disable-notif", NULL, "disable DirectSound audio buffer notifications when supported", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_AUDIO),
@@ -1315,6 +1470,7 @@ GF_DEF_ARG("charset", NULL, "set charset when not recognized from input. Possibl
  GF_DEF_ARG("m2ts-vvc-old", NULL, "hack for old TS streams using 0x32 for VVC instead of 0x33", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HACKS),
  GF_DEF_ARG("piff-force-subsamples", NULL, "hack for PIFF PSEC files generated by 0.9.0 and 1.0 MP4Box with wrong subsample_count inserted for audio", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HACKS),
  GF_DEF_ARG("vvdec-annexb", NULL, "hack for old vvdec+libavcodec supporting only annexB format", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HACKS),
+ GF_DEF_ARG("heif-hevc-urn", NULL, "use HEVC URN for alpha and depth in HEIF instead of MPEG-B URN (HEIF first edition)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_HACKS),
 
 
  {0}
@@ -1447,7 +1603,7 @@ Bool gf_sys_set_cfg_option(const char *opt_string)
 	}
 	gf_opts_set_key(szSec, szKey, szVal[0] ? szVal : NULL);
 
-	if (!strcmp(szSec, "core")) {
+	if (!strcmp(szSec, "core") || !strcmp(szSec, "temp")) {
 		if (!strcmp(szKey, "noprog") && (!strcmp(szVal, "yes")||!strcmp(szVal, "true")||!strcmp(szVal, "1")) ) {
 			void gpac_disable_progress();
 
@@ -1518,7 +1674,6 @@ Bool gf_opts_load_option(const char *arg_name, const char *val, Bool *consumed_n
 				if (sec_hdr_done)
 					fprintf(stdout, "\n");
 			}
-			exit(0);
 		}
 		return GF_TRUE;
 	}
@@ -1760,7 +1915,11 @@ static u32 help_buf_size=0;
 
 void gf_sys_cleanup_help()
 {
-	if (help_buf) gf_free(help_buf);
+	if (help_buf) {
+		gf_free(help_buf);
+		help_buf = NULL;
+		help_buf_size = 0;
+	}
 }
 
 
@@ -1875,6 +2034,15 @@ void gf_sys_format_help(FILE *helpout, u32 flags, const char *fmt, ...)
 		check_char_balanced(help_buf, '\'');
 	}
 #endif
+
+/*#ifdef GPAC_CONFIG_ANDROID
+	//on android use logs for help print
+	if (!gen_doc) {
+		GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("%s", help_buf));
+		return;
+	}
+#endif
+*/
 
 	line = help_buf;
 	while (line[0]) {
@@ -2339,7 +2507,7 @@ Bool gf_sys_word_match(const char *orig, const char *dst)
 		if (s1 && !s2) return GF_FALSE;
 		if (!s1 && s2) return GF_FALSE;
 
-		if (strstr(dst, orig))
+		if (gf_strnistr(dst, orig, MIN(olen, dlen)))
 			return GF_TRUE;
 		return GF_FALSE;
 	}
@@ -2404,5 +2572,3 @@ retry_char:
 		return GF_TRUE;
 	return GF_FALSE;
 }
-
-#endif

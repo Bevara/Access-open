@@ -29,7 +29,7 @@
 #include <gpac/xml.h>
 #include <gpac/media_tools.h>
 
-#ifndef GPAC_DISABLE_CORE_TOOLS
+#ifndef GPAC_DISABLE_MPD
 
 /*!
 \file <gpac/mpd.h>
@@ -76,7 +76,7 @@ typedef enum
 \param segment_name target buffer where the segment name is formatted - size must be GF_MAX_PATH
 \param rep_id ID of the target representation
 \param base_url base URL, may be NULL
-\param seg_rad_name base name of the output segements (eg, myfile_ZZZ), shall not be NULL, may be empty ("")
+\param seg_rad_name base name of the output segmeents (eg, myfile_ZZZ), shall not be NULL, may be empty ("")
 \param seg_ext segment extensions
 \param start_time start time of the segment in MPD timescale
 \param bandwidth bandwidth used for the representation
@@ -413,7 +413,7 @@ typedef struct
 {
 	/*! disabled*/
 	Bool disabled;
-	/*! name of cahed init segemnt URL (usually local cache or gmem:// url)*/
+	/*! name of cahed init segment URL (usually local cache or gmem:// url)*/
 	char *cached_init_segment_url;
 	/*! if set indicates the associated gmem memory is owned by this representation*/
 	Bool owned_gmem;
@@ -653,6 +653,13 @@ typedef struct {
 
 	/*! target part (cmaf chunk) duration for HLS LL*/
 	Double hls_ll_part_dur;
+
+	/*! tfdt of first segment*/
+	u64 first_tfdt_plus_one;
+	u32 first_tfdt_timescale;
+
+	GF_Fraction hls_max_seg_dur;
+
 } GF_MPD_Representation;
 
 /*! AdaptationSet*/
@@ -877,6 +884,7 @@ typedef struct {
 
 	/*! indicates the GPAC state info should be written*/
 	Bool write_context;
+	Bool use_gpac_ext;
 	/*! indicates this is the last static serialization of a previously dynamic MPD*/
 	Bool was_dynamic;
 	/*! indicates the HLS variant files shall be created, otherwise temp files are used*/
@@ -894,6 +902,8 @@ typedef struct {
 	Bool llhls_rendition_reports;
 	/*! user-defined  PART-HOLD-BACK, auto computed if <=0*/
 	Double llhls_part_holdback;
+	//als absolute url flag
+	u32 hls_abs_url;
 } GF_MPD;
 
 /*! parses an MPD Element (and subtree) from DOM
@@ -1235,6 +1245,6 @@ GF_Err gf_mpd_load_cues(const char *cues_file, u32 stream_id, u32 *cues_timescal
 GF_MPD_Descriptor *gf_mpd_get_descriptor(GF_List *desclist, char *scheme_id);
 
 /*! @} */
-#endif /*GPAC_DISABLE_CORE_TOOLS*/
+#endif /*GPAC_DISABLE_MPD*/
 
 #endif // _MPD_H_

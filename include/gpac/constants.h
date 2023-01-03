@@ -182,13 +182,12 @@ typedef enum
 	GF_PIXEL_RGBD		=	GF_4CC('R', 'G', 'B', 'D'),
 	/*!RGB24 + depth plane (7 lower bits) + shape mask. Component ordering in bytes is R-G-B-(S+D).*/
 	GF_PIXEL_RGBDS		=	GF_4CC('3', 'C', 'D', 'S'),
-	/*!Stereo RGB24 */
-	GF_PIXEL_RGBS		=	GF_4CC('R', 'G', 'B', 'S'),
-	/*!Stereo RGBA. Component ordering in bytes is R-G-B-A. */
-	GF_PIXEL_RGBAS		=	GF_4CC('R', 'G', 'A', 'S'),
 
 	/*internal format for OpenGL using pachek RGB 24 bit plus planar depth plane at the end of the image*/
 	GF_PIXEL_RGB_DEPTH = GF_4CC('R', 'G', 'B', 'd'),
+
+	/*generic pixel format uncv from ISO/IEC 23001-17*/
+	GF_PIXEL_UNCV = GF_4CC('u', 'n', 'c', 'v'),
 
 	/*!YUV packed 422 format*/
 	GF_PIXEL_YUYV		=	GF_4CC('Y','U','Y','V'),
@@ -613,6 +612,10 @@ typedef enum
 	/*! codecid for MPEG-1 Audio streams, layer 1*/
 	GF_CODECID_MPEG_AUDIO_L1 = GF_4CC('m','p','a','1'),
 
+	GF_CODECID_MSPEG4_V3 = GF_4CC('D','I','V','3'),
+
+	GF_CODECID_ALAC = GF_4CC('A','L','A','C'),
+
 	//fake codec IDs for RTP
 	GF_CODECID_FAKE_MP2T = GF_4CC('M','P','2','T')
 } GF_CodecID;
@@ -661,6 +664,12 @@ GF_CodecID gf_codecid_from_oti(u32 stream_type, u32 oti);
 \return RFC 4CC of codec, 0 if not mapped/known
 */
 u32 gf_codecid_4cc_type(GF_CodecID codecid);
+
+/*! Checks if reframer/unframer exists for this codec in gpac
+\param codecid target codec ID
+\return GF_TRUE if reframer/unframer exist (bitstream reparse is possible), GF_FALSE otherwise
+*/
+Bool gf_codecid_has_unframer(GF_CodecID codecid);
 
 /*! Gets the codecid given the associated short name
 \param cname target codec short name
@@ -912,7 +921,7 @@ u32 gf_audio_fmt_to_isobmf(GF_AudioFormat afmt);
 GF_AudioFormat gf_audio_fmt_enum(u32 *idx, const char **name, const char **fileext, const char **desc);
 
 /*! get CICP layout code point from audio configuration
-\param nb_chan number of channels
+\param nb_chan total number of channels
 \param nb_surr number of surround channels
 \param nb_lfe number of LFE channels
 \return CICP layout code point format or 0 if unknown
@@ -1663,7 +1672,6 @@ enum
 	/*! Mesh projection (not supported yet)*/
 	GF_PROJ360_MESH
 };
-
 
 /*! @} */
 

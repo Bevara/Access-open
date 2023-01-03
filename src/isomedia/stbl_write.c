@@ -914,7 +914,7 @@ GF_Err stbl_AddChunkOffset(GF_MediaBox *mdia, u32 sampleNumber, u32 StreamDescIn
 			gf_free(co64->offsets);
 			co64->offsets = newLarge;
 			co64->nb_entries++;
-			co64->alloc_size++;
+			co64->alloc_size = co64->nb_entries;
 		}
 	}
 
@@ -1377,7 +1377,13 @@ GF_Err stbl_RemoveRAP(GF_SampleTableBox *stbl, u32 sampleNumber)
 
 	//we remove the only one around...
 	if (stss->nb_entries == 1) {
-		if (stss->sampleNumbers[0] != sampleNumber) return GF_OK;
+		if (stss->sampleNumbers[0] != sampleNumber) {
+			if (sampleNumber < stss->sampleNumbers[0]) {
+				assert(stss->sampleNumbers[0]);
+				stss->sampleNumbers[0]--;
+			}
+			return GF_OK;
+		}
 		//free our numbers but don't delete (all samples are NON-sync
 		gf_free(stss->sampleNumbers);
 		stss->sampleNumbers = NULL;
@@ -1391,13 +1397,43 @@ GF_Err stbl_RemoveRAP(GF_SampleTableBox *stbl, u32 sampleNumber)
 		if (sampleNumber == stss->sampleNumbers[i]) {
 			memmove(&stss->sampleNumbers[i], &stss->sampleNumbers[i+1], sizeof(u32)* (stss->nb_entries-i-1) );
 			stss->nb_entries--;
+			i--;
 		}
 
-		if (sampleNumber < stss->sampleNumbers[i]) {
+		else if (sampleNumber < stss->sampleNumbers[i]) {
 			assert(stss->sampleNumbers[i]);
 			stss->sampleNumbers[i]--;
 		}
 	}
+	return GF_OK;
+}
+
+GF_Err stbl_RemoveRAPs(GF_SampleTableBox *stbl, u32 nb_samples)
+{
+	u32 i;
+
+	GF_SyncSampleBox *stss = stbl->SyncSample;
+	if (!stss) return GF_OK;
+
+	for (i=0; i<stss->nb_entries; i++) {
+		if (stss->sampleNumbers[i] <= nb_samples) {
+			memmove(&stss->sampleNumbers[i], &stss->sampleNumbers[i+1], sizeof(u32)* (stss->nb_entries-i-1) );
+			stss->nb_entries--;
+			i--;
+			continue;
+		}
+		stss->sampleNumbers[i] -= nb_samples;
+	}
+
+	if (!stss->nb_entries) {
+		//free our numbers but don't delete (all samples are NON-sync
+		gf_free(stss->sampleNumbers);
+		stss->sampleNumbers = NULL;
+		stss->r_LastSampleIndex = stss->r_LastSyncSample = 0;
+		stss->alloc_size = stss->nb_entries = 0;
+		return GF_OK;
+	}
+
 	return GF_OK;
 }
 
@@ -1435,9 +1471,11 @@ GF_Err stbl_RemoveShadow(GF_SampleTableBox *stbl, u32 sampleNumber)
 	//shadows for 1 sample...
 	i=0;
 	while ((ent = (GF_StshEntry *)gf_list_enum(stsh->entries, &i))) {
-		if (ent->shadowedSampleNumber == sampleNumber) {
+		if (ent->shadowedSampleNumber <= sampleNumber) {
 			i--;
 			gf_list_rem(stsh->entries, i);
+		} else {
+			ent->shadowedSampleNumber--;
 		}
 	}
 	//reset the cache
@@ -1517,7 +1555,7 @@ GF_Err stbl_RemovePaddingBits(GF_SampleTableBox *stbl, u32 SampleNumber)
 
 GF_Err stbl_RemoveSubSample(GF_SampleTableBox *stbl, u32 SampleNumber)
 {
-	u32 i, count, j, subs_count, prev_sample, delta=0;
+	u32 i, count, j, subs_count, prev_sample;
 
 	if (! stbl->sub_samples) return GF_OK;
 	subs_count = gf_list_count(stbl->sub_samples);
@@ -1525,12 +1563,19 @@ GF_Err stbl_RemoveSubSample(GF_SampleTableBox *stbl, u32 SampleNumber)
 		GF_SubSampleInformationBox *subs = gf_list_get(stbl->sub_samples, j);
 		if (! subs->Samples) continue;
 
+
 		prev_sample = 0;
 		count = gf_list_count(subs->Samples);
 		for (i=0; i<count; i++) {
 			GF_SubSampleInfoEntry *e = gf_list_get(subs->Samples, i);
 			prev_sample += e->sample_delta;
-			if (prev_sample==SampleNumber) {
+			//convert to sample num
+			e->sample_delta = prev_sample;
+		}
+		for (i=0; i<count; i++) {
+			GF_SubSampleInfoEntry *e = gf_list_get(subs->Samples, i);
+			//remove
+			if (e->sample_delta<=SampleNumber) {
 				gf_list_rem(subs->Samples, i);
 				while (gf_list_count(e->SubSamples)) {
 					GF_SubSampleEntry *pSubSamp = (GF_SubSampleEntry*) gf_list_get(e->SubSamples, 0);
@@ -1541,10 +1586,19 @@ GF_Err stbl_RemoveSubSample(GF_SampleTableBox *stbl, u32 SampleNumber)
 				gf_free(e);
 				i--;
 				count--;
-				delta=1;
 				continue;
+			} else {
+				e->sample_delta--;
 			}
-			e->sample_delta+=delta;
+
+		}
+		//convert back to delta
+		GF_SubSampleInfoEntry *prev_e = gf_list_get(subs->Samples, 0);
+		if (!prev_e) return GF_OK;
+		for (i=1; i<count; i++) {
+			GF_SubSampleInfoEntry *e = gf_list_get(subs->Samples, i);
+			e->sample_delta = e->sample_delta - prev_e->sample_delta;
+			prev_e = e;
 		}
 	}
 	return GF_OK;
@@ -1730,6 +1784,7 @@ GF_Err stbl_AppendChunk(GF_SampleTableBox *stbl, u64 offset)
 	if (!co64->offsets) return GF_OUT_OF_MEM;
 	co64->offsets[co64->nb_entries] = offset;
 	co64->alloc_size = co64->nb_entries;
+        co64->nb_entries += 1;
 	return GF_OK;
 }
 
@@ -1805,7 +1860,7 @@ GF_Err stbl_AppendRAP(GF_SampleTableBox *stbl, u8 isRap)
 	return GF_OK;
 }
 
-GF_Err stbl_AppendTrafMap(GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end, u32 nb_pack_samples)
+GF_Err stbl_AppendTrafMap(GF_ISOFile *mov, GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end, u32 nb_pack_samples)
 {
 	GF_TrafToSampleMap *tmap;
 	GF_TrafMapEntry *tmap_ent;

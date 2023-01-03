@@ -88,6 +88,10 @@ void ttmldec_update_size_info(GF_TTMLDec *ctx)
 		p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_HEIGHT);
 		if (p) h = p->value.uint;
 
+		if (ctx->scene->compositor->osize.x && ctx->scene->compositor->osize.y) {
+			w = ctx->scene->compositor->osize.x;
+			h = ctx->scene->compositor->osize.y;
+		}
 		if (!w) w = ctx->txtw;
 		if (!h) h = ctx->txth;
 
@@ -182,7 +186,7 @@ static GF_Err ttmldec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DELAY);
 	ctx->delay = p ? p->value.longsint : 0;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
-	ctx->timescale = p ? p->value.longsint : 1000;
+	ctx->timescale = p ? p->value.uint : 1000;
 
 	return GF_OK;
 }
@@ -272,7 +276,7 @@ JSContext *ttmldec_get_js_context(GF_TTMLDec *ctx)
 	if (ctx->update_args) {
 		JSValue global = JS_GetGlobalObject(c);
 
-		u32 fs = MAX(ctx->fsize, ctx->fontSize);
+		u32 fs = (u32) MAX(ctx->fsize, ctx->fontSize);
 		u32 def_font_size = ctx->scene->compositor->subfs;
 		if (!def_font_size) {
 			if (ctx->vp_h > 2000) def_font_size = 80;
@@ -308,7 +312,7 @@ static GF_Err ttmldec_process(GF_Filter *filter)
 	const u8 *pck_data;
 	char *pck_alloc=NULL, *ttml_doc;
 	u64 cts;
-	u32 obj_time;
+	u32 obj_time, dur;
 	u32 pck_size;
 	JSValue fun_val;
 	JSValue global;
@@ -349,10 +353,12 @@ static GF_Err ttmldec_process(GF_Filter *filter)
 	delay += ctx->delay;
 
 	if (delay>=0) cts += delay;
-	else if (cts > -delay) cts -= -delay;
+	else if (cts > (u64) -delay) cts -= -delay;
 	else cts = 0;
 
 	gf_odm_check_buffering(ctx->odm, ctx->ipid);
+	cts = gf_timestamp_to_clocktime(cts, ctx->timescale);
+	dur = (u32) gf_timestamp_rescale(gf_filter_pck_get_duration(pck), ctx->timescale, 1000);
 
 	//we still process any frame before our clock time even when buffering
 	obj_time = gf_clock_time(ctx->odm->ck);
@@ -363,7 +369,7 @@ static GF_Err ttmldec_process(GF_Filter *filter)
 		fun_val = JS_GetPropertyStr(c, global, "on_ttml_clock");
 		if (JS_IsFunction(c, fun_val) ) {
 			JSValue ret, argv[1];
-			argv[0] = JS_NewInt64(c, obj_time);
+			argv[0] = JS_NewInt64(c, gf_clock_time_absolute(ctx->odm->ck) );
 
 			ret = JS_Call(c, fun_val, global, 1, argv);
 			if (JS_IsException(ret)) {
@@ -386,10 +392,9 @@ static GF_Err ttmldec_process(GF_Filter *filter)
 		if (e) return e;
 	}
 
-	if (gf_timestamp_greater(cts, ctx->timescale, obj_time, 1000)) {
-		gf_sc_sys_frame_pending(ctx->scene->compositor, ((Double) cts / ctx->timescale), obj_time, filter);
+	if (!gf_sc_check_sys_frame(ctx->scene, ctx->odm, ctx->ipid, filter, cts, dur))
 		return GF_OK;
-	}
+
 	pck_data = gf_filter_pck_get_data(pck, &pck_size);
 	subs = gf_filter_pck_get_property(pck, GF_PROP_PCK_SUBS);
 
@@ -539,8 +544,8 @@ static const GF_FilterArgs TTMLDecArgs[] =
 	"- center: align text at center of text area\n"
 	"- top: align text at top of text area", GF_PROP_UINT, "bottom", "bottom|center|top", GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(lineSpacing), "line spacing as scaling factor to font size", GF_PROP_FLOAT, "1.0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
-	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, 0},
-	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, 0},
+	{ OFFS(txtw), "default width in standalone rendering", GF_PROP_UINT, "400", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(txth), "default height in standalone rendering", GF_PROP_UINT, "200", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -558,7 +563,13 @@ GF_FilterRegister TTMLDecRegister = {
 	GF_FS_SET_DESCRIPTION("TTML decoder")
 	GF_FS_SET_HELP("This filter decodes TTML streams into a SVG scene graph of the compositor filter.\n"
 		"The scene graph creation is done through JavaScript.\n"
-		"The filter options are used to override the JS global variables of the TTML renderer.")
+		"The filter options are used to override the JS global variables of the TTML renderer.\n"
+		"\n"
+		"In stand-alone rendering (no associated video), the filter will use:\n"
+		"- `Width` and `Height` properties of input pid if any\n"
+		"- otherwise, `osize` option of compositor if set\n"
+		"- otherwise, [-txtw]() and [-txth]()\n"
+		)
 	.private_size = sizeof(GF_TTMLDec),
 	.flags = GF_FS_REG_MAIN_THREAD,
 	.args = TTMLDecArgs,

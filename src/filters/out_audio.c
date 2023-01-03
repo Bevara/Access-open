@@ -39,7 +39,8 @@ typedef struct
 	Double speed, start;
 	u32 vol, pan, buffer, mbuffer, rbuffer;
 	GF_Fraction adelay;
-	
+	Double media_offset;
+
 	GF_FilterPid *pid;
 	u32 sr, afmt, nb_ch, timescale;
 	u64 ch_cfg;
@@ -222,7 +223,8 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 		we therefore probe the first packet before probing the buffer fullness*/
 		pck = gf_filter_pid_get_packet(ctx->pid);
 		if (!pck) {
-			if (gf_filter_pid_is_eos(ctx->pid))
+			//pid may be set to NULL if removed
+			if (!ctx->pid || gf_filter_pid_is_eos(ctx->pid))
 				ctx->is_eos = GF_TRUE;
 			return 0;
 		}
@@ -289,6 +291,14 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 			delay += gf_timestamp_rescale(ctx->adelay.num, ctx->adelay.den, ctx->timescale);
 
 		cts = gf_filter_pck_get_cts(pck);
+
+		const GF_PropertyValue *p = gf_filter_pck_get_property(pck, GF_PROP_PCK_MEDIA_TIME);
+		if (p) {
+			Double a_ts = (Double)  gf_filter_pck_get_cts(pck);
+			a_ts /= ctx->timescale;
+			ctx->media_offset = a_ts - p->value.number;
+		}
+
 		if (delay >= 0) {
 			cts += delay;
 		} else if (cts < (u64) -delay) {
@@ -372,6 +382,7 @@ static u32 aout_fill_output(void *ptr, u8 *buffer, u32 buffer_size)
 				ctx->pck_offset += nb_copy;
 				return done;
 			}
+			ctx->last_cts += (size / ctx->bytes_per_sample) * ctx->sr;
 			ctx->pck_offset = 0;
 		}
 		gf_filter_pid_drop_packet(ctx->pid);
@@ -397,8 +408,13 @@ static GF_Err aout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 	GF_AudioOutCtx *ctx = (GF_AudioOutCtx *) gf_filter_get_udta(filter);
 
 	if (is_remove) {
-		assert(ctx->pid==pid);
-		ctx->pid=NULL;
+		assert(ctx->pid == pid);
+		ctx->pid = NULL;
+		//set a NULL clock hint in case other sinks using clock hints are still running
+		GF_Fraction64 mtime;
+		mtime.num = 0;
+		mtime.den = 0;
+		gf_filter_hint_single_clock(filter, 0, mtime);
 		return GF_OK;
 	}
 	assert(!ctx->pid || (ctx->pid==pid));
@@ -455,6 +471,7 @@ static GF_Err aout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 			buffer_req_changed = GF_TRUE;
 		}
 	}
+	ctx->pid = pid;
 
 	if ((ctx->sr!=sr) || (ctx->afmt != afmt) || (ctx->nb_ch != nb_ch)) {
 		buffer_req_changed = GF_TRUE;
@@ -504,8 +521,6 @@ static GF_Err aout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 		ctx->speed = evt.play.speed;
 		ctx->start = evt.play.start_range;
 	}
-
-	ctx->pid = pid;
 	ctx->sr = sr;
 	ctx->afmt = afmt;
 	ctx->nb_ch = nb_ch;
@@ -552,7 +567,7 @@ static GF_Err aout_initialize(GF_Filter *filter)
 	if (!ctx->bnum || !ctx->bdur) ctx->bnum = ctx->bdur = 0;
 
 	os_wnd_handler = NULL;
-	sOpt = gf_opts_get_key("Temp", "OSWnd");
+	sOpt = gf_opts_get_key("temp", "window-handle");
 	if (sOpt) sscanf(sOpt, "%p", &os_wnd_handler);
 	e = ctx->audio_out->Setup(ctx->audio_out, os_wnd_handler, ctx->bnum, ctx->bdur);
 
@@ -616,6 +631,9 @@ static GF_Err aout_process(GF_Filter *filter)
 	}
 
 	if (ctx->th || ctx->audio_out->SelfThreaded) {
+		//not configured, force fetching first packet
+		if (!ctx->sr && ctx->pid)
+			gf_filter_pid_get_packet(ctx->pid);
 		if (ctx->is_eos) return GF_EOS;
 		gf_filter_ask_rt_reschedule(filter, 100000);
 		return GF_OK;
@@ -693,6 +711,7 @@ static const GF_FilterArgs AudioOutArgs[] =
 	{ OFFS(adelay), "set audio delay in sec", GF_PROP_FRACTION, "0", NULL, GF_FS_ARG_HINT_ADVANCED|GF_FS_ARG_UPDATE},
 	{ OFFS(buffer_done), "buffer done indication (readonly, for user app)", GF_PROP_BOOL, NULL, NULL, GF_ARG_HINT_EXPERT},
 	{ OFFS(rebuffer), "system time in us at which last rebuffer started, 0 if not rebuffering (readonly, for user app)", GF_PROP_LUINT, NULL, NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(media_offset), "media offset (substract this value to CTS to get media time - readonly)", GF_PROP_DOUBLE, "0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -714,6 +733,11 @@ GF_FilterRegister AudioOutRegister = {
 	"If [-clock]() is set, the filter will report system time (in us) and corresponding packet CTS for other filters to use for AV sync.\n")
 	.private_size = sizeof(GF_AudioOutCtx),
 	.args = AudioOutArgs,
+#ifdef GPAC_CONFIG_ANDROID
+	//on android pin on man thread so that all events/commands come from main thread
+	//we use a dedicated thread for filling the audio
+	.flags = GF_FS_REG_MAIN_THREAD,
+#endif
 	SETCAPS(AudioOutCaps),
 	.initialize = aout_initialize,
 	.finalize = aout_finalize,

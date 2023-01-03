@@ -54,7 +54,7 @@ void BD_OffsetSFTime(GF_BifsDecoder * codec, Double *time)
 
 void BD_CheckSFTimeOffset(GF_BifsDecoder *codec, GF_Node *node, GF_FieldInfo *inf)
 {
-	if (gf_node_get_tag(node) != TAG_ProtoNode) {
+	if (inf->name && (gf_node_get_tag(node) != TAG_ProtoNode)) {
 		if (!stricmp(inf->name, "startTime") || !stricmp(inf->name, "stopTime"))
 			BD_OffsetSFTime(codec,  (Double *)inf->far_ptr);
 	} else if (gf_sg_proto_field_is_sftime_offset(node, inf)) {
@@ -248,7 +248,7 @@ GF_Err gf_bifs_dec_sf_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *n
 		if (!is_mem_com) {
 			GF_Node *old_node = *((GF_Node **) field->far_ptr);
 			if (old_node != NULL) {
-				u32 i, count = gf_list_count(codec->command_buffers);
+				u32 count = gf_list_count(codec->command_buffers);
 				for (i=0; i<count; i++) {
 					CommandBufferItem *cbi = (CommandBufferItem*) gf_list_get(codec->command_buffers, i);
 					if (cbi->node == old_node) {
@@ -302,7 +302,7 @@ GF_Err gf_bifs_dec_sf_field(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *n
 GF_Err BD_DecMFFieldList(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node, GF_FieldInfo *field, Bool is_mem_com)
 {
 	GF_Node *new_node;
-	GF_Err e;
+	GF_Err e=GF_OK;
 	u8 endFlag, qp_local, qp_on, initial_qp;
 	GF_ChildNodeItem *last = NULL;
 	u32 nbF;
@@ -323,15 +323,15 @@ GF_Err BD_DecMFFieldList(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 	while (!endFlag  && (codec->LastError>=0)) {
 		if (field->fieldType != GF_SG_VRML_MFNODE) {
 			e = gf_sg_vrml_mf_append(field->far_ptr, field->fieldType, & sffield.far_ptr);
-			if (e) return e;
+			if (e) goto exit;
 			e = gf_bifs_dec_sf_field(codec, bs, node, &sffield, GF_FALSE);
-			if (e) return e;
+			if (e) goto exit;
 		} else {
 			new_node = gf_bifs_dec_node(codec, bs, field->NDTtype);
 			//append
 			if (new_node) {
 				e = gf_node_register(new_node, is_mem_com ? NULL : node);
-				if (e) return e;
+				if (e) goto exit;
 
 				//regular coding
 				if (node) {
@@ -341,7 +341,7 @@ GF_Err BD_DecMFFieldList(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 						//we have a QP in the same scope, remove previous
 						if (qp_on) gf_bifs_dec_qp_remove(codec, GF_FALSE);
 						e = gf_bifs_dec_qp_set(codec, new_node);
-						if (e) return e;
+						if (e) goto exit;
 						qp_on = 1;
 						if (qp_local) qp_local = 2;
 						if (codec->force_keep_qp) {
@@ -361,10 +361,11 @@ GF_Err BD_DecMFFieldList(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 					e = gf_node_list_add_child_last( (GF_ChildNodeItem **)field->far_ptr, new_node, &last);
 				}
 			} else {
-				return codec->LastError;
+				e = codec->LastError;
+				goto exit;
 			}
 		}
-		if (e) return e;
+		if (e) goto exit;
 
 		endFlag = gf_bs_read_int(bs, 1);
 
@@ -382,9 +383,13 @@ GF_Err BD_DecMFFieldList(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node
 		}
 		nbF += 1;
 	}
+
+exit:
 	/*finally delete the QP if any (local or not) as we get out of this node
 	and reactivate previous one*/
 	if (qp_on) gf_bifs_dec_qp_remove(codec, initial_qp);
+	if (e) return e;
+
 	/*this is for QP 14*/
 	gf_bifs_dec_qp14_set_length(codec, nbF);
 	return GF_OK;
@@ -427,64 +432,71 @@ GF_Err BD_DecMFFieldVec(GF_BifsDecoder * codec, GF_BitStream *bs, GF_Node *node,
 			e = gf_bifs_dec_sf_field(codec, bs, node, &sffield, GF_FALSE);
 			if (e) return e;
 		}
-	} else {
-		last = NULL;
-		for (i=0; i<nbFields; i++) {
-			GF_Node *new_node = gf_bifs_dec_node(codec, bs, field->NDTtype);
-			if (new_node) {
-				e = gf_node_register(new_node, is_mem_com ? NULL : node);
-				if (e) return e;
+		return GF_OK;
+	}
 
-				if (node) {
-					/*special case for QP, register as the current QP*/
-					if (gf_node_get_tag(new_node) == TAG_MPEG4_QuantizationParameter) {
-						qp_local = ((M_QuantizationParameter *)new_node)->isLocal;
-						/*we have a QP in the same scope, remove previous
-						NB: we assume this is the right behavior, the spec doesn't say
-						whether QP is cumulative or not*/
-						if (qp_on) gf_bifs_dec_qp_remove(codec, GF_FALSE);
+	e = GF_OK;
+	last = NULL;
+	for (i=0; i<nbFields; i++) {
+		GF_Node *new_node = gf_bifs_dec_node(codec, bs, field->NDTtype);
+		if (new_node) {
+			e = gf_node_register(new_node, is_mem_com ? NULL : node);
+			if (e) goto exit;
 
-						e = gf_bifs_dec_qp_set(codec, new_node);
-						if (e) return e;
-						qp_on = 1;
-						if (qp_local) qp_local = 2;
-						if (codec->force_keep_qp) {
-							e = gf_node_list_add_child_last(field->far_ptr, new_node, &last);
-							if (e) return e;
-						} else {
-							gf_node_register(new_node, NULL);
-							gf_node_unregister(new_node, node);
-						}
-					} else {
+			if (node) {
+				/*special case for QP, register as the current QP*/
+				if (gf_node_get_tag(new_node) == TAG_MPEG4_QuantizationParameter) {
+					qp_local = ((M_QuantizationParameter *)new_node)->isLocal;
+					/*we have a QP in the same scope, remove previous
+					NB: we assume this is the right behavior, the spec doesn't say
+					whether QP is cumulative or not*/
+					if (qp_on) gf_bifs_dec_qp_remove(codec, GF_FALSE);
+
+					e = gf_bifs_dec_qp_set(codec, new_node);
+					if (e) goto exit;
+					qp_on = 1;
+					if (qp_local) qp_local = 2;
+					if (codec->force_keep_qp) {
 						e = gf_node_list_add_child_last(field->far_ptr, new_node, &last);
-						if (e) return e;
+						if (e) goto exit;
+					} else {
+						gf_node_register(new_node, NULL);
+						gf_node_unregister(new_node, node);
 					}
+				} else {
+					e = gf_node_list_add_child_last(field->far_ptr, new_node, &last);
+					if (e) goto exit;
 				}
-				/*proto coding*/
-				else if (codec->pCurrentProto) {
-					/*TO DO: what happens if this is a QP node on the interface ?*/
-					e = gf_node_list_add_child_last( (GF_ChildNodeItem **)field->far_ptr, new_node, &last);
-					if (e) return e;
-				}
-			} else {
-				return codec->LastError ? codec->LastError : GF_NON_COMPLIANT_BITSTREAM;
 			}
-		}
-		/*according to the spec, the QP applies to the current node itself, not just children.
-		If IsLocal is TRUE remove the node*/
-		if (qp_on && qp_local) {
-			if (qp_local == 2) {
-//				qp_local = 1;
-			} else {
-				//ask to get rid of QP and reactivate if we had a QP when entering the node
-				gf_bifs_dec_qp_remove(codec, initial_qp);
-//				qp_local = 0;
+			/*proto coding*/
+			else if (codec->pCurrentProto) {
+				/*TO DO: what happens if this is a QP node on the interface ?*/
+				e = gf_node_list_add_child_last( (GF_ChildNodeItem **)field->far_ptr, new_node, &last);
+				if (e)goto exit;
 			}
+		} else {
+			e = codec->LastError ? codec->LastError : GF_NON_COMPLIANT_BITSTREAM;
+			goto exit;
 		}
 	}
+
+exit:
+
+	/*according to the spec, the QP applies to the current node itself, not just children.
+	If IsLocal is TRUE remove the node*/
+	if (qp_on && qp_local) {
+		if (qp_local == 2) {
+//				qp_local = 1;
+		} else {
+			//ask to get rid of QP and reactivate if we had a QP when entering the node
+			gf_bifs_dec_qp_remove(codec, initial_qp);
+//				qp_local = 0;
+		}
+	}
+
 	/*finally delete the QP if any (local or not) as we get out of this node*/
 	if (qp_on) gf_bifs_dec_qp_remove(codec, GF_TRUE);
-	return GF_OK;
+	return e;
 }
 
 

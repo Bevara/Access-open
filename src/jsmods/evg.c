@@ -1577,7 +1577,7 @@ static Bool evg_shader_ops(GF_JSCanvas *canvas, EVGShader *shader, GF_EVGFragmen
 	GF_IVec4 *right_vali;
 	register u32 if_level=0;
 	register u32 nif_level=0;
-	register Bool cond_res;
+	register Bool cond_res=GF_FALSE;
 	register ShaderOp *op = &shader->ops[0];
 
 	//assign to dummy values, this will prevent any badly formatted shader to assign a value to a NULL left-val or read a null right-val
@@ -3763,6 +3763,9 @@ static void va_finalize(JSRuntime *rt, JSValue obj)
 
 static void va_gc_mark(JSRuntime *rt, JSValueConst obj, JS_MarkFunc *mark_func)
 {
+#ifdef GPAC_ENABLE_COVERAGE
+	if (!rt) return;
+#endif
 	EVG_VA *va = JS_GetOpaque(obj, va_class_id);
 	if (!va) return;
 	JS_MarkValue(rt, va->ab, mark_func);
@@ -6272,7 +6275,7 @@ static JSValue texture_diff_score(JSContext *c, JSValueConst obj, int argc, JSVa
 	if (tx_with->pf != tx->pf) return GF_JS_EXCEPTION(c);
 
 	if (argc>1) {
-		u32 idx=1;
+		int idx=1;
 		if (JS_IsString(argv[1])) {
 			const char * str = JS_ToCString(c, argv[1]);
 			if (strstr(str, "mae")) do_mae = GF_TRUE;
@@ -7796,6 +7799,11 @@ static int js_evg_load_module(JSContext *c, JSModuleDef *m)
 
 		JS_NewClassID(&va_class_id);
 		JS_NewClass(rt, va_class_id, &va_class);
+
+#ifdef GPAC_ENABLE_COVERAGE
+		if (gf_sys_is_cov_mode())
+			va_gc_mark(NULL, JS_NULL, NULL);
+#endif
 
 #ifdef EVG_USE_JS_SHADER
 		JS_NewClassID(&fragment_class_id);

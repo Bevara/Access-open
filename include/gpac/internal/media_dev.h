@@ -108,6 +108,9 @@ typedef struct
 	u8 video_format;
 	Bool video_full_range_flag;
 
+	Bool chroma_location_info_present_flag;
+	u8 chroma_sample_loc_type_top_field, chroma_sample_loc_type_bottom_field;
+
 	Bool colour_description_present_flag;
 	u8 colour_primaries;
 	u8 transfer_characteristics;
@@ -252,7 +255,7 @@ typedef struct
 
 	Bool is_svc;
 	u8 last_nal_type_parsed;
-	s8 last_ps_idx;
+	s8 last_ps_idx, last_sps_idx;
 } AVCState;
 
 typedef struct
@@ -304,6 +307,8 @@ typedef struct
 
 	//if set all video info is removed
 	Bool remove_video_info;
+	//if set timing info is removed
+	Bool remove_vui_timing_info;
 	//new fullrange, -1 to use info from bitstream
 	s32 fullrange;
 	//new vidformat flag, -1 to use info from bitstream
@@ -413,7 +418,7 @@ typedef struct
 	u8 chroma_loc_info_present_flag;
 	u32 chroma_sample_loc_type_top_field, chroma_sample_loc_type_bottom_field;
 
-	u8 neutra_chroma_indication_flag, field_seq_flag, frame_field_info_present_flag;
+	u8 neutral_chroma_indication_flag, field_seq_flag, frame_field_info_present_flag;
 	u8 default_display_window_flag;
 	u32 left_offset, right_offset, top_offset, bottom_offset;
 	u8 hrd_parameters_present_flag;
@@ -630,8 +635,8 @@ typedef struct
 //	u32 inter_layer_ref_pic_id[VVC_MAX_REF_PICS];
 } VVC_RefPicList;
 
-#define MAX_TILE_COLS 30
-#define MAX_TILE_ROWS 33
+#define VVC_MAX_TILE_COLS 30
+#define VVC_MAX_TILE_ROWS 33
 
 typedef struct
 {
@@ -712,8 +717,8 @@ typedef struct
 	u32 cw_left, cw_right, cw_top, cw_bottom;
 
 	//tile info
-	u32 tile_rows_height_ctb[MAX_TILE_ROWS];
-	u32 tile_cols_width_ctb[MAX_TILE_COLS];
+	u32 tile_rows_height_ctb[VVC_MAX_TILE_ROWS];
+	u32 tile_cols_width_ctb[VVC_MAX_TILE_COLS];
 	u32 pic_width_in_ctbsY, pic_height_in_ctbsY;
 } VVC_PPS;
 
@@ -1152,6 +1157,9 @@ GF_Err gf_webvtt_parser_dump_done(GF_WebVTTParser *parser, u32 duration);
 #define M2V_EXT_START_CODE					0xB5
 #define M2V_GOP_START_CODE					0xB8
 
+
+/*build isobmf dec info from sequence header+ephdr (only seq hdr is parsed, only advanced profile is supprted) */
+GF_Err gf_media_vc1_seq_header_to_dsi(const u8 *seq_hdr, u32 seq_hdr_len, u8 **dsi, u32 *dsi_size);
 
 #endif		/*_GF_MEDIA_DEV_H_*/
 

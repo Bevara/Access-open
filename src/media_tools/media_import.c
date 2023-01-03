@@ -99,7 +99,7 @@ static void gf_media_update_bitrate_ex(GF_ISOFile *file, u32 track, Bool use_esd
 
 	br = (Double) (s64) gf_isom_get_media_duration(file, track);
 	br /= timescale;
-	if (br) {
+	if (br>0) {
 		GF_ESD *esd = NULL;
 		if (!csize || !cdur) {
 			bitrate = (u32) ((Double) (s64)avg_rate / br);
@@ -184,7 +184,7 @@ u32 gf_dolby_vision_level(u32 width, u32 height, u64 fps_num, u64 fps_den, u32 c
             else dv_level = 10;
         }
         else if (level_check <= 7680*4320*60) dv_level = 12;
-        else level_check = 13;
+        else dv_level = 13;
 	}
 	return dv_level;
 }
@@ -282,6 +282,7 @@ static GF_Err gf_import_afx_sc3dmc(GF_MediaImporter *import, Bool mult_desc_allo
 	gf_set_progress("Importing SC3DMC", 1, 1);
 
 	gf_isom_sample_del(&samp);
+	gf_isom_update_duration(import->dest);
 
 exit:
 	gf_free(data);
@@ -345,7 +346,7 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 				gf_free(lang);
 				lang = NULL;
 			}
-			gf_media_get_rfc_6381_codec_name(import->orig, i+1, import->tk_info[i].szCodecProfile, GF_FALSE, GF_FALSE);
+			gf_media_get_rfc_6381_codec_name(import->orig, i+1, 1, import->tk_info[i].szCodecProfile, GF_FALSE, GF_FALSE);
 
 			import->nb_tracks ++;
 		}
@@ -450,7 +451,8 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 		if (dst && strstr(dst, ".mov"))
 			clone_flags = 0;
 	}
-
+	clone_flags |= GF_ISOM_CLONE_RESET_DURATION;
+	
 	if (import->flags & GF_IMPORT_USE_DATAREF)
 		clone_flags |= GF_ISOM_CLONE_TRACK_KEEP_DREF;
 	if (import->target_trackID && (import->target_trackID==(u32)-1))
@@ -740,6 +742,7 @@ static GF_Err gf_import_isomedia_track(GF_MediaImporter *import)
 			if (e) goto exit;
 		}
 	}
+	gf_isom_update_duration(import->dest);
 
 exit:
 	if (sai_buffer) gf_free(sai_buffer);
@@ -1499,6 +1502,20 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 
 	if (importer->streamFormat && !strcmp(importer->streamFormat, "VTT")) e |= gf_dynstrcat(&args, "webvtt", ":");
 
+	//SRT-related legacy params
+	if (importer->fontName) {
+		e |= gf_dynstrcat(&args, "fontname=", ":");
+		e |= gf_dynstrcat(&args, importer->fontName, NULL);
+	}
+	if (importer->fontName) {
+		sprintf(szSubArg, "fontsize=%d", importer->fontSize);
+		e |= gf_dynstrcat(&args, szSubArg, ":");
+	}
+	if (importer->text_width && importer->text_height) {
+		sprintf(szSubArg, "width=%d:height=%d:txtx=%d:txty=%d", importer->text_width, importer->text_height, importer->text_x, importer->text_y);
+		e |= gf_dynstrcat(&args, szSubArg, ":");
+	}
+
 	if (importer->source_magic) {
 		sprintf(szSubArg, "#SrcMagic="LLU, importer->source_magic);
 		e |= gf_dynstrcat(&args, szSubArg, ":");
@@ -1507,7 +1524,6 @@ GF_Err gf_media_import(GF_MediaImporter *importer)
 		sprintf(szSubArg, "#MuxIndex=%d", importer->track_index);
 		e |= gf_dynstrcat(&args, szSubArg, ":");
 	}
-
 	if (e) {
 		if (!importer->run_in_session)
 			gf_fs_del(fsess);

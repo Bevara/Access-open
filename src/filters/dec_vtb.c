@@ -83,6 +83,7 @@ typedef struct
 	u32 reorder, ofmt;
 	Bool no_copy;
 	Bool disable_hw;
+	Bool wait_sync;
 
 	//internal
 //	GF_FilterPid *ipid;
@@ -96,6 +97,8 @@ typedef struct
 	u32 codecid;
 	Bool is_hardware;
 	Bool wait_rap;
+	s32 cmx;
+	Bool full_range;
 
 	GF_Err last_error;
 	
@@ -105,7 +108,7 @@ typedef struct
 
     GF_List *frames, *frames_res;
     GF_FilterPacket *cur_pck;
-
+	GF_Mutex *mx;
 	u8 chroma_format, luma_bit_depth, chroma_bit_depth;
 	Bool frame_size_changed;
 	Bool reorder_detected;
@@ -215,7 +218,9 @@ static void vtbdec_on_frame(void *opaque, void *sourceFrameRefCon, OSStatus stat
 
 	ctx->profile_supported = GF_TRUE;
 	ctx->nb_consecutive_errors=0;
+	gf_mx_p(ctx->mx);
 	frame = gf_list_pop_back(ctx->frames_res);
+	gf_mx_v(ctx->mx);
 	if (!frame) {
 		GF_SAFEALLOC(frame, GF_VTBHWFrame);
 		if (!frame) return;
@@ -240,6 +245,7 @@ static void vtbdec_on_frame(void *opaque, void *sourceFrameRefCon, OSStatus stat
 	if (!ctx->last_timescale_out)
 		ctx->last_timescale_out = gf_filter_pck_get_timescale(frame->pck_src);
 
+	gf_mx_p(ctx->mx);
 	count = gf_list_count(ctx->frames);
 	for (i=0; i<count; i++) {
 		GF_VTBHWFrame *aframe = gf_list_get(ctx->frames, i);
@@ -270,10 +276,13 @@ static void vtbdec_on_frame(void *opaque, void *sourceFrameRefCon, OSStatus stat
 		if (insert) {
 			gf_list_insert(ctx->frames, frame, i);
 			ctx->reorder_detected = GF_TRUE;
+			gf_mx_v(ctx->mx);
 			return;
 		}
 	}
+
 	gf_list_add(ctx->frames, frame);
+	gf_mx_v(ctx->mx);
 }
 
 static CFDictionaryRef vtbdec_create_buffer_attributes(GF_VTBDecCtx *ctx, OSType pix_fmt)
@@ -343,7 +352,7 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
 		break;
 	}
 
-	ctx->wait_rap = GF_TRUE;
+	ctx->wait_rap = ctx->wait_sync;
 	ctx->reorder_probe = ctx->reorder;
 	ctx->reorder_detected = GF_FALSE;
 	pid = gf_list_get(ctx->streams, 0);
@@ -788,6 +797,7 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
     case kVTVideoDecoderMalfunctionErr:
         return GF_IO_ERR;
     case kVTVideoDecoderBadDataErr :
+    case -8969:
         return GF_NOT_SUPPORTED;
 
 	case kVTPixelTransferNotSupportedErr:
@@ -796,7 +806,7 @@ static GF_Err vtbdec_init_decoder(GF_Filter *filter, GF_VTBDecCtx *ctx)
     case 0:
         break;
     default:
-        return GF_SERVICE_ERROR;
+		return GF_NOT_SUPPORTED;
     }
 	
 	//good to go !
@@ -873,6 +883,8 @@ static void vtbdec_register_param_sets(GF_VTBDecCtx *ctx, char *data, u32 size, 
 			if (ps_id<0) return;
 		}
 	}
+
+	if (!dest) return;
 	
 	count = gf_list_count(dest);
 	for (i=0; i<count; i++) {
@@ -1022,6 +1034,11 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STRIDE, &PROP_UINT(ctx->stride) );
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PAR, &PROP_FRAC(ctx->pixel_ar) );
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PIXFMT, &PROP_UINT(ctx->pix_fmt) );
+
+		if (ctx->full_range)
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(ctx->full_range));
+		if (ctx->cmx>=0)
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT((u32) ctx->cmx));
 		return GF_OK;
 	}
 	//need a reset !
@@ -1112,13 +1129,15 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			gf_odf_avc_cfg_del(cfg);
 
 			if ((ctx->active_sps>=0) && ctx->avc.sps[ctx->active_sps].vui_parameters_present_flag) {
-				Bool full_range = ctx->avc.sps[ctx->active_sps].vui.video_full_range_flag;
-				u32 cmx = ctx->avc.sps[ctx->active_sps].vui.matrix_coefficients;
-				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(full_range));
-				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT(cmx));
+				ctx->full_range = ctx->avc.sps[ctx->active_sps].vui.video_full_range_flag;
+				ctx->cmx = ctx->avc.sps[ctx->active_sps].vui.matrix_coefficients;
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(ctx->full_range));
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT((u32) ctx->cmx));
 			} else {
 				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, NULL);
 				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, NULL);
+				ctx->full_range = GF_FALSE;
+				ctx->cmx = -1;
 			}
 			return e;
 		}
@@ -1178,13 +1197,15 @@ static GF_Err vtbdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			gf_odf_hevc_cfg_del(cfg);
 
 			if ((ctx->active_sps>=0) && ctx->hevc.sps[ctx->active_sps].vui_parameters_present_flag) {
-				Bool full_range = ctx->hevc.sps[ctx->active_sps].video_full_range_flag;
-				u32 cmx = ctx->hevc.sps[ctx->active_sps].matrix_coeffs;
-				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(full_range));
-				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT(cmx));
+				ctx->full_range = ctx->hevc.sps[ctx->active_sps].video_full_range_flag;
+				ctx->cmx = ctx->hevc.sps[ctx->active_sps].matrix_coeffs;
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(ctx->full_range));
+				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, &PROP_UINT((u32) ctx->cmx));
 			} else {
 				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, NULL);
 				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, NULL);
+				ctx->cmx = -1;
+				ctx->full_range = GF_FALSE;
 			}
 			return e;
 		}
@@ -1431,14 +1452,18 @@ static GF_Err vtbdec_flush_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 
 	if (ctx->no_copy) return vtbdec_send_output_frame(filter, ctx);
 
+	gf_mx_p(ctx->mx);
 	vtbframe = gf_list_pop_front(ctx->frames);
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[VTB] Outputting frame DTS "LLU" CTS "LLU" timescale %d\n", gf_filter_pck_get_dts(vtbframe->pck_src), gf_filter_pck_get_cts(vtbframe->pck_src), gf_filter_pck_get_timescale(vtbframe->pck_src)));
+	gf_mx_v(ctx->mx);
 
 
 	status = CVPixelBufferLockBaseAddress(vtbframe->frame, kCVPixelBufferLock_ReadOnly);
     if (status != kCVReturnSuccess) {
         GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[VTB] Error locking frame data\n"));
+		gf_mx_p(ctx->mx);
 		gf_list_add(ctx->frames_res, vtbframe);
+		gf_mx_v(ctx->mx);
         return GF_IO_ERR;
     }
 
@@ -1502,7 +1527,9 @@ static GF_Err vtbdec_flush_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 		gf_filter_pck_send(dst_pck);
 	}
     CVPixelBufferUnlockBaseAddress(vtbframe->frame, kCVPixelBufferLock_ReadOnly);
+	gf_mx_p(ctx->mx);
 	gf_list_add(ctx->frames_res, vtbframe);
+	gf_mx_v(ctx->mx);
 	return GF_OK;
 }
 
@@ -1755,7 +1782,9 @@ void vtbframe_release(GF_Filter *filter, GF_FilterPid *pid, GF_FilterPacket *pck
     }
 
     safe_int_dec(&f->ctx->decoded_frames_pending);
+	gf_mx_p(f->ctx->mx);
 	gf_list_add(f->ctx->frames_res, f);
+	gf_mx_v(f->ctx->mx);
 }
 
 GF_Err vtbframe_get_plane(GF_FilterFrameInterface *frame, u32 plane_idx, const u8 **outPlane, u32 *outStride)
@@ -1810,7 +1839,7 @@ void *myGetGLContext()
 
 GF_Err vtbframe_get_gl_texture(GF_FilterFrameInterface *frame, u32 plane_idx, u32 *gl_tex_format, u32 *gl_tex_id, GF_CodecMatrix * texcoordmatrix)
 {
-    OSStatus status;
+    OSStatus status=kCVReturnSuccess;
 	GLenum target_fmt;
 	u32 w, h;
 	GF_CVGLTextureREF *outTexture=NULL;
@@ -1899,7 +1928,9 @@ static GF_Err vtbdec_send_output_frame(GF_Filter *filter, GF_VTBDecCtx *ctx)
 	GF_VTBHWFrame *vtb_frame;
 	GF_FilterPacket *dst_pck;
 
+	gf_mx_p(ctx->mx);
 	vtb_frame = gf_list_pop_front(ctx->frames);
+	gf_mx_v(ctx->mx);
 	if (!vtb_frame) return GF_BAD_PARAM;
 
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[VTB] Outputting frame DTS "LLU" CTS "LLU" timescale %d\n", gf_filter_pck_get_dts(vtb_frame->pck_src), gf_filter_pck_get_cts(vtb_frame->pck_src), gf_filter_pck_get_timescale(vtb_frame->pck_src)));
@@ -1939,12 +1970,14 @@ static Bool vtbdec_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 {
 	GF_VTBDecCtx *ctx = (GF_VTBDecCtx *) gf_filter_get_udta(filter);
 	if (evt->base.type==GF_FEVT_PLAY) {
+		gf_mx_p(ctx->mx);
 		while (gf_list_count(ctx->frames) ) {
 			GF_VTBHWFrame *f = gf_list_pop_back(ctx->frames);
 			if (f->pck_src) gf_filter_pck_unref(f->pck_src);
 			f->pck_src = NULL;
 			gf_list_add(ctx->frames_res, f);
 		}
+		gf_mx_v(ctx->mx);
 		ctx->drop_non_refs = evt->play.drop_non_ref;
 	}
 	else if ((evt->base.type==GF_FEVT_SET_SPEED) || (evt->base.type==GF_FEVT_RESUME)) {
@@ -1964,6 +1997,10 @@ static GF_Err vtbdec_initialize(GF_Filter *filter)
 	ctx->frames_res = gf_list_new();
 	ctx->frames = gf_list_new();
 	ctx->streams = gf_list_new();
+	ctx->mx = gf_mx_new("VTBDec");
+
+	gf_filter_force_main_thread(filter, GF_TRUE);
+
 	return GF_OK;
 }
 
@@ -2001,6 +2038,7 @@ static void vtbdec_finalize(GF_Filter *filter)
 	if (ctx->ps_bs) gf_bs_del(ctx->ps_bs);
 	if (ctx->nalu_rewrite_bs) gf_bs_del(ctx->nalu_rewrite_bs);
 	if (ctx->nalu_buffer) gf_free(ctx->nalu_buffer);
+	gf_mx_del(ctx->mx);
 }
 
 
@@ -2041,6 +2079,7 @@ static const GF_FilterArgs VTBDecArgs[] =
 	{ OFFS(no_copy), "dispatch decoded frames as OpenGL textures (true) or as copied packets (false) ", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ofmt), "set default pixel format for decoded video. If not found, fall back to `nv12`", GF_PROP_PIXFMT, "nv12", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(disable_hw), "disable hardware decoding", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(wait_sync), "wait for sync frame before decoding", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE},
 	{}
 };
 

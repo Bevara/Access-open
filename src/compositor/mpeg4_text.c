@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -28,7 +28,6 @@
 #include "mpeg4_grouping.h"
 #include "texturing.h"
 #include <gpac/utf.h>
-#include <gpac/options.h>
 
 #ifndef GPAC_DISABLE_VRML
 
@@ -209,7 +208,8 @@ static void build_text(TextStack *st, M_Text *txt, GF_TraverseState *tr_state)
 	Fixed fontSize, start_x, start_y, line_spacing, tot_width, tot_height, max_scale, maxExtent;
 	u32 size, trim_size;
 	GF_Font *font;
-	Bool horizontal;
+	char szBuf[100];
+	Bool horizontal, use_pass = GF_FALSE;
 	GF_TextSpan *trim_tspan = NULL;
 	GF_FontManager *ft_mgr = tr_state->visual->compositor->font_manager;
 	M_FontStyle *fs = (M_FontStyle *)txt->fontStyle;
@@ -228,6 +228,7 @@ static void build_text(TextStack *st, M_Text *txt, GF_TraverseState *tr_state)
 		if (strstr(fs->style.buffer, "ITALIC") || strstr(fs->style.buffer, "italic")) styles |= GF_FONT_ITALIC;
 		if (strstr(fs->style.buffer, "UNDERLINED") || strstr(fs->style.buffer, "underlined")) styles |= GF_FONT_UNDERLINED;
 		if (strstr(fs->style.buffer, "STRIKETHROUGH") || strstr(fs->style.buffer, "strikethrough")) styles |= GF_FONT_STRIKEOUT;
+		if (strstr(fs->style.buffer, "PASSWD") || strstr(fs->style.buffer, "passwd")) use_pass = GF_TRUE;
 	}
 
 	font = gf_font_manager_set_font(ft_mgr, fs ? fs->family.vals : NULL, fs ? fs->family.count : 0, styles);
@@ -257,10 +258,25 @@ static void build_text(TextStack *st, M_Text *txt, GF_TraverseState *tr_state)
 	tot_width = tot_height = 0;
 	for (i=0; i < txt->string.count; i++) {
 		GF_TextSpan *tspan;
+
 		char *str = txt->string.vals[i];
 		if (!str) continue;
 
-		tspan = gf_font_manager_create_span(ft_mgr, font, txt->string.vals[i], fontSize, GF_FALSE, GF_FALSE, GF_FALSE, NULL, GF_FALSE, styles, (GF_Node*)txt);
+		if (use_pass) {
+			u32 j=0, len = (u32) strlen(str);
+			if (len>=100) len=99;
+			while (j<len) {
+				if (str[j] == 0x1)
+					szBuf[j] = str[j];
+				else
+					szBuf[j] = '*';
+				j++;
+			}
+			szBuf[j] = 0;
+			str = szBuf;
+		}
+
+		tspan = gf_font_manager_create_span(ft_mgr, font, str, fontSize, GF_FALSE, GF_FALSE, GF_FALSE, NULL, GF_FALSE, styles, (GF_Node*)txt);
 		if (!tspan) continue;
 
 		if (horizontal) tspan->flags |= GF_TEXT_SPAN_HORIZONTAL;

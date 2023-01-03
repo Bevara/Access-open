@@ -772,7 +772,8 @@ static void gf_dump_vrml_simple_field(GF_SceneDumper *sdump, GF_FieldInfo field,
 	}
 	if (gf_sg_vrml_is_sf_field(field.fieldType)) {
 		if (sdump->XMLDump) StartAttribute(sdump, "value");
-		gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, parent);
+		if (field.far_ptr)
+			gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, parent);
 		if (sdump->XMLDump) EndAttribute(sdump);
 	} else {
 		GenMFField *mffield;
@@ -785,7 +786,7 @@ static void gf_dump_vrml_simple_field(GF_SceneDumper *sdump, GF_FieldInfo field,
 		} else {
 			StartAttribute(sdump, "value");
 		}
-		for (i=0; i<mffield->count; i++) {
+		for (i=0; mffield && (i<mffield->count); i++) {
 			if (i) gf_fprintf(sdump->trace, " ");
 			gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
 			/*this is to cope with single MFString which shall appear as SF in XMT*/
@@ -916,7 +917,8 @@ static void gf_dump_vrml_field(GF_SceneDumper *sdump, GF_Node *node, GF_FieldInf
 
 	if (gf_sg_vrml_is_sf_field(field.fieldType)) {
 		StartAttribute(sdump, field.name);
-		gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, node);
+		if (field.far_ptr)
+			gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, node);
 		EndAttribute(sdump);
 	} else {
 		GenMFField *mffield = (GenMFField *) field.far_ptr;
@@ -938,12 +940,10 @@ static void gf_dump_vrml_field(GF_SceneDumper *sdump, GF_Node *node, GF_FieldInf
 		}
 
 		if (!sdump->XMLDump) gf_fprintf(sdump->trace, "[");
-		if (mffield) {
-			for (i=0; i<mffield->count; i++) {
-				if (i) gf_fprintf(sdump->trace, " ");
-				gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
-				gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, 1, node);
-			}
+		for (i=0; mffield && (i<mffield->count); i++) {
+			if (i) gf_fprintf(sdump->trace, " ");
+			gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
+			gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, 1, node);
 		}
 		if (!sdump->XMLDump) gf_fprintf(sdump->trace, "]");
 
@@ -1150,7 +1150,7 @@ static void gf_dump_vrml_dyn_field(GF_SceneDumper *sdump, GF_Node *node, GF_Fiel
 					sdump->indent--;
 					DUMP_IND(sdump);
 				} else {
-					for (i=0; i<mffield->count; i++) {
+					for (i=0; mffield && (i<mffield->count); i++) {
 						if (i) gf_fprintf(sdump->trace, " ");
 						if (field.fieldType != GF_SG_VRML_MFNODE) {
 							gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
@@ -1191,7 +1191,7 @@ static void gf_dump_vrml_dyn_field(GF_SceneDumper *sdump, GF_Node *node, GF_Fiel
 					} else {
 						gf_fprintf(sdump->trace, " %s=\"", GetXMTFieldTypeValueName(field.fieldType));
 					}
-					for (i=0; i<mffield->count; i++) {
+					for (i=0; mffield && (i<mffield->count); i++) {
 						if (i) gf_fprintf(sdump->trace, " ");
 						if (field.fieldType != GF_SG_VRML_MFNODE) {
 							gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
@@ -1235,7 +1235,8 @@ static void gf_dump_vrml_proto_field(GF_SceneDumper *sdump, GF_Node *node, GF_Fi
 			} else {
 				gf_fprintf(sdump->trace, " %s=\"", GetXMTFieldTypeValueName(field.fieldType));
 			}
-			gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, node);
+			if (field.far_ptr)
+				gf_dump_vrml_sffield(sdump, field.fieldType, field.far_ptr, 0, node);
 			gf_fprintf(sdump->trace, "\"/>\n");
 		}
 	} else {
@@ -1262,13 +1263,11 @@ static void gf_dump_vrml_proto_field(GF_SceneDumper *sdump, GF_Node *node, GF_Fi
 				} else {
 					gf_fprintf(sdump->trace, " %s=\"", GetXMTFieldTypeValueName(field.fieldType));
 				}
-				if (mffield) {
-					for (i=0; i<mffield->count; i++) {
-						if (i) gf_fprintf(sdump->trace, " ");
-						if (field.fieldType != GF_SG_VRML_MFNODE) {
-							gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
-							gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, (mffield->count>1) ? 1 : 0, node);
-						}
+				for (i=0; mffield && (i<mffield->count); i++) {
+					if (i) gf_fprintf(sdump->trace, " ");
+					if (field.fieldType != GF_SG_VRML_MFNODE) {
+						gf_sg_vrml_mf_get_item(field.far_ptr, field.fieldType, &slot_ptr, i);
+						gf_dump_vrml_sffield(sdump, sf_type, slot_ptr, (mffield->count>1) ? 1 : 0, node);
 					}
 				}
 				gf_fprintf(sdump->trace, "\"/>\n");
@@ -2780,9 +2779,13 @@ static GF_Err DumpLSRSendEvent(GF_SceneDumper *sdump, GF_Command *com)
 	        lsr_format_node_id(com->node, com->RouteID, szID),
 	        gf_dom_event_get_name(com->send_event_name)
 	       );
-	if (com->send_event_name <= GF_EVENT_MOUSEWHEEL)
+	if ((com->send_event_name <= GF_EVENT_MOUSEWHEEL)
+		|| (com->send_event_name == GF_EVENT_MOUSEOUT)
+		|| (com->send_event_name == GF_EVENT_MOUSEOVER)
+	) {
 		gf_fprintf(sdump->trace, " pointvalue=\"%g %g\"", FIX2FLT(com->send_event_x), FIX2FLT(com->send_event_y) );
-
+	}
+	
 	switch (com->send_event_name) {
 	case GF_EVENT_KEYDOWN:
 	case GF_EVENT_LONGKEYPRESS:
@@ -3021,7 +3024,6 @@ GF_Err gf_sm_dump_command_list(GF_SceneDumper *sdump, GF_List *comList, u32 inde
 		DUMP_IND(sdump);
 		gf_fprintf(sdump->trace, "}\n");
 	}
-#endif
 
 	if (has_scene_replace && sdump->XMLDump) {
 		sdump->indent--;
@@ -3031,6 +3033,7 @@ GF_Err gf_sm_dump_command_list(GF_SceneDumper *sdump, GF_List *comList, u32 inde
 			EndElement(sdump, "Replace", 1);
 		}
 	}
+#endif
 
 	sdump->indent = prev_ind;
 	sdump->skip_scene_replace = prev_skip;

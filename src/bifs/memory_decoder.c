@@ -75,14 +75,15 @@ static GF_Err BM_ParseMultipleIndexedReplace(GF_BifsDecoder *codec, GF_BitStream
 
 		if (field.fieldType==GF_SG_VRML_SFNODE) {
 			inf->new_node = gf_bifs_dec_node(codec, bs, field.NDTtype);
-			if (codec->LastError) goto err;
+			e = codec->LastError;
 			inf->field_ptr = &inf->new_node;
-			gf_node_register(inf->new_node, NULL);
+			if (inf->new_node)
+				gf_node_register(inf->new_node, NULL);
 		} else {
 			field.far_ptr = inf->field_ptr = gf_sg_vrml_field_pointer_new(inf->fieldType);
 			e = gf_bifs_dec_sf_field(codec, bs, node, &field, GF_TRUE);
-			if (e) goto err;
 		}
+		if (e) goto err;
 		count--;
 	}
 err:
@@ -178,7 +179,12 @@ static GF_Err BM_ParseGlobalQuantizer(GF_BifsDecoder *codec, GF_BitStream *bs, G
 	codec->scenegraph->global_qp = NULL;
 
 	if (gf_node_get_tag(node) != TAG_MPEG4_QuantizationParameter) {
-		gf_node_unregister(node, NULL);
+		//if node was just created (num_instances == 0), unregister
+		//otherwise (USE node) don't do anything
+		if (!node->sgprivate->num_instances) {
+			node->sgprivate->num_instances = 1;
+			gf_node_unregister(node, NULL);
+		}
 		return GF_NON_COMPLIANT_BITSTREAM;
 	}
 
@@ -188,7 +194,8 @@ static GF_Err BM_ParseGlobalQuantizer(GF_BifsDecoder *codec, GF_BitStream *bs, G
 	codec->scenegraph->global_qp = node;
 
 	/*register TWICE: once for the command, and for the scenegraph globalQP*/
-	node->sgprivate->num_instances = 2;
+	gf_node_register(node, NULL);
+	gf_node_register(node, NULL);
 
 	com = gf_sg_command_new(codec->current_graph, GF_SG_GLOBAL_QUANTIZER);
 	inf = gf_sg_command_field_new(com);
@@ -337,6 +344,7 @@ static GF_Err BM_XReplace(GF_BifsDecoder *codec, GF_BitStream *bs, GF_List *com_
 	}
 	decfield.fieldIndex = inf->fieldIndex;
 	decfield.fieldType = inf->fieldType;
+	decfield.name = targetField.name;
 
 	if (inf->fieldType==GF_SG_VRML_SFNODE) {
 		decfield.far_ptr = inf->field_ptr = &inf->new_node;

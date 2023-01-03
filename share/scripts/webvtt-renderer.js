@@ -10,7 +10,7 @@ var height = rect.height;
 
 //filter-assignable variables - if changing names, also do it in filters/dec_webvtt.c
 var xOffset = 0;
-var yOffset = 0;
+var yOffset = 0; //positive towards top
 var fontSize = 20;
 var textColor = "white";
 var fontFamily = "SANS";
@@ -31,20 +31,18 @@ function reportMessage(msg) {
 function createTextArea(settingsObj) {
 
 	var t = document.createElement("textArea");
-	t.setAttribute("x", xOffset+settingsObj.xPosition);
-	t.setAttribute("y", yOffset- fontSize);
+	let x = xOffset + settingsObj.xPosition;
+	let y = -yOffset - settingsObj.linePosition;
+	t.setAttribute("x", x);
+	t.setAttribute("y", y);
 	var w, h;
-	if (settingsObj.fromTop) {
-		t.setAttribute("display-align", "before");
-		h=height-2*yOffset;
-	} else {
-		t.setAttribute("display-align", "after");
-		h = height-2*yOffset-settingsObj.linePosition;
-	}
+
+	t.setAttribute("display-align", "after");
+	h=height;
 	w = settingsObj.size;
 	t.setAttribute("height", h);
 	t.setAttribute("width", w);
-	reportMessage("Creating textArea size " + w + " x " + h);
+	reportMessage("Creating textArea size " + x + 'x' + y + '@' + w + "x" + h);
 	
 	t.setAttribute("fill", textColor);
 	t.setAttribute("font-size", fontSize);
@@ -117,25 +115,30 @@ function parseCueSettings(cueSettings){
 		if (compositeCueSettings.line.match(/\%/)) {
 			obj.linePosition = parseFloat(compositeCueSettings.line.replace(/\%/ig,""));
 			if (isNaN(obj.linePosition)) {
-				obj.linePosition = nbCues*lineSpaceFactor*fontSize;
+				obj.linePosition = (nbCues + 0.5) * lineSpaceFactor*fontSize;
 			} else {
-				obj.linePosition *= height/100;
+				if (obj.linePosition<0) obj.linePosition=100;
+				else if (obj.linePosition>100) obj.linePosition=100;
+				//convert to vertical translation 
+				let h = height - 3*lineSpaceFactor*fontSize/2;
+				obj.linePosition = h - obj.linePosition*h/100 + lineSpaceFactor*fontSize/2;
 			}
 		} else {
-			obj.linePosition = parseFloat(compositeCueSettings.line)*lineIncrement;
+			obj.linePosition = parseFloat(compositeCueSettings.line);
 			if (isNaN(obj.linePosition)) {
-				obj.linePosition = nbCues*lineSpaceFactor*fontSize;
+				obj.linePosition = (nbCues + 0.5) * lineSpaceFactor*fontSize;
 			} else {
-				if (obj.linePosition > 0) {
-					obj.fromTop = true;
+				let h = (height - 2*fontSize) / lineSpaceFactor*fontSize;
+				obj.linePosition *= lineSpaceFactor*fontSize;
+				if (obj.linePosition >= 0) {
+						obj.linePosition = height - lineSpaceFactor*fontSize - obj.linePosition;
 				} else {
-					obj.fromTop = false;
-					obj.linePosition = -obj.linePosition;
+					obj.linePosition = -obj.linePosition - lineSpaceFactor*fontSize/2;
 				}
 			}
 		}
 	} else {
-		obj.linePosition = nbCues*lineSpaceFactor*fontSize;
+		obj.linePosition = (nbCues + 0.5) * lineSpaceFactor*fontSize;
 	}
 
 	let position_auto=true;
@@ -191,7 +194,7 @@ function parseCueSettings(cueSettings){
 		obj.align = "center";
 	}
 
-	reportMessage("cue settings parsed: linePosition "+obj.linePosition + " xPosition "+obj.xPosition + " size "+obj.size+ " align "+obj.align + ' position_auto ' + position_auto);
+	reportMessage("cue settings parsed: " + JSON.stringify(obj));
 	return obj;
 }
 
@@ -256,7 +259,7 @@ function parseCue(cueText) {
 						stack = stack.slice(0,stackScanDepth);
 					} else {
 						// Tag mismatch!
-						alert("Tag mismatch when parsing WebVTT cue: "+cueText);
+						alert("Tag mismatch when parsing WebVTT cue: "+cueText+ " tag name was " + TagName);
 					}
 				} else {
 					// Opening Tag
@@ -264,9 +267,10 @@ function parseCue(cueText) {
 					// If not, don't allow it (unless the sanitiseCueHTML option is explicitly set to false)
 				
 					if ((	currentToken.substr(1).match(SRTChunkTimestampParser)	||
-							currentToken.match(/^<v\s+[^>]+>/i)						||
-							currentToken.match(/^<c[a-z0-9\-\_\.]+>/)				||
-							currentToken.match(/^<(b|i|u|ruby|rt)>/))				) {
+							currentToken.match(/^<(v|lang)\s+[^>]+>/i)						||
+							currentToken.match(/^<c[a-zA-Z0-9\-\_\.]+>/)				||
+							currentToken.match(/^<(b|i|u|ruby|ruby|rt)>/))
+					) {
 						
 						var tmpObject = {
 							"token":	currentToken.replace(/[<\/>]+/ig,"").split(/[\s\.]+/)[0],

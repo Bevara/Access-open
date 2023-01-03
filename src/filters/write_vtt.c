@@ -30,6 +30,8 @@
 #include <gpac/internal/media_dev.h>
 
 
+#ifndef GPAC_DISABLE_VTT
+
 typedef struct
 {
 	//opts
@@ -134,7 +136,7 @@ void webvtt_write_cue(GF_WebVTTMxCtx *ctx, GF_WebVTTCue *cue, Bool write_srt)
 	//override both dts and cts as they can be different from input if cues are merged
 	gf_filter_pck_set_dts(dst, start);
 	gf_filter_pck_set_cts(dst, start);
-	gf_filter_pck_set_duration(dst, end-start);
+	gf_filter_pck_set_duration(dst, (u32) (end-start));
 
 	gf_filter_pck_set_property_str(dst, "vtt_pre", NULL);
 	gf_filter_pck_set_property_str(dst, "vtt_cueid", NULL);
@@ -284,3 +286,10 @@ const GF_FilterRegister *vttmx_register(GF_FilterSession *session)
 {
 	return &WebVTTMxRegister;
 }
+#else
+const GF_FilterRegister *vttmx_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+
+#endif /*GPAC_DISABLE_VTT*/

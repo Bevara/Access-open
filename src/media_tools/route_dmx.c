@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2020
+ *			Copyright (c) Telecom ParisTech 2018-2022
  *					All rights reserved
  *
  *  This file is part of GPAC / Media Tools ROUTE (ATSC3, DVB-I) demux sub-project
@@ -25,7 +25,7 @@
 
 #include <gpac/route.h>
 
-#if !defined(GPAC_DISABLE_ROUTE) && !defined(GPAC_DISABLE_CORE_TOOLS)
+#if !defined(GPAC_DISABLE_ROUTE)
 
 #include <gpac/network.h>
 #include <gpac/bitstream.h>
@@ -329,7 +329,6 @@ static GF_ROUTEDmx *gf_route_dmx_new_internal(const char *ifce, u32 sock_buffer_
 		GF_LOG(GF_LOG_ERROR, GF_LOG_ROUTE, ("[ROUTE] Failed to create UDP socket\n"));
 		return NULL;
 	}
-	gf_sk_group_register(routedmx->active_sockets, routedmx->atsc_sock);
 
 	gf_sk_set_usec_wait(routedmx->atsc_sock, 1);
 	e = gf_sk_setup_multicast(routedmx->atsc_sock, GF_ATSC_MCAST_ADDR, GF_ATSC_MCAST_PORT, 1, GF_FALSE, (char *) ifce);
@@ -340,6 +339,8 @@ static GF_ROUTEDmx *gf_route_dmx_new_internal(const char *ifce, u32 sock_buffer_
 	}
 	gf_sk_set_buffer_size(routedmx->atsc_sock, GF_FALSE, sock_buffer_size);
 	//gf_sk_set_block_mode(routedmx->sock, GF_TRUE);
+
+	gf_sk_group_register(routedmx->active_sockets, routedmx->atsc_sock);
 	return routedmx;
 }
 
@@ -766,6 +767,14 @@ static GF_Err gf_route_service_gather_object(GF_ROUTEDmx *routedmx, GF_ROUTEServ
 				obj->nb_frags = obj->nb_recv_frags = 0;
 				obj->nb_bytes = obj->nb_recv_bytes = 0;
 				obj->total_length = total_len;
+				if (obj->total_length>obj->alloc_size) {
+					gf_mx_p(routedmx->blob_mx);
+					obj->payload = gf_realloc(obj->payload, obj->total_length);
+					obj->alloc_size = obj->total_length;
+					obj->blob.size = obj->total_length;
+					obj->blob.data = obj->payload;
+					gf_mx_v(routedmx->blob_mx);
+				}
 				obj->toi = toi;
 				obj->status = GF_LCT_OBJ_INIT;
 				break;
@@ -2044,4 +2053,4 @@ void gf_route_dmx_debug_tsi(GF_ROUTEDmx *routedmx, u32 tsi)
 	if (routedmx) routedmx->debug_tsi = tsi;
 }
 
-#endif /* !GPAC_DISABLE_ROUTE && !GPAC_DISABLE_CORE_TOOLS */
+#endif /* !GPAC_DISABLE_ROUTE */

@@ -27,11 +27,9 @@
 
 #include "visual_manager.h"
 #include "nodes_stacks.h"
-#include <gpac/options.h>
 #include "texturing.h"
 
 #include "gl_inc.h"
-
 
 #ifndef GPAC_DISABLE_3D
 void compositor_2d_hybgl_clear_surface(GF_VisualManager *visual, GF_IRect *rc, u32 BackColor, u32 is_offscreen_clear)
@@ -41,7 +39,7 @@ void compositor_2d_hybgl_clear_surface(GF_VisualManager *visual, GF_IRect *rc, u
 	if (!visual->is_attached) return;
 
 	if (!BackColor && !visual->offscreen && !is_offscreen_clear) {
-		if ( !(visual->compositor->init_flags & GF_TERM_WINDOW_TRANSPARENT)) {
+		if ( !(visual->compositor->init_flags & GF_VOUT_WINDOW_TRANSPARENT)) {
 			BackColor = visual->compositor->back_color & 0x00FFFFFF;
 		}
 	}
@@ -84,6 +82,8 @@ void compositor_2d_hybgl_flush_video(GF_Compositor *compositor, GF_IRect *area)
 	//if no object drawn since the last flush, no need to draw the texture
 	if (!compositor->visual->nb_objects_on_canvas_since_last_ogl_flush)
 		goto exit;
+
+	compositor->visual->prev_hybgl_canvas_not_empty = GF_TRUE;
 
 	memset(&a_tr_state, 0, sizeof(GF_TraverseState));
 	a_tr_state.color_mat.identity = 1;
@@ -363,7 +363,7 @@ void compositor_2d_clear_surface(GF_VisualManager *visual, GF_IRect *rc, u32 Bac
 		GF_Window src_wnd, dst_wnd;
 
 		if (!BackColor && !visual->offscreen) {
-			if ( !(visual->compositor->init_flags & GF_TERM_WINDOW_TRANSPARENT)) {
+			if ( !(visual->compositor->init_flags & GF_VOUT_WINDOW_TRANSPARENT)) {
 				BackColor = visual->compositor->back_color;
 			}
 		}
@@ -636,7 +636,6 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 		switch (txh->pixelformat) {
 		case GF_PIXEL_RGB:
 		case GF_PIXEL_BGR:
-		case GF_PIXEL_RGBS:
 		case GF_PIXEL_RGBD:
 //		case GF_PIXEL_RGB_555:
 //		case GF_PIXEL_RGB_565:
@@ -649,7 +648,6 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 			break;
 		case GF_PIXEL_ARGB:
 		case GF_PIXEL_RGBA:
-		case GF_PIXEL_RGBAS:
 		case GF_PIXEL_RGBDS:
 			if (hw_caps & GF_VIDEO_HW_HAS_RGBA)
 				use_soft_stretch = GF_FALSE;
@@ -849,7 +847,11 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 		e = visual->compositor->video_out->LockBackBuffer(visual->compositor->video_out, &backbuffer, GF_TRUE);
 		if (!e) {
 			u32 push_time = gf_sys_clock();
+#ifndef GPAC_DISABLE_PLAYER
 			e = gf_stretch_bits(&backbuffer, &video_src, &dst_wnd, &src_wnd, alpha, GF_FALSE, tr_state->col_key, ctx->col_mat);
+#else
+			e = GF_NOT_SUPPORTED;
+#endif
 			store_blit_times(txh, push_time);
 			visual->compositor->video_out->LockBackBuffer(visual->compositor->video_out, &backbuffer, GF_FALSE);
 			if (e) {

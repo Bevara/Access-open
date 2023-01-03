@@ -24,10 +24,14 @@ EXT=
 PROG=gpac
 endif
 
-ifeq ($(STATICBUILD),yes)
+ifeq ($(STATIC_BUILD),yes)
 ##include static modules and other deps for libgpac
 include ../../static.mak
-LINKFLAGS+=$(shell pkg-config ../../gpac.pc --libs --static | sed 's/-lgpac //'  )
+ifneq ($(PKG_CONFIG), no)
+LINKFLAGS+=$(shell $(PKG_CONFIG) ../../gpac.pc --libs --static | sed 's/-lgpac //'  )
+else
+LINKFLAGS+= -lgpac_static
+endif
 LINKFLAGS+= $(GPAC_SH_FLAGS)
 LINKFLAGS+=$(EXTRALIBS)
 else
@@ -41,9 +45,14 @@ endif
 
 
 #common objs - insert after ../static if any to overwrite list of objects
-OBJS= main.o
+OBJS=gpac.o compositor_tools.o gpac_help.o
 
 SRCS := $(OBJS:.o=.c)
+
+ifeq ($(CONFIG_DARWIN),yes)
+OBJS+= carbon_hook.o
+LDFLAGS += -framework Carbon
+endif
 
 ifeq ($(CONFIG_WIN32),yes)
 OBJS+=$(SRC_PATH)/manifest.o

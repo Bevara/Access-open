@@ -138,13 +138,13 @@ typedef struct
 	//args
 	Bool exporter;
 	GF_PropUIntList saps;
-	GF_PropUIntList frames;
+	GF_PropIntList frames;
 	Bool refs;
 	u32 rt;
 	Double speed;
 	u32 raw;
 	GF_PropStringList xs, xe;
-	Bool nosap, splitrange, xadjust, tcmdrw, no_audio_seek, probe_ref;
+	Bool nosap, splitrange, xadjust, tcmdrw, no_audio_seek, probe_ref, xots;
 	u32 xround, utc_ref, utc_probe;
 	Double seeksafe;
 	GF_PropStringList props;
@@ -159,6 +159,7 @@ typedef struct
 	GF_List *streams;
 	RTStream *clock;
 
+	Double rt_speed;
 	u64 reschedule_in;
 	u64 clock_val;
 
@@ -382,7 +383,7 @@ GF_Err reframer_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 	return GF_OK;
 }
 
-static Bool reframer_parse_date(char *date, GF_Fraction64 *value, u64 *frame_idx_plus_one, u32 *extract_mode)
+static Bool reframer_parse_date(char *date, GF_Fraction64 *value, u64 *frame_idx_plus_one, u32 *extract_mode, Bool *is_dur)
 {
 	u64 v;
 	value->num  =0;
@@ -390,6 +391,8 @@ static Bool reframer_parse_date(char *date, GF_Fraction64 *value, u64 *frame_idx
 
 	if (extract_mode)
 		*extract_mode = EXTRACT_RANGE;
+	if (is_dur)
+		*is_dur = GF_FALSE;
 
 	if (date[0] == 'T') {
 		u32 h=0, m=0, s=0, ms=0;
@@ -433,12 +436,21 @@ static Bool reframer_parse_date(char *date, GF_Fraction64 *value, u64 *frame_idx
 	if ((date[0]=='D') || (date[0]=='d')) {
 		if (extract_mode)
 			*extract_mode = EXTRACT_DUR;
+		if (is_dur)
+			*is_dur = GF_TRUE;
+
 		if (sscanf(date+1, LLD"/"LLU, &value->num, &value->den)==2) {
+			return GF_TRUE;
+		}
+		if (strchr(date+1, '.')) {
+			Double res = atof(date+1);
+			value->den = 1000000;
+			value->num = (s64) (res * value->den);
 			return GF_TRUE;
 		}
 		if (sscanf(date+1, LLU, &v)==1) {
 			value->num = v;
-			value->den = 1000;
+			value->den = 1;
 			return GF_TRUE;
 		}
 	}
@@ -525,7 +537,7 @@ static void reframer_load_range(GF_ReframerCtx *ctx)
 	if (!end_date) ctx->range_type = RANGE_OPEN;
 	else ctx->range_type = RANGE_CLOSED;
 
-	if (!reframer_parse_date(start_date, &ctx->cur_start, &ctx->start_frame_idx_plus_one, &ctx->extract_mode)) {
+	if (!reframer_parse_date(start_date, &ctx->cur_start, &ctx->start_frame_idx_plus_one, &ctx->extract_mode, NULL)) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] cannot parse start date, assuming end of ranges\n"));
 		//done
 		ctx->range_type = RANGE_DONE;
@@ -590,13 +602,20 @@ static void reframer_load_range(GF_ReframerCtx *ctx)
 		}
 	}
 	if (end_date) {
-		if (!reframer_parse_date(end_date, &ctx->cur_end, &ctx->end_frame_idx_plus_one, NULL)) {
+		Bool is_dur = GF_FALSE;
+		if (!reframer_parse_date(end_date, &ctx->cur_end, &ctx->end_frame_idx_plus_one, NULL, &is_dur)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] cannot parse end date, assuming open range\n"));
 			ctx->range_type = RANGE_OPEN;
-		}
-		else if (gf_timestamp_greater_or_equal(ctx->cur_start.num, ctx->cur_start.den, ctx->cur_end.num, ctx->cur_end.den) ) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] End range before start range, assuming open range\n"));
-			ctx->range_type = RANGE_OPEN;
+		} else {
+			if (is_dur) {
+				ctx->cur_end.num = gf_timestamp_rescale(ctx->cur_end.num, ctx->cur_end.den, ctx->cur_start.den);
+				ctx->cur_end.den = ctx->cur_start.den;
+				ctx->cur_end.num += ctx->cur_start.num;
+			}
+			if (gf_timestamp_greater_or_equal(ctx->cur_start.num, ctx->cur_start.den, ctx->cur_end.num, ctx->cur_end.den) ) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] End range before start range, assuming open range\n"));
+				ctx->range_type = RANGE_OPEN;
+			}
 		}
 	}
 
@@ -726,8 +745,8 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 				do_send = GF_TRUE;
 			} else {
 				u64 diff = cts_us - st_clock->cts_us_at_init;
-				if (ctx->speed>0) diff = (u64) ( diff / ctx->speed);
-				else if (ctx->speed<0) diff = (u64) ( diff / -ctx->speed);
+				if (ctx->rt_speed>0) diff = (u64) ( diff / ctx->rt_speed);
+				else if (ctx->rt_speed<0) diff = (u64) ( diff / -ctx->rt_speed);
 
 				clock -= st_clock->sys_clock_at_init;
 				if (clock + RT_PRECISION_US >= diff) {
@@ -750,9 +769,17 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 		u32 i;
 		Bool found=GF_FALSE;
 		for (i=0; i<ctx->frames.nb_items; i++) {
-			if (ctx->frames.vals[i] == st->nb_frames + 1) {
-				found=GF_TRUE;
-				break;
+			s32 v = ctx->frames.vals[i];
+			if (v>=0) {
+				if (v == st->nb_frames + 1) {
+					found=GF_TRUE;
+					break;
+				}
+			} else {
+				if (st->nb_frames % (-v) == 0) {
+					found=GF_TRUE;
+					break;
+				}
 			}
 		}
 		if (!found) {
@@ -953,15 +980,17 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 					}
 				}
 			}
+			if (!ctx->xots) {
+				ts += st->tk_delay;
+				ts += st->ts_at_range_end;
+				ts -= st->ts_at_range_start_plus_one - 1;
 
-			ts += st->tk_delay;
-			ts += st->ts_at_range_end;
-			ts -= st->ts_at_range_start_plus_one - 1;
-
-			if (ts<0) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] Negative TS while splitting, something went wrong during range estimation, forcing to 0\n"));
-				ts = 0;
+				if (ts<0) {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] Negative TS while splitting, something went wrong during range estimation, forcing to 0\n"));
+					ts = 0;
+				}
 			}
+
 			if (st->probe_ref_frame_ts && (gf_filter_pck_get_dts(pck) + st->tk_delay + 1 == st->probe_ref_frame_ts)) {
 				gf_filter_pck_set_property(new_pck, GF_PROP_PCK_SKIP_PRES, &PROP_BOOL(GF_TRUE));
 			}
@@ -971,7 +1000,7 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 				gf_filter_pck_set_dts(new_pck, ts);
 			}
 		}
-		if (!st->is_raw) {
+		if (!st->is_raw && !ctx->xots) {
 			ts = gf_filter_pck_get_dts(pck) + cts_offset;
 			if (ts != GF_FILTER_NO_TS) {
 				ts += st->tk_delay;
@@ -1101,7 +1130,7 @@ static u32 reframer_check_pck_range(GF_Filter *filter, GF_ReframerCtx *ctx, RTSt
 			now = gf_net_get_utc();
 		}
 
-		if (now < ctx->cur_start.num) {
+		if (now < (u64) ctx->cur_start.num) {
 			before = GF_TRUE;
 			u64 time = (ctx->cur_start.num - now) / 1000;
 
@@ -1109,9 +1138,9 @@ static u32 reframer_check_pck_range(GF_Filter *filter, GF_ReframerCtx *ctx, RTSt
 				u32 h, m, s;
 				char szStatus[100];
 				ctx->last_utc_time_s = time+2;
-				h = time/3600;
-				m = time/60 - h*60;
-				s = time - m*60 - h*3660;
+				h = (u32) (time/3600);
+				m = (u32) (time/60 - h*60);
+				s = (u32) (time - m*60 - h*3660);
 				if (h>24) {
 					u32 days = h/24;
 					sprintf(szStatus, "Next range start in %d days", days);
@@ -2202,6 +2231,7 @@ refetch_streams:
 			}
 
 			//OK every stream has now packets starting at the min_ts, ready to go
+			const GF_PropertyValue *chap_times=NULL, *chap_names=NULL;
 			ctx->nb_video_frames_since_start = 0;
 			for (i=0; i<count; i++) {
 				GF_FilterPid *ipid = gf_filter_get_ipid(filter, i);
@@ -2227,6 +2257,13 @@ refetch_streams:
 						st->nb_frames_until_start = 0;
 					}
 				}
+
+				if (!chap_times && ctx->cur_start.den) {
+					chap_times = gf_filter_pid_get_property(st->ipid, GF_PROP_PID_CHAP_TIMES);
+					chap_names = gf_filter_pid_get_property(st->ipid, GF_PROP_PID_CHAP_NAMES);
+					if (!chap_times || !chap_names || (chap_times->value.uint_list.nb_items!=chap_names->value.string_list.nb_items))
+						chap_times = chap_names = NULL;
+				}
 			}
 			ctx->nb_video_frames_since_start_at_range_start = ctx->nb_video_frames_since_start;
 
@@ -2242,6 +2279,63 @@ refetch_streams:
 #ifdef DEBUG_RF_MEM_USAGE
 			reframer_dump_mem(ctx, "Starting new range");
 #endif
+
+			if (chap_times) {
+				GF_PropertyValue ch;
+				GF_PropUIntList new_times;
+				GF_PropStringList new_names;
+				u32 first_chap_idx=0, last_chap_idx=chap_times->value.uint_list.nb_items;
+				u32 cut_time = (u32) gf_timestamp_rescale(min_ts, min_timescale, 1000);
+				u32 out_time = 0;
+				if (ctx->range_type == RANGE_CLOSED) {
+					out_time = (u32) gf_timestamp_rescale(ctx->cur_end.num, ctx->cur_end.den, 1000);
+				}
+
+				for (i=0; i<chap_times->value.uint_list.nb_items; i++) {
+					if (chap_times->value.uint_list.vals[i] <= cut_time)
+						first_chap_idx = i;
+					if (!out_time) continue;
+
+					if (chap_times->value.uint_list.vals[i] == out_time)
+						break;
+
+					if (chap_times->value.uint_list.vals[i] > out_time) {
+						last_chap_idx = i+1;
+						break;
+					}
+				}
+				new_times.nb_items = last_chap_idx - first_chap_idx;
+				new_times.vals = gf_malloc(sizeof(u32)*new_times.nb_items);
+				new_names.nb_items = new_times.nb_items;
+				new_names.vals = gf_malloc(sizeof(char *)*new_names.nb_items);
+				u32 k=0;
+				for (i=first_chap_idx; i<last_chap_idx; i++) {
+					s64 time = chap_times->value.uint_list.vals[i];
+					time -= cut_time;
+					if (time<0) time = 0;
+					new_times.vals[k] = (u32) time;
+					new_names.vals[k] = gf_strdup(chap_names->value.string_list.vals[i]);
+					k++;
+				}
+
+				//set chapter properties
+				for (i=0; i<count; i++) {
+					GF_FilterPid *ipid = gf_filter_get_ipid(filter, i);
+					RTStream *st = gf_filter_pid_get_udta(ipid);
+
+					ch.type = GF_PROP_UINT_LIST;
+					ch.value.uint_list = new_times;
+					gf_filter_pid_set_property(st->opid, GF_PROP_PID_CHAP_TIMES, &ch);
+
+					ch.type = GF_PROP_STRING_LIST_COPY;
+					ch.value.string_list = new_names;
+					gf_filter_pid_set_property(st->opid, GF_PROP_PID_CHAP_NAMES, &ch);
+				}
+				gf_free(new_times.vals);
+				ch.type = GF_PROP_STRING_LIST;
+				ch.value.string_list = new_names;
+				gf_props_reset_single(&ch);
+			}
 		}
 		if (!ctx->in_range && !ctx->flush_samples)
 			return GF_OK;
@@ -2492,7 +2586,8 @@ static GF_Err reframer_initialize(GF_Filter *filter)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Reframer] `xround=seek` can only be used for single range extraction\n"));
 		return GF_BAD_PARAM;
 	}
-
+	if (ctx->speed != 0)
+		ctx->rt_speed = ctx->speed;
 
 	reframer_load_range(ctx);
 
@@ -2541,8 +2636,14 @@ static Bool reframer_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		st->is_playing = GF_TRUE;
 		if (ctx->eos_state==1)
 			ctx->eos_state = 0;
+		if (ctx->speed==0)
+			ctx->rt_speed = evt->play.speed;
+
 	} else if (evt->base.type==GF_FEVT_STOP) {
 		st->is_playing = GF_FALSE;
+	} else if (evt->base.type==GF_FEVT_SET_SPEED) {
+		if (ctx->speed==0)
+			ctx->rt_speed = evt->play.speed;
 	}
 
 	gf_filter_pid_send_event(st->ipid, &fevt);
@@ -2585,13 +2686,13 @@ static const GF_FilterArgs ReframerArgs[] =
 	"- sync: enables real-time regulation one clock for all PIDs", GF_PROP_UINT, "off", "off|on|sync", GF_FS_ARG_HINT_NORMAL},
 	{ OFFS(saps), "list of SAP types (0,1,2,3,4) to forward, other packets are dropped (forwarding only sap 0 will break the decoding)", GF_PROP_UINT_LIST, NULL, "0|1|2|3|4", GF_FS_ARG_HINT_NORMAL},
 	{ OFFS(refs), "forward only frames used as reference frames, if indicated in the input stream", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_NORMAL},
-	{ OFFS(speed), "speed for real-time regulation mode", GF_PROP_DOUBLE, "1.0", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(speed), "speed for real-time regulation mode, a value of 0 uses speed from play commands", GF_PROP_DOUBLE, "0.0", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(raw), "force input AV streams to be in raw format\n"
 	"- no: do not force decoding of inputs\n"
 	"- av: force decoding of audio and video inputs\n"
 	"- a: force decoding of audio inputs\n"
 	"- v: force decoding of video inputs", GF_PROP_UINT, "no", "av|a|v|no", GF_FS_ARG_HINT_NORMAL},
-	{ OFFS(frames), "drop all except listed frames (first being 1)", GF_PROP_UINT_LIST, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(frames), "drop all except listed frames (first being 1). A negative value `-V` keeps only first frame every `V` frames", GF_PROP_SINT_LIST, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(xs), "extraction start time(s)", GF_PROP_STRING_LIST, NULL, NULL, GF_FS_ARG_HINT_NORMAL},
 	{ OFFS(xe), "extraction end time(s). If less values than start times, the last time interval extracted is an open range", GF_PROP_STRING_LIST, NULL, NULL, GF_FS_ARG_HINT_NORMAL},
 	{ OFFS(xround), "adjust start time of extraction range to I-frame\n"
@@ -2600,9 +2701,10 @@ static const GF_FilterArgs ReframerArgs[] =
 	"- after: use first I-frame (if any) following or matching range start\n"
 	"- closest: use I-frame closest to range start", GF_PROP_UINT, "before", "before|seek|after|closest", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(xadjust), "adjust end time of extraction range to be before next I-frame", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(xots), "keep original timestamps after extraction", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(nosap), "do not cut at SAP when extracting range (may result in broken streams)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(splitrange), "signal file boundary at each extraction first packet for template-base file generation", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(seeksafe), "rewind play requests by given seconds (to make sur I-frame preceding start is catched)", GF_PROP_DOUBLE, "10.0", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(seeksafe), "rewind play requests by given seconds (to make sure the I-frame preceding start is catched)", GF_PROP_DOUBLE, "10.0", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(tcmdrw), "rewrite TCMD samples when splitting", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(props), "extra output PID properties per extraction range", GF_PROP_STRING_LIST, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(no_audio_seek), "disable seek mode on audio streams (no change of priming duration)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
@@ -2611,7 +2713,7 @@ static const GF_FilterArgs ReframerArgs[] =
 	"- local: use UTC of local host\n"
 	"- any: use UTC of media, or UTC of local host if not found in media after probing time\n"
 	"- media: use UTC of media (abort if none found)", GF_PROP_UINT, "any", "local|any|media", GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(utc_probe), "timeout in millisenconds to try to acquire UTC reference from media", GF_PROP_UINT, "5000", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(utc_probe), "timeout in milliseconds to try to acquire UTC reference from media", GF_PROP_UINT, "5000", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -2649,12 +2751,12 @@ GF_FilterRegister ReframerRegister = {
 		"The formats allowed for times specifiers are:\n"
 		"- 'T'H:M:S, 'T'M:S: specify time in hours, minutes, seconds\n"
 		"- 'T'H:M:S.MS, 'T'M:S.MS, 'T'S.MS: specify time in hours, minutes, seconds and milliseconds\n"
-		"- INT, FLOAT: specify time in seconds\n"
-		"- NUM/DEN: specify time in seconds as fraction\n"
+		"- INT, FLOAT, NUM/DEN: specify time in seconds (number or fraction)\n"
+		"- 'D'INT, 'D'FLOAT, 'D'NUM/DEN: specify end time as offset to start time in seconds (number or fraction) - only valid for [-xe]()\n"
 		"- 'F'NUM: specify time as frame number\n"
 		"- XML DateTime: specify absolute UTC time\n"
 		"  \n"
-		"In this mode, the timestamps are rewritten to form a continuous timeline.\n"
+		"In this mode, the timestamps are rewritten to form a continuous timeline, unless [-xots]() is set.\n"
 		"When multiple ranges are given, the filter will try to seek if needed and supported by source.\n"
 		"\n"
 		"EX gpac -i m.mp4 reframer:xs=T00:00:10,T00:01:10,T00:02:00:xe=T00:00:20,T00:01:20 [dst]\n"
@@ -2664,8 +2766,8 @@ GF_FilterRegister ReframerRegister = {
 		"- if a following start range is set, the end range is set to this next start\n"
 		"- otherwise, the end range is open\n"
 		"\n"
-		"EX gpac -i m.mp4 reframer:xs=0,10,25:xe=5 [dst]\n"
-		"This will extract the time ranges [0s,5s], [10s,25s] and all media starting from 25s\n"
+		"EX gpac -i m.mp4 reframer:xs=0,10,25:xe=5,20 [dst]\n"
+		"This will extract the time ranges [0s,5s], [10s,20s] and all media starting from 25s\n"
 		"EX gpac -i m.mp4 reframer:xs=0,10,25 [dst]\n"
 		"This will extract the time ranges [0s,10s], [10s,25s] and all media starting from 25s\n"
 		"\n"
@@ -2712,7 +2814,7 @@ GF_FilterRegister ReframerRegister = {
 		"The filter can perform splitting of the source using [-xs]() option.\n"
 		"The additional formats allowed for [-xs]() option are:\n"
 		"- `SAP`: split source at each SAP/RAP\n"
-		"- `D`VAL: split source by chunks of `VAL` ms\n"
+		"- `D`VAL: split source by chunks of `VAL` seconds\n"
 		"- `D`NUM/DEN: split source by chunks of `NUM/DEN` seconds\n"
 		"- `S`VAL: split source by chunks of estimated size `VAL` bytes (can use property multipliers, e.g. `m`)\n"
 		"\n"
@@ -2723,7 +2825,7 @@ GF_FilterRegister ReframerRegister = {
 	.max_extra_pids = (u32) -1,
 	.args = ReframerArgs,
 	//reframer is explicit only, so we don't load the reframer during resolution process
-	.flags = GF_FS_REG_EXPLICIT_ONLY|GF_FS_REG_ALLOW_CYCLIC,
+	.flags = GF_FS_REG_EXPLICIT_ONLY|GF_FS_REG_ALLOW_CYCLIC|GF_FS_REG_TEMP_INIT,
 	SETCAPS(ReframerCaps),
 	.initialize = reframer_initialize,
 	.finalize = reframer_finalize,

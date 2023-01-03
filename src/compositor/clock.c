@@ -143,15 +143,18 @@ void gf_clock_reset(GF_Clock *ck)
 	ck->init_timestamp = 0;
 	ck->start_time = 0;
 	ck->has_seen_eos = 0;
+	ck->has_media_time_shift = GF_FALSE;
 	//do NOT reset media timestamp mapping once the clock is init
 	//if discontinuities are found the media time mapping will be adjusted then
 	ck->timeline_id++;
 }
 
-void gf_clock_set_time(GF_Clock *ck, u32 TS)
+void gf_clock_set_time(GF_Clock *ck, u64 ref_TS, u32 timescale)
 {
 	if (!ck->clock_init) {
-		ck->init_timestamp = TS;
+		u64 real_ts_ms = gf_timestamp_rescale(ref_TS, timescale, 1000);
+		ck->init_ts_loops = (u32) (real_ts_ms / 0xFFFFFFFFUL);
+		ck->init_timestamp = (u32) (real_ts_ms % 0xFFFFFFFFUL);
 		ck->clock_init = 1;
 		ck->audio_delay = 0;
 		/*update starttime and pausetime even in pause mode*/
@@ -226,10 +229,12 @@ u32 gf_clock_time(GF_Clock *ck)
 	return time - ck->audio_delay;
 }
 
-u32 gf_clock_to_media_time(GF_Clock *ck, u32 clock_val)
+u64 gf_clock_to_media_time(GF_Clock *ck, u32 clock_val)
 {
-	u32 t = clock_val;
-	if (ck && ck->has_media_time_shift) {
+	u64 t = ck->init_ts_loops;
+	t *= 0xFFFFFFFFUL;
+	t += clock_val;
+	if (ck->has_media_time_shift) {
 		if (t > ck->media_ts_orig) t -= ck->media_ts_orig;
 		else t=0;
 		t += ck->media_time_orig;
@@ -237,7 +242,7 @@ u32 gf_clock_to_media_time(GF_Clock *ck, u32 clock_val)
 	return t;
 }
 
-u32 gf_clock_media_time(GF_Clock *ck)
+u64 gf_clock_media_time(GF_Clock *ck)
 {
 	u32 t;
 	if (!ck) return 0;
@@ -296,3 +301,46 @@ void gf_clock_set_audio_delay(GF_Clock *ck, s32 ms_delay)
 	if (ck) ck->audio_delay = ms_delay;
 }
 
+u32 gf_timestamp_to_clocktime(u64 ts, u32 timescale)
+{
+	if (ts==GF_FILTER_NO_TS) return 0;
+	//this happens for direct file loaders calling this (btplay & co)
+	if (!timescale) return 0;
+
+	ts = gf_timestamp_rescale(ts, timescale, 1000);
+	ts = ts % 0xFFFFFFFFUL;
+	return (u32) ts;
+}
+
+u64 gf_clock_time_absolute(GF_Clock *ck)
+{
+	if (!ck->clock_init) return 0;
+	u64 time = ck->init_ts_loops;
+	time *= 0xFFFFFFFFUL;
+	time += gf_clock_time(ck);
+	return time;
+}
+
+
+s32 gf_clock_diff(GF_Clock *ck, u32 ck_time, u32 ts)
+{
+	s64 ts_diff;
+
+	ts_diff = ts;
+	ts_diff -= ck_time;
+	//clock has wrapped around
+	if (ck_time & 0x80000000) {
+		//cts has not yet wrapped around
+		if (! (ts & 0x80000000)) {
+			ts_diff += 0xFFFFFFFFUL;
+		}
+	} else {
+		if (ts & 0x80000000) {
+			ts_diff -= 0xFFFFFFFFUL;
+		}
+	}
+	if (ck->speed<0)
+		ts_diff = -ts_diff;
+
+	return (s32) ts_diff;
+}
