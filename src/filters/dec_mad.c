@@ -370,7 +370,7 @@ GF_FilterRegister MADRegister = {
 
 #endif
 
-const GF_FilterRegister *maddec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_maddec_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_MAD
 	return &MADRegister;

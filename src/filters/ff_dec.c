@@ -1515,14 +1515,14 @@ static const GF_FilterArgs FFDecodeArgs[] =
 	{0}
 };
 
-const GF_FilterRegister *ffdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffdec_register(GF_FilterSession *session)
 {
 	return ffmpeg_build_register(session, &FFDecodeRegister, FFDecodeArgs, 1, FF_REG_TYPE_DECODE);
 }
 
 #else
 #include <gpac/filters.h>
-const GF_FilterRegister *ffdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffdec_register(GF_FilterSession *session)
 {
 	return NULL;
 }

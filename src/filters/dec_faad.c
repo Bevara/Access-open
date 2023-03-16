@@ -467,7 +467,7 @@ GF_FilterRegister FAADRegister = {
 
 #endif
 
-const GF_FilterRegister *faad_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_faad_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_FAAD
 	return &FAADRegister;

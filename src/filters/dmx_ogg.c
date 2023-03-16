@@ -986,7 +986,7 @@ GF_FilterRegister OGGDmxRegister = {
 
 #endif // !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_OGG)
 
-const GF_FilterRegister *oggdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_oggdmx_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_OGG)
 	return &OGGDmxRegister;

@@ -314,7 +314,7 @@ GF_FilterRegister VorbisDecRegister = {
 
 #endif
 
-const GF_FilterRegister *vorbisdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vorbisdec_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_VORBIS
 	return &VorbisDecRegister;

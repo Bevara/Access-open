@@ -896,13 +896,13 @@ GF_FilterRegister MP3DmxRegister = {
 };
 
 
-const GF_FilterRegister *mp3_dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_mp3_dmx_register(GF_FilterSession *session)
 {
 	return &MP3DmxRegister;
 }
 
 #else
-const GF_FilterRegister *mp3_dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_mp3_dmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

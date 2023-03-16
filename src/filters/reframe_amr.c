@@ -617,7 +617,7 @@ GF_FilterRegister AMRDmxRegister = {
 };
 
 
-const GF_FilterRegister *amrdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_amrdmx_register(GF_FilterSession *session)
 {
 	return &AMRDmxRegister;
 }

@@ -291,7 +291,7 @@ GF_FilterRegister A52DecRegister = {
 
 #endif
 
-const GF_FilterRegister *a52dec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_a52dec_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_LIBA52
 	return &A52DecRegister;
