@@ -1319,7 +1319,7 @@ static const GF_FilterArgs FFDemuxArgs[] =
 };
 
 
-const GF_FilterRegister *ffdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffdmx_register(GF_FilterSession *session)
 {
 	return ffmpeg_build_register(session, &FFDemuxRegister, FFDemuxArgs, 2, FF_REG_TYPE_DEMUX);
 }
@@ -1808,7 +1808,7 @@ const GF_FilterRegister *ffavin_register(GF_FilterSession *session)
 
 #include <gpac/filters.h>
 
-const GF_FilterRegister *ffdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffdmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

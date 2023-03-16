@@ -615,7 +615,7 @@ GF_FilterRegister FileInRegister = {
 };
 
 
-const GF_FilterRegister *filein_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_filein_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 		gf_opts_set_key("temp_in_proto", FileInRegister.name, "file,isobmf,gmem,gfio");

@@ -620,7 +620,7 @@ GF_FilterRegister J2KRegister = {
 
 #endif
 
-const GF_FilterRegister *j2kdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_j2kdec_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_JP2
 	return &J2KRegister;

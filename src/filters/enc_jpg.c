@@ -407,7 +407,7 @@ GF_FilterRegister JPGEncRegister = {
 
 #endif
 
-const GF_FilterRegister *jpgenc_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_jpgenc_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_JPEG
 	return &JPGEncRegister;

@@ -170,7 +170,7 @@ GF_FilterRegister ImgDecRegister = {
 	.process = imgdec_process,
 };
 
-const GF_FilterRegister *imgdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_imgdec_register(GF_FilterSession *session)
 {
 	return &ImgDecRegister;
 }

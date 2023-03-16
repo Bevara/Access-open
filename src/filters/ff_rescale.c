@@ -1062,7 +1062,7 @@ GF_FilterRegister FFSWSRegister = {
 #include <gpac/filters.h>
 #endif //GPAC_HAS_FFMPEG
 
-const GF_FilterRegister *ffsws_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffsws_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_FFMPEG
 	FFSWSArgs[1].min_max_enum = gf_pixel_fmt_all_names();

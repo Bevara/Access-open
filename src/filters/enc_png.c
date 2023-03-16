@@ -385,7 +385,7 @@ GF_FilterRegister PNGEncRegister = {
 
 #endif
 
-const GF_FilterRegister *pngenc_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_pngenc_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_PNG
 	return &PNGEncRegister;
