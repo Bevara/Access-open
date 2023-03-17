@@ -592,7 +592,7 @@ GF_FilterRegister VTTDecRegister = {
 
 #endif
 
-const GF_FilterRegister *vttdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vttdec_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_DISABLE_VTT) && !defined(GPAC_DISABLE_SVG) && defined(GPAC_HAS_QJS)
 	return &VTTDecRegister;

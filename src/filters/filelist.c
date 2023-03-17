@@ -3089,7 +3089,7 @@ GF_FilterRegister FileListRegister = {
 	.probe_data = filelist_probe_data
 };
 
-const GF_FilterRegister *filelist_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_filelist_register(GF_FilterSession *session)
 {
 	return &FileListRegister;
 }

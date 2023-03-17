@@ -981,7 +981,7 @@ GF_FilterRegister NHMLDumpRegister = {
 	.process = nhmldump_process
 };
 
-const GF_FilterRegister *nhmldump_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_nhmldump_register(GF_FilterSession *session)
 {
 	return &NHMLDumpRegister;
 }

@@ -1643,13 +1643,13 @@ GF_FilterRegister HEVCMergeRegister = {
 	.max_extra_pids = -1,
 };
 
-const GF_FilterRegister *hevcmerge_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_hevcmerge_register(GF_FilterSession *session)
 {
 	return &HEVCMergeRegister;
 }
 
 #else
-const GF_FilterRegister *hevcmerge_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_hevcmerge_register(GF_FilterSession *session)
 {
 	return NULL;
 }

@@ -566,7 +566,7 @@ GF_FilterRegister TTXTMxRegister = {
 	.process = tx3gmx_process
 };
 
-const GF_FilterRegister *ttxtuf_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ttxtuf_register(GF_FilterSession *session)
 {
 	return &TTXTMxRegister;
 }
@@ -604,7 +604,7 @@ GF_FilterRegister TX3G2SRTRegister = {
 	.process = tx3gmx_process
 };
 
-const GF_FilterRegister *tx3g2srt_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_tx3g2srt_register(GF_FilterSession *session)
 {
 	return &TX3G2SRTRegister;
 }
@@ -643,7 +643,7 @@ GF_FilterRegister TTX2VTTRegister = {
 	.process = tx3gmx_process
 };
 
-const GF_FilterRegister *tx3g2vtt_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_tx3g2vtt_register(GF_FilterSession *session)
 {
 	return &TTX2VTTRegister;
 }
@@ -684,25 +684,25 @@ GF_FilterRegister TX3G2TTMLRegister = {
 };
 
 
-const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_tx3g2ttml_register(GF_FilterSession *session)
 {
 	return &TX3G2TTMLRegister;
 }
 
 #else
-const GF_FilterRegister *ttxtuf_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ttxtuf_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-const GF_FilterRegister *tx3g2srt_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_tx3g2srt_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-const GF_FilterRegister *tx3g2vtt_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_tx3g2vtt_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_tx3g2ttml_register(GF_FilterSession *session)
 {
 	return NULL;
 }

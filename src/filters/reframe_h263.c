@@ -768,7 +768,7 @@ GF_FilterRegister H263DmxRegister = {
 };
 
 
-const GF_FilterRegister *h263dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_h263dmx_register(GF_FilterSession *session)
 {
 	return &H263DmxRegister;
 }

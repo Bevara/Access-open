@@ -265,7 +265,7 @@ GF_FilterRegister LSRDecRegister = {
 
 #endif /*GPAC_DISABLE_LASER*/
 
-const GF_FilterRegister *lsrdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_lsrdec_register(GF_FilterSession *session)
 {
 #ifdef GPAC_DISABLE_LASER
 	return NULL;

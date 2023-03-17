@@ -2132,7 +2132,7 @@ static const GF_FilterArgs FFEncodeArgs[] =
 
 const int FFENC_STATIC_ARGS = (sizeof (FFEncodeArgs) / sizeof (GF_FilterArgs)) - 1;
 
-const GF_FilterRegister *ffenc_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffenc_register(GF_FilterSession *session)
 {
 	return ffmpeg_build_register(session, &FFEncodeRegister, FFEncodeArgs, FFENC_STATIC_ARGS, FF_REG_TYPE_ENCODE);
 }
@@ -2140,7 +2140,7 @@ const GF_FilterRegister *ffenc_register(GF_FilterSession *session)
 
 #else
 #include <gpac/filters.h>
-const GF_FilterRegister *ffenc_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffenc_register(GF_FilterSession *session)
 {
 	return NULL;
 }

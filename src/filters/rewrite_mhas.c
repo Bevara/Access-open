@@ -272,7 +272,7 @@ GF_FilterRegister MHASMxRegister = {
 };
 
 
-const GF_FilterRegister *mhasmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_mhasmx_register(GF_FilterSession *session)
 {
 	return &MHASMxRegister;
 }

@@ -602,7 +602,7 @@ GF_FilterRegister OSVCDecRegister = {
 
 #endif //GPAC_HAS_OPENSVC
 
-const GF_FilterRegister *osvcdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_osvcdec_register(GF_FilterSession *session)
 {
 #ifdef GPAC_HAS_OPENSVC
 	return &OSVCDecRegister;

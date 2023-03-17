@@ -610,7 +610,7 @@ GF_FilterRegister SockOutRegister = {
 };
 
 
-const GF_FilterRegister *sockout_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_sockout_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 #ifdef GPAC_HAS_SOCK_UN

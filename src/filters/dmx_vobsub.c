@@ -474,7 +474,7 @@ GF_FilterRegister VOBSubDmxRegister = {
 
 #endif
 
-const GF_FilterRegister *vobsubdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vobsubdmx_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_VOBSUB
 	return &VOBSubDmxRegister;

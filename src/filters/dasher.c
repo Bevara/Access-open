@@ -9915,12 +9915,12 @@ GF_FilterRegister DasherRegister = {
 };
 
 
-const GF_FilterRegister *dasher_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_dasher_register(GF_FilterSession *session)
 {
 	return &DasherRegister;
 }
 #else
-const GF_FilterRegister *dasher_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_dasher_register(GF_FilterSession *session)
 {
 	return NULL;
 }

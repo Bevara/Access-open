@@ -491,7 +491,7 @@ GF_FilterRegister RawVidReframeRegister = {
 };
 
 
-const GF_FilterRegister *rawvidreframe_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_rawvidreframe_register(GF_FilterSession *session)
 {
 	RawVidReframeArgs[1].min_max_enum = gf_pixel_fmt_all_names();
 	RawVidReframeCaps[1].val.value.string = (char *) gf_pixel_fmt_all_shortnames();

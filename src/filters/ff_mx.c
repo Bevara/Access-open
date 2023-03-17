@@ -1450,14 +1450,14 @@ static const GF_FilterArgs FFMuxArgs[] =
 
 const int FFMX_STATIC_ARGS = (sizeof (FFMuxArgs) / sizeof (GF_FilterArgs)) - 1;
 
-const GF_FilterRegister *ffmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffmx_register(GF_FilterSession *session)
 {
 	return ffmpeg_build_register(session, &FFMuxRegister, FFMuxArgs, FFMX_STATIC_ARGS, FF_REG_TYPE_MUX);
 }
 
 #else
 #include <gpac/filters.h>
-const GF_FilterRegister *ffmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

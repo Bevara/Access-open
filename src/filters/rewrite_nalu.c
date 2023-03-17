@@ -640,7 +640,7 @@ GF_FilterRegister NALUMxRegister = {
 };
 
 
-const GF_FilterRegister *nalumx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_nalumx_register(GF_FilterSession *session)
 {
 	return &NALUMxRegister;
 }

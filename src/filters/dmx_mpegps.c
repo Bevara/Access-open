@@ -487,7 +487,7 @@ GF_FilterRegister M2PSDmxRegister = {
 
 #endif // GPAC_DISABLE_MPEG2PS
 
-const GF_FilterRegister *m2psdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_m2psdmx_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_MPEG2PS
 	return &M2PSDmxRegister;

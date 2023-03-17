@@ -547,7 +547,7 @@ GF_FilterRegister TileAggRegister = {
 	.max_extra_pids = (u32) (-1),
 };
 
-const GF_FilterRegister *tileagg_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_tileagg_register(GF_FilterSession *session)
 {
 	return &TileAggRegister;
 }

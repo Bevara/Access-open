@@ -928,7 +928,7 @@ GF_FilterRegister BSAggRegister = {
 	.process = bs_agg_process
 };
 
-const GF_FilterRegister *bs_agg_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_bs_agg_register(GF_FilterSession *session)
 {
 	return (const GF_FilterRegister *) &BSAggRegister;
 }

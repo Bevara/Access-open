@@ -622,7 +622,7 @@ GF_FilterRegister VCropRegister = {
 
 
 
-const GF_FilterRegister *vcrop_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vcrop_register(GF_FilterSession *session)
 {
 	return &VCropRegister;
 }

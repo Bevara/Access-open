@@ -1489,7 +1489,7 @@ GF_FilterRegister M2TSDmxRegister = {
 
 #endif
 
-const GF_FilterRegister *m2tsdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_m2tsdmx_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_MPEG2TS
 	return &M2TSDmxRegister;

@@ -550,7 +550,7 @@ GF_FilterRegister RestampRegister = {
 	.update_arg = restamp_update_arg
 };
 
-const GF_FilterRegister *restamp_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_restamp_register(GF_FilterSession *session)
 {
 	return (const GF_FilterRegister *) &RestampRegister;
 }

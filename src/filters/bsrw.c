@@ -743,7 +743,7 @@ GF_FilterRegister BSRWRegister = {
 	.update_arg = bsrw_update_arg
 };
 
-const GF_FilterRegister *bsrw_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_bsrw_register(GF_FilterSession *session)
 {
 	//assign runtime caps on first load
 	if (gf_opts_get_bool("temp", "helponly")) {

@@ -282,12 +282,12 @@ GF_FilterRegister WebVTTMxRegister = {
 };
 
 
-const GF_FilterRegister *vttmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vttmx_register(GF_FilterSession *session)
 {
 	return &WebVTTMxRegister;
 }
 #else
-const GF_FilterRegister *vttmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vttmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

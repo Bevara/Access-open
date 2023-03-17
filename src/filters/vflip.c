@@ -502,7 +502,7 @@ GF_FilterRegister VFlipRegister = {
 
 
 
-const GF_FilterRegister *vflip_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vflip_register(GF_FilterSession *session)
 {
 	return &VFlipRegister;
 }

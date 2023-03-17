@@ -2105,7 +2105,7 @@ GF_FilterRegister GF_VTBDecCtxRegister = {
 
 #endif // !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) ) && defined(GPAC_HAS_VTB)
 
-const GF_FilterRegister *vtbdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_vtbdec_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_DISABLE_AV_PARSERS) && ( defined(GPAC_CONFIG_DARWIN) || defined(GPAC_CONFIG_IOS) ) && defined(GPAC_HAS_VTB)
 	return &GF_VTBDecCtxRegister;

@@ -1329,7 +1329,7 @@ GF_FilterRegister GSFMxRegister = {
 };
 
 
-const GF_FilterRegister *gsfmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_gsfmx_register(GF_FilterSession *session)
 {
 	return &GSFMxRegister;
 }

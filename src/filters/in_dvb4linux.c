@@ -432,7 +432,7 @@ GF_FilterRegister DVBLinuxRegister = {
 #endif
 };
 
-const GF_FilterRegister *dvblin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_dvblin_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_HAS_LINUX_DVB) || defined(GPAC_SIM_LINUX_DVB)
 	if (!gf_opts_get_bool("temp", "gendoc"))

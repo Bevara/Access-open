@@ -354,7 +354,7 @@ GF_FilterRegister CryptFinRegister = {
 };
 
 
-const GF_FilterRegister *cryptfin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_cryptfin_register(GF_FilterSession *session)
 {
 	return &CryptFinRegister;
 }
@@ -630,7 +630,7 @@ GF_FilterRegister CryptFoutRegister = {
 };
 
 
-const GF_FilterRegister *cryptfout_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_cryptfout_register(GF_FilterSession *session)
 {
 	return &CryptFoutRegister;
 }
@@ -656,11 +656,11 @@ GF_Err gf_cryptfout_push_key(GF_Filter *filter, bin128 *key, bin128 *IV)
 
 
 #else
-const GF_FilterRegister *cryptfin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_cryptfin_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-const GF_FilterRegister *cryptfout_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_cryptfout_register(GF_FilterSession *session)
 {
 	return NULL;
 }

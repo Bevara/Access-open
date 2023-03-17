@@ -488,13 +488,13 @@ GF_FilterRegister M2TSSplitRegister = {
 	.process_event = m2tssplit_process_event,
 };
 
-const GF_FilterRegister *m2tssplit_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_m2tssplit_register(GF_FilterSession *session)
 {
 	return &M2TSSplitRegister;
 }
 
 #else
-const GF_FilterRegister *m2tssplit_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_m2tssplit_register(GF_FilterSession *session)
 {
 	return NULL;
 }

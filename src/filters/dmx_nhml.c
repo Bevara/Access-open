@@ -1739,7 +1739,7 @@ GF_FilterRegister NHMLDmxRegister = {
 	.process_event = nhmldmx_process_event
 };
 
-const GF_FilterRegister *nhmldmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_nhmldmx_register(GF_FilterSession *session)
 {
 	return &NHMLDmxRegister;
 }

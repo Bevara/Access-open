@@ -414,7 +414,7 @@ GF_FilterRegister ADTSMxRegister = {
 };
 
 
-const GF_FilterRegister *adtsmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_adtsmx_register(GF_FilterSession *session)
 {
 	return &ADTSMxRegister;
 }
@@ -460,7 +460,7 @@ GF_FilterRegister LATMMxRegister = {
 };
 
 
-const GF_FilterRegister *latm_mx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_latm_mx_register(GF_FilterSession *session)
 {
 	return &LATMMxRegister;
 }

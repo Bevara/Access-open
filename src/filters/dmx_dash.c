@@ -3458,7 +3458,7 @@ GF_FilterRegister DASHDmxRegister = {
 
 #endif //GPAC_DISABLE_DASH_CLIENT
 
-const GF_FilterRegister *dashdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_dashdmx_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_DASH_CLIENT
 	return &DASHDmxRegister;

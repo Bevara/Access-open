@@ -1748,7 +1748,7 @@ static void ffavin_log_none(void *avcl, int level, const char *fmt, va_list vl)
 }
 #endif
 
-const GF_FilterRegister *ffavin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffavin_register(GF_FilterSession *session)
 {
 	GF_FilterRegister *res_reg = ffmpeg_build_register(session, &FFAVInRegister, FFAVInArgs, FFAVIN_STATIC_ARGS, FF_REG_TYPE_DEV_IN);
 
@@ -1813,7 +1813,7 @@ const GF_FilterRegister *dynCall_ffdmx_register(GF_FilterSession *session)
 	return NULL;
 }
 
-const GF_FilterRegister *ffavin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffavin_register(GF_FilterSession *session)
 {
 	return NULL;
 }

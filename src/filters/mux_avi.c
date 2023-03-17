@@ -691,7 +691,7 @@ static GF_Err avimux_initialize(GF_Filter *filter)
 
 #endif
 
-const GF_FilterRegister *avimux_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_avimux_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_AVILIB
 	return &AVIMuxRegister;

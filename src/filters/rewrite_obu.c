@@ -629,13 +629,13 @@ GF_FilterRegister OBUMxRegister = {
 };
 
 
-const GF_FilterRegister *obumx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_obumx_register(GF_FilterSession *session)
 {
 	return &OBUMxRegister;
 }
 
 #else
-const GF_FilterRegister *obumx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_obumx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

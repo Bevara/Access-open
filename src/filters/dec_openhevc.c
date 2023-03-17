@@ -1422,7 +1422,7 @@ GF_FilterRegister OHEVCDecRegister = {
 GPAC_MODULE_EXPORT
 GF_FilterRegister *RegisterFilter(GF_FilterSession *session)
 #else
-const GF_FilterRegister *ohevcdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ohevcdec_register(GF_FilterSession *session)
 #endif
 
 {

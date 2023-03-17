@@ -915,14 +915,14 @@ GF_FilterRegister MHASDmxRegister = {
 };
 
 
-const GF_FilterRegister *mhas_dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_mhas_dmx_register(GF_FilterSession *session)
 {
 	return &MHASDmxRegister;
 }
 
 #else
 
-const GF_FilterRegister *mhas_dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_mhas_dmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

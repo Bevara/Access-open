@@ -256,7 +256,7 @@ GF_FilterRegister RewinderRegister = {
 };
 
 
-const GF_FilterRegister *rewind_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_rewind_register(GF_FilterSession *session)
 {
 	return &RewinderRegister;
 }

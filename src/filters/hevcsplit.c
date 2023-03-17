@@ -952,13 +952,13 @@ GF_FilterRegister HEVCSplitRegister = {
 	.process = hevcsplit_process,
 };
 
-const GF_FilterRegister* hevcsplit_register(GF_FilterSession *session)
+const GF_FilterRegister* dynCall_hevcsplit_register(GF_FilterSession *session)
 {
 	return &HEVCSplitRegister;
 }
 
 #else
-const GF_FilterRegister* hevcsplit_register(GF_FilterSession *session)
+const GF_FilterRegister* dynCall_hevcsplit_register(GF_FilterSession *session)
 {
 	return NULL;
 }

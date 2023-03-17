@@ -443,7 +443,7 @@ static const GF_FilterArgs FFBSFArgs[] =
 
 const int FFBSF_STATIC_ARGS = (sizeof (FFBSFArgs) / sizeof (GF_FilterArgs)) - 1;
 
-const GF_FilterRegister *ffbsf_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffbsf_register(GF_FilterSession *session)
 {
 	return ffmpeg_build_register(session, &FFBSFRegister, FFBSFArgs, FFBSF_STATIC_ARGS, FF_REG_TYPE_BSF);
 }
@@ -451,7 +451,7 @@ const GF_FilterRegister *ffbsf_register(GF_FilterSession *session)
 #else //FFMPEG_HAS_BSF
 
 #include <gpac/filters.h>
-const GF_FilterRegister *ffbsf_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ffbsf_register(GF_FilterSession *session)
 {
 	return NULL;
 }

@@ -1274,7 +1274,7 @@ GF_FilterRegister GF_MCDecCtxRegister = {
 };
 
 
-const GF_FilterRegister *mcdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_mcdec_register(GF_FilterSession *session)
 {
 #ifndef GPAC_CONFIG_ANDROID
 	if (!gf_opts_get_bool("temp", "gendoc"))

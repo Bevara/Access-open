@@ -473,7 +473,7 @@ GF_FilterRegister PCMReframeRegister = {
 };
 
 
-const GF_FilterRegister *pcmreframe_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_pcmreframe_register(GF_FilterSession *session)
 {
 	PCMReframeArgs[1].min_max_enum = gf_audio_fmt_all_names();
 	PCMReframeCaps[1].val.value.string = (char *) gf_audio_fmt_all_shortnames();

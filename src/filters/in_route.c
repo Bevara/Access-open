@@ -966,7 +966,7 @@ GF_FilterRegister ROUTEInRegister = {
 	.probe_url = routein_probe_url
 };
 
-const GF_FilterRegister *routein_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_routein_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 		gf_opts_set_key("temp_in_proto", ROUTEInRegister.name, "atsc,route");
@@ -976,7 +976,7 @@ const GF_FilterRegister *routein_register(GF_FilterSession *session)
 
 #else
 
-const GF_FilterRegister *routein_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_routein_register(GF_FilterSession *session)
 {
 	return NULL;
 }

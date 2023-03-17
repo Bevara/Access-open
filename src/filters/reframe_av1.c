@@ -1381,13 +1381,13 @@ GF_FilterRegister AV1DmxRegister = {
 };
 
 
-const GF_FilterRegister *av1dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_av1dmx_register(GF_FilterSession *session)
 {
 	return &AV1DmxRegister;
 }
 
 #else
-const GF_FilterRegister *av1dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_av1dmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

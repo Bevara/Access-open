@@ -736,7 +736,7 @@ GF_FilterRegister QCPDmxRegister = {
 };
 
 
-const GF_FilterRegister *qcpdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_qcpdmx_register(GF_FilterSession *session)
 {
 	return &QCPDmxRegister;
 }

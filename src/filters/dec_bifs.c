@@ -282,7 +282,7 @@ GF_FilterRegister BIFSDecRegister = {
 
 #endif /*GPAC_DISABLE_BIFS*/
 
-const GF_FilterRegister *bifs_dec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_bifs_dec_register(GF_FilterSession *session)
 {
 #ifdef GPAC_DISABLE_BIFS
 	return NULL;

@@ -562,7 +562,7 @@ GF_FilterRegister OGGMuxRegister = {
 
 #endif
 
-const GF_FilterRegister *oggmux_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_oggmux_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_OGG
 	return &OGGMuxRegister;

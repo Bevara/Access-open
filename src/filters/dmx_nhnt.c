@@ -517,7 +517,7 @@ GF_FilterRegister NHNTDmxRegister = {
 	.process_event = nhntdmx_process_event
 };
 
-const GF_FilterRegister *nhntdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_nhntdmx_register(GF_FilterSession *session)
 {
 	return &NHNTDmxRegister;
 }

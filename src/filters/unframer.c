@@ -126,7 +126,7 @@ GF_FilterRegister UnframerRegister = {
 	.process = unframer_process,
 };
 
-const GF_FilterRegister *unframer_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_unframer_register(GF_FilterSession *session)
 {
 	return (const GF_FilterRegister *) &UnframerRegister;
 }

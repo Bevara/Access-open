@@ -1004,7 +1004,7 @@ GF_FilterRegister RTPInRegister = {
 #endif
 
 
-const GF_FilterRegister *rtpin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_rtpin_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_STREAMING
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {

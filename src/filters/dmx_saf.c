@@ -463,7 +463,7 @@ GF_FilterRegister SAFDmxRegister = {
 	.probe_data = safdmx_probe_data
 };
 
-const GF_FilterRegister *safdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_safdmx_register(GF_FilterSession *session)
 {
 	return &SAFDmxRegister;
 }

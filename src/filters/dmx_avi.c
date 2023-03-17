@@ -730,7 +730,7 @@ GF_FilterRegister AVIDmxRegister = {
 
 #endif // GPAC_DISABLE_AVILIB
 
-const GF_FilterRegister *avidmx_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_avidmx_register(GF_FilterSession *session)
 {
 #ifndef GPAC_DISABLE_AVILIB
 	return &AVIDmxRegister;

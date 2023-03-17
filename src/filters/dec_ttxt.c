@@ -1505,7 +1505,7 @@ GF_FilterRegister TTXTDecRegister = {
 
 #endif
 
-const GF_FilterRegister *ttxtdec_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_ttxtdec_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_ISOM)
 	return &TTXTDecRegister;

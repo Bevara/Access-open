@@ -625,7 +625,7 @@ GF_FilterRegister SockInRegister = {
 };
 
 
-const GF_FilterRegister *sockin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_sockin_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 #ifdef GPAC_HAS_SOCK_UN
