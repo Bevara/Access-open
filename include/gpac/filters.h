@@ -30,6 +30,10 @@
 extern "C" {
 #endif
 
+#if __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 #include <gpac/tools.h>
 #include <gpac/list.h>
 #include <gpac/events.h>

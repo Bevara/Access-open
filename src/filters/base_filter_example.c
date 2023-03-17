@@ -159,7 +159,7 @@ const GF_FilterRegister ExampleFilterRegister = {
 	.update_arg = example_filter_update_arg
 };
 
-const GF_FilterRegister *ex_filter_register(GF_FilterSession *session, Bool load_meta_filters)
+const GF_FilterRegister *dynCall_ex_filter_register(GF_FilterSession *session, Bool load_meta_filters)
 {
 	return &ExampleFilterRegister;
 }

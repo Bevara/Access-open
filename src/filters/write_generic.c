@@ -1958,7 +1958,7 @@ static GF_Err writegen_initialize(GF_Filter *filter)
 }
 
 
-const GF_FilterRegister *dynCall_writegen_register(GF_FilterSession *session)
+const GF_FilterRegister * EMSCRIPTEN_KEEPALIVE dynCall_writegen_register(GF_FilterSession *session)
 {
 
 	//assign runtime caps on first load
