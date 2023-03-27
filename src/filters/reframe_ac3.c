@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2022
+ *			Copyright (c) Telecom ParisTech 2017-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / AC3 reframer filter
@@ -334,7 +334,10 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 	u8 *output;
 	u8 *start;
 	u32 pck_size, remain, prev_pck_size;
-	u64 cts = GF_FILTER_NO_TS;
+	u64 cts;
+	
+restart:
+	cts = GF_FILTER_NO_TS;
 
 	//always reparse duration
 	if (!ctx->duration.num)
@@ -366,8 +369,8 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 			return GF_OK;
 		}
 
-		//max EAC3 frame is 4096, AC3 is 3840 - if we store more than 2 frames consider we have garbage
-		if (ctx->ac3_buffer_size>10000) {
+		//max EAC3 frame is 4096 but we can have side streams, AC3 is 3840 - if we store more than 2 frames consider we have garbage
+		if (ctx->ac3_buffer_size>100000) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[AC3Dmx] Trashing %d garbage bytes\n", ctx->ac3_buffer_size));
 			ctx->ac3_buffer_size = 0;
 		}
@@ -428,16 +431,18 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 
 		sync_pos = (u32) gf_bs_get_position(ctx->bs);
 
-		//startcode not found or not enough bytes, gather more
-		if (!res || (remain < sync_pos + ctx->hdr.framesize)) {
-			if (sync_pos && ctx->hdr.framesize) {
-				start += sync_pos;
-				remain -= sync_pos;
+		//if not end of stream or no valid frame
+		if (pck || !ctx->hdr.framesize) {
+			//startcode not found or not enough bytes, gather more
+			if (!res || (remain < sync_pos + ctx->hdr.framesize)) {
+				if (sync_pos && ctx->hdr.framesize) {
+					start += sync_pos;
+					remain -= sync_pos;
+				}
+				break;
 			}
-			break;
+			ac3dmx_check_pid(filter, ctx);
 		}
-
-		ac3dmx_check_pid(filter, ctx);
 
 		if (!ctx->is_playing) {
 			ctx->resume_from = 1 + ctx->ac3_buffer_size - remain;
@@ -474,7 +479,10 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 			memcpy(output, sync, ctx->hdr.framesize);
 			gf_filter_pck_set_dts(dst_pck, ctx->cts);
 			gf_filter_pck_set_cts(dst_pck, ctx->cts);
-			gf_filter_pck_set_duration(dst_pck, AC3_FRAME_SIZE);
+			if (ctx->timescale && (ctx->timescale!=ctx->sample_rate))
+				gf_filter_pck_set_duration(dst_pck, (u32) gf_timestamp_rescale(AC3_FRAME_SIZE, ctx->sample_rate, ctx->timescale));
+			else
+				gf_filter_pck_set_duration(dst_pck, AC3_FRAME_SIZE);
 			gf_filter_pck_set_sap(dst_pck, GF_FILTER_SAP_1);
 			gf_filter_pck_set_framing(dst_pck, GF_TRUE, GF_TRUE);
 
@@ -515,7 +523,8 @@ GF_Err ac3dmx_process(GF_Filter *filter)
 
 	if (!pck) {
 		ctx->ac3_buffer_size = 0;
-		return ac3dmx_process(filter);
+		//avoid recursive call
+		goto restart;
 	} else {
 		if (remain && (remain < ctx->ac3_buffer_size)) {
 			memmove(ctx->ac3_buffer, start, remain);
@@ -588,7 +597,7 @@ static const char *ac3dmx_probe_data(const u8 *_data, u32 _size, GF_FilterProbeS
 			has_broken_frames = GF_TRUE;
 		nb_frames += ahdr.nb_streams;
 		for (i=0; i<ahdr.nb_streams; i++)
-			nb_frames += ahdr.streams[i].nb_dep_sub;
+			nb_frames += ahdr.streams[i].nb_dep_sub ? 1 : 0;
 		gf_bs_skip_bytes(bs, ahdr.framesize);
 		if (!pos && (nb_frames==1) && !gf_bs_available(bs)) nb_frames++;
 		pos+=ahdr.framesize;

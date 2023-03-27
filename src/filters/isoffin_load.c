@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -360,8 +360,10 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 
  				if (pix_fmt) {
 					codec_id = GF_CODECID_RAW;
-					if (pix_fmt==GF_PIXEL_UNCV)
+					if (pix_fmt==GF_PIXEL_UNCV) {
 						load_default = GF_TRUE;
+						codec_id = GF_CODECID_RAW_UNCV;
+					}
 				} else {
 					load_default = GF_TRUE;
 				}
@@ -614,7 +616,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			}
 		}
 
-		if (!read->mem_load_mode) {
+		if (!read->mem_load_mode || ch->duration) {
 			//if no edit list (whether complex or simple TS offset) and no sidx, use media duration
 			if (!ch->has_edit_list && !use_sidx_dur && !ch->ts_offset) {
 				//no specific edit list type but edit present, use the duration in the edit
@@ -675,8 +677,11 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		if (w)
 			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_FRAME_SIZE, &PROP_UINT(w));
 
+		//mem mode, cannot read backwards
 		if (read->mem_load_mode) {
-			gf_filter_pid_set_property(pid, GF_PROP_PID_PLAYBACK_MODE, &PROP_UINT(GF_PLAYBACK_MODE_NONE) );
+			const GF_PropertyValue *p = gf_filter_pid_get_property(read->pid, GF_PROP_PID_PLAYBACK_MODE);
+			if (!p)
+				gf_filter_pid_set_property(pid, GF_PROP_PID_PLAYBACK_MODE, &PROP_UINT(GF_PLAYBACK_MODE_FASTFORWARD) );
 		} else {
 			gf_filter_pid_set_property(pid, GF_PROP_PID_PLAYBACK_MODE, &PROP_UINT(GF_PLAYBACK_MODE_REWIND) );
 		}
@@ -1246,6 +1251,20 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 	e = gf_isom_get_stsd_template(read->mov, ch->track, stsd_idx, &tk_template, &tk_template_size);
 	if (e == GF_OK) {
 		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_STSD_TEMPLATE, &PROP_DATA_NO_COPY(tk_template, tk_template_size) );
+
+		if (!gf_sys_old_arch_compat()) {
+			//if more than one sample desc, export all of them
+			if (gf_isom_get_sample_description_count(read->mov, ch->track)>1) {
+				tk_template=NULL;
+				tk_template_size=0;
+				e = gf_isom_get_stsd_template(read->mov, ch->track, 0, &tk_template, &tk_template_size);
+				if (e == GF_OK) {
+					gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_STSD_ALL_TEMPLATES, &PROP_DATA_NO_COPY(tk_template, tk_template_size) );
+
+					gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_STSD_TEMPLATE_IDX, &PROP_UINT(stsd_idx) );
+				}
+			}
+		}
 	} else {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[IsoMedia] Failed to serialize stsd box: %s\n", gf_error_to_string(e) ));
 	}
@@ -1708,8 +1727,9 @@ retry:
 	gf_filter_pid_set_property_str(pid, "meta:name", item_name ? &PROP_STRING(item_name) : NULL );
 	gf_filter_pid_set_property_str(pid, "meta:encoding", item_encoding ? &PROP_STRING(item_encoding) : NULL );
 
-	if ((item_type == GF_4CC('u','n','c','v')) || (item_type == GF_4CC('u','n','c','i'))) {
+	if ((item_type == GF_ISOM_SUBTYPE_UNCV) || (item_type == GF_ISOM_ITEM_TYPE_UNCI)) {
 		gf_filter_pid_set_property(pid, GF_PROP_PID_PIXFMT, &PROP_UINT(GF_PIXEL_UNCV) );
+		gf_filter_pid_set_property(pid, GF_PROP_PID_CODECID, &PROP_UINT(GF_CODECID_RAW_UNCV) );
 	}
 
 

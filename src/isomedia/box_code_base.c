@@ -4429,7 +4429,7 @@ GF_Err video_sample_entry_box_size(GF_Box *s)
 
 	/*VVC*/
 	gf_isom_check_position(s, (GF_Box *)ptr->vvc_config, &pos);
-	
+
 	/*AV1*/
 	gf_isom_check_position(s, (GF_Box *)ptr->av1_config, &pos);
 
@@ -7618,6 +7618,9 @@ GF_Err trun_box_read(GF_Box *s, GF_BitStream *bs)
 			if (ptr->flags & GF_ISOM_TRUN_DURATION) {
 				p->Duration = gf_bs_read_u32(bs);
 				trun_size += 4;
+
+				if (!ptr->min_duration || (ptr->min_duration>p->Duration))
+					ptr->min_duration = p->Duration;
 			}
 			if (ptr->flags & GF_ISOM_TRUN_SIZE) {
 				p->size = gf_bs_read_u32(bs);
@@ -8857,7 +8860,7 @@ GF_Err dac3_box_write(GF_Box *s, GF_BitStream *bs)
 	e = gf_isom_box_write_header(s, bs);
 	if (ptr->cfg.is_ec3) s->type = GF_ISOM_BOX_TYPE_DAC3;
 	if (e) return e;
-	
+
 	e = gf_odf_ac3_cfg_write_bs(&ptr->cfg, bs);
 	if (e) return e;
 
@@ -9983,6 +9986,9 @@ static void *sgpd_parse_entry(u32 grouping_type, GF_BitStream *bs, s32 bytes_in_
 		}
 		return ptr;
 	}
+	case 0:
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] sgpd entry null grouping_type is invalid\n") );
+		return NULL;
 	default:
 		break;
 	}
@@ -12974,7 +12980,9 @@ GF_Err xtra_box_read(GF_Box *s, GF_BitStream *bs)
 		gf_list_add(ptr->tags, tag);
 
 		if (tag_size) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[isom] invalid tag size in Xtra !\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[isom] left-over bytes in tag %s in Xtra !\n", data));
+			gf_bs_skip_bytes(bs, tag_size);
+			ISOM_DECREASE_SIZE_NO_ERR(ptr, tag_size)
 		}
 	}
 	return GF_OK;

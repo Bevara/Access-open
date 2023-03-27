@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -26,6 +26,8 @@
 
 
 #include "visual_manager.h"
+#ifndef GPAC_DISABLE_COMPOSITOR
+
 #include "nodes_stacks.h"
 #include "texturing.h"
 
@@ -302,7 +304,7 @@ static GF_Err c2d_get_video_access_normal(GF_VisualManager *visual)
 {
 	GF_Err e;
 	GF_Compositor *compositor = visual->compositor;
-
+	if (!compositor->video_out->LockBackBuffer) return GF_NOT_SUPPORTED;
 	compositor->hw_locked = GF_FALSE;
 
 	e = compositor->video_out->LockBackBuffer(compositor->video_out, &compositor->hw_surface, GF_TRUE);
@@ -843,11 +845,14 @@ static Bool compositor_2d_draw_bitmap_ex(GF_VisualManager *visual, GF_TextureHan
 			txh->flags |= GF_SR_TEXTURE_DISABLE_BLIT;
 			return GF_FALSE;
 		}
+		if (!visual->compositor->video_out->LockBackBuffer)
+			e = GF_NOT_SUPPORTED;
+		else
+			e = visual->compositor->video_out->LockBackBuffer(visual->compositor->video_out, &backbuffer, GF_TRUE);
 
-		e = visual->compositor->video_out->LockBackBuffer(visual->compositor->video_out, &backbuffer, GF_TRUE);
 		if (!e) {
 			u32 push_time = gf_sys_clock();
-#ifndef GPAC_DISABLE_PLAYER
+#ifndef GPAC_DISABLE_COMPOSITOR
 			e = gf_stretch_bits(&backbuffer, &video_src, &dst_wnd, &src_wnd, alpha, GF_FALSE, tr_state->col_key, ctx->col_mat);
 #else
 			e = GF_NOT_SUPPORTED;
@@ -1459,3 +1464,5 @@ void compositor_2d_init_callbacks(GF_Compositor *compositor)
 {
 	compositor->visual->DrawBitmap = compositor_2d_draw_bitmap;
 }
+
+#endif //GPAC_DISABLE_COMPOSITOR

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2022
+ *			Copyright (c) Telecom ParisTech 2018-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG-DASH/HLS segmenter
@@ -137,6 +137,14 @@ enum
 	DASHER_DEFKID_AUTO
 };
 
+enum
+{
+	DASHER_PSWITCH_SINGLE=0,
+	DASHER_PSWITCH_FORCE,
+	DASHER_PSWITCH_STSD
+};
+
+
 typedef struct
 {
 	u32 bs_switch, profile, spd, cp, ntp;
@@ -166,10 +174,10 @@ typedef struct
 	Bool check_dur, skip_seg, loop, reschedule, scope_deps, keep_src;
 	Double refresh, tsb, subdur;
 	u64 *_p_gentime, *_p_mpdtime;
-	Bool cmpd, dual, sreg, pswitch;
+	Bool cmpd, dual, sreg;
 	char *styp;
 	Bool sigfrag;
-	u32 sbound;
+	u32 sbound, pswitch;
 	char *utcs;
 	char *mname;
 	char *hlsdrm;
@@ -240,7 +248,11 @@ typedef struct
 
 	Bool no_seg_dur;
 
-	Bool utc_initialized;
+	u32 utc_initialized;
+#ifdef GPAC_USE_DOWNLOADER
+	GF_DownloadSession *utc_sess;
+#endif
+
 	DasherUTCTimingType utc_timing_type;
 	s32 utc_diff;
 
@@ -318,6 +330,8 @@ typedef struct _dash_stream
 
 	u32 nb_comp, nb_comp_done;
 
+	Bool is_av;
+
 	u32 nb_rep, nb_rep_done;
 	Double set_seg_duration;
 
@@ -390,6 +404,7 @@ typedef struct _dash_stream
 	Bool segment_started;
 	u64 first_cts_in_seg;
 	u64 first_cts_in_next_seg;
+	u64 min_cts_in_seg_plus_one;
 	//used for last segment computation of segmentTimeline
 	u64 est_first_cts_in_next_seg;
 	u64 last_cts, last_dts;
@@ -463,6 +478,7 @@ typedef struct _dash_stream
 	Bool stl;
 
 	Bool set_period_switch;
+	u32 all_stsd_crc;
 
 } GF_DashStream;
 
@@ -630,7 +646,7 @@ static void dasher_update_bitrate(GF_DasherCtx *ctx, GF_DashStream *ds)
 	}
 
 	if (!ds->rate_first_dts_plus_one) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[Dasher] Couldn't compute bitrate in time for manifest generation, please report to GPAC devs !\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[Dasher] Couldn't compute bitrate of PID %s in time for manifest generation, please specify #Bitrate property\n", gf_filter_pid_get_name(ds->ipid)));
 		return;
 	}
 
@@ -1132,6 +1148,7 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 		CHECK_PROP_FRAC64(GF_PROP_PID_DURATION, ds->duration, GF_EOS)
 		CHECK_PROP_STR(GF_PROP_PID_URL, ds->src_url, GF_EOS)
 		period_switch = old_period_switch;
+		if (ds->duration.num<0) ds->duration.num = 0;
 
 		CHECK_PROP(GF_PROP_PID_ID, ds->id, GF_EOS)
 		CHECK_PROP(GF_PROP_PID_DEPENDENCY_ID, ds->dep_id, GF_EOS)
@@ -1151,6 +1168,24 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 				ds->src_id = gf_crc_32(src_args, (u32) strlen(src_args));
 			}
 		}
+
+		//check if we had up-front declarations of codec configs
+		if (ctx->pswitch==DASHER_PSWITCH_STSD) {
+			p = gf_filter_pid_get_property(pid, GF_PROP_PID_ISOM_STSD_ALL_TEMPLATES);
+			if (p) {
+				u32 all_stsd_crc = gf_crc_32(p->value.data.ptr, p->value.data.size);
+				//same config, we assume the muxer dealt with this at setup, reset dsi crc to skip period switch test below
+				if (all_stsd_crc==ds->all_stsd_crc) {
+					ds->dsi_crc = 0;
+					ds->dsi_enh_crc = 0;
+				} else {
+					ds->all_stsd_crc = all_stsd_crc;
+				}
+			} else {
+				ds->all_stsd_crc = 0;
+			}
+		}
+
 		dc_crc = 0;
 		dsi = p = gf_filter_pid_get_property(pid, GF_PROP_PID_DECODER_CONFIG);
 		if (p && (p->type==GF_PROP_DATA))
@@ -1254,12 +1289,17 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 		dasher_get_dash_dur(ctx, ds);
 
 		ds->splitable = GF_FALSE;
+		ds->is_av = GF_FALSE;
 		switch (ds->stream_type) {
 		case GF_STREAM_TEXT:
 		case GF_STREAM_METADATA:
 		case GF_STREAM_OD:
 		case GF_STREAM_SCENE:
 			ds->splitable = ctx->split;
+			break;
+		case GF_STREAM_VISUAL:
+		case GF_STREAM_AUDIO:
+			ds->is_av = GF_TRUE;
 			break;
 		}
 
@@ -1345,7 +1385,6 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			case GF_CODECID_AC3:
 			case GF_CODECID_EAC3:
 				if (dsi) {
-					u32 i;
 					GF_AC3Config ac3;
 					gf_odf_ac3_config_parse(dsi->value.data.ptr, dsi->value.data.size, (ds->codec_id==GF_CODECID_EAC3) ? GF_TRUE : GF_FALSE, &ac3);
 
@@ -1353,8 +1392,7 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 					ds->nb_surround = gf_ac3_get_surround_channels(ac3.streams[0].acmod);
 					ds->atmos_complexity_type = ac3.is_ec3 ? ac3.complexity_index_type : 0;
 					_nb_ch = gf_ac3_get_total_channels(ac3.streams[0].acmod);
-					for (i=0; i<ac3.streams[0].nb_dep_sub; ++i) {
-						assert(ac3.streams[0].nb_dep_sub == 1);
+					if (ac3.streams[0].nb_dep_sub) {
 						_nb_ch += gf_eac3_get_chan_loc_count(ac3.streams[0].chan_loc);
 					}
                     if (ds->nb_lfe) _nb_ch++;
@@ -1420,7 +1458,7 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 	period_switch = GF_FALSE;
 	CHECK_PROP_STR(GF_PROP_PID_PERIOD_ID, ds->period_id, GF_EOS)
 	CHECK_PROP_PROP(GF_PROP_PID_PERIOD_DESC, ds->p_period_desc, GF_EOS)
-	if (!period_switch && ctx->pswitch)
+	if (!period_switch && (ctx->pswitch==DASHER_PSWITCH_FORCE))
 		period_switch = GF_TRUE;
 
 	if (gf_filter_pid_get_property_str(pid, "period_switch"))
@@ -1742,304 +1780,27 @@ static GF_Err dasher_setup_mpd(GF_DasherCtx *ctx)
 }
 
 
-GF_Err rfc_6381_get_codec_aac(char *szCodec, u32 codec_id,  u8 *dsi, u32 dsi_size, Bool force_sbr);
-GF_Err rfc_6381_get_codec_m4v(char *szCodec, u32 codec_id, u8 *dsi, u32 dsi_size);
-GF_Err rfc_6381_get_codec_avc(char *szCodec, u32 subtype, GF_AVCConfig *avcc);
-GF_Err rfc_6381_get_codec_hevc(char *szCodec, u32 subtype, GF_HEVCConfig *hvcc);
-GF_Err rfc_6381_get_codec_av1(char *szCodec, u32 subtype, GF_AV1Config *av1c, COLR colr);
-GF_Err rfc_6381_get_codec_vpx(char *szCodec, u32 subtype, GF_VPConfig *vpcc, COLR colr);
-GF_Err rfc_6381_get_codec_dolby_vision(char *szCodec, u32 subtype, GF_DOVIDecoderConfigurationRecord *dovi);
-GF_Err rfc_6381_get_codec_vvc(char *szCodec, u32 subtype, GF_VVCConfig *vvcc);
-GF_Err rfc_6381_get_codec_mpegha(char *szCodec, u32 subtype, u8 *dsi, u32 dsi_size, s32 pl);
-GF_Err rfc6381_codec_name_default(char *szCodec, u32 subtype, u32 codec_id);
-
-
 static GF_Err dasher_get_rfc_6381_codec_name(GF_DasherCtx *ctx, GF_DashStream *ds, char *szCodec, Bool force_inband, Bool force_sbr)
 {
-	u32 subtype=0, subtype_src=0;
-	s32 mha_pl=-1;
-	const GF_PropertyValue *dcd, *dcd_enh, *dovi, *codec;
-	COLR colr;
-
-	memset(&colr, 0, sizeof(colr));
-
-	dcd = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_ISOM_SUBTYPE);
-	if (dcd) subtype_src = dcd->value.uint;
-
-	dcd = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_DECODER_CONFIG);
-	dcd_enh = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_DECODER_CONFIG_ENHANCEMENT);
-
-	// If colour information is supplied in [the colr] box, and also in the video bitstream, [the] box takes precedence
-	{
-		const GF_PropertyValue *p1 = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_COLR_PRIMARIES),
-		                       *p2 = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_COLR_TRANSFER),
-		                       *p3 = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_COLR_MX),
-		                       *p4 = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_COLR_RANGE);
-		if (p1 && p2 && p3 && p4) {
-			colr.override = GF_TRUE;
-			colr.colour_primaries = p1->value.uint;
-			colr.transfer_characteristics = p2->value.uint;
-			colr.matrix_coefficients = p3->value.uint;
-			colr.full_range = p4->value.boolean;
-		} else if (!p1 && !p2 && !p3 && !p4) {
-		} else {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[ISOM Tools] Incomplete upstream-filter 'colr' information when computing RFC6381. Ignoring.\n"));
+	const GF_PropertyValue *tile_base_dcd = NULL;
+	if (ds->codec_id==GF_CODECID_HEVC_TILES) {
+		const GF_PropertyValue *dcd = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_DECODER_CONFIG);
+		if (!dcd && ds->dep_id) {
+			u32 i, count = gf_list_count(ctx->current_period->streams);
+			for (i=0; i<count; i++) {
+				GF_DashStream *a_ds = gf_list_get(ctx->current_period->streams, i);
+				if (a_ds->id != ds->dep_id) continue;
+				tile_base_dcd = gf_filter_pid_get_property(a_ds->ipid, GF_PROP_PID_DECODER_CONFIG);
+				break;
+			}
 		}
 	}
 
 	if (!force_inband) {
 		force_inband = ds->inband_params;
 	}
-	if (!force_inband) {
-		const GF_PropertyValue *p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_ISOM_SUBTYPE);
-		if (p) {
-			//input uses inband parameters, force it on output regardless of bitstream switching mode
-			switch (p->value.uint) {
-			case GF_ISOM_SUBTYPE_AVC3_H264:
-			case GF_ISOM_SUBTYPE_AVC4_H264:
-			case GF_ISOM_SUBTYPE_LHE1:
-			case GF_ISOM_SUBTYPE_HEV1:
-			case GF_ISOM_SUBTYPE_VVI1:
-			case GF_ISOM_SUBTYPE_DVAV:
-			case GF_ISOM_SUBTYPE_DVHE:
-				force_inband = GF_TRUE;
-				ds->inband_params = 1;
-				break;
-			}
-		}
-	}
-
-	codec = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_CODEC);
-	if (codec && (codec->type==GF_PROP_STRING) && codec->value.string) {
-		const char *codec_str = codec->value.string;
-		if (codec_str[0] != '.') {
-			snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", codec_str);
-			return GF_OK;
-		}
-		if (!subtype_src)
-			subtype_src = gf_codecid_4cc_type(ds->codec_id);
-		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s%s", gf_4cc_to_str(subtype_src), codec_str);
-		return GF_OK;
-	}
-
-	dovi = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_DOLBY_VISION);
-	if (dovi) {
-		GF_Err e;
-		GF_BitStream *bs = gf_bs_new(dovi->value.data.ptr, dovi->value.data.size, GF_BITSTREAM_READ);
-		GF_DOVIDecoderConfigurationRecord *dvcc = gf_odf_dovi_cfg_read_bs(bs);
-		gf_bs_del(bs);
-		if (!dvcc) {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[ISOM Tools] No config found for Dolby Vision file (\"%s\") when computing RFC6381.\n", gf_4cc_to_str(subtype)));
-			return GF_BAD_PARAM;
-		}
-
-		switch (ds->codec_id) {
-		case GF_CODECID_HEVC:
-			e = rfc_6381_get_codec_dolby_vision(szCodec, ds->inband_params ? GF_ISOM_SUBTYPE_DVHE : GF_ISOM_SUBTYPE_DVH1, dvcc);
-			break;
-		case GF_CODECID_AVC:
-			e = rfc_6381_get_codec_dolby_vision(szCodec, ds->inband_params ? GF_ISOM_SUBTYPE_DVAV : GF_ISOM_SUBTYPE_DVA1, dvcc);
-			break;
-		case GF_CODECID_AV1:
-			e = rfc_6381_get_codec_dolby_vision(szCodec, GF_ISOM_SUBTYPE_DAV1, dvcc);
-			break;
-		default:
-			e = GF_NOT_SUPPORTED;
-		}
-		gf_odf_dovi_cfg_del(dvcc);
-		return e;
-	}
-
-	switch (ds->codec_id) {
-	case GF_CODECID_AAC_MPEG4:
-	case GF_CODECID_AAC_MPEG2_MP:
-	case GF_CODECID_AAC_MPEG2_LCP:
-	case GF_CODECID_AAC_MPEG2_SSRP:
-	case GF_CODECID_USAC:
-		return rfc_6381_get_codec_aac(szCodec, ds->codec_id, dcd ? dcd->value.data.ptr : NULL, dcd ? dcd->value.data.size : 0, force_sbr);
-
-	case GF_CODECID_MPEG4_PART2:
-		return rfc_6381_get_codec_m4v(szCodec, ds->codec_id, dcd ? dcd->value.data.ptr : NULL, dcd ? dcd->value.data.size : 0);
-		break;
-	case GF_CODECID_SVC:
-	case GF_CODECID_MVC:
-		if (dcd_enh) dcd = dcd_enh;
-		subtype = (ds->codec_id==GF_CODECID_SVC) ? GF_ISOM_SUBTYPE_SVC_H264 : GF_ISOM_SUBTYPE_MVC_H264;
-	case GF_CODECID_AVC:
-		if (!subtype) {
-			if (force_inband) {
-				subtype = dcd_enh ? GF_ISOM_SUBTYPE_AVC4_H264 : GF_ISOM_SUBTYPE_AVC3_H264;
-			} else {
-				subtype = dcd_enh ? GF_ISOM_SUBTYPE_AVC2_H264 : GF_ISOM_SUBTYPE_AVC_H264;
-			}
-		}
-		if (dcd) {
-			GF_AVCConfig *avcc = gf_odf_avc_cfg_read(dcd->value.data.ptr, dcd->value.data.size);
-			if (avcc) {
-				GF_Err e = rfc_6381_get_codec_avc(szCodec, subtype, avcc);
-				gf_odf_avc_cfg_del(avcc);
-				return e;
-			}
-		}
-		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
-		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] Cannot find AVC config, using default %s\n", szCodec));
-		return GF_OK;
-
-#ifndef GPAC_DISABLE_HEVC
-	case GF_CODECID_LHVC:
-		subtype = force_inband ? GF_ISOM_SUBTYPE_LHE1 : GF_ISOM_SUBTYPE_LHV1;
-		//fallthrough
-	case GF_CODECID_HEVC_TILES:
-		if (!subtype) subtype = GF_ISOM_SUBTYPE_HVT1;
-		if (!dcd && ds->dep_id) {
-			u32 i, count = gf_list_count(ctx->current_period->streams);
-			for (i=0; i<count; i++) {
-				GF_DashStream *a_ds = gf_list_get(ctx->current_period->streams, i);
-				if (a_ds->id != ds->dep_id) continue;
-				dcd = gf_filter_pid_get_property(a_ds->ipid, GF_PROP_PID_DECODER_CONFIG);
-				break;
-			}
-		}
-		//fallthrough
-	case GF_CODECID_HEVC:
-		if (!subtype) {
-			if (ds->tile_base) {
-				subtype = force_inband ? GF_ISOM_SUBTYPE_HEV2 : GF_ISOM_SUBTYPE_HVC2;
-			} else if (dcd_enh) {
-				if (dcd) {
-					subtype = force_inband ? GF_ISOM_SUBTYPE_HEV2 : GF_ISOM_SUBTYPE_HVC2;
-				} else {
-					subtype = force_inband ? GF_ISOM_SUBTYPE_LHE1 : GF_ISOM_SUBTYPE_LHV1;
-				}
-			} else {
-				subtype = force_inband ? GF_ISOM_SUBTYPE_HEV1 : GF_ISOM_SUBTYPE_HVC1;
-			}
-		}
-		if (dcd || dcd_enh) {
-			GF_HEVCConfig *hvcc = dcd ? gf_odf_hevc_cfg_read(dcd->value.data.ptr, dcd->value.data.size, GF_FALSE) : NULL;
-			if (hvcc) {
-				GF_Err e = rfc_6381_get_codec_hevc(szCodec, subtype, hvcc);
-				gf_odf_hevc_cfg_del(hvcc);
-				return e;
-			}
-			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[Dasher] HEVC config not compliant !\n"));
-			return GF_NON_COMPLIANT_BITSTREAM;
-		}
-
-		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
-		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] Cannot find HEVC config, using default %s\n", szCodec));
-		return GF_OK;
-#endif
-
-#ifndef GPAC_DISABLE_AV1
-	case GF_CODECID_AV1:
-		if (!subtype) subtype = GF_ISOM_SUBTYPE_AV01;
-
-		if (dcd) {
-			GF_AV1Config *av1c = gf_odf_av1_cfg_read(dcd->value.data.ptr, dcd->value.data.size);
-			if (av1c) {
-				GF_Err e = rfc_6381_get_codec_av1(szCodec, subtype, av1c, colr);
-				gf_odf_av1_cfg_del(av1c);
-				return e;
-			}
-			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASHER] AV1 config not conformant\n"));
-			return GF_NON_COMPLIANT_BITSTREAM;
-		}
-		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
-		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] Cannot find AV1 config, using default %s\n", szCodec));
-		return GF_OK;
-#endif /*GPAC_DISABLE_AV1*/
-
-
-	case GF_CODECID_VP8:
-		if (!subtype) subtype = GF_ISOM_SUBTYPE_VP08;
-	case GF_CODECID_VP9:
-		if (!subtype) subtype = GF_ISOM_SUBTYPE_VP09;
-
-		if (dcd) {
-			GF_VPConfig *vpcc = gf_odf_vp_cfg_read(dcd->value.data.ptr, dcd->value.data.size);
-
-			if (vpcc) {
-				GF_Err e = rfc_6381_get_codec_vpx(szCodec, subtype, vpcc, colr);
-				gf_odf_vp_cfg_del(vpcc);
-				return e;
-			}
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[Dasher] No config found for VP file (\"%s\") when computing RFC6381.\n", gf_4cc_to_str(subtype)));
-			return GF_NON_COMPLIANT_BITSTREAM;
-		}
-		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
-		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] Cannot find VPX config, using default %s\n", szCodec));
-		return GF_OK;
-
-	case GF_CODECID_MHAS:
-		subtype = subtype_src ? subtype_src : GF_ISOM_SUBTYPE_MH3D_MHM1;
-		if (!dcd) {
-			const GF_PropertyValue *pl = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_PROFILE_LEVEL);
-			if (pl) mha_pl = (s32) pl->value.uint;
-		}
-		//fallthrough
-	case GF_CODECID_MPHA:
-		if (!subtype)
-			subtype = subtype_src ? subtype_src : GF_ISOM_SUBTYPE_MH3D_MHA1;
-
-		return rfc_6381_get_codec_mpegha(szCodec, subtype, dcd ? dcd->value.data.ptr : NULL, dcd ? dcd->value.data.size : 0, mha_pl);
-
-	case GF_CODECID_VVC:
-		if (!subtype) {
-			subtype = force_inband ? GF_ISOM_SUBTYPE_VVI1 : GF_ISOM_SUBTYPE_VVC1;
-		}
-		if (dcd) {
-			GF_VVCConfig *vvcc = gf_odf_vvc_cfg_read(dcd->value.data.ptr, dcd->value.data.size);
-
-			snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.", gf_4cc_to_str(subtype));
-			if (vvcc) {
-				GF_Err e = rfc_6381_get_codec_vvc(szCodec, subtype, vvcc);
-				gf_odf_vvc_cfg_del(vvcc);
-				return e;
-			}
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[Dasher] No config found for VP file (\"%s\") when computing RFC6381.\n", gf_4cc_to_str(subtype)));
-			return GF_NON_COMPLIANT_BITSTREAM;
-		}
-		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
-		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] Cannot find VVC config, using default %s\n", szCodec));
-		return GF_OK;
-
-	default:
-		subtype = gf_codecid_4cc_type(ds->codec_id);
-		if (!subtype) {
-			const GF_PropertyValue *p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_ISOM_SUBTYPE);
-			if (p) subtype = p->value.uint;
-		}
-		if (!subtype && (ds->codec_id==GF_CODECID_RAW)) {
-			if (ds->stream_type==GF_STREAM_VISUAL) {
-				const GF_PropertyValue *p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_PIXFMT);
-				if (p) subtype = gf_pixel_fmt_to_qt_type(p->value.uint);
-			}
-			else if (ds->stream_type==GF_STREAM_AUDIO) {
-				const GF_PropertyValue *p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_AUDIO_FORMAT);
-				if (p) subtype = gf_audio_fmt_to_isobmf(p->value.uint);
-			}
-		}
-
-		if (!subtype) {
-			const char *mime = gf_codecid_mime(ds->codec_id);
-			if (mime) mime = strchr(mime, '/');
-			if (mime) mime++;
-			if (mime && mime[0]) {
-				GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[Dasher] codec parameters not known, using mime type %s\n", mime));
-				strcpy(szCodec, mime);
-				return GF_OK;
-			}
-			GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] codec parameters not known, cannot set codec string\n" ));
-			strcpy(szCodec, "unkn");
-			return GF_OK;
-		}
-
-		return rfc6381_codec_name_default(szCodec, subtype, ds->codec_id);
-	}
-	return GF_OK;
+	return gf_filter_pid_get_rfc_6381_codec_string(ds->ipid, szCodec, force_inband, force_sbr, tile_base_dcd, &ds->inband_params);
 }
-
 
 static GF_DashStream *get_base_ds(GF_DasherCtx *ctx, GF_DashStream *for_ds)
 {
@@ -3231,7 +2992,10 @@ static void dasher_open_pid(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashStream 
 	if (ctx->pssh == GF_DASH_PSSH_MPD) {
 		gf_filter_pid_set_property(ds->opid, GF_PROP_PID_CENC_PSSH, NULL);
 	}
-
+	//multi-stsd disabled, remove sdsd template (only needed at init)
+	if (ctx->pswitch != DASHER_PSWITCH_STSD) {
+		gf_filter_pid_set_property(ds->opid, GF_PROP_PID_ISOM_STSD_ALL_TEMPLATES, NULL);
+	}
 
 	//force PID ID
 	gf_filter_pid_set_property(ds->opid, GF_PROP_PID_ID, &PROP_UINT(ds->pid_id) );
@@ -3440,8 +3204,8 @@ static void dasher_setup_sources(GF_Filter *filter, GF_DasherCtx *ctx, GF_MPD_Ad
 				GF_SAFEALLOC(set->par, GF_MPD_Fractional);
 			}
 			if (set->par) {
-				set->par->num = ds->width;
-				set->par->den = ds->height;
+				set->par->num = ds->width * ds->sar.num;
+				set->par->den = ds->height * ds->sar.den;
 				gf_media_reduce_aspect_ratio(&set->par->num, &set->par->den);
 			}
 		}
@@ -5581,12 +5345,13 @@ static u32 dasher_period_count(GF_List *streams_in /*GF_DashStream*/)
 
 static void dasher_init_utc(GF_Filter *filter, GF_DasherCtx *ctx)
 {
+	u8 *data=NULL;
+	u64 remote_utc;
+#ifdef GPAC_USE_DOWNLOADER
+	GF_Err e;
 	const char *cache_name;
 	u32 size;
-	u8 *data;
-	u64 remote_utc;
-	GF_Err e;
-	GF_DownloadSession *sess;
+#endif
 	GF_DownloadManager *dm;
 	char *url;
 	DasherUTCTimingType def_type = DASHER_UTCREF_NONE;
@@ -5602,35 +5367,57 @@ static void dasher_init_utc(GF_Filter *filter, GF_DasherCtx *ctx)
 		url += 4;
 	}
 
-	dm  = gf_filter_get_download_manager(filter);
-	if (!dm) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to get download manager, cannot sync to remote UTC clock\n"));
-		return;
-	}
 	if (!strcmp(ctx->utcs, "inband")) {
 		ctx->utc_timing_type = DASHER_UTCREF_INBAND;
 		return;
 	}
-
-	sess = gf_dm_sess_new(dm, url, GF_NETIO_SESSION_MEMORY_CACHE|GF_NETIO_SESSION_NOT_THREADED, NULL, NULL, &e);
-	if (e) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to create session for remote UTC source %s: %s - local clock will be used instead\n", url, gf_error_to_string(e) ));
-		return;
+#ifndef GPAC_USE_DOWNLOADER
+	GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[DASH] No download manager, cannot sync to remote UTC clock\n"));
+	ctx->utc_timing_type = DASHER_UTCREF_NONE;
+	return;
+#else
+	//create session
+	if (!ctx->utc_sess) {
+		dm  = gf_filter_get_download_manager(filter);
+		if (!dm) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to get download manager, cannot sync to remote UTC clock\n"));
+			return;
+		}
+		ctx->utc_sess = gf_dm_sess_new(dm, url, GF_NETIO_SESSION_MEMORY_CACHE, NULL, NULL, &e);
+		if (e) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to create session for remote UTC source %s: %s - local clock will be used instead\n", url, gf_error_to_string(e) ));
+			return;
+		}
+		e = gf_dm_sess_process(ctx->utc_sess);
+		if (e==GF_IP_NETWORK_EMPTY) {
+			ctx->utc_initialized = GF_FALSE;
+			return;
+		}
 	}
-	while (1) {
-		GF_NetIOStatus status;
-		e = gf_dm_sess_process(sess);
-		if (e) break;
-		gf_dm_sess_get_stats(sess, NULL, NULL, NULL, NULL, NULL, &status);
-		if (status>=GF_NETIO_DATA_TRANSFERED) break;
+	//check we are done
+	GF_NetIOStatus status;
+	e = gf_dm_sess_get_stats(ctx->utc_sess, NULL, NULL, NULL, NULL, NULL, &status);
+	if (status==GF_NETIO_DATA_TRANSFERED) e = GF_OK;
+	else if (status==GF_NETIO_DATA_EXCHANGE) e = GF_NOT_READY;
+	else if (status==GF_NETIO_STATE_ERROR) {}
+	else if ((status==GF_NETIO_DISCONNECTED) && (e>=GF_OK))
+		e = GF_OK;
+	else
+		e = GF_NOT_READY;
+
+	if (e==GF_NOT_READY) {
+		ctx->utc_initialized = GF_FALSE;
+		return;
 	}
 	if (e<0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Failed to fetch remote UTC source %s: %s\n", url, gf_error_to_string(e) ));
-		gf_dm_sess_del(sess);
+		gf_dm_sess_del(ctx->utc_sess);
+		ctx->utc_sess = NULL;
 		return;
 	}
-	cache_name = gf_dm_sess_get_cache_name(sess);
+	cache_name = gf_dm_sess_get_cache_name(ctx->utc_sess);
 	gf_blob_get(cache_name, &data, &size, NULL);
+
 	if (data) {
 		//xsDate or isoDate - we always signal using iso
 		if (strchr(data, 'T')) {
@@ -5654,7 +5441,7 @@ static void dasher_init_utc(GF_Filter *filter, GF_DasherCtx *ctx)
 
 	//not match, try http date
 	if (!ctx->utc_timing_type) {
-		const char *hdr = gf_dm_sess_get_header(sess, "Date");
+		const char *hdr = gf_dm_sess_get_header(ctx->utc_sess, "Date");
 		if (hdr) {
 			//http-head
 			remote_utc = gf_net_parse_date(hdr);
@@ -5673,44 +5460,9 @@ static void dasher_init_utc(GF_Filter *filter, GF_DasherCtx *ctx)
 		} else {
 			GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[Dasher] Synchronized clock to remote %s - UTC diff (local - remote) %d ms\n", url, ctx->utc_diff));
 		}
-
-		if (!gf_list_count(ctx->mpd->utc_timings) ) {
-			Bool dashif_ok = GF_FALSE;
-			GF_MPD_Descriptor *utc_t;
-			GF_SAFEALLOC(utc_t, GF_MPD_Descriptor);
-			utc_t->value = gf_strdup(url);
-			switch (ctx->utc_timing_type) {
-			case DASHER_UTCREF_HTTP_HEAD:
-				utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-head:2014");
-				break;
-			case DASHER_UTCREF_XSDATE:
-				utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-xsdate:2014");
-				dashif_ok = GF_TRUE;
-				break;
-			case DASHER_UTCREF_ISO:
-				utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-iso:2014");
-				dashif_ok = GF_TRUE;
-				break;
-			case DASHER_UTCREF_NTP:
-				utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-ntp:2014");
-				dashif_ok = GF_TRUE;
-				break;
-			case DASHER_UTCREF_INBAND:
-				utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:direct:2014");
-				break;
-			default:
-				break;
-			}
-			if (!dashif_ok && (ctx->profile==GF_DASH_PROFILE_DASHIF_LL)) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] UTC reference %s allowed in DASH-IF Low Latency profile\n\tswitching to regular live profile\n", utc_t->scheme_id_uri));
-				ctx->profile = GF_DASH_PROFILE_LIVE;
-			}
-			if (!ctx->mpd->utc_timings)
-				ctx->mpd->utc_timings = gf_list_new();
-			gf_list_add(ctx->mpd->utc_timings, utc_t);
-		}
 	}
-	gf_dm_sess_del(sess);
+	gf_dm_sess_del(ctx->utc_sess);
+#endif
 }
 
 
@@ -6449,13 +6201,50 @@ static GF_Err dasher_setup_period(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashS
 	if (!ctx->mpd->availabilityStartTime && (ctx->dmode!=GF_MPD_TYPE_STATIC) && !inject_ds) {
 		u64 dash_start_date = ctx->ast ? gf_net_parse_date(ctx->ast) : 0;
 
-		if (!ctx->utc_initialized) {
-			dasher_init_utc(filter, ctx);
+		if (ctx->utc_timing_type != DASHER_UTCREF_NONE) {
+			if (!gf_list_count(ctx->mpd->utc_timings) ) {
+				Bool dashif_ok = GF_FALSE;
+				GF_MPD_Descriptor *utc_t;
+				char *url = ctx->utcs;
+				if (!strncmp(url, "xsd@", 4)) url += 4;
 
-			//setup service description
-			if (ctx->profile == GF_DASH_PROFILE_DASHIF_LL) {
-				ctx->mpd->inject_service_desc = GF_TRUE;
+				GF_SAFEALLOC(utc_t, GF_MPD_Descriptor);
+				utc_t->value = gf_strdup(url);
+				switch (ctx->utc_timing_type) {
+				case DASHER_UTCREF_HTTP_HEAD:
+					utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-head:2014");
+					break;
+				case DASHER_UTCREF_XSDATE:
+					utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-xsdate:2014");
+					dashif_ok = GF_TRUE;
+					break;
+				case DASHER_UTCREF_ISO:
+					utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-iso:2014");
+					dashif_ok = GF_TRUE;
+					break;
+				case DASHER_UTCREF_NTP:
+					utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:http-ntp:2014");
+					dashif_ok = GF_TRUE;
+					break;
+				case DASHER_UTCREF_INBAND:
+					utc_t->scheme_id_uri = gf_strdup("urn:mpeg:dash:utc:direct:2014");
+					break;
+				default:
+					break;
+				}
+				if (!dashif_ok && (ctx->profile==GF_DASH_PROFILE_DASHIF_LL)) {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] UTC reference %s allowed in DASH-IF Low Latency profile\n\tswitching to regular live profile\n", utc_t->scheme_id_uri));
+					ctx->profile = GF_DASH_PROFILE_LIVE;
+				}
+				if (!ctx->mpd->utc_timings)
+					ctx->mpd->utc_timings = gf_list_new();
+				gf_list_add(ctx->mpd->utc_timings, utc_t);
 			}
+		}
+
+		//setup service description
+		if (ctx->profile == GF_DASH_PROFILE_DASHIF_LL) {
+			ctx->mpd->inject_service_desc = GF_TRUE;
 		}
 
 		ctx->mpd->gpac_init_ntp_ms = gf_net_get_ntp_ms();
@@ -6550,7 +6339,7 @@ static GF_Err dasher_setup_period(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashS
 static void dasher_insert_timeline_entry(GF_DasherCtx *ctx, GF_DashStream *ds)
 {
 	GF_MPD_SegmentTimelineEntry *s;
-	u64 duration, pto;
+	u64 duration, pto, prev_patch_dur=0;
 	Bool is_first = GF_FALSE;
 	Bool seg_align = GF_FALSE;
 	GF_MPD_SegmentTimeline *tl=NULL;
@@ -6570,10 +6359,20 @@ static void dasher_insert_timeline_entry(GF_DasherCtx *ctx, GF_DashStream *ds)
 	if (gf_list_find(ds->set->representations, ds->rep)==0) is_first = GF_TRUE;
 	assert(ds->first_cts_in_next_seg > ds->first_cts_in_seg);
 	duration = ds->first_cts_in_next_seg - ds->first_cts_in_seg;
+
+		//handle sap time adjustment (first_cts_in_seg is the SAP cts, we may have lower cts whith sap 2 or 3)
+	if (ds->min_cts_in_seg_plus_one && (ds->min_cts_in_seg_plus_one-1 < ds->first_cts_in_seg)) {
+		prev_patch_dur = ds->first_cts_in_seg - (ds->min_cts_in_seg_plus_one-1);
+		if (ds->timescale != ds->mpd_timescale)
+			prev_patch_dur = gf_timestamp_rescale(prev_patch_dur, ds->timescale, ds->mpd_timescale);
+		ds->first_cts_in_seg = ds->min_cts_in_seg_plus_one-1;
+		duration += prev_patch_dur;
+		ds->seg_start_time -= prev_patch_dur;
+	}
+
 	pto = ds->presentation_time_offset;
 	if (ds->timescale != ds->mpd_timescale) {
-		duration *= ds->mpd_timescale;
-		duration /= ds->timescale;
+		duration = gf_timestamp_rescale(duration, ds->timescale, ds->mpd_timescale);
 
 		pto = gf_timestamp_rescale(pto, ds->timescale, ds->mpd_timescale);
 	}
@@ -6655,10 +6454,38 @@ static void dasher_insert_timeline_entry(GF_DasherCtx *ctx, GF_DashStream *ds)
 
 	//append to previous entry if possible
 	s = gf_list_last(tl->entries);
+
+	if (prev_patch_dur) {
+		u32 nb_ent = gf_list_count(tl->entries);
+		//split entry
+		if (s->repeat_count) {
+			GF_MPD_SegmentTimelineEntry *next;
+			s->repeat_count--;
+			GF_SAFEALLOC(next, GF_MPD_SegmentTimelineEntry);
+			if (!next) return;
+			next->duration = (u32) (s->duration - prev_patch_dur);
+			next->start_time = s->start_time + (s->repeat_count+1) * s->duration;
+			gf_list_add(tl->entries, next);
+			s = next;
+		} else {
+			//update entry
+			s->duration -= (u32) prev_patch_dur;
+			//merge with old one if possible
+			GF_MPD_SegmentTimelineEntry *prev = (nb_ent>1) ? gf_list_get(tl->entries, nb_ent-2) : NULL;
+			if (prev && (prev->duration==s->duration) && (prev->start_time + (prev->repeat_count+1) * prev->duration == s->start_time)) {
+				prev->repeat_count++;
+				gf_list_pop_back(tl->entries);
+				gf_free(s);
+				s=prev;
+			}
+		}
+	}
+
 	if (s && (s->duration == duration) && (s->start_time + (s->repeat_count+1) * s->duration == ds->seg_start_time + pto)) {
 		s->repeat_count++;
 		return;
 	}
+
 	//nope, allocate
 	GF_SAFEALLOC(s, GF_MPD_SegmentTimelineEntry);
 	if (!s) return;
@@ -6894,6 +6721,7 @@ static void dasher_flush_segment(GF_DasherCtx *ctx, GF_DashStream *ds, Bool is_l
 
 		if (!ds->done) {
 			ds->first_cts_in_next_seg = ds->first_cts_in_seg = ds->est_first_cts_in_next_seg = 0;
+			ds->min_cts_in_seg_plus_one = 0;
 		}
 
 		if (ds->muxed_base) {
@@ -6939,17 +6767,19 @@ static void dasher_flush_segment(GF_DasherCtx *ctx, GF_DashStream *ds, Bool is_l
 			}
 #endif
 
-			assert(base_ds->segment_started);
-			base_ds->segment_started = GF_FALSE;
+			//it may happen that we get a reconfigure triggered while no segment is active
+			if (base_ds->segment_started) {
+				base_ds->segment_started = GF_FALSE;
 
-			base_ds->next_seg_start += (u64) (base_ds->dash_dur.num) * base_ds->timescale / base_ds->dash_dur.den;
-			while (base_ds->next_seg_start <= base_ds->adjusted_next_seg_start) {
 				base_ds->next_seg_start += (u64) (base_ds->dash_dur.num) * base_ds->timescale / base_ds->dash_dur.den;
-				if (ctx->skip_seg)
-					base_ds->seg_number ++;
+				while (base_ds->next_seg_start <= base_ds->adjusted_next_seg_start) {
+					base_ds->next_seg_start += (u64) (base_ds->dash_dur.num) * base_ds->timescale / base_ds->dash_dur.den;
+					if (ctx->skip_seg)
+						base_ds->seg_number ++;
+				}
+				base_ds->adjusted_next_seg_start = base_ds->next_seg_start;
+				base_ds->seg_number ++;
 			}
-			base_ds->adjusted_next_seg_start = base_ds->next_seg_start;
-			base_ds->seg_number ++;
 		}
 	}
 
@@ -6957,8 +6787,9 @@ static void dasher_flush_segment(GF_DasherCtx *ctx, GF_DashStream *ds, Bool is_l
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[Dasher] Rep#%s flush seg %d start %g duration %g next seg end time %g\n", ds_log->rep->id, ds_log->seg_number-1, ((Double)first_cts_in_cur_seg)/ds_log->timescale, ((Double)seg_dur_ms)/1000, ((Double)ds_log->adjusted_next_seg_start)/ds_log->timescale));
 	}
 
-	//muxed representation with unaligned duration,
+	//muxed representation with unaligned duration, report all done reps to number of components done
 	if (has_ds_done) {
+		base_ds->nb_comp_done = 0;
 		for (i=0; i<count; i++) {
 			ds = gf_list_get(ctx->current_period->streams, i);
 			//otherwise reset only media components for this rep
@@ -6968,6 +6799,10 @@ static void dasher_flush_segment(GF_DasherCtx *ctx, GF_DashStream *ds, Bool is_l
 				base_ds->nb_comp_done++;
 			}
 		}
+	}
+	else if (ds->muxed_base) {
+		//force reset if muxed base and no rep is over
+		base_ds->nb_comp_done = 0;
 	}
 
 	//some reps are done, other not, force a max time on all AS in the period
@@ -7763,7 +7598,6 @@ static void dasher_send_empty_segment(GF_DasherCtx *ctx, GF_DashStream *ds)
 		dasher_flush_segment(ctx, ds, GF_FALSE);
 
 		ds->first_cts_in_seg = next_cts;
-		ds->nb_comp_done = 0;
 		ds->split_dur_next = 0;
 	}
 
@@ -7816,6 +7650,10 @@ static GF_Err dasher_process(GF_Filter *filter)
 		gf_filter_abort(filter);
 		return GF_SERVICE_ERROR;
 	}
+	if (!ctx->utc_initialized) {
+		dasher_init_utc(filter, ctx);
+		if (!ctx->utc_initialized) return GF_OK;
+	}
 
 	//session regulation is on and we have a an MPD (setup done) and a next time (first seg processed)
 	//check if we have reached the next time
@@ -7856,10 +7694,11 @@ static GF_Err dasher_process(GF_Filter *filter)
 	count = gf_list_count(ctx->current_period->streams);
 	if (!ctx->min_cts_period.den) {
 		u64 min_ts=0, min_timescale = 0;
+		u32 num_ready=0, num_blocked=0;
 		for (i=0; i<count; i++) {
 			GF_DashStream *ds = gf_list_get(ctx->current_period->streams, i);
 			GF_FilterPacket *pck = gf_filter_pid_get_packet(ds->ipid);
-			if (!pck) return GF_OK;
+			if (!pck) continue;
 			u64 ts = gf_filter_pck_get_cts(pck);
 			//only adjust if delay is negative (skip), otherwise (delay) keep mints as is.
 			//Not doing so will set the rep PTO to the delay, canceling the delay ...
@@ -7869,6 +7708,11 @@ static GF_Err dasher_process(GF_Filter *filter)
 				min_ts = ts;
 				min_timescale = ds->timescale;
 			}
+			num_ready++;
+			if (gf_filter_pid_would_block(ds->ipid)) num_blocked++;
+		}
+		if (count) {
+			if (num_ready < num_blocked) return GF_OK;
 		}
 		ctx->min_cts_period.num = min_ts;
 		ctx->min_cts_period.den = min_timescale;
@@ -7889,6 +7733,7 @@ static GF_Err dasher_process(GF_Filter *filter)
 		if (ds->seg_done) continue;
 
 		if (ctx->dmode == GF_MPD_TYPE_DYNAMIC_LAST) {
+			if (!ds->done && ds->opid) gf_filter_pid_set_eos(ds->opid);
 			ds->done = 1;
 			continue;
 		}
@@ -8045,7 +7890,6 @@ static GF_Err dasher_process(GF_Filter *filter)
 					base_ds->nb_comp_done ++;
 					if (base_ds->nb_comp_done == base_ds->nb_comp) {
 						dasher_flush_segment(ctx, base_ds, GF_FALSE);
-						base_ds->nb_comp_done = 0;
 					}
 					//loop on the entire source, mark as done for subdur and check if all other streams are done
 					if (!ds->done) {
@@ -8070,6 +7914,18 @@ static GF_Err dasher_process(GF_Filter *filter)
 						ds->nb_repeat++;
 						ds->reschedule = GF_TRUE;
 						gf_filter_pid_discard_block(ds->opid);
+					}
+				}
+				//no packet, muxed rep and base DS done, flush - required if no packet is present for the segment
+				//typically for subs
+				else if (ds->muxed_base && base_ds->seg_done && !ds->seg_done && !ds->is_av) {
+					ds->seg_done = GF_TRUE;
+					ds->first_cts_in_next_seg = ds->est_first_cts_in_next_seg;
+					ds->est_first_cts_in_next_seg = 0;
+					assert(base_ds->nb_comp_done < base_ds->nb_comp);
+					base_ds->nb_comp_done ++;
+					if (base_ds->nb_comp_done == base_ds->nb_comp) {
+						dasher_flush_segment(ctx, base_ds, GF_FALSE);
 					}
 				}
 				break;
@@ -8549,6 +8405,14 @@ static GF_Err dasher_process(GF_Filter *filter)
 							ds->set->starts_with_sap = sap_type;
 					}
 
+					//if sap2, silently move startWithSAP to 2 if previsouly 0,1 or 2
+					if (sap_type == GF_FILTER_SAP_2) {
+						if (ctx->sseg)
+							ds->set->subsegment_starts_with_sap = MAX(ds->set->subsegment_starts_with_sap, sap_type);
+						else
+							ds->set->starts_with_sap = MAX(ds->set->starts_with_sap, sap_type);
+					}
+
 					seg_over = GF_TRUE;
 					if (ds == base_ds) {
 						base_ds->adjusted_next_seg_start = cts;
@@ -8629,6 +8493,12 @@ static GF_Err dasher_process(GF_Filter *filter)
 			}
 			ds->nb_pck ++;
 
+			if (!ds->min_cts_in_seg_plus_one)
+				ds->min_cts_in_seg_plus_one = cts+1;
+			else if (ds->min_cts_in_seg_plus_one - 1 > cts)
+				ds->min_cts_in_seg_plus_one = cts+1;
+
+
 			if (ctx->sigfrag) {
 				if (!ds->segment_started) {
 					ds->first_cts_in_seg = cts;
@@ -8703,6 +8573,10 @@ static GF_Err dasher_process(GF_Filter *filter)
 				gf_filter_pck_set_dependency_flags(dst, dep_flags);
 				//this one might be incorrect of this split packet is also split, but we update the duration right below
 				gf_filter_pck_set_duration(dst, dur);
+
+				//undo cts shift, we use it just below to compute cumulated dur using orig_cts (stored before shift)
+				if (diff)
+					cts -= ds->first_cts;
 			}
 
 			//if split, adjust duration - this may happen on a split packet, if it covered 3 or more segments
@@ -8712,6 +8586,7 @@ static GF_Err dasher_process(GF_Filter *filter)
 				//adjust dur
 				cumulated_split_dur += (u32) (cts - orig_cts);
 				assert( dur > split_dur);
+				assert( cumulated_split_dur <= gf_filter_pck_get_duration(pck) );
 				ds->split_dur_next = cumulated_split_dur;
 				dur = split_dur;
 			}
@@ -8787,6 +8662,7 @@ static GF_Err dasher_process(GF_Filter *filter)
 		else if (ds->seg_done && ctx->force_period_switch) nb_init++;
 		else if (ds->seg_done && ds->muxed_base && ds->muxed_base->done) {
 			nb_init++;
+			if (!ds->done && ds->opid) gf_filter_pid_set_eos(ds->opid);
 			ds->done = 1;
 		}
 	}
@@ -9292,12 +9168,18 @@ static GF_Err dasher_setup_profile(GF_DasherCtx *ctx)
 		ctx->sseg = ctx->sfile = GF_FALSE;
 		ctx->no_fragments_defaults = ctx->align = ctx->tpl = ctx->sap = GF_TRUE;
 		if (!ctx->utcs) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] DASH-IF LL requires UTCTiming but none specified, using http://time.akamai.com/?iso \n"));
-			ctx->utcs = gf_strdup("http://time.akamai.com/?iso");
+			const char *default_utc_timing_server = "https://time.akamai.com/?iso&ms";
+			GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] DASH-IF LL requires UTCTiming but none specified, using %s \n", default_utc_timing_server));
+			ctx->utcs = gf_strdup(default_utc_timing_server);
 		}
 		break;
 	default:
 		break;
+	}
+
+	if ((ctx->bs_switch == DASHER_BS_SWITCH_MULTI) && (ctx->pswitch == DASHER_PSWITCH_STSD)) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[Dasher] Cannot use `stsd` period switch with `multi` bitstream switching, disabling pswitch\n"));
+		ctx->pswitch = DASHER_PSWITCH_SINGLE;
 	}
 
 	if (ctx->sseg)
@@ -9412,10 +9294,6 @@ static GF_Err dasher_initialize(GF_Filter *filter)
 	if ((ctx->tsb>=0) && (ctx->dmode!=GF_DASH_STATIC))
 		ctx->purge_segments = GF_TRUE;
 
-	if (ctx->llhls && !ctx->cmaf && !gf_sys_is_test_mode()) {
-		//cmaf is required for ll hls (at least tfdt per traf is)
-		ctx->cmaf = DASHER_CMAF_CMFC;
-	}
 	if (ctx->state && ctx->sreg) {
 		u32 diff;
 		u64 next_gen_ntp;
@@ -9428,6 +9306,15 @@ static GF_Err dasher_initialize(GF_Filter *filter)
 			return e;
 		}
 	}
+
+
+	dasher_init_utc(filter, ctx);
+
+#ifdef GPAC_CONFIG_EMSCRIPTEN
+	//we need to read the state file so we must run on main thread
+	if (ctx->state)
+		gf_filter_force_main_thread(filter, GF_TRUE);
+#endif
 	return GF_OK;
 }
 
@@ -9660,7 +9547,10 @@ static const GF_FilterArgs DasherArgs[] =
 		"- cmfc: use CMAF `cmfc` guidelines\n"
 		"- cmf2: use CMAF `cmf2` guidelines"
 		, GF_PROP_UINT, "no", "no|cmfc|cmf2", GF_FS_ARG_HINT_ADVANCED},
-	{ OFFS(pswitch), "force period switch instead of absorbing PID reconfiguration (for splicing or add insertion not using periodID)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_HIDE},
+	{ OFFS(pswitch), "period switch control mode\n"
+		"- single: change period if PID configuration changes\n"
+		"- force: force period switch at each PID reconfiguration instead of absorbing PID reconfiguration (for splicing or add insertion not using periodID)\n"
+		"- stsd: change period if PID configuration changes unless new configuration was advertised in initial config", GF_PROP_UINT, "single", "single|force|stsd", GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(chain), "URL of next MPD for regular chaining", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(chain_fbk), "URL of fallback MPD", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(gencues), "only insert segment boundaries and do not generate manifests", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -9793,7 +9683,7 @@ GF_FilterRegister DasherRegister = {
 "- asto: set the availability time offset for DASH. This value should be equal or slightly greater than segment duration minus cdur\n"
 "- llhls: enable low latency for HLS\n"
 "\n"
-"Note: [-llhls]() will force CMAF to `cmfc` if [-cmaf]() is not set.\n"
+"Note: [-llhls]() does not force `cmaf` mode to allow for multiplexed media in segments but it enforces to `tfdt_traf` in the muxer.\n"
 "\n"
 "If your sources are not real-time, insert a reframer filter with real-time regulation\n"
 "EX gpac -i source.mp4 reframer:rt=on -o live.mpd:segdur=2:cdur=0.2:asto=1.8:profile=live:dmode=dynamic\n"

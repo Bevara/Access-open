@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2022
+ *			Copyright (c) Telecom ParisTech 2017-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -1059,7 +1059,6 @@ enum
 	GF_PROP_PID_FPS = GF_4CC('V','F','P','F'),
 	GF_PROP_PID_INTERLACED = GF_4CC('V','I','L','C'),
 	GF_PROP_PID_SAR = GF_4CC('P','S','A','R'),
-	GF_PROP_PID_PAR = GF_4CC('V','P','A','R'),
 	GF_PROP_PID_WIDTH_MAX = GF_4CC('M', 'W','I','D'),
 	GF_PROP_PID_HEIGHT_MAX = GF_4CC('M', 'H','E','I'),
 	GF_PROP_PID_ZORDER = GF_4CC('V', 'Z','I','X'),
@@ -1107,6 +1106,7 @@ enum
 	GF_PROP_PID_HAS_SYNC = GF_4CC('P','S','Y','N'),
 	GF_PROP_SERVICE_WIDTH = GF_4CC('D','W','D','T'),
 	GF_PROP_SERVICE_HEIGHT = GF_4CC('D','H','G','T'),
+	GF_PROP_PID_IS_DEFAULT = GF_4CC('P','D','E','F'),
 	GF_PROP_PID_CAROUSEL_RATE = GF_4CC('C','A','R','A'),
 	GF_PROP_PID_AUDIO_VOLUME = GF_4CC('A','V','O','L'),
 	GF_PROP_PID_AUDIO_PAN = GF_4CC('A','P','A','N'),
@@ -1157,6 +1157,8 @@ enum
 	GF_PROP_PID_ISOM_TRACK_TEMPLATE = GF_4CC('I','T','K','T'),
 	GF_PROP_PID_ISOM_TREX_TEMPLATE = GF_4CC('I','T','X','T'),
 	GF_PROP_PID_ISOM_STSD_TEMPLATE = GF_4CC('I','S','T','D'),
+	GF_PROP_PID_ISOM_STSD_TEMPLATE_IDX = GF_4CC('I','S','T','I'),
+	GF_PROP_PID_ISOM_STSD_ALL_TEMPLATES = GF_4CC('I','S','T','A'),
 	GF_PROP_PID_ISOM_UDTA = GF_4CC('I','M','U','D'),
 	GF_PROP_PID_ISOM_HANDLER = GF_4CC('I','H','D','L'),
 	GF_PROP_PID_ISOM_TRACK_FLAGS = GF_4CC('I','T','K','F'),
@@ -1238,6 +1240,7 @@ enum
 	GF_PROP_PID_CUBE_MAP_PAD = GF_4CC('P','C','M','P'),
 	GF_PROP_PID_EQR_CLAMP = GF_4CC('P','E','Q','C'),
 	GF_PROP_PID_SPARSE = GF_4CC('P','S','P','A'),
+	GF_PROP_PID_CHARSET = GF_4CC('P','C','H','S'),
 
 	GF_PROP_PID_SCENE_NODE = GF_4CC('P','S','N','D'),
 	GF_PROP_PID_ORIG_CRYPT_SCHEME = GF_4CC('P','O','C','S'),
@@ -1272,7 +1275,7 @@ enum
 
 	//PID has temi information
 	GF_PROP_PID_HAS_TEMI = GF_4CC('P','T','E','M'),
-	//PID has no init segment associated (file foward mode of dasher)
+	//PID has no init segment associated (file forward mode of dasher)
 	GF_PROP_PID_NO_INIT = GF_4CC('P','N','I','N'),
 
 	GF_PROP_PID_IS_MANIFEST = GF_4CC('P','H','S','M'),
@@ -1444,8 +1447,10 @@ typedef struct {
 	u32 type;
 	/*! name */
 	const char *name;
+#ifndef GPAC_DISABLE_DOC
 	/*! description */
 	const char *description;
+#endif
 	/*! data type  (uint, float, etc ..) */
 	u8 data_type;
 	/*! flags for the property */
@@ -2204,6 +2209,10 @@ typedef enum
 	GF_FS_REG_SINGLE_THREAD = 1<<13,
 	/*! Indicates the filter needs to be initialized even if temoorary - see \ref gf_filter_is_temporary. Always enabled if GF_FS_REG_META is set */
 	GF_FS_REG_TEMP_INIT = 1<<14,
+	/*! Indicates the filter uses libc sync file read - only needed for emscripten multithreaded support for now, translated into GF_FS_REG_MAIN_THREAD */
+	GF_FS_REG_USE_SYNC_READ = 1<<15,
+	/*! Indicates the filter may block the main thread (configure, process) - only needed for emscripten multithreaded support*/
+	GF_FS_REG_BLOCK_MAIN = 1<<16,
 
 
 	/*! flag dynamically set at runtime for custom filters*/
@@ -3120,9 +3129,10 @@ const GF_FilterCapability *gf_filter_get_caps(GF_Filter *filter, u32 *nb_caps);
 \param filter target filter
 \param data buffer to probe
 \param size size of buffer
+\param score ste to the probing score, may be NULL
 \return the mime type probed, or NULL if not recognized
 */
-const char *gf_filter_probe_data(GF_Filter *filter, u8 *data, u32 size);
+const char *gf_filter_probe_data(GF_Filter *filter, u8 *data, u32 size, GF_FilterProbeScore *score);
 
 /*! checks if the given filter is an alias filter created by a multiple sink filter
 \param filter target filter
@@ -3233,6 +3243,14 @@ void gf_filter_meta_set_instances(GF_Filter *filter, const char *instance_names_
 \return NULL or space-separated names of meta filter instances, without meta registry name. eg "negate" for ffavf::f=negate
 */
 const char *gf_filter_meta_get_instances(GF_Filter *filter);
+
+
+/*! Locates start of gpac option separator in a url path
+\param filter target filter
+\param path path to analyze
+\return NULL or first option found (including option separator)
+*/
+const char *gf_filter_path_escape_colon(GF_Filter *filter, const char *path);
 
 /*! @} */
 
@@ -3569,6 +3587,13 @@ typedef struct
 	/*! loss rate in per-thousand - input pid only */
 	u32 loss_rate;
 
+	/*! timestamp and timescale of last packet droped
+		- For input PID, set to last packet dropped
+		- For output PID, set to maximum TS value of last packet dropped on all PID destinations
+	*/
+	GF_Fraction64 last_ts_drop;
+	/*! timestamp and timescale of last packet send on PID (for output PID) or on parent PID (for input PID)	*/
+	GF_Fraction64 last_ts_sent;
 } GF_FilterPidStatistics;
 
 /*! Direction for stats querying*/
@@ -3999,6 +4024,19 @@ Bool gf_filter_pid_has_decoder(GF_FilterPid *PID);
 \return error if any
 */
 GF_Err gf_filter_pid_set_rt_stats(GF_FilterPid *PID, u32 rtt_ms, u32 jitter_us, u32 loss_rate);
+
+
+/*! Returns RFC6381 "codec" string of a PID
+
+\param PID the target filter PID
+\param szCodec string to be written, must be RFC6381_CODEC_NAME_SIZE_MAX at least
+\param force_inband forces inband signaling for avc/hevc/etc
+\param force_sbr forces SBR signaling for AAC
+\param tile_base_dcd decoder config of tiled base track if known, may be NULL otherwise
+\param out_inband_forced set to 1 if inband is to be forced (dasher only) - may be NULL
+\return error if any
+*/
+GF_Err gf_filter_pid_get_rfc_6381_codec_string(GF_FilterPid *PID, char *szCodec, Bool force_inband, Bool force_sbr, const GF_PropertyValue *tile_base_dcd, u32 *out_inband_forced);
 
 /*! @} */
 

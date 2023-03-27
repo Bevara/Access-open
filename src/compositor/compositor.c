@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -27,6 +27,8 @@
 #include <gpac/utf.h>
 #include <gpac/modules/hardcoded_proto.h>
 #include <gpac/modules/compositor_ext.h>
+
+#ifndef GPAC_DISABLE_COMPOSITOR
 
 #include "nodes_stacks.h"
 
@@ -665,6 +667,15 @@ static GF_Err gf_sc_load_driver(GF_Compositor *compositor)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Compositor] Failed to load a video output module.\n"));
 		return GF_IO_ERR;
 	}
+
+#ifdef GPAC_CONFIG_EMSCRIPTEN
+	if (compositor->player) {
+		void gpac_force_step_mode(Bool for_display);
+		gpac_force_step_mode(compositor->player ? GF_TRUE : GF_FALSE);
+	}
+#endif
+
+
 
 	sOpt = gf_opts_get_key("temp", "window-display");
 	if (sOpt) sscanf(sOpt, "%p", &os_disp);
@@ -1863,9 +1874,11 @@ GF_Err gf_sc_set_option(GF_Compositor *compositor, GF_CompositorOption type, u32
 
 	case GF_OPT_HTTP_MAX_RATE:
 	{
+#ifndef GPAC_DISABLE_NETWORK
 		GF_DownloadManager *dm = gf_filter_get_download_manager(compositor->filter);
 		if (!dm) return GF_SERVICE_ERROR;
 		gf_dm_set_data_rate(dm, value);
+#endif
 		e = GF_OK;
 		break;
 	}
@@ -2048,6 +2061,7 @@ GF_Err gf_sc_get_screen_buffer(GF_Compositor *compositor, GF_VideoSurface *frame
 #endif
 		/*no depth dump in 2D mode*/
 		if (depth_dump_mode) e = GF_NOT_SUPPORTED;
+		else if (!compositor->video_out->LockBackBuffer) e = GF_NOT_SUPPORTED;
 		else e = compositor->video_out->LockBackBuffer(compositor->video_out, framebuffer, 1);
 
 	if (e != GF_OK) gf_mx_v(compositor->mx);
@@ -4444,11 +4458,15 @@ static u32 gf_sc_get_option_internal(GF_Compositor *compositor, u32 type)
 	case GF_OPT_CAN_SELECT_STREAMS:
 		return (compositor->root_scene && compositor->root_scene->is_dynamic_scene) ? 1 : 0;
 	case GF_OPT_HTTP_MAX_RATE:
+#ifndef GPAC_DISABLE_NETWORK
 	{
 		GF_DownloadManager *dm = gf_filter_get_download_manager(compositor->filter);
 		if (!dm) return 0;
 		return gf_dm_get_data_rate(dm);
 	}
+#else
+		return 0;
+#endif
 	case GF_OPT_VIDEO_BENCH:
 		return compositor->bench_mode ? GF_TRUE : GF_FALSE;
 	case GF_OPT_ORIENTATION_SENSORS_ACTIVE:
@@ -5181,3 +5199,5 @@ u32 gf_sc_get_current_service_id(GF_Compositor *compositor)
 	if (mo && mo->odm) return mo->odm->ServiceID;
 	return 0;
 }
+
+#endif // GPAC_DISABLE_COMPOSITOR

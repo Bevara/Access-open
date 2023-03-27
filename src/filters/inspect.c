@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2022
+ *			Copyright (c) Telecom ParisTech 2017-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / inspection filter
@@ -129,6 +129,7 @@ typedef struct
 	Bool has_seen_eos;
 } GF_InspectCtx;
 
+static void format_duration(s64 dur, u64 timescale, FILE *dump, Bool skip_name);
 
 GF_Err gf_bs_set_logger(GF_BitStream *bs, void (*on_bs_log)(void *udta, const char *field_name, u32 nb_bits, u64 field_val, s32 idx1, s32 idx2, s32 idx3), void *udta);
 
@@ -1241,11 +1242,26 @@ static void gf_inspect_dump_nalu_internal(FILE *dump, u8 *ptr, u32 ptr_size, Boo
 	}
 }
 
+static u32 inspect_get_analyze_mode()
+{
+	u32 i, nb_args = gf_sys_get_argc();
+	for (i=1;i<nb_args;i++) {
+		const char *arg = gf_sys_get_arg(i);
+		if (!strncmp(arg, "--analyze=", 10)) {
+			if (!strcmp(arg+10, "on")) return INSPECT_ANALYZE_ON;
+			else if (!strcmp(arg+10, "bs")) return INSPECT_ANALYZE_BS;
+			else if (!strcmp(arg+10, "full")) return INSPECT_ANALYZE_BS_BITS;
+			return INSPECT_ANALYZE_OFF;
+		}
+	}
+	return INSPECT_ANALYZE_OFF;
+}
+
 GF_EXPORT
 void gf_inspect_dump_nalu(FILE *dump, u8 *ptr, u32 ptr_size, Bool is_svc, HEVCState *hevc, AVCState *avc, VVCState *vvc, u32 nalh_size, Bool dump_crc, Bool is_encrypted)
 {
 	if (!dump) return;
-	gf_inspect_dump_nalu_internal(dump, ptr, ptr_size, is_svc, hevc, avc, vvc, nalh_size, dump_crc, is_encrypted, 0, NULL);
+	gf_inspect_dump_nalu_internal(dump, ptr, ptr_size, is_svc, hevc, avc, vvc, nalh_size, dump_crc, is_encrypted, inspect_get_analyze_mode(), NULL);
 }
 
 static void av1_dump_tile(FILE *dump, u32 idx, AV1Tile *tile)
@@ -1393,7 +1409,7 @@ GF_EXPORT
 void gf_inspect_dump_obu(FILE *dump, AV1State *av1, u8 *obu_ptr, u64 obu_ptr_length, ObuType obu_type, u64 obu_size, u32 hdr_size, Bool dump_crc)
 {
 	if (!dump) return;
-	gf_inspect_dump_obu_internal(dump, av1, obu_ptr, obu_ptr_length, obu_type, obu_size, hdr_size, dump_crc, NULL, 0);
+	gf_inspect_dump_obu_internal(dump, av1, obu_ptr, obu_ptr_length, obu_type, obu_size, hdr_size, dump_crc, NULL, inspect_get_analyze_mode());
 }
 
 static void gf_inspect_dump_prores_internal(FILE *dump, u8 *ptr, u64 frame_size, Bool dump_crc, PidCtx *pctx)
@@ -1976,6 +1992,7 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 
 	switch (p4cc) {
 	case GF_PROP_PID_DOWNLOAD_SESSION:
+	case GF_PROP_PID_MUX_INDEX:
 	case GF_PROP_PCK_END_RANGE:
 		return;
 	case GF_PROP_PCK_SENDER_NTP:
@@ -2100,6 +2117,8 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 
 		case GF_PROP_PID_ISOM_TREX_TEMPLATE:
 		case GF_PROP_PID_ISOM_STSD_TEMPLATE:
+		case GF_PROP_PID_ISOM_STSD_TEMPLATE_IDX:
+		case GF_PROP_PID_ISOM_STSD_ALL_TEMPLATES:
 			//TODO once all OK: remove this test and regenerate all hashes
 			if (gf_sys_is_test_mode())
 				return;
@@ -2176,6 +2195,9 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 			}
 		}else{
 			inspect_printf(dump, "%s", gf_props_dump(p4cc, att, szDump, (GF_PropDumpDataMode) ctx->dump_data) );
+		}
+		if ((p4cc==GF_PROP_PID_DURATION) && !gf_sys_is_test_mode()) {
+			format_duration(att->value.lfrac.num, att->value.lfrac.den, dump, GF_TRUE);
 		}
 		inspect_printf(dump, "\n");
 	}
@@ -3157,7 +3179,7 @@ static void inspect_reset_parsers(PidCtx *pctx, void *keep_parser_address)
 }
 #endif
 
-static void format_duration(s64 dur, u64 timescale, FILE *dump)
+static void format_duration(s64 dur, u64 timescale, FILE *dump, Bool skip_name)
 {
 	u32 h, m, s, ms;
 	const char *name = "duration";
@@ -3178,16 +3200,20 @@ static void format_duration(s64 dur, u64 timescale, FILE *dump)
 	m = (u32) (dur/ 60000) - h*60;
 	s = (u32) (dur/1000) - h*3600 - m*60;
 	ms = (u32) (dur) - h*3600000 - m*60000 - s*1000;
+	if (skip_name)
+		inspect_printf(dump, " (");
+	else
+		inspect_printf(dump, " %s ", name);
 	if (h<=24) {
 		if (h)
-			inspect_printf(dump, " %s %02d:%02d:%02d.%03d", name, h, m, s, ms);
+			inspect_printf(dump, "%02d:%02d:%02d.%03d", h, m, s, ms);
 		else
-			inspect_printf(dump, " %s %02d:%02d.%03d", name, m, s, ms);
+			inspect_printf(dump, "%02d:%02d.%03d", m, s, ms);
 	} else {
 		u32 d = (u32) (dur / 3600000 / 24);
 		h = (u32) (dur/3600000)-24*d;
 		if (d<=365) {
-			inspect_printf(dump, " %s %d Days, %02d:%02d:%02d.%03d", name, d, h, m, s, ms);
+			inspect_printf(dump, "%d Days, %02d:%02d:%02d.%03d", d, h, m, s, ms);
 		} else {
 			u32 y=0;
 			while (d>365) {
@@ -3195,20 +3221,26 @@ static void format_duration(s64 dur, u64 timescale, FILE *dump)
 				d-=365;
 				if (y%4) d--;
 			}
-			inspect_printf(dump, " %s %d Years %d Days, %02d:%02d:%02d.%03d", name, y, d, h, m, s, ms);
+			inspect_printf(dump, "%d Years %d Days, %02d:%02d:%02d.%03d", y, d, h, m, s, ms);
 		}
 	}
+	if (skip_name)
+		inspect_printf(dump, ")");
 }
 
 
 static void inspect_dump_pid_as_info(GF_InspectCtx *ctx, FILE *dump, GF_FilterPid *pid, u32 pid_idx, Bool is_connect, Bool is_remove, u64 pck_for_config, Bool is_info, PidCtx *pctx)
 {
+	char szCodec[RFC6381_CODEC_NAME_SIZE_MAX];
 	const GF_PropertyValue *p, *dsi, *dsi_enh;
 	Bool is_raw=GF_FALSE;
 	Bool is_protected=GF_FALSE;
 	u32 codec_id=0;
 
 	if (!ctx->dump_log && !dump) return;
+
+	szCodec[0] = 0;
+	gf_filter_pid_get_rfc_6381_codec_string(pid, szCodec, GF_FALSE, GF_FALSE, NULL, NULL);
 
 	inspect_printf(dump, "PID");
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_ID);
@@ -3253,7 +3285,7 @@ static void inspect_dump_pid_as_info(GF_InspectCtx *ctx, FILE *dump, GF_FilterPi
 	if (p && stricmp(p->value.string, "und")) inspect_printf(dump, " language \"%s\"", p->value.string);
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_DURATION);
-	if (p) format_duration((s64) p->value.lfrac.num, (u32) p->value.lfrac.den, dump);
+	if (p) format_duration((s64) p->value.lfrac.num, (u32) p->value.lfrac.den, dump, GF_FALSE);
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
 	if (p) inspect_printf(dump, " timescale %d", p->value.uint);
@@ -3336,6 +3368,8 @@ static void inspect_dump_pid_as_info(GF_InspectCtx *ctx, FILE *dump, GF_FilterPi
 	}
 
 	inspect_printf(dump, " codec");
+	if (szCodec[0] && strcmp(szCodec, "unkn"))
+		inspect_printf(dump, " %s", szCodec);
 
 #ifndef GPAC_DISABLE_AV_PARSERS
 	if ((codec_id==GF_CODECID_HEVC) || (codec_id==GF_CODECID_LHVC) || (codec_id==GF_CODECID_HEVC_TILES)) {

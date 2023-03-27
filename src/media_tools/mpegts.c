@@ -823,6 +823,11 @@ static void gf_m2ts_process_sdt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *ses, GF
 		descs_size = ((data[pos+3]&0xf)<<8) | data[pos+4];
 		pos += 5;
 
+		if (pos+descs_size > data_size) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid descriptors size read from data (%u)\n"));
+			return;
+		}
+
 		d_pos = 0;
 		while (d_pos < descs_size) {
 			u8 d_tag = data[pos+d_pos];
@@ -938,6 +943,11 @@ static void gf_m2ts_process_tdt_tot(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *tdt
 	GF_SAFEALLOC(time_table, GF_M2TS_TDT_TOT);
 	if (!time_table) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Fail to alloc DVB time table\n"));
+		return;
+	}
+
+	if (data_size < 5) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Section data size too small to read date (len: %u)\n", data_size));
 		return;
 	}
 
@@ -1139,7 +1149,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 	u32 info_length, pos, desc_len, evt_type, nb_es,i;
 	u32 nb_sections;
 	u32 data_size;
-	u32 nb_hevc, nb_hevc_temp, nb_shvc, nb_shvc_temp, nb_mhvc, nb_mhvc_temp;
+	u32 nb_hevc_temp, nb_shvc, nb_shvc_temp, nb_mhvc, nb_mhvc_temp;
 	unsigned char *data;
 	GF_M2TS_Section *section;
 	GF_Err e = GF_OK;
@@ -1256,7 +1266,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 		}
 	}
 
-	nb_hevc = nb_hevc_temp = nb_shvc = nb_shvc_temp = nb_mhvc = nb_mhvc_temp = 0;
+	nb_hevc_temp = nb_shvc = nb_shvc_temp = nb_mhvc = nb_mhvc_temp = 0;
 	while (pos<data_size) {
 		GF_M2TS_PES *pes = NULL;
 		GF_M2TS_SECTION_ES *ses = NULL;
@@ -1722,8 +1732,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 
 			nb_es++;
 
-			if (es->stream_type == GF_M2TS_VIDEO_HEVC) nb_hevc++;
-			else if (es->stream_type == GF_M2TS_VIDEO_HEVC_TEMPORAL) nb_hevc_temp++;
+			if (es->stream_type == GF_M2TS_VIDEO_HEVC_TEMPORAL) nb_hevc_temp++;
 			else if (es->stream_type == GF_M2TS_VIDEO_SHVC) nb_shvc++;
 			else if (es->stream_type == GF_M2TS_VIDEO_SHVC_TEMPORAL) nb_shvc_temp++;
 			else if (es->stream_type == GF_M2TS_VIDEO_MHVC) nb_mhvc++;
@@ -1732,7 +1741,7 @@ static void gf_m2ts_process_pmt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *pmt, GF
 	}
 
 	//Table 2-139, implied hierarchy indexes
-	if (nb_hevc_temp + nb_shvc + nb_shvc_temp + nb_mhvc+ nb_mhvc_temp) {
+	if (nb_hevc_temp + nb_shvc + nb_shvc_temp + nb_mhvc + nb_mhvc_temp) {
 		for (i=0; i<gf_list_count(pmt->program->streams); i++) {
 			GF_M2TS_PES *es = (GF_M2TS_PES *)gf_list_get(pmt->program->streams, i);
 			if ( !(es->flags & GF_M2TS_ES_IS_PES)) continue;
@@ -2130,7 +2139,7 @@ void gf_m2ts_flush_pes(GF_M2TS_Demuxer *ts, GF_M2TS_PES *pes, u32 force_flush_ty
 
 		} else {
 			if (!has_data) goto exit;
-			
+
 			/*3-byte start-code + 1 byte streamid*/
 			len = 4;
 			memset(&pesh, 0, sizeof(pesh));

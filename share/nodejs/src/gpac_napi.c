@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2021-2022
+ *			Copyright (c) Telecom ParisTech 2021-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / NodeJS module
@@ -2769,6 +2769,8 @@ napi_value filter_iopid_stats(napi_env env, napi_callback_info info, Bool is_opi
 	SET_U32(rtt)
 	SET_U32(jitter)
 	SET_U32(loss_rate)
+	NAPI_CALL(napi_set_named_property(env, res, "last_ts_sent", frac64_to_napi(env, &stats.last_ts_sent)) );
+	NAPI_CALL(napi_set_named_property(env, res, "last_ts_drop", frac64_to_napi(env, &stats.last_ts_drop)) );
 	return res;
 }
 napi_value filter_ipid_stats(napi_env env, napi_callback_info info)
@@ -4855,7 +4857,7 @@ static napi_status InitConstants(napi_env env, napi_value exports)
 	DEF_CONST(GF_IP_NETWORK_EMPTY)
 	DEF_CONST(GF_IP_UDP_TIMEOUT)
 	DEF_CONST(GF_AUTHENTICATION_FAILURE)
-	DEF_CONST(GF_SCRIPT_NOT_READY)
+	DEF_CONST(GF_NOT_READY)
 	DEF_CONST(GF_INVALID_CONFIGURATION)
 	DEF_CONST(GF_NOT_FOUND)
 	DEF_CONST(GF_PROFILE_NOT_SUPPORTED)

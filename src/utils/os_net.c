@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -24,6 +24,9 @@
  */
 
 #include <gpac/network.h>
+
+#ifndef GPAC_DISABLE_NETWORK
+
 
 #if defined(WIN32) || defined(_WIN32_WCE)
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
@@ -362,12 +365,6 @@ static u32 ipv6_check_state = 0;
 #include <sys/un.h>
 #endif
 
-GF_EXPORT
-const char *gf_errno_str(int errnoval)
-{
-	return strerror(errnoval);
-}
-
 
 /*internal flags*/
 enum
@@ -383,30 +380,6 @@ enum
 	GF_SOCK_HAS_CONNECT = 1<<16,
 };
 
-#if __EMSCRIPTEN__
-#include <emscripten/fetch.h>
-
-void downloadSucceeded(emscripten_fetch_t *fetch) {
-  printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
-  // The data is now available at fetch->data[0] through fetch->data[fetch->numBytes-1];
-  emscripten_fetch_close(fetch); // Free data associated with the fetch.
-}
-
-void downloadFailed(emscripten_fetch_t *fetch) {
-  printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
-  emscripten_fetch_close(fetch); // Also free data on failure.
-}
-
-void downloadProgress(emscripten_fetch_t *fetch) {
-  if (fetch->totalBytes) {
-    printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
-  } else {
-    printf("Downloading %s.. %lld bytes complete.\n", fetch->url, fetch->dataOffset + fetch->numBytes);
-  }
-}
-
-#endif
-
 struct __tag_socket
 {
 	u32 flags;
@@ -416,11 +389,6 @@ struct __tag_socket
 	struct sockaddr_storage dest_addr;
 #else
 	struct sockaddr_in dest_addr;
-#endif
-
-#if __EMSCRIPTEN__
-	emscripten_fetch_attr_t attr;
-	emscripten_fetch_t * fetch;
 #endif
 	u32 dest_addr_len;
 
@@ -730,7 +698,7 @@ void gf_sk_set_usec_wait(GF_Socket *sock, u32 usec_wait)
 	sock->usec_wait = (usec_wait>=1000000) ? 500 : usec_wait;
 }
 
-#ifdef GPAC_STATIC_BUILD
+#ifdef GPAC_STATIC_BIN
 struct hostent *gf_gethostbyname(const char *PeerName)
 {
 	GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("Static GPAC build has no DNS support, cannot resolve host %s !\n", PeerName));
@@ -746,16 +714,6 @@ GF_EXPORT
 GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, const char *local_ip)
 {
 	s32 ret;
-
-	#if __EMSCRIPTEN__
-	emscripten_fetch_attr_init(&sock->attr);
-	strcpy(sock->attr.requestMethod, "GET");
-	sock->attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-	sock->attr.onsuccess = downloadSucceeded;
-	sock->attr.onprogress = downloadProgress;
-	sock->attr.onerror = downloadFailed;
-	return GF_OK;
-	#endif
 #ifdef GPAC_HAS_IPV6
 	u32 type;
 	struct addrinfo *res, *aip, *lip;
@@ -920,7 +878,7 @@ conn_ok:
 			}
 		}
 		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Host %s found\n", PeerName));
-		memcpy((char *) &sock->dest_addr.sin_addr, Host->h_addr_list[0], sizeof(u32));
+		memcpy(&sock->dest_addr.sin_addr, Host->h_addr_list[0], sizeof(u8)*Host->h_length);
 	}
 
 	if (local_ip) {
@@ -2024,26 +1982,10 @@ GF_Err gf_sk_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *By
 	return GF_OK;
 }
 
-#if __EMSCRIPTEN__
-GF_Err gf_emscripten_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *BytesRead, Bool do_select)
-{
-	if (BytesRead) *BytesRead = emscripten_fetch_get_response_headers_length(sock->fetch);
-	if (!buffer) return GF_OK;
-	if (*BytesRead == 0) return GF_OK;
-	emscripten_fetch_get_response_headers(sock->fetch, buffer, length);
-	return GF_OK;
-}
-#endif
-
-
 GF_EXPORT
 GF_Err gf_sk_receive(GF_Socket *sock, u8 *buffer, u32 length, u32 *BytesRead)
 {
-	#if __EMSCRIPTEN__
-	return gf_emscripten_receive_internal(sock, buffer, length, BytesRead, GF_TRUE);
-	#else
 	return gf_sk_receive_internal(sock, buffer, length, BytesRead, GF_TRUE);
-	#endif
 }
 
 GF_EXPORT
@@ -2304,6 +2246,12 @@ GF_Err gf_sk_probe(GF_Socket *sock)
 	return GF_OK;
 }
 
+#else
+//for ntoh/hton
+#include <arpa/inet.h>
+#endif //GPAC_DISABLE_NETWORK
+
+
 GF_EXPORT
 u32 gf_htonl(u32 val)
 {
@@ -2328,4 +2276,10 @@ GF_EXPORT
 u16 gf_ntohs(u16 val)
 {
 	return ntohs(val);
+}
+
+GF_EXPORT
+const char *gf_errno_str(int errnoval)
+{
+	return strerror(errnoval);
 }

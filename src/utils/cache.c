@@ -2,7 +2,7 @@
  *					GPAC Multimedia Framework
  *
  *			Authors: Jean Le Feuvre, Pierre Souchay
- *			Copyright (c) Telecom ParisTech 2010-2022
+ *			Copyright (c) Telecom ParisTech 2010-2023
  *					All rights reserved
  *
  *   This file is part of GPAC / common tools sub-project
@@ -24,6 +24,9 @@
  */
 
 #include <gpac/cache.h>
+
+#ifndef GPAC_DISABLE_NETWORK
+
 #include <gpac/network.h>
 #include <gpac/download.h>
 #include <gpac/token.h>
@@ -635,7 +638,7 @@ GF_Err gf_cache_close_write_cache( const DownloadedCacheEntry entry, const GF_Do
 	return e;
 }
 
-GF_Err gf_cache_open_write_cache( const DownloadedCacheEntry entry, const GF_DownloadSession * sess, GF_Mutex *mx )
+GF_Err gf_cache_open_write_cache( const DownloadedCacheEntry entry, const GF_DownloadSession * sess)
 {
 	CHECK_ENTRY;
 	if (!sess)
@@ -653,9 +656,6 @@ GF_Err gf_cache_open_write_cache( const DownloadedCacheEntry entry, const GF_Dow
 	entry->flags &= ~CORRUPTED;
 
 	if (entry->memory_stored) {
-		if (!entry->cache_blob.mx)
-			entry->cache_blob.mx = mx;
-
 		gf_mx_p(entry->cache_blob.mx);
 
 		GF_LOG(GF_LOG_INFO, GF_LOG_CACHE, ("[CACHE] Opening cache file %s for write (%s)...\n", entry->cache_filename, entry->url));
@@ -1105,3 +1105,4 @@ Bool gf_cache_set_content(const DownloadedCacheEntry entry, GF_Blob *blob, Bool 
     return GF_TRUE;
 }
 
+#endif //GPAC_DISABLE_NETWORK

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / NALU (AVC, HEVC, VVC)  reframer filter
@@ -270,13 +270,12 @@ GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
 	if (p) {
 		ctx->timescale = p->value.uint;
-		//if we have a FPS prop, use it
+		ctx->cur_fps.den = 0;
+		ctx->cur_fps.num = ctx->timescale;
+
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_FPS);
 		if (p) {
 			ctx->cur_fps = p->value.frac;
-		} else {
-			ctx->cur_fps.den = 0;
-			ctx->cur_fps.num = ctx->timescale;
 		}
 	}
 
@@ -394,6 +393,10 @@ GF_Err naludmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 			naludmx_enqueue_or_dispatch(ctx, NULL, GF_TRUE);
 		}
 		ctx->nal_store_size = 0;
+
+		if (ctx->timescale != 0)
+			ctx->resume_from = 0;
+
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		//don't change codec type if reframing an ES (for HLS SAES)
 		if (!ctx->timescale)
@@ -644,7 +647,7 @@ static void naludmx_check_dur(GF_Filter *filter, GF_NALUDmxCtx *ctx)
 			case GF_AVC_NALU_SEI:
 				naludmx_probe_recovery_sei(bs, avc_state);
 				break;
-			
+
 			}
 			//also mark open GOP or first slice in gdr as valid seek point
 			if (is_slice && avc_state->sei.recovery_point.valid) {
@@ -1630,7 +1633,7 @@ static void naludmx_set_dolby_vision(GF_NALUDmxCtx *ctx)
 	u8 dv_cfg[24];
 	if (!ctx->opid)
 		return;
-		
+
 	switch (ctx->dv_mode) {
 	case DVMODE_NONE:
 	case DVMODE_CLEAN:
@@ -1866,7 +1869,10 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 	else
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAR, NULL);
 
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FPS, & PROP_FRAC(ctx->cur_fps));
+	//if we have a FPS prop, use it
+	if (!gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FPS))
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FPS, & PROP_FRAC(ctx->cur_fps));
+
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->timescale ? ctx->timescale : ctx->cur_fps.num));
 
 	if (ctx->explicit || !has_hevc_base) {
@@ -2887,7 +2893,7 @@ static s32 naludmx_parse_nal_avc(GF_NALUDmxCtx *ctx, char *data, u32 size, u32 n
 					/* This PPS is used by an SVC NAL unit, it should be moved to the SVC Config Record) */
 					gf_list_rem(ctx->pps, i);
 					i--;
-					if (!ctx->pps_svc) ctx->pps_svc = gf_list_new(ctx->pps_svc);
+					if (!ctx->pps_svc) ctx->pps_svc = gf_list_new();
 					gf_list_add(ctx->pps_svc, slc);
 					ctx->ps_modified = GF_TRUE;
 				}
@@ -3029,12 +3035,18 @@ GF_Err naludmx_process(GF_Filter *filter)
 	GF_NALUDmxCtx *ctx = gf_filter_get_udta(filter);
 	GF_FilterPacket *pck;
 	u8 *start;
-	u32 nalu_before = ctx->nb_nalus;
-	u32 nalu_store_before = 0;
+	u32 nalu_before, nalu_store_before;
 	s32 remain;
-	Bool is_eos = GF_FALSE;
-	Bool drop_packet = GF_FALSE;
-	u64 byte_offset = GF_FILTER_NO_BO;
+	Bool is_eos, drop_packet;
+	u64 byte_offset;
+
+restart:
+
+	nalu_store_before = 0;
+	is_eos = GF_FALSE;
+	drop_packet = GF_FALSE;
+	byte_offset = GF_FILTER_NO_BO;
+	nalu_before = ctx->nb_nalus;
 
 	//always reparse duration
 	if (!ctx->file_loaded)
@@ -3638,6 +3650,8 @@ naldmx_flush:
 					dts = gf_filter_pck_get_dts(q_pck);
 					if (dts == GF_FILTER_NO_TS) continue;
 					cts = gf_filter_pck_get_cts(q_pck);
+					//cts may be unset at this point (nal in middle of AU)
+					if (cts == GF_FILTER_NO_TS) continue;
 					cts += ctx->poc_shift;
 					cts -= slice_poc;
 					gf_filter_pck_set_cts(q_pck, cts);
@@ -3822,8 +3836,10 @@ naldmx_flush:
 	if (drop_packet)
 		gf_filter_pid_drop_packet(ctx->ipid);
 
-	if (is_eos)
-		return naludmx_process(filter);
+	if (is_eos) {
+		//avoid recursive call
+		goto restart;
+	}
 
 	if ((ctx->nb_nalus>nalu_before) && gf_filter_reporting_enabled(filter)) {
 		char szStatus[1024];
@@ -3995,13 +4011,13 @@ static const char *naludmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 	u32 nb_hevc=0;
 	u32 nb_avc=0;
 	u32 nb_vvc=0;
-	u32 nb_nalus=0;
+	//u32 nb_nalus=0;
 	u32 nb_hevc_zero=0;
 	u32 nb_avc_zero=0;
 	u32 nb_vvc_zero=0;
 	u32 nb_sps_hevc=0,nb_pps_hevc=0,nb_vps_hevc=0;
 	u32 nb_sps_avc=0,nb_pps_avc=0;
-	u32 nb_sps_vvc=0,nb_pps_vvc=0,nb_vps_vvc=0;
+	u32 nb_sps_vvc=0,nb_pps_vvc=0; //,nb_vps_vvc=0;
 
 	while (size>3) {
 		u32 nal_type=0;
@@ -4019,7 +4035,7 @@ static const char *naludmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 			not_vvc++;
 			continue;
 		}
-		nb_nalus++;
+		//nb_nalus++;
 
 		nal_type = (data[0] & 0x7E) >> 1;
 		if (nal_type<=40) {
@@ -4084,11 +4100,11 @@ static const char *naludmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 			nb_sps_vvc++;
 			break;
 		case GF_VVC_NALU_VID_PARAM:
-			nb_vps_vvc++;
+			//nb_vps_vvc++;
 			break;
 		case GF_VVC_NALU_ACCESS_UNIT:
 			//to detect files without VPS correctly
-			nb_vps_vvc++;
+			//nb_vps_vvc++;
 			break;
 		case 0:
 			nb_vvc_zero++;

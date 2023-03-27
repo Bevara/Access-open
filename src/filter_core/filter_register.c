@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2022
+ *			Copyright (c) Telecom ParisTech 2017-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -33,6 +33,8 @@ void gf_fs_register_test_filters(GF_FilterSession *fsess)
 {
 
 }
+
+void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess);
 
 #else
 const GF_FilterRegister *ut_filter_register(GF_FilterSession *session);
@@ -152,6 +154,7 @@ const GF_FilterRegister *hevcmerge_register(GF_FilterSession *session);
 const GF_FilterRegister *jsfilter_register(GF_FilterSession *session);
 const GF_FilterRegister *m2tssplit_register(GF_FilterSession *session);
 const GF_FilterRegister *httpout_register(GF_FilterSession *session);
+const GF_FilterRegister *uncvdec_register(GF_FilterSession *session);
 
 #if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
 const GF_FilterRegister *dtout_register(GF_FilterSession *session);
@@ -160,6 +163,13 @@ const GF_FilterRegister *dtout_register(GF_FilterSession *session);
 #if !defined(GPAC_CONFIG_IOS)
 const GF_FilterRegister *mcdec_register(GF_FilterSession *session);
 #endif
+
+#if defined(GPAC_CONFIG_EMSCRIPTEN)
+const GF_FilterRegister *wcdec_register(GF_FilterSession *session);
+const GF_FilterRegister *wcenc_register(GF_FilterSession *session);
+const GF_FilterRegister *webgrab_register(GF_FilterSession *session);
+#endif
+
 
 const GF_FilterRegister *flac_dmx_register(GF_FilterSession *session);
 const GF_FilterRegister *proresdmx_register(GF_FilterSession *session);
@@ -333,6 +343,13 @@ void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
 
 	gf_fs_add_filter_register(fsess, unframer_register(a_sess) );
 	gf_fs_add_filter_register(fsess, writeuf_register(a_sess) );
+	gf_fs_add_filter_register(fsess, uncvdec_register(a_sess) );
+
+#if defined(GPAC_CONFIG_EMSCRIPTEN)
+	gf_fs_add_filter_register(fsess, wcdec_register(a_sess) );
+	gf_fs_add_filter_register(fsess, wcenc_register(a_sess) );
+	gf_fs_add_filter_register(fsess, webgrab_register(a_sess) );
+#endif
 
 #if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
 	gf_fs_add_filter_register(fsess, dtout_register(a_sess) );

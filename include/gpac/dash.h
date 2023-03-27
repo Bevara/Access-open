@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2012-2022
+ *			Copyright (c) Telecom ParisTech 2012-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / Adaptive HTTP Streaming sub-project
@@ -149,6 +149,8 @@ struct _gf_dash_io
 	u32 (*get_total_size)(GF_DASHFileIO *dashio, GF_DASHFileIOSession session);
 	/*! get the total size on bytes for the session*/
 	u32 (*get_bytes_done)(GF_DASHFileIO *dashio, GF_DASHFileIOSession session);
+	/*! get the status of the session - GF_OK for done, GF_NOT_READY for in progress, other error code indicate download error*/
+	GF_Err (*get_status)(GF_DASHFileIO *dashio, GF_DASHFileIOSession session);
 
 	/*! callback when manifest (DASH, HLS) or sub-playlist (HLS) is updated*/
 	void (*manifest_updated)(GF_DASHFileIO *dashio, const char *manifest_name, const char *local_path, s32 group_idx);
@@ -1099,6 +1101,13 @@ s32 gf_dash_group_get_as_id(GF_DashClient *dash, u32 group_idx);
 \return GF_TRUE if init segment is present, GF_FALSE otherwise
 */
 Bool gf_dash_group_has_init_segment(GF_DashClient *dash, u32 group_idx);
+
+/*! get sample aspect ratio for video group
+\param dash the target dash client
+\param group_idx the 0-based index of the target group
+\param sar filled with representation SAR if any, set to 0 otherwise - may be NULL
+*/
+void gf_dash_group_get_sar(GF_DashClient *dash, u32 group_idx, GF_Fraction *sar);
 
 //any change to the structure below MUST be reflected in libgpac.py !!
 

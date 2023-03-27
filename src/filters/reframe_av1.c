@@ -57,7 +57,7 @@ typedef struct
 	Double index;
 	Bool importer;
 	Bool deps, notime, temporal_delim;
-	
+
 	u32 bsdbg;
 
 	//only one input pid declared
@@ -655,7 +655,10 @@ static void av1dmx_check_pid(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	if (!ctx->timescale) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->cur_fps.num));
 	}
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FPS, & PROP_FRAC(ctx->cur_fps));
+	//if we have a FPS prop, use it
+	if (!gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_FPS))
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FPS, & PROP_FRAC(ctx->cur_fps));
+
 	if (ctx->state.sequence_width && ctx->state.sequence_height) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_WIDTH, & PROP_UINT(ctx->state.sequence_width));
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_HEIGHT, & PROP_UINT(ctx->state.sequence_height));
@@ -933,7 +936,7 @@ static GF_Err av1dmx_parse_flush_sample(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 
 	if (!ctx->opid)
 		return GF_NON_COMPLIANT_BITSTREAM;
-		
+
 	gf_bs_get_content_no_truncate(ctx->state.bs, &ctx->state.frame_obus, &pck_size, &ctx->state.frame_obus_alloc);
 
 	if (!pck_size) {
@@ -1037,7 +1040,12 @@ GF_Err av1dmx_parse_av1(GF_Filter *filter, GF_AV1DmxCtx *ctx)
 	if (ctx->timescale && (e==GF_BUFFER_TOO_SMALL))
 		e = GF_OK;
 
-	if (e) return e;
+	if (e) {
+		if (e!=GF_EOS && e!=GF_BUFFER_TOO_SMALL) {
+			av1dmx_parse_flush_sample(filter, ctx);
+		}
+		return e;
+	}
 
 
 	if (!ctx->opid) {
@@ -1392,4 +1400,3 @@ const GF_FilterRegister *dynCall_av1dmx_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif // GPAC_DISABLE_AV_PARSERS
-

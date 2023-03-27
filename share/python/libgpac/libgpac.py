@@ -2,7 +2,7 @@
 #          GPAC - Multimedia Framework C SDK
 #
 #          Authors: Jean Le Feuvre
-#          Copyright (c) Telecom Paris 2020-2022
+#          Copyright (c) Telecom Paris 2020-2023
 #                  All rights reserved
 #
 #  Python ctypes bindings for GPAC (core initialization and filters API only)
@@ -242,7 +242,7 @@ except OSError:
 
 #change this to reflect API we encapsulate. An incomatibility in either of these will throw a warning
 GF_ABI_MAJOR=12
-GF_ABI_MINOR=10
+GF_ABI_MINOR=11
 
 gpac_abi_major=_libgpac.gf_gpac_abi_major()
 gpac_abi_minor=_libgpac.gf_gpac_abi_minor()
@@ -547,7 +547,9 @@ class FilterPidStatistics(Structure):
 		("last_rt_report", c_ulonglong),
 		("rtt", c_uint),
 		("jitter", c_uint),
-		("loss_rate", c_uint)
+		("loss_rate", c_uint),
+		("last_ts_drop", Fraction64),
+		("last_ts_sent", Fraction64)
 	]
     ## \endcond
 ## filter argument object, as defined in libgpac and usable as a Python object
@@ -1295,8 +1297,8 @@ GF_IP_UDP_TIMEOUT = -46
 #see \ref GF_AUTHENTICATION_FAILURE
 GF_AUTHENTICATION_FAILURE = -50
 ##\hideinitializer
-#see \ref GF_SCRIPT_NOT_READY
-GF_SCRIPT_NOT_READY = -51
+#see \ref GF_NOT_READY
+GF_NOT_READY = -51
 ##\hideinitializer
 #see \ref GF_INVALID_CONFIGURATION
 GF_INVALID_CONFIGURATION = -52

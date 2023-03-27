@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre, Romain Bouqueau, Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / Media Tools sub-project
@@ -90,17 +90,17 @@ void gf_media_reduce_aspect_ratio(u32 *width, u32 *height)
 		}
 		i++;
 	}
-	//not standard one, reduce by power of 2
+	//not standard one, reduce (brute force)
 	i = 2;
 	while (1) {
-		if (w <= i) return;
-		if (h <= i) return;
+		if ((w <= i) || (h <= i))
+			return;
 
-		if (w % i) return;
-		if (h % i) return;
-		*width = w / i;
-		*height = h / i;
-		i *= 2;
+		if (!(w % i) && !(h % i)) {
+			*width = w / i;
+			*height = h / i;
+		}
+		i += 1;
 	}
 }
 
@@ -5677,10 +5677,10 @@ static s32 avc_parse_slice(GF_BitStream *bs, AVCState *avc, Bool svc_idr_flag, A
 	if (si->slice_type > 9) return -1;
 
 	pps_id = gf_bs_read_ue_log(bs, "pps_id");
-	if ((pps_id<0) || (pps_id > 255)) return -1;
+	if ((pps_id<0) || (pps_id >= 255)) return -1;
 	si->pps = &avc->pps[pps_id];
 	if (!si->pps->slice_group_count) return -2;
-	if (si->pps->sps_id>=255) return -1;
+	if (si->pps->sps_id>=32) return -1;
 	si->sps = &avc->sps[si->pps->sps_id];
 	if (!si->sps->log2_max_frame_num) return -2;
 	avc->sps_active_idx = si->pps->sps_id;
@@ -5787,7 +5787,7 @@ static s32 svc_parse_slice(GF_BitStream *bs, AVCState *avc, AVCSliceInfo *si)
 	if (si->slice_type > 9) return -1;
 
 	pps_id = gf_bs_read_ue_log(bs, "pps_id");
-	if ((pps_id<0) || (pps_id > 255))
+	if ((pps_id<0) || (pps_id >= 255))
 		return -1;
 	si->pps = &avc->pps[pps_id];
 	si->pps->id = pps_id;
@@ -7199,7 +7199,7 @@ s32 hevc_parse_slice_segment(GF_BitStream *bs, HEVCState *hevc, HEVCSliceInfo *s
 				u32 num_long_term_pics = 0;
 
 				memset(DeltaPocMsbCycleLt, 0, sizeof(u8) * 32);
-				
+
 				if (sps->num_long_term_ref_pic_sps > 0) {
 					num_long_term_sps = gf_bs_read_ue_log(bs, "num_long_term_sps");
 				}
@@ -7339,7 +7339,7 @@ s32 hevc_parse_slice_segment(GF_BitStream *bs, HEVCState *hevc, HEVCSliceInfo *s
 		}
 	}
 
-	si->header_size_bits = (gf_bs_get_position(bs) - 1) * 8 + gf_bs_get_bit_position(bs); // av_parser.c modified on 16 jan. 2019 
+	si->header_size_bits = (gf_bs_get_position(bs) - 1) * 8 + gf_bs_get_bit_position(bs); // av_parser.c modified on 16 jan. 2019
 
 	if (gf_bs_read_int_log(bs, 1, "byte_align") == 0) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("Error parsing slice header: byte_align not found at end of header !\n"));
@@ -8246,6 +8246,7 @@ static s32 gf_hevc_read_sps_bs_internal(GF_BitStream *bs, HEVCState *hevc, u8 la
 	if ((sps_id < 0) || (sps_id >= 16)) {
 		return -1;
 	}
+	if (!hevc) return sps_id;
 
 	sps = &hevc->sps[sps_id];
 	if (!sps->state) {
@@ -9158,7 +9159,6 @@ static Bool gf_eac3_parser_internal(GF_BitStream *bs, GF_AC3Config *hdr, Bool fu
 	Bool main_indep_found = GF_FALSE;
 	s32 cur_main_id = -1;
 	u32 nb_blocks_main;
-	u32 cur_main_ac3 = 0;
 	u16 main_substreams; //bit-mask of independent channels found so far
 	static u32 numblks[4] = {1, 2, 3, 6};
 
@@ -9207,7 +9207,6 @@ next_block:
 		}
 		main_indep_found = GF_TRUE;
 		cur_main_id = 0;
-		cur_main_ac3 = 1;
 		goto next_block;
 	}
 	//corrupted frame, trash
@@ -9231,7 +9230,6 @@ next_block:
 
 	//independent stream
 	if (strmtyp!=0x1) {
-		cur_main_ac3 = 0;
 		//all blocks gathered and we have seen this substreamid, done with whole frame
 		if ( (nb_blocks_main>=6) && ( (main_substreams >> substreamid) & 0x1)) {
 			eac3_update_channels(hdr);
@@ -9256,11 +9254,6 @@ next_block:
 		}
 		goto retry_frame;
 	}
-	//quick hack (not sure if the spec forbids this): some AC3+EAC3 streams use substreamid=0 for the eac3
-	//which breaks nb_dep_sub / chan_loc signaling
-	//we increase by one in this case
-	if (cur_main_ac3 && !substreamid) cur_main_ac3=2;
-	if (cur_main_ac3==2) substreamid++;
 
 	frmsiz = gf_bs_read_int_log(bs, 11, "frmsiz");
 	framesize += 2 * (1 + frmsiz);
@@ -9328,8 +9321,9 @@ next_block:
 			hdr->nb_streams++;
 	}
 	//dependent stream, record max substream ID of dep and store chan map
+	//"Dependent substreams are assigned substream ID's 0 to 7, which shall be assigned sequentially according to the order the dependent substreams are present in the bit stream. "
 	else {
-		hdr->streams[cur_main_id].nb_dep_sub = substreamid;
+		hdr->streams[cur_main_id].nb_dep_sub = 1+substreamid;
 		hdr->streams[cur_main_id].chan_loc |= chanmap;
 	}
 
@@ -10206,7 +10200,7 @@ s32 gf_mpegh_get_mhas_pl(u8 *ptr, u32 size, u64 *ch_layout)
 	s32 sync_pos=-1;
 
 	if (!ptr || !size) return 0;
-	
+
 	for (i=0; i<size-3; i++) {
 		if ((ptr[i]==0xC0) && (ptr[i+1]== 0x01) && (ptr[i+2]==0xA5)) {
 			sync_pos = i;
@@ -10602,7 +10596,7 @@ static s32 gf_vvc_read_sps_bs_internal(GF_BitStream *bs, VVCState *vvc, u8 layer
 		sps->width -= SubWidthC * (sps->cw_left + sps->cw_right);
 		sps->height -= SubHeightC * (sps->cw_top + sps->cw_bottom);
 	}
-	
+
 	sps->subpic_info_present = gf_bs_read_int_log(bs, 1, "subpic_info_present");
 	if (sps->subpic_info_present) {
 		sps->nb_subpics = 1 + gf_bs_read_ue_log(bs, "nb_subpics_minus1");
@@ -12038,7 +12032,7 @@ s32 gf_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_type, u8 
 			memcpy(&vvc->s_info, &n_state, sizeof(VVCSliceInfo));
 			return ret;
 		}
-		
+
 		ret = 0;
 		if (n_state.compute_poc_defer || n_state.picture_header_in_slice_header_flag) {
 			is_slice = GF_TRUE;

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2022
+ *			Copyright (c) Telecom ParisTech 2018-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / ffmpeg encode filter
@@ -139,6 +139,8 @@ typedef struct _gf_ffenc_ctx
 	Bool args_updated;
 
 	FILE *logfile_pass1;
+
+	u64 prev_dts;
 } GF_FFEncodeCtx;
 
 static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove, Bool is_force_reconf);
@@ -256,7 +258,6 @@ static void ffenc_copy_pid_props(GF_FFEncodeCtx *ctx)
 	} else {
 		gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_CODECID, &PROP_UINT(ctx->codecid) );
 	}
-	gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_ISOM_STSD_TEMPLATE, NULL);
 	gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_ISOM_SUBTYPE, NULL);
 	gf_filter_pid_set_property(ctx->out_pid, GF_PROP_PID_PROFILE_LEVEL, NULL);
 
@@ -717,7 +718,13 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 	count = gf_list_count(ctx->src_packets);
 	for (i=0; i<count; i++) {
 		src_pck = gf_list_get(ctx->src_packets, i);
-		if (ffenc_get_cts(ctx, src_pck) == pkt->pts) break;
+		u64 cts = ffenc_get_cts(ctx, src_pck);
+		if (ctx->remap_ts) {
+			SCALE_TS(cts);
+			UNSCALE_TS(cts);
+		}
+		if (cts == pkt->pts)
+			break;
 		src_pck = NULL;
 	}
 
@@ -822,8 +829,17 @@ static GF_Err ffenc_process_video(GF_Filter *filter, struct _gf_ffenc_ctx *ctx)
 
 	ffenc_log_video(filter, ctx, pkt, gf_filter_reporting_enabled(filter));
 
+	//make sure we always send increasing DTS - this can happen when relaunching encoders, the computed delay may vary
+	//and we end up with lesser DTS for a few frames...
+	u64 dts = pkt->dts + ctx->ts_shift;
+	if (!ctx->prev_dts) {
+		ctx->prev_dts = dts;
+	} else if (ctx->prev_dts>=dts) {
+		dts = ctx->prev_dts + 1;
+	}
 	gf_filter_pck_set_cts(dst_pck, pkt->pts + ctx->ts_shift);
-	gf_filter_pck_set_dts(dst_pck, pkt->dts + ctx->ts_shift);
+	gf_filter_pck_set_dts(dst_pck, dts);
+	ctx->prev_dts = dts;
 
 	//this is not 100% correct since we don't have any clue if this is SAP1/2/3/4 ...
 	//since we send the output to our reframers we should be fine
@@ -1740,6 +1756,13 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		}
 
 		gf_media_get_reduced_frame_rate(&ctx->encoder->time_base.den, &ctx->encoder->time_base.num);
+		//make sure we are still able to rescale timestamps at 1ms precision
+		if (ctx->timescale>1000) {
+			while (ctx->encoder->time_base.den<1000) {
+				ctx->encoder->time_base.den*=10;
+				ctx->encoder->time_base.num*=10;
+			}
+		}
 
 		if (ctx->low_delay) {
 			av_dict_set(&ctx->options, "profile", "baseline", 0);
@@ -1791,8 +1814,6 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 		ctx->init_cts_setup = GF_TRUE;
 		ctx->frame->format = ctx->encoder->pix_fmt;
 	} else if (type==GF_STREAM_AUDIO) {
-		ctx->process = ffenc_process_audio;
-
 		ctx->encoder->sample_rate = ctx->sample_rate;
 		ctx->encoder->channels = ctx->channels;
 
@@ -1921,6 +1942,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	}
 
 	av_dict_copy(&options, ctx->options, 0);
+	ffmpeg_check_threads(filter, options, ctx->encoder);
 	res = avcodec_open2(ctx->encoder, codec, &options);
 	if (res < 0) {
 		if (options) av_dict_free(&options);
@@ -1937,7 +1959,7 @@ static GF_Err ffenc_configure_pid_ex(GF_Filter *filter, GF_FilterPid *pid, Bool 
 	{
 		char szCodecName[1000];
 		if (ctx->encoder->thread_count>1)
-			sprintf(szCodecName, "ffenc:%s (%d frames)", codec->name ? codec->name : "unknown", ctx->encoder->thread_count);
+			sprintf(szCodecName, "ffenc:%s (%d threads)", codec->name ? codec->name : "unknown", ctx->encoder->thread_count);
 		else
 			sprintf(szCodecName, "ffenc:%s", codec->name ? codec->name : "unknown");
 		gf_filter_set_name(filter, szCodecName);
@@ -2111,7 +2133,9 @@ GF_FilterRegister FFEncodeRegister = {
 	.process = ffenc_process,
 	.process_event = ffenc_process_event,
 	.update_arg = ffenc_update_arg,
-	.flags = GF_FS_REG_META | GF_FS_REG_TEMP_INIT,
+	.flags = GF_FS_REG_META | GF_FS_REG_TEMP_INIT | GF_FS_REG_BLOCK_MAIN,
+	//use middle priority in case we have other encoders
+	.priority = 128
 };
 
 #define OFFS(_n)	#_n, offsetof(GF_FFEncodeCtx, _n)

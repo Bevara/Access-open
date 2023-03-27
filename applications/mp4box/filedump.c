@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / mp4box application
@@ -1277,7 +1277,7 @@ static GF_Err dump_isom_nal_ex(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *du
 
 		dts = samp->DTS;
 		cts = dts + (s32) samp->CTS_Offset;
-		is_rap = samp->IsRAP;
+		is_rap = samp->IsRAP ? GF_TRUE : GF_FALSE;
 		if (!is_rap) gf_isom_get_sample_rap_roll_info(file, track, i+1, &is_rap, NULL, NULL);
 
 		if (dump_flags&2) {
@@ -1368,41 +1368,41 @@ GF_Err dump_isom_nal(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool
 	Bool is_prores = GF_FALSE;
     Bool is_opus = GF_FALSE;
 
+	u32 track = gf_isom_get_track_by_id(file, trackID);
+	GF_ESD* esd = gf_isom_get_esd(file, track, 1);
+
+	if (!esd || !esd->decoderConfig) {
+		switch (gf_isom_get_media_subtype(file, track, 1)) {
+		case GF_ISOM_SUBTYPE_AV01:
+			is_av1 = GF_TRUE;
+			break;
+		case GF_QT_SUBTYPE_APCH:
+		case GF_QT_SUBTYPE_APCO:
+		case GF_QT_SUBTYPE_APCN:
+		case GF_QT_SUBTYPE_APCS:
+		case GF_QT_SUBTYPE_AP4X:
+		case GF_QT_SUBTYPE_AP4H:
+			is_prores = GF_TRUE;
+			break;
+		case GF_ISOM_SUBTYPE_OPUS:
+			is_opus = GF_TRUE;
+			break;
+		}
+	}
+	else if (esd->decoderConfig->objectTypeIndication == GF_CODECID_AV1) {
+		is_av1 = GF_TRUE;
+	} else if (esd->decoderConfig->objectTypeIndication == GF_CODECID_OPUS) {
+		is_opus = GF_TRUE;
+	}
+	if (esd) gf_odf_desc_del((GF_Descriptor*)esd);
+
 	FILE *dump;
 	if (inName) {
-		GF_ESD* esd;
-
-		strcpy(szFileName, inName);
-
-		u32 track = gf_isom_get_track_by_id(file, trackID);
-		esd = gf_isom_get_esd(file, track, 1);
-
-		if (!esd || !esd->decoderConfig) {
-			switch (gf_isom_get_media_subtype(file, track, 1)) {
-			case GF_ISOM_SUBTYPE_AV01:
-				is_av1 = GF_TRUE;
-				break;
-			case GF_QT_SUBTYPE_APCH:
-			case GF_QT_SUBTYPE_APCO:
-			case GF_QT_SUBTYPE_APCN:
-			case GF_QT_SUBTYPE_APCS:
-			case GF_QT_SUBTYPE_AP4X:
-			case GF_QT_SUBTYPE_AP4H:
-				is_prores = GF_TRUE;
-				break;
-            case GF_ISOM_SUBTYPE_OPUS:
-                is_opus = GF_TRUE;
-                break;
-			}
+		if (is_final_name) {
+			strcpy(szFileName, inName);
+		} else {
+			sprintf(szFileName, "%s_%d_%s.xml", inName, trackID, is_av1 ? "obu" : "nalu");
 		}
-		else if (esd->decoderConfig->objectTypeIndication == GF_CODECID_AV1) {
-			is_av1 = GF_TRUE;
-        } else if (esd->decoderConfig->objectTypeIndication == GF_CODECID_OPUS) {
-            is_opus = GF_TRUE;
-        }
-		if (esd) gf_odf_desc_del((GF_Descriptor*)esd);
-
-		if (!is_final_name) sprintf(szFileName, "%s_%d_%s.xml", inName, trackID, is_av1 ? "obu" : "nalu");
 		dump = gf_fopen(szFileName, "wt");
 		if (!dump) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s for dumping\n", szFileName));
@@ -4478,6 +4478,7 @@ void dump_mpeg2_ts(char *mpeg2ts_file, char *out_name, Bool prog_num)
 #endif /*GPAC_DISABLE_MPEG2TS*/
 
 
+#ifndef GPAC_DISABLE_NETWORK
 void get_file_callback(void *usr_cbk, GF_NETIO_Parameter *parameter)
 {
 	if (parameter->msg_type==GF_NETIO_DATA_EXCHANGE) {
@@ -4562,9 +4563,11 @@ static void revert_cache_file(char *item_path)
 	gf_cfg_del(cached);
 	gf_file_delete(szPATH);
 }
+#endif
 
 GF_Err rip_mpd(const char *mpd_src, const char *output_dir)
 {
+#ifndef GPAC_DISABLE_NETWORK
 	GF_DownloadSession *sess;
 	u32 i, connect_time, reply_time, download_time, req_hdr_size, rsp_hdr_size;
 	GF_Err e;
@@ -4742,4 +4745,7 @@ err_exit:
 	if (mpd) gf_mpd_del(mpd);
 	gf_dm_del(dm);
 	return e;
+#else
+	return GF_NOT_SUPPORTED;
+#endif
 }

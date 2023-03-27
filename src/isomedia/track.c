@@ -458,7 +458,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 	u32 i, j, chunk_size, track_num;
 	u64 base_offset, data_offset, traf_duration, tfdt;
 	u32 def_duration, DescIndex, def_size, def_flags;
-	u32 duration, size, flags, prev_trun_data_offset, sample_index, num_first_sample_in_traf;
+	u32 duration, size, flags, prev_trun_data_offset, num_first_sample_in_traf;
 	u8 pad, sync;
 	u16 degr;
 	Bool first_samp_in_traf=GF_TRUE;
@@ -471,8 +471,10 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 	GF_TrunEntry *ent;
 #ifdef GF_ENABLE_CTRN
 	GF_TrackFragmentBox *traf_ref = NULL;
+	u32 sample_index;
 #endif
 	Bool is_first_merge = !trak->first_traf_merged;
+	Bool patch_no_dur;
 
 	GF_Err stbl_AppendTime(GF_SampleTableBox *stbl, u32 duration, u32 nb_pack);
 	GF_Err stbl_AppendSize(GF_SampleTableBox *stbl, u32 size, u32 nb_pack);
@@ -521,6 +523,8 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 	def_duration = (traf->tfhd->flags & GF_ISOM_TRAF_SAMPLE_DUR) ? traf->tfhd->def_sample_duration : traf->trex->def_sample_duration;
 	def_size = (traf->tfhd->flags & GF_ISOM_TRAF_SAMPLE_SIZE) ? traf->tfhd->def_sample_size : traf->trex->def_sample_size;
 	def_flags = (traf->tfhd->flags & GF_ISOM_TRAF_SAMPLE_FLAGS) ? traf->tfhd->def_sample_flags : traf->trex->def_sample_flags;
+
+	patch_no_dur = gf_isom_is_video_handler_type(trak->Media->handler->handlerType);
 
 	//locate base offset, by default use moof (dash-like)
 	base_offset = moof_offset;
@@ -645,7 +649,9 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 		store_traf_map = GF_TRUE;
 	}
 
+#ifdef GF_ENABLE_CTRN
 	sample_index = 0;
+#endif
 	i=0;
 	while ((trun = (GF_TrackFragmentRunBox *)gf_list_enum(traf->TrackRuns, &i))) {
 		//merge the run
@@ -710,7 +716,14 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 					flags = trun->first_sample_flags;
 				}
 			}
+#ifdef GF_ENABLE_CTRN
 			sample_index++;
+#endif
+			//fix for broken truns with empty duration for frame
+			if (patch_no_dur && !duration && (trun->flags & GF_ISOM_TRUN_DURATION)) {
+				duration = trun->min_duration;
+			}
+
 			/*store the resolved value in case we have inheritance*/
 			ent->size = size;
 			ent->Duration = duration;

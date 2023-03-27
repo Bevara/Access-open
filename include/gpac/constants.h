@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / exported constants
@@ -575,6 +575,8 @@ typedef enum
 	GF_CODECID_FLASH = GF_4CC( 'f', 'l', 's', 'h' ),
 	/*! codecid for RAW media streams. No decoder config associated (config through PID properties)*/
 	GF_CODECID_RAW = GF_4CC('R','A','W','M'),
+	/*! codecid for RAW media streams using UNCV  decoder config*/
+	GF_CODECID_RAW_UNCV = GF_4CC('U','N','C','V'),
 
 	GF_CODECID_AV1 = GF_4CC('A','V','1',' '),
 
@@ -887,7 +889,7 @@ const char *gf_audio_fmt_all_names();
 */
 const char *gf_audio_fmt_all_shortnames();
 
-/*! returns number of bots per sample for the given format
+/*! returns number of bits per sample for the given format
 \param afmt desired audio format
 \return bit depth of format
 */

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2021
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG-4 visual p2 xvid decoder filter
@@ -224,7 +224,8 @@ static GF_Err xviddec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_WIDTH, &PROP_UINT(ctx->width) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_HEIGHT, &PROP_UINT(ctx->height) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STRIDE, &PROP_UINT(ctx->width) );
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PAR, &PROP_FRAC(ctx->pixel_ar) );
+	if (!gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_SAR))
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_SAR, &PROP_FRAC(ctx->pixel_ar) );
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PIXFMT, &PROP_UINT(GF_PIXEL_YUV) );
 
 	return GF_OK;
@@ -259,10 +260,10 @@ static GF_Err xviddec_process(GF_Filter *filter)
 	GF_FilterPacket *pck, *pck_ref, *src_pck, *dst_pck;
 
 	pck = gf_filter_pid_get_packet(ctx->ipid);
-
 	if (!ctx->codec)
 		return ctx->cfg_crc ? GF_SERVICE_ERROR : GF_OK;
 
+flush_dec:
 	memset(&frame, 0, sizeof(frame));
 	if (pck) {
 		u64 cts = gf_filter_pck_get_cts(pck);;
@@ -415,7 +416,8 @@ packed_frame :
 	}
 	//flush all frames if eos is detected
 	else if (gf_filter_pid_is_eos(ctx->ipid)) {
-		return xviddec_process(filter);
+		//avoid recursive call
+		goto flush_dec;
 	}
 
 	return GF_OK;
