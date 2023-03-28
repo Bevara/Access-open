@@ -98,8 +98,12 @@ static void swf_init_decompress(SWFReader *read)
 	uLongf destLen;
 	char *src, *dst;
 
-	assert(gf_bs_get_size(read->bs)-8 < (u64)1<<31); /*must fit within 32 bits*/
 	size = (u32) gf_bs_get_size(read->bs)-8;
+	if (gf_bs_get_size(read->bs) - 8 >= (u64)1<<31) {
+		gf_bs_del(read->bs);
+		read->bs = NULL;
+		return;
+	}
 	dst_size = read->length;
 	src = gf_malloc(sizeof(char)*size);
 	dst = gf_malloc(sizeof(char)*dst_size);
@@ -333,6 +337,10 @@ static char *swf_get_string(SWFReader *read)
 		name = szName;
 	}
 	while (1) {
+		if (i>=read->size) {
+			read->ioerr = GF_NON_COMPLIANT_BITSTREAM;
+			break;
+		}
 		name[i] = swf_read_int(read, 8);
 		if (!name[i]) break;
 		i++;
@@ -1111,7 +1119,6 @@ static GF_Err swf_actions(SWFReader *read, u32 mask, u32 key)
 			switch (action_code) {
 			/* SWF 3 Action Model */
 			case 0x81: /* goto frame */
-				assert (length == 2);
 				act.type = GF_SWF_AS3_GOTO_FRAME;
 				act.frame_number = swf_get_16(read);
 				read->action(read, &act);
@@ -1121,8 +1128,8 @@ static GF_Err swf_actions(SWFReader *read, u32 mask, u32 key)
 				act.url = swf_get_string(read);
 				act.target = swf_get_string(read);
 				read->action(read, &act);
-				gf_free(act.url);
-				gf_free(act.target);
+				if (act.url) gf_free(act.url);
+				if (act.target) gf_free(act.target);
 				break;
 			/* next frame */
 			case 0x04:
@@ -1144,7 +1151,6 @@ static GF_Err swf_actions(SWFReader *read, u32 mask, u32 key)
 				DO_ACT(GF_SWF_AS3_STOP_SOUNDS)
 			/* wait for frame */
 			case 0x8A:
-				assert (length == 3);
 				act.type = GF_SWF_AS3_WAIT_FOR_FRAME;
 				act.frame_number = swf_get_16(read);
 				skip_actions = swf_read_int(read, 8);
@@ -1155,14 +1161,14 @@ static GF_Err swf_actions(SWFReader *read, u32 mask, u32 key)
 				act.type = GF_SWF_AS3_SET_TARGET;
 				act.target = swf_get_string(read);
 				read->action(read, &act);
-				gf_free(act.target);
+				if (act.target) gf_free(act.target);
 				break;
 			/* goto label */
 			case 0x8C:
 				act.type = GF_SWF_AS3_GOTO_LABEL;
 				act.target = swf_get_string(read);
 				read->action(read, &act);
-				gf_free(act.target);
+				if (act.target) gf_free(act.target);
 				break;
 			default:
 //				swf_report(read, GF_OK, "Skipping unsupported action %x", action_code);
@@ -1170,6 +1176,8 @@ static GF_Err swf_actions(SWFReader *read, u32 mask, u32 key)
 				break;
 			}
 		}
+		if (gf_bs_is_overflow(read->bs))
+			return GF_NON_COMPLIANT_BITSTREAM;
 		action_code = swf_read_int(read, 8);
 	}
 #undef DO_ACT
@@ -1209,6 +1217,7 @@ static GF_Err swf_def_button(SWFReader *read, u32 revision)
 		else gf_cmx_init(&rec->cmx);
 		gf_bs_align(read->bs);
 		button.count++;
+		if (button.count>=40) return GF_NON_COMPLIANT_BITSTREAM;
 	}
 	read->define_button(read, &button);
 	if (revision==0) {
@@ -2411,15 +2420,17 @@ GF_Err swf_parse_tag(SWFReader *read)
 	diff = pos + read->size;
 	gf_set_progress("SWF Parsing", pos, read->length);
 
+	read->ioerr = GF_OK;
 	e = swf_process_tag(read);
 	swf_align(read);
+	if (!e) e = read->ioerr;
 
 	diff -= swf_get_file_pos(read);
 	if (diff<0) {
 		swf_report(read, GF_IO_ERR, "tag %s over-read of %d bytes (size %d)", swf_get_tag_name(read->tag), -1*diff, read->size);
 		return GF_IO_ERR;
 	} else {
-		swf_read_int(read, diff*8);
+		gf_bs_skip_bytes(read->bs, diff);
 	}
 
 
@@ -2620,6 +2631,7 @@ GF_Err gf_swf_read_header(SWFReader *read)
 	/*if compressed decompress the whole file*/
 	if (sig[0] == 'C') {
 		swf_init_decompress(read);
+		if (!read->bs) return GF_NON_COMPLIANT_BITSTREAM;
 	}
 
 	swf_get_rec(read, &rc);
