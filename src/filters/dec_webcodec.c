@@ -67,7 +67,7 @@ void wcdec_on_error(GF_WCDecCtx *ctx, int state, char *msg)
 }
 
 EM_JS(int, wcdec_init, (int wc_ctx, int _codec_str, int width, int height, int sample_rate, int num_channels, int dsi, int dsi_size), {
-	let codec_str = _codec_str ? libgpac.UTF8ToString(_codec_str) : null;
+	let codec_str = _codec_str ? Module.UTF8ToString(_codec_str) : null;
 	let config = {};
 	config.codec = codec_str;
 	let dec_class = null;
@@ -81,46 +81,46 @@ EM_JS(int, wcdec_init, (int wc_ctx, int _codec_str, int width, int height, int s
 		dec_class = AudioDecoder;
 	}
 	if (dsi_size) {
-		config.description = new Uint8Array(libgpac.HEAPU8.buffer, dsi, dsi_size);
+		config.description = new Uint8Array(Module.HEAPU8.buffer, dsi, dsi_size);
 	}
 
-	if (typeof libgpac._to_webdec != 'function') {
-		libgpac._web_decs = [];
-		libgpac._to_webdec = (ctx) => {
-          for (let i=0; i<libgpac._web_decs.length; i++) {
-            if (libgpac._web_decs[i]._wc_ctx==ctx) return libgpac._web_decs[i];
+	if (typeof Module._to_webdec != 'function') {
+		Module._web_decs = [];
+		Module._to_webdec = (ctx) => {
+          for (let i=0; i<Module._web_decs.length; i++) {
+            if (Module._web_decs[i]._wc_ctx==ctx) return Module._web_decs[i];
           }
           return null;
 		};
-		libgpac._on_wcdec_error = libgpac.cwrap('wcdec_on_error', null, ['number', 'number', 'string']);
-		libgpac._on_wcdec_frame = libgpac.cwrap('wcdec_on_video', null, ['number', 'bigint', 'string', 'number', 'number']);
-		libgpac._on_wcdec_audio = libgpac.cwrap('wcdec_on_audio', null, ['number', 'bigint', 'string', 'number', 'number', 'number']);
-		libgpac._on_wcdec_flush = libgpac.cwrap('wcdec_on_flush', null, ['number']);
-		libgpac._on_wcdec_frame_copy = libgpac.cwrap('wcdec_on_frame_copy', null, ['number', 'number', 'number']);
+		Module._on_wcdec_error = Module.cwrap('wcdec_on_error', null, ['number', 'number', 'string']);
+		Module._on_wcdec_frame = Module.cwrap('wcdec_on_video', null, ['number', 'bigint', 'string', 'number', 'number']);
+		Module._on_wcdec_audio = Module.cwrap('wcdec_on_audio', null, ['number', 'bigint', 'string', 'number', 'number', 'number']);
+		Module._on_wcdec_flush = Module.cwrap('wcdec_on_flush', null, ['number']);
+		Module._on_wcdec_frame_copy = Module.cwrap('wcdec_on_frame_copy', null, ['number', 'number', 'number']);
 	}
-	let c = libgpac._to_webdec(wc_ctx);
+	let c = Module._to_webdec(wc_ctx);
 	if (!c) {
 		c = {_wc_ctx: wc_ctx, dec: null, _frame: null};
-		libgpac._web_decs.push(c);
+		Module._web_decs.push(c);
 	}
 	dec_class.isConfigSupported(config).then( supported => {
 		if (supported.supported) {
 			if (!c.dec) {
 				let init_info = {
 					error: (e) => {
-						libgpac._on_wcdec_error(c._wc_ctx, 1, ""+e);
+						Module._on_wcdec_error(c._wc_ctx, 1, ""+e);
 					}
 				};
 				if (width && height) {
 					init_info.output = (frame) => {
 						c._frame = frame;
-						libgpac._on_wcdec_frame(c._wc_ctx, BigInt(frame.timestamp), frame.format, frame.codedWidth, frame.codedHeight);
+						Module._on_wcdec_frame(c._wc_ctx, BigInt(frame.timestamp), frame.format, frame.codedWidth, frame.codedHeight);
 						if (c._frame) frame.close();
 					};
 				} else {
 					init_info.output = (frame) => {
 						c._frame = frame;
-						libgpac._on_wcdec_audio(c._wc_ctx, BigInt(frame.timestamp), frame.format, frame.numberOfFrames, frame.numberOfChannels, frame.sampleRate);
+						Module._on_wcdec_audio(c._wc_ctx, BigInt(frame.timestamp), frame.format, frame.numberOfFrames, frame.numberOfChannels, frame.sampleRate);
 						if (c._frame) frame.close();
 					};
 				}
@@ -128,12 +128,12 @@ EM_JS(int, wcdec_init, (int wc_ctx, int _codec_str, int width, int height, int s
 				c.dec = new dec_class(init_info);
 			}
 			c.dec.configure(config);
-			libgpac._on_wcdec_error(c._wc_ctx, 0, null);
+			Module._on_wcdec_error(c._wc_ctx, 0, null);
 		} else {
-			libgpac._on_wcdec_error(c._wc_ctx, 1, null);
+			Module._on_wcdec_error(c._wc_ctx, 1, null);
 		}
 	}).catch( (e) => {
-		libgpac._on_wcdec_error(c._wc_ctx, 1, ""+e);
+		Module._on_wcdec_error(c._wc_ctx, 1, ""+e);
 	});
 })
 
@@ -252,40 +252,40 @@ static GF_Err wcdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 
 
 EM_JS(int, wcdec_push_frame, (int wc_ctx, int buf, int buf_size, int key, u64 ts), {
-	let c = libgpac._to_webdec(wc_ctx);
+	let c = Module._to_webdec(wc_ctx);
 	if (!c || !c.dec) return;
 	const chunk = new EncodedVideoChunk({
 		timestamp: Number(ts),
 		type: key ? "key" : "delta",
-		data: new Uint8Array(libgpac.HEAPU8.buffer, buf, buf_size)
+		data: new Uint8Array(Module.HEAPU8.buffer, buf, buf_size)
   });
   c.dec.decode(chunk);
 })
 
 EM_JS(int, wcdec_push_audio, (int wc_ctx, int buf, int buf_size, int key, u64 ts), {
-	let c = libgpac._to_webdec(wc_ctx);
+	let c = Module._to_webdec(wc_ctx);
 	if (!c || !c.dec) return;
 	const chunk = new EncodedAudioChunk({
 		timestamp: Number(ts),
 		type: key ? "key" : "delta",
-		data: new Uint8Array(libgpac.HEAPU8.buffer, buf, buf_size)
+		data: new Uint8Array(Module.HEAPU8.buffer, buf, buf_size)
   });
   c.dec.decode(chunk);
 })
 
 EM_JS(int, wcdec_copy_frame, (int wc_ctx, int dst_pck, int buf, int buf_size), {
-	let c = libgpac._to_webdec(wc_ctx);
+	let c = Module._to_webdec(wc_ctx);
 	if (!c || !c._frame || !dst_pck) return;
 
 	//setup dst
-	let ab = new Uint8Array(libgpac.HEAPU8.buffer, buf, buf_size);
+	let ab = new Uint8Array(Module.HEAPU8.buffer, buf, buf_size);
 	let frame = c._frame;
 	c._frame = null;
 	frame.copyTo(ab).then( layout => {
-		libgpac._on_wcdec_frame_copy(c._wc_ctx, dst_pck, 1);
+		Module._on_wcdec_frame_copy(c._wc_ctx, dst_pck, 1);
 		frame.close();
 	}).catch( e => {
-		libgpac._on_wcdec_frame_copy(c._wc_ctx, dst_pck, 0);
+		Module._on_wcdec_frame_copy(c._wc_ctx, dst_pck, 0);
 		frame.close();
 	});
 
@@ -379,11 +379,11 @@ void wcdec_on_video(GF_WCDecCtx *ctx, u64 timestamp, char *format, u32 width, u3
 }
 
 EM_JS(int, wcdec_copy_audio, (int wc_ctx, int buf, int buf_size, int plane_index), {
-	let c = libgpac._to_webdec(wc_ctx);
+	let c = Module._to_webdec(wc_ctx);
 	if (!c || !c._frame) return;
 
 	//setup dst
-	let ab = new Uint8Array(libgpac.HEAPU8.buffer, buf, buf_size);
+	let ab = new Uint8Array(Module.HEAPU8.buffer, buf, buf_size);
 	c._frame.copyTo(ab, { planeIndex: plane_index });
 })
 
@@ -478,9 +478,9 @@ void wcdec_on_flush(GF_WCDecCtx *ctx)
 }
 
 EM_JS(int, wcdec_flush, (int wc_ctx), {
-	let c = libgpac._to_webdec(wc_ctx);
+	let c = Module._to_webdec(wc_ctx);
 	if (!c || !c.dec) return;
-	c.dec.flush().then( () => { libgpac._on_wcdec_flush(c._wc_ctx); }).catch ( (e) => { libgpac._on_wcdec_flush(c._wc_ctx); } );
+	c.dec.flush().then( () => { Module._on_wcdec_flush(c._wc_ctx); }).catch ( (e) => { Module._on_wcdec_flush(c._wc_ctx); } );
 })
 
 
@@ -578,11 +578,11 @@ GF_Err wcdec_initialize(GF_Filter *filter)
 }
 
 EM_JS(int, wcdec_del, (int wc_ctx), {
-	if (! Array.isArray(libgpac._web_decs) ) return;
-	for (let i=0; i<libgpac._web_decs.length; i++) {
-		if (libgpac._web_decs[i]._wc_ctx == wc_ctx) {
-			libgpac._web_decs[i]._wc_ctx = null;
-			libgpac._web_decs.splice(i, 1);
+	if (! Array.isArray(Module._web_decs) ) return;
+	for (let i=0; i<Module._web_decs.length; i++) {
+		if (Module._web_decs[i]._wc_ctx == wc_ctx) {
+			Module._web_decs[i]._wc_ctx = null;
+			Module._web_decs.splice(i, 1);
 			return;
 		}
 	}
@@ -658,11 +658,11 @@ const GF_FilterRegister *wcdec_register(GF_FilterSession *session)
 {
 	
 	int has_webv_decode = EM_ASM_INT({
-		if ('VideoDecoder' in window) return 1;
+		if (typeof window != 'undefined' && 'VideoDecoder' in window) return 1;
 		return 0;
 	});
 	int has_weba_decode = EM_ASM_INT({
-		if ('AudioDecoder' in window) return 1;
+		if (typeof window != 'undefined' && 'AudioDecoder' in window) return 1;
 		return 0;
 	});
 
