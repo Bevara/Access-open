@@ -118,6 +118,7 @@ GF_Err truehd_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove
 		ctx->opid = gf_filter_pid_new(filter);
 		gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, NULL);
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_STREAM_TYPE, &PROP_UINT(GF_STREAM_AUDIO));
 	}
 	if (ctx->timescale) ctx->copy_props = GF_TRUE;
 	return GF_OK;
@@ -614,7 +615,7 @@ restart:
 		u8 *frame;
 		TrueHDHdr hdr;
 		u32 bytes_to_drop=0;
-		u64 frame_start;
+		u64 frame_start=0;
 		e = truehd_parse_frame(ctx, ctx->bs, &hdr, &frame_start);
 		if (e==GF_BUFFER_TOO_SMALL) {
 			e = GF_OK;
@@ -630,8 +631,14 @@ restart:
 		}
 
 		//frame not complete, wait
-		if (remain < frame_start + hdr.frame_size)
+		if (remain < frame_start + hdr.frame_size) {
+			//we may have sent the ac3 stream, drop frame
+			if (frame_start) {
+				start += frame_start;
+				remain -= (u32) frame_start;
+			}
 			break;
+		}
 
 		if (hdr.sync)
 			truehd_check_pid(filter, ctx, &hdr);

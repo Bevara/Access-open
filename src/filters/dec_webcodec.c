@@ -334,7 +334,7 @@ void wcdec_on_video(GF_WCDecCtx *ctx, u64 timestamp, char *format, u32 width, u3
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[WebDec] Unrecognized pixel format %s\n", format));
 		return;
 	}
-	if ((pf != ctx->pf) || (width != ctx->width) || (height != ctx->height)) {
+	if ((pf != ctx->pf) || (width != ctx->width) || (height != ctx->height) || !ctx->out_size) {
 		ctx->pf = pf;
 		ctx->width = width;
 		ctx->height = height;
@@ -532,8 +532,11 @@ static GF_Err wcdec_process(GF_Filter *filter)
 		}
 		ctx->in_flush = 0;
 		//don't push too fast
-		if (gf_list_count(ctx->src_pcks) > ctx->queued) return GF_OK;
-
+		if (gf_list_count(ctx->src_pcks) > ctx->queued) {
+			//ask for later processing to trigger breaking of scheduler loop in case of threading
+			gf_filter_ask_rt_reschedule(filter, 500);
+			return GF_OK;
+		}
 		in_buffer = (u8 *) gf_filter_pck_get_data(pck, &in_buffer_size);
 		cts = gf_timestamp_rescale( gf_filter_pck_get_cts(pck), ctx->timescale, 1000000);
 		sap = gf_filter_pck_get_sap(pck);
@@ -644,7 +647,7 @@ GF_FilterRegister GF_WCDecCtxRegister = {
 	GF_FS_SET_HELP("This filter decodes video streams using WebCodec decoder of the browser")
 	.args = WCDecArgs,
 	SETCAPS(WCDecCapsAV),
-	.flags = GF_FS_REG_SINGLE_THREAD,
+	.flags = GF_FS_REG_SINGLE_THREAD|GF_FS_REG_ASYNC_BLOCK,
 	.private_size = sizeof(GF_WCDecCtx),
 	.initialize = wcdec_initialize,
 	.finalize = wcdec_finalize,
@@ -656,14 +659,13 @@ GF_FilterRegister GF_WCDecCtxRegister = {
 
 const GF_FilterRegister *wcdec_register(GF_FilterSession *session)
 {
-	
 	int has_webv_decode = EM_ASM_INT({
-		if (typeof window != 'undefined' && 'VideoDecoder' in window) return 1;
-		return 0;
+		if (typeof VideoDecoder == 'undefined') return 0;
+		return 1;
 	});
 	int has_weba_decode = EM_ASM_INT({
-		if (typeof window != 'undefined' && 'AudioDecoder' in window) return 1;
-		return 0;
+		if (typeof AudioDecoder == 'undefined') return 0;
+		return 1;
 	});
 
 	if (!has_webv_decode && !has_weba_decode) {

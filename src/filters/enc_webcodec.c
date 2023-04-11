@@ -468,8 +468,11 @@ static GF_Err wcenc_process(GF_Filter *filter)
 		}
 		ctx->in_flush = 0;
 		//don't push too fast
-		if (gf_list_count(ctx->src_pcks) > ctx->queued) return GF_OK;
-
+		if (gf_list_count(ctx->src_pcks) > ctx->queued) {
+			//ask for later processing to trigger breaking of scheduler loop in case of threading
+			gf_filter_ask_rt_reschedule(filter, 500);
+			return GF_OK;
+		}
 		in_buffer = (u8 *) gf_filter_pck_get_data(pck, &in_buffer_size);
 		cts = gf_timestamp_rescale( gf_filter_pck_get_cts(pck), ctx->timescale, 1000000);
 
@@ -700,7 +703,7 @@ GF_FilterRegister GF_WCEncCtxRegister = {
 	GF_FS_SET_HELP("This filter encodes video streams using WebCodec encoder of the browser")
 	.args = WCEncArgs,
 	SETCAPS(WCEncCapsAV),
-	.flags = GF_FS_REG_SINGLE_THREAD,
+	.flags = GF_FS_REG_SINGLE_THREAD|GF_FS_REG_ASYNC_BLOCK,
 	.private_size = sizeof(GF_WCEncCtx),
 	.initialize = wcenc_initialize,
 	.finalize = wcenc_finalize,
@@ -713,12 +716,12 @@ const GF_FilterRegister *wcenc_register(GF_FilterSession *session)
 {
 	
 	int has_webv_encode = EM_ASM_INT({
-		if (typeof window != 'undefined' && 'VideoEncoder' in window) return 1;
-		return 0;
+		if (typeof VideoEncoder == 'undefined') return 0;
+		return 1;
 	});
 	int has_weba_encode = EM_ASM_INT({
-		if (typeof window != 'undefined' && 'AudioEncoder' in window) return 1;
-		return 0;
+		if (typeof AudioEncoder == 'undefined') return 0;
+		return 1;
 	});
 
 	if (!has_webv_encode && !has_weba_encode) {

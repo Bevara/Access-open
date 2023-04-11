@@ -429,11 +429,16 @@ GF_Filter *gf_filter_new(GF_FilterSession *fsess, const GF_FilterRegister *freg,
 			gf_dynstrcat(&all_args, "gpac", NULL);
 			dst_sep_inserted = GF_TRUE;
 		} else if (all_args) {
-			gf_dynstrcat(&all_args, szDBSep, NULL);
+			if (strlen(all_args))
+				gf_dynstrcat(&all_args, szDBSep, NULL);
 			dst_sep_inserted = GF_TRUE;
 		}
 		//push dst args
 		filter_push_args(fsess, &all_args, (char *) dst_striped, GF_FALSE, dst_sep_inserted);
+		if (all_args && (!strcmp(all_args, szDBSep) || !all_args[0])) {
+			gf_free(all_args);
+			all_args=NULL;
+		}
 
 
 		localarg_marker = all_args ? strstr(all_args, "gfloc") : NULL;
@@ -3375,11 +3380,10 @@ void gf_filter_setup_failure(GF_Filter *filter, GF_Err reason)
 
 //#define DUMP_TASKS
 #if !defined(GPAC_DISABLE_LOG) && defined DUMP_TASKS
-static Bool task_postponed_log(void *udta, void *item)
+static void task_postponed_log(void *udta, void *item)
 {
 	GF_FSTask *at = (GF_FSTask *)item;
 	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("\ttask %s\n", at->log_name));
-	return GF_FALSE;
 }
 #endif
 

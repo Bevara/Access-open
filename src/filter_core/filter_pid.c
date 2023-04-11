@@ -3577,9 +3577,8 @@ static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filt
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Solved %sfilter chain from filter %s PID %s to filter %s - dumping chain:\n", reconfigurable_only_type ? "adaptation " : "", pid->filter->name, pid->name, dst->freg->name));
 		}
 #endif
-		char szLocSep[8];
-		sprintf(szLocSep, "gfloc%c", fsess->sep_args);
-		gfloc = strstr(args, "gfloc");
+
+		gfloc = args ? strstr(args, "gfloc") : NULL;
 		if (gfloc) {
 			if ((gfloc>args) && (gfloc[-1]==fsess->sep_args))
 				gfloc --;
@@ -5993,6 +5992,7 @@ GF_Err gf_filter_pid_copy_properties(GF_FilterPid *dst_pid, GF_FilterPid *src_pi
 {
 	return gf_filter_pid_merge_properties_internal(dst_pid, src_pid, NULL, NULL, GF_FALSE);
 }
+
 
 GF_EXPORT
 u32 gf_filter_pid_get_packet_count(GF_FilterPid *pid)

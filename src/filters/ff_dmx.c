@@ -52,7 +52,7 @@ typedef struct
 	u64 ts_offset;
 	Bool mkv_webvtt;
 	u32 vc1_mode;
-	u64 fake_dts;
+	u64 fake_dts_plus_one, fake_dts_orig;
 	Bool fake_dts_set;
 } PidCtx;
 
@@ -110,9 +110,10 @@ typedef struct
 	u32 is_open;
 	u32 strbuf_offset;
 	u8 *strbuf;
-	u32 strbuf_size, strbuf_alloc, strbuf_min;
-	Bool in_seek, in_eos, first_block;
+	u32 strbuf_size, strbuf_alloc, strbuf_min, in_seek;
+	Bool in_eos, first_block;
 	s64 seek_offset;
+	u64 seek_ms;
 } GF_FFDemuxCtx;
 
 static void ffdmx_finalize(GF_Filter *filter)
@@ -441,6 +442,7 @@ static GF_Err ffdmx_process(GF_Filter *filter)
 	int res;
 	GF_FFDemuxCtx *ctx = (GF_FFDemuxCtx *) gf_filter_get_udta(filter);
 
+restart:
 	if (ctx->ipid) {
 		e = ffdmx_flush_input(filter, ctx);
 		if (e==GF_NOT_READY) return GF_OK;
@@ -456,7 +458,9 @@ static GF_Err ffdmx_process(GF_Filter *filter)
 	if (ctx->raw_pck_out)
 		return GF_EOS;
 
-	u32 would_block=0, pids=0;
+	u32 would_block, pids;
+
+	would_block = pids = 0;
 	for (i=0; i<ctx->nb_streams; i++) {
 		if (!ctx->pids_ctx[i].pid) continue;
 		pids++;
@@ -466,11 +470,10 @@ static GF_Err ffdmx_process(GF_Filter *filter)
 			would_block++;
 	}
 	if (would_block == pids) {
-		gf_filter_ask_rt_reschedule(filter, 0);
+		gf_filter_ask_rt_reschedule(filter, 1000);
 		return GF_OK;
 	}
 
-restart:
 	sample_time = gf_sys_clock_high_res();
 
 	FF_INIT_PCK(ctx, pkt)
@@ -509,6 +512,15 @@ restart:
 		} else {
 			pkt->pts = pkt->dts;
 		}
+	}
+	if (ctx->seek_ms) {
+		if (pkt->pts * 1000 < ctx->seek_ms * ctx->demuxer->streams[pkt->stream_index]->time_base.den) {
+			if (!ctx->raw_pck_out) {
+				FF_FREE_PCK(pkt);
+			}
+			goto restart;
+		}
+		ctx->seek_ms = 0;
 	}
 
 	pctx = &ctx->pids_ctx[pkt->stream_index];
@@ -661,19 +673,26 @@ restart:
 		ts = (pkt->pts + pctx->ts_offset-1) * stream->time_base.num;
 		gf_filter_pck_set_cts(pck_dst, ts );
 
+		//trick for some demuxers in libavformat no setting dts when negative (mkv for ex)
+		if (!pctx->fake_dts_plus_one) {
+			pctx->fake_dts_plus_one = 1+ts;
+			pctx->fake_dts_orig = ts;
+		}
+
 		if (pkt->dts != AV_NOPTS_VALUE) {
-			ts = (pctx->fake_dts + pkt->dts + pctx->ts_offset-1) * stream->time_base.num;
+			ts = (pctx->fake_dts_plus_one-1 - pctx->fake_dts_orig + pkt->dts + pctx->ts_offset-1) * stream->time_base.num;
 			gf_filter_pck_set_dts(pck_dst, ts);
-			if (!pctx->fake_dts_set && pctx->fake_dts) {
-				s64 offset = pctx->fake_dts;
-				gf_filter_pid_set_property(pctx->pid, GF_PROP_PID_DELAY, &PROP_LONGSINT( -offset) );
+			if (!pctx->fake_dts_set && pctx->fake_dts_plus_one) {
+				s64 offset = pctx->fake_dts_plus_one-1;
+				offset -= pctx->fake_dts_orig;
+				if (offset)
+					gf_filter_pid_set_property(pctx->pid, GF_PROP_PID_DELAY, &PROP_LONGSINT( -offset) );
 				pctx->fake_dts_set = GF_TRUE;
 			}
 		} else {
-			//trick for some demuxers in libavformat no setting dts when negative (mkv for ex)
-			ts = pctx->fake_dts;
+			ts = pctx->fake_dts_plus_one-1;
 			gf_filter_pck_set_dts(pck_dst, ts);
-			pctx->fake_dts += pkt->duration;
+			pctx->fake_dts_plus_one += pkt->duration;
 		}
 
 		if (pkt->duration)
@@ -717,7 +736,7 @@ restart:
 	}
 
 	e = gf_filter_pck_send(pck_dst);
-    ctx->nb_pck_sent++;
+	ctx->nb_pck_sent++;
 	ctx->nb_stop_pending=0;
 	if (!ctx->raw_pck_out) {
 		FF_FREE_PCK(pkt);
@@ -726,10 +745,16 @@ restart:
 	nb_pck++;
 	if (e || (nb_pck>10)) return e;
 
-	if (ctx->ipid && ctx->strbuf_size && (ctx->strbuf_offset*2 > ctx->strbuf_size)) {
-		gf_filter_post_process_task(filter);
+	//we demux an input, restart to flush it
+	if (ctx->ipid) {
+		if (ctx->strbuf_size && (ctx->strbuf_offset*2 > ctx->strbuf_size)) {
+			gf_filter_post_process_task(filter);
+		}
+		goto restart;
 	}
-	goto restart;
+
+	//we don't demux an input, only rely on session to schedule the filter
+	return GF_OK;
 }
 
 
@@ -1164,6 +1189,42 @@ GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, u32 grab_type)
 		for (j=0; j<(u32) stream->nb_side_data; j++) {
 			ffdmx_parse_side_data(&stream->side_data[i], pid);
 		}
+
+		if (ctx->demuxer->nb_chapters) {
+			GF_PropertyValue p;
+			GF_PropUIntList times;
+			GF_PropStringList names;
+			u32 nb_c = ctx->demuxer->nb_chapters;
+
+			times.vals = gf_malloc(sizeof(u32)*nb_c);
+			names.vals = gf_malloc(sizeof(char *)*nb_c);
+			memset(names.vals, 0, sizeof(char *)*nb_c);
+			times.nb_items = names.nb_items = nb_c;
+
+			for (j=0; j<ctx->demuxer->nb_chapters; j++) {
+				AVChapter *c = ctx->demuxer->chapters[j];
+				u64 start = gf_timestamp_rescale(c->start * c->time_base.num, c->time_base.den, 1000);
+				times.vals[j] = (u32) start;
+				AVDictionaryEntry *ent = NULL;
+				while (c->metadata) {
+					ent = av_dict_get(c->metadata, "", ent, AV_DICT_IGNORE_SUFFIX);
+					if (!ent) break;
+					if (!strcmp(ent->key, "title")) {
+						names.vals[j] = gf_strdup(ent->value);
+					}
+				}
+				if (!names.vals[j]) names.vals[j] = gf_strdup("Unknwon");
+			}
+			p.type = GF_PROP_UINT_LIST;
+			p.value.uint_list = times;
+			gf_filter_pid_set_property(pid, GF_PROP_PID_CHAP_TIMES, &p);
+			gf_free(times.vals);
+
+			p.type = GF_PROP_STRING_LIST;
+			p.value.string_list = names;
+			gf_filter_pid_set_property(pid, GF_PROP_PID_CHAP_NAMES, &p);
+			//no free for string lists
+		}
 	}
 
 	if (!nb_a && !nb_v && !nb_t)
@@ -1346,7 +1407,10 @@ static GF_Err ffdmx_initialize(GF_Filter *filter)
 static int ffdmx_read_packet(void *opaque, uint8_t *buf, int buf_size)
 {
 	GF_FFDemuxCtx *ctx = (GF_FFDemuxCtx *)opaque;
-
+	if (ctx->in_seek && (ctx->seek_offset >= 0)) {
+		ctx->in_seek = 2;
+		return -1;
+	}
 	if (ctx->strbuf_offset + buf_size > ctx->strbuf_size) {
 		if (!ctx->in_eos) {
 			GF_LOG(GF_LOG_WARNING, ctx->log_class, ("[%s] Internal buffer too small, may result in packet drops - try increaset strbuf_min option\n", ctx->fname));
@@ -1359,6 +1423,9 @@ static int ffdmx_read_packet(void *opaque, uint8_t *buf, int buf_size)
 	}
 	memcpy(buf, ctx->strbuf + ctx->strbuf_offset, buf_size);
 	ctx->strbuf_offset += buf_size;
+	//if 2xbuffer size is larger than our min internal buffer, increase size - this should limit risks of getting called with no packets to deliver
+	if (buf_size*2 >= ctx->strbuf_min)
+		ctx->strbuf_min = 2*buf_size;
 	return buf_size;
 }
 
@@ -1375,8 +1442,11 @@ static int64_t ffdmx_seek(void *opaque, int64_t offset, int whence)
 		return val;
 	}
 	if (ctx->in_seek) {
-		ctx->seek_offset = offset;
-		return offset;
+		if (ctx->in_seek == 1) {
+			ctx->seek_offset = offset;
+			return offset;
+		}
+		return -1;
 	}
 	//if seeking in first block (while probing for stream info), allow it
 	if (ctx->first_block && (whence==SEEK_SET) && (offset<ctx->strbuf_size)) {
@@ -1455,15 +1525,27 @@ static Bool ffdmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		if (!ctx->raw_data && (ctx->last_play_start_range != evt->play.start_range)) {
 			u32 i;
 			if (ctx->ipid) {
-				ctx->in_seek = GF_TRUE;
+				ctx->seek_ms = 0;
+				ctx->in_seek = 1;
 				ctx->seek_offset = -1;
 			}
 
 			int res = av_seek_frame(ctx->demuxer, -1, (s64) (AV_TIME_BASE*evt->play.start_range), AVSEEK_FLAG_BACKWARD);
 			if (res<0) {
 				GF_LOG(GF_LOG_WARNING, ctx->log_class, ("[%s] Fail to seek %s to %g - error %s\n", ctx->fname, ctx->src, evt->play.start_range, av_err2str(res) ));
-			} else if (ctx->ipid && (ctx->seek_offset>=0)) {
+				ctx->in_seek = 2;
+				ctx->seek_offset=0;
+			}
+			if (ctx->ipid && (ctx->seek_offset>=0)) {
 				GF_FilterEvent fevt;
+				//failed to seek, start from 0
+				if (evt->play.start_range && (ctx->in_seek==2)) {
+					ctx->seek_offset=0;
+					ctx->seek_ms = (u64) (1000*evt->play.start_range);
+					GF_LOG(GF_LOG_WARNING, ctx->log_class, ("[%s] Fail to seek %s to %g, seeking from start\n", ctx->fname, ctx->src, evt->play.start_range));
+					if (res<0)
+						av_seek_frame(ctx->demuxer, -1, 0, AVSEEK_FLAG_BACKWARD);
+				}
 				GF_FEVT_INIT(fevt, GF_FEVT_SOURCE_SEEK, ctx->ipid);
 				fevt.seek.start_offset = ctx->seek_offset;
 				gf_filter_pid_send_event(ctx->ipid, &fevt);
