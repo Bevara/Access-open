@@ -485,7 +485,7 @@ GF_FilterRegister ResamplerRegister = {
 
 const char *gf_audio_fmt_cicp_all_names();
 
-const GF_FilterRegister *dynCall_resample_register(GF_FilterSession *session)
+const GF_FilterRegister *resample_register(GF_FilterSession *session)
 {
 	ResamplerArgs[3].min_max_enum = gf_audio_fmt_cicp_all_names();
 	return &ResamplerRegister;
