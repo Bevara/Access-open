@@ -852,7 +852,9 @@ const u32 *QueryInterfaces()
 GPAC_MODULE_EXPORT
 GF_BaseInterface *LoadInterface(u32 InterfaceType)
 {
+	#if !defined(GPAC_DISABLE_EVG)
 	if (InterfaceType == GF_FONT_READER_INTERFACE) return (GF_BaseInterface *)ft_load();
+	#endif
 	return NULL;
 }
 

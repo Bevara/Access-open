@@ -27,6 +27,8 @@
 #include <gpac/constants.h>
 #include <gpac/filters.h>
 
+#ifndef GPAC_DISABLE_AV_PARSERS
+
 typedef struct
 {
 	u64 pos;
@@ -812,4 +814,9 @@ const GF_FilterRegister *dynCall_truehd_register(GF_FilterSession *session)
 {
 	return &TrueHDDmxRegister;
 }
-
+#else
+const GF_FilterRegister *dynCall_truehd_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif

@@ -26,7 +26,7 @@
 
 #include <gpac/path2d.h>
 
-#if !defined(GPAC_DISABLE_EVG) || defined(GPAC_HAS_FREETYPE)
+#if !defined(GPAC_DISABLE_EVG) 
 
 GF_EXPORT
 GF_Path *gf_path_new()

@@ -61,7 +61,9 @@ endif
 #common objs - insert after ../static if any to overwrite list of objects
 OBJS=gpac.o compositor_tools.o gpac_help.o
 ifeq ($(CONFIG_EMSCRIPTEN),yes)
+ifeq ($(DISABLE_ISOFF),no)
 OBJS+= ../mp4box/mp4box.o ../mp4box/filedump.o ../mp4box/fileimport.o
+endif
 endif
 
 

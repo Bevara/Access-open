@@ -432,6 +432,7 @@ static void SDLVid_DestroyObjects(SDLVidCtx *ctx)
 #include <gpac/media_tools.h>
 void SDLVid_SetIcon(SDLVidCtx *ctx)
 {
+	#ifdef GPAC_HAS_PNG
 	u8 *buffer, *dec_buf;
 	u32 size, w, h, pf, Bpp, dst_size=0;
 	const char cfg[GF_MAX_PATH];
@@ -457,6 +458,7 @@ void SDLVid_SetIcon(SDLVidCtx *ctx)
 	}
 	gf_free(buffer);
 	gf_free(dec_buf);
+	#endif
 }
 #endif
 
