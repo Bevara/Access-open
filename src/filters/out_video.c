@@ -2334,12 +2334,12 @@ GF_FilterRegister VideoOutRegister = {
 	.update_arg = vout_update_arg
 };
 
-const GF_FilterRegister *dynCall_vout_register(GF_FilterSession *session)
+const GF_FilterRegister *vout_register(GF_FilterSession *session)
 {
 	return &VideoOutRegister;
 }
 #else
-const GF_FilterRegister *dynCall_vout_register(GF_FilterSession *session)
+const GF_FilterRegister *vout_register(GF_FilterSession *session)
 {
 	return NULL;
 }
