@@ -80,6 +80,7 @@ struct __tag_bitstream
 	u32 overflow_state;
 };
 
+GF_EXPORT
 GF_Err gf_bs_reassign_buffer(GF_BitStream *bs, const u8 *buffer, u64 BufferSize)
 {
 	if (!bs) return GF_BAD_PARAM;
