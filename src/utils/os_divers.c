@@ -155,6 +155,8 @@ u64 gf_sys_clock_high_res()
 
 Bool gf_sys_enable_remotery(Bool start, Bool is_shutdown);
 
+static Bool gpac_disable_rti = GF_FALSE;
+
 
 GF_EXPORT
 void gf_sleep(u32 ms)
@@ -918,7 +920,9 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 	s32 i;
 	if (!gpac_argc) {
 		Bool gf_opts_load_option(const char *arg_name, const char *val, Bool *consumed_next, GF_Err *e);
+#ifdef GPAC_ENABLE_RESTRICT
 		void gf_cfg_load_restrict();
+#endif
 
 #ifndef GPAC_DISABLE_NETWORK
 		gpac_use_poll = GF_TRUE;
@@ -1022,8 +1026,10 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 			if (gpac_quiet==2) gf_log_set_tool_level(GF_LOG_ALL, GF_LOG_QUIET);
 			gf_set_progress_callback(NULL, progress_quiet);
 		}
+#ifdef GPAC_ENABLE_RESTRICT
 		//now that we have parsed all options, load restrict
 		gf_cfg_load_restrict();
+#endif
 	}
 	//for OSX we allow overwrite of argc/argv due to different behavior between console-mode apps and GUI
 #if !defined(__DARWIN__) && !defined(__APPLE__)
@@ -1521,7 +1527,10 @@ GF_Err gf_sys_init(GF_MemTrackerType mem_tracker_type, const char *profile)
 	/*init RTI stats*/
 	if (!memory_at_gpac_startup) {
 		GF_SystemRTInfo rti;
-		if (gf_sys_get_rti(500, &rti, GF_RTI_SYSTEM_MEMORY_ONLY)) {
+		if (profile && !strcmp(profile, "n")) {
+			gpac_disable_rti=GF_TRUE;
+			memory_at_gpac_startup = 0;
+		} else if (gf_sys_get_rti(500, &rti, GF_RTI_SYSTEM_MEMORY_ONLY)) {
 			memory_at_gpac_startup = rti.physical_memory_avail;
 			GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[core] System init OK - process id %d - %d MB physical RAM - %d cores\n", rti.pid, (u32) (rti.physical_memory/1024/1024), rti.nb_cores));
 		} else {
@@ -2284,6 +2293,8 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 GF_EXPORT
 Bool gf_sys_get_rti(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 {
+	if (gpac_disable_rti) return GF_FALSE;
+
 	Bool res = gf_sys_get_rti_os(refresh_time_ms, rti, flags);
 	if (res) {
 		if (!rti->process_memory) rti->process_memory = memory_at_gpac_startup - rti->physical_memory_avail;

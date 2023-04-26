@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2008-2022
+ *			Copyright (c) Telecom ParisTech 2008-2023
  *					All rights reserved
  *
  *  This file is part of GPAC
@@ -136,6 +136,8 @@ This section documents the base data types of GPAC.
 #define GPAC_HAS_SSL
 //#endif
 #define GPAC_HAS_SOCK_UN
+
+#define GPAC_HAS_FD
 
 //64-bits OSX
 #ifdef __LP64__
@@ -336,12 +338,6 @@ this macro is currently defined in setup.h */
 
 /*disables DASH MPD */
 //#define GPAC_DISABLE_MPD
-
-/*disables HEVC */
-//#define GPAC_DISABLE_HEVC
-
-/*disables AOM AV1 */
-//#define GPAC_DISABLE_AV1
 
 /*disables VOBSUB */
 //#define GPAC_DISABLE_VOBSUB

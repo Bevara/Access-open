@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -872,7 +872,7 @@ GF_Box *def_parent_box_new()
 	return (GF_Box *) tmp;
 }
 
-#ifndef GPAC_DISABLE_ISOM_WRITEHintSa
+#ifndef GPAC_DISABLE_ISOM_WRITE
 
 GF_Err def_parent_box_write(GF_Box *s, GF_BitStream *bs)
 {
@@ -904,7 +904,7 @@ GF_Box *def_parent_full_box_new()
 	return (GF_Box *) tmp;
 }
 
-#ifndef GPAC_DISABLE_ISOM_WRITEHintSa
+#ifndef GPAC_DISABLE_ISOM_WRITE
 
 GF_Err def_parent_full_box_write(GF_Box *s, GF_BitStream *bs)
 {
@@ -4005,15 +4005,14 @@ GF_Err audio_sample_entry_box_read(GF_Box *s, GF_BitStream *bs)
 	ptr = (GF_MPEGAudioSampleEntryBox *)s;
 
 	start = gf_bs_get_position(bs);
-	gf_bs_seek(bs, start + 8);
-	v = gf_bs_read_u16(bs);
+	v = gf_bs_peek_bits(bs, 16, 8);
 	if (v)
 		ptr->qtff_mode = GF_ISOM_AUDIO_QTFF_ON_NOEXT;
 
 	//try to disambiguate QTFF v1 and MP4 v1 audio sample entries ...
 	if (v==1) {
 		//go to end of ISOM audio sample entry, skip 4 byte (box size field), read 4 bytes (box type) and check if this looks like a box
-		gf_bs_seek(bs, start + 8 + 20  + 4);
+		gf_bs_skip_bytes(bs, 8 + 20 + 4);
 		a = gf_bs_read_u8(bs);
 		b = gf_bs_read_u8(bs);
 		c = gf_bs_read_u8(bs);
@@ -4024,9 +4023,9 @@ GF_Err audio_sample_entry_box_read(GF_Box *s, GF_BitStream *bs)
 		if (isalnum(c)) nb_alnum++;
 		if (isalnum(d)) nb_alnum++;
 		if (nb_alnum>2) ptr->qtff_mode = GF_ISOM_AUDIO_QTFF_NONE;
+		gf_bs_seek(bs, start);
 	}
 
-	gf_bs_seek(bs, start);
 	e = gf_isom_audio_sample_entry_read((GF_AudioSampleEntryBox*)s, bs);
 	if (e) return e;
 	pos = gf_bs_get_position(bs);
@@ -7417,6 +7416,14 @@ void trun_box_del(GF_Box *s)
 	if (ptr->samples) gf_free(ptr->samples);
 	if (ptr->cache) gf_bs_del(ptr->cache);
 	if (ptr->sample_order) gf_free(ptr->sample_order);
+	if (ptr->sample_refs) {
+		while (gf_list_count(ptr->sample_refs)) {
+			GF_TrafSampleRef *sref = gf_list_pop_back(ptr->sample_refs);
+			if (!sref->ref) gf_free(sref->data);
+			gf_free(sref);
+		}
+		gf_list_del(ptr->sample_refs);
+	}
 	gf_free(ptr);
 }
 
@@ -10630,7 +10637,7 @@ GF_Err trgr_on_child_box(GF_Box *s, GF_Box *a, Bool is_rem)
 	GF_TrackGroupBox *ptr = (GF_TrackGroupBox *)s;
 
 	BOX_FIELD_LIST_ASSIGN(groups)
-	return gf_list_add(ptr->groups, a);
+	return GF_OK;
 }
 
 

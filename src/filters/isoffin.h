@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -70,7 +70,7 @@ typedef struct
 	u32 xps_check;
 	char *catseg;
 	Bool sigfrag;
-	Bool nocrypt, strtxt, nodata;
+	Bool nocrypt, strtxt, nodata, lightp;
 	u32 mstore_purge, mstore_samples, mstore_size;
 
 	//internal
@@ -151,7 +151,7 @@ typedef struct
 	s32 roll;
 	u32 xps_mask;
 	
-	u32 sample_num;
+	u32 sample_num, sample_last;
 	s64 ts_offset;
 
 	/*for edit lists*/
@@ -190,7 +190,6 @@ typedef struct
 	u8 skip_byte_block, crypt_byte_block;
 	u32 au_seq_num;
 	u64 sender_ntp, ntp_at_server_ntp;
-	u32 au_duration;
 
 	u64 isma_BSO;
 	Bool pck_encrypted;
@@ -205,6 +204,9 @@ typedef struct
 	GF_AVCConfig *avcc;
 	GF_VVCConfig *vvcc;
 	u32 dsi_crc;
+	u64 first_tfdt;
+
+	GF_FilterPacket *pck;
 } ISOMChannel;
 
 void isor_reset_reader(ISOMChannel *ch);

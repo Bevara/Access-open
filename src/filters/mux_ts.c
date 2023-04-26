@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2022
+ *			Copyright (c) Telecom ParisTech 2018-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG-2 TS mux filter
@@ -675,6 +675,7 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 		}
 		//serialize webvtt cue formatting for TX3G
 		else if (tspid->codec_id == GF_CODECID_WEBVTT) {
+#ifndef GPAC_DISABLE_VTT
 			u32 i;
 			u64 start_ts, end_ts;
 			void webvtt_write_cue_bs(GF_BitStream *bs, GF_WebVTTCue *cue, Bool write_srt);
@@ -694,6 +695,7 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 			gf_bs_get_content(bs, &es_pck.data, &es_pck.data_len);
 			gf_bs_del(bs);
 			tspid->pck_data_buf = es_pck.data;
+#endif
 		}
 		//for TTML we keep the entire payload as a PES packet
 
@@ -2112,7 +2114,11 @@ GF_FilterRegister TSMuxRegister = {
 };
 
 
+<<<<<<< HEAD
 const GF_FilterRegister *dynCall_tsmux_register(GF_FilterSession *session)
+=======
+const GF_FilterRegister *m2tsmx_register(GF_FilterSession *session)
+>>>>>>> 586113942f9e1efdfa75eac1aae2b27b610bcb27
 {
 	return &TSMuxRegister;
 }

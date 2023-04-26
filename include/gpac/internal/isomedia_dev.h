@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -932,6 +932,9 @@ typedef struct
 	u32 index;
 	u32 nb_base_refs;
 
+	u8 *(*sample_alloc_cbk)(u32 size, void *cbk);
+	void *sample_alloc_udta;
+
 #ifndef GPAC_DISABLE_ISOM_WRITE
 	u64 first_dts_chunk;
 	u32 nb_samples_in_cache;
@@ -940,11 +943,11 @@ typedef struct
 	GF_BitStream *chunk_cache;
 #endif
 
+	u32 sample_count_at_seg_start;
 #ifndef	GPAC_DISABLE_ISOM_FRAGMENTS
 	//dts value when at refererence fragment start (first frag ever or first after a table reset), usually current segment start
 	u64 dts_at_seg_start;
 	//number of samples at refererence fragment start (first frag ever or first after a table reset), usually current segment start
-	u32 sample_count_at_seg_start;
 	Bool first_traf_merged;
 	Bool present_in_scalable_segment;
 	u32 current_traf_stsd_idx;
@@ -1130,7 +1133,7 @@ typedef struct
 	GF_SttsEntry *entries;
 	u32 nb_entries, alloc_size;
 
-#ifndef GPAC_DISABLE_ISOM_WRITE
+#if !defined(GPAC_DISABLE_ISOM_WRITE) || !defined(GPAC_DISABLE_ISOM_FRAGMENTS)
 	/*cache for WRITE*/
 	u32 w_currentSampleNum;
 	u64 w_LastDTS;
@@ -1158,7 +1161,7 @@ typedef struct
 	GF_DttsEntry *entries;
 	u32 nb_entries, alloc_size;
 
-#ifndef GPAC_DISABLE_ISOM_WRITE
+#if !defined(GPAC_DISABLE_ISOM_WRITE) || !defined(GPAC_DISABLE_ISOM_FRAGMENTS)
 	u32 w_LastSampleNumber;
 	/*force one sample per entry*/
 	Bool unpack_mode;
@@ -2034,12 +2037,15 @@ typedef struct
 	u64 sidx_end;
 	u64 moof_start;
 	u64 mdat_end;
+	u64 first_dts;
 } GF_TrafMapEntry;
 
 typedef struct
 {
 	u32 nb_entries, nb_alloc;
 	GF_TrafMapEntry *frag_starts;
+	//read cache
+	u32 r_cur_sample, r_cur_idx;
 } GF_TrafToSampleMap;
 
 typedef struct
@@ -2083,7 +2089,7 @@ typedef struct
 	u8 patch_piff_psec;
 } GF_SampleTableBox;
 
-GF_Err stbl_AppendTrafMap(GF_ISOFile *mov, GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end, u32 nb_pack_samples);
+GF_Err stbl_AppendTrafMap(GF_ISOFile *mov, GF_SampleTableBox *stbl, Bool is_seg_start, u64 seg_start_offset, u64 frag_start_offset, u64 tfdt, u8 *moof_template, u32 moof_template_size, u64 sidx_start, u64 sidx_end, u32 nb_pack_samples);
 
 typedef struct __tag_media_info_box
 {
@@ -2611,8 +2617,12 @@ typedef struct
 	u64 ntp, timestamp;
 
 	//emsg to inject before moof, not part of the moof hierarchy !
-
 	GF_List *emsgs;
+
+	//when using packet reference, we serialize the segment start (emsg, prft, moof+mdat) header here
+	u8 *moof_data;
+	u32 moof_data_len, trun_ref_size;
+
 } GF_MovieFragmentBox;
 
 
@@ -2683,7 +2693,6 @@ typedef struct
 #endif
 
 	u32 interleave_id;
-	u8 merge_sample_interleave;
 	u8 use_sample_interleave;
 	u8 force_new_trun;
 	u8 IFrameSwitching;
@@ -2692,6 +2701,9 @@ typedef struct
 	u8 truns_v1;
 	u8 large_tfdt;
 	u8 no_sdtp_first_flags;
+	//when using packet refs, cumulated size of all data aded to child truns
+	u32 trun_ref_size;
+
 } GF_TrackFragmentBox;
 
 GF_TrackFragmentBox *gf_isom_get_traf(GF_ISOFile *mov, GF_ISOTrackID TrackID);
@@ -2750,6 +2762,7 @@ typedef struct
 
 	/*only for trun, ignored for ctrn*/
 	u32 first_sample_flags;
+	u32 run_size;
 
 	/*in write mode with data caching*/
 	GF_BitStream *cache;
@@ -2774,7 +2787,17 @@ typedef struct
 	u32 *sample_order;
 
 	u32 min_duration;
+
+	GF_List *sample_refs;
 } GF_TrackFragmentRunBox;
+
+typedef struct
+{
+	u8 *data;
+	u32 len;
+	void *ref;
+	u32 ref_offset;
+} GF_TrafSampleRef;
 
 #ifdef GF_ENABLE_CTRN
 u32 gf_isom_ctrn_field_size_bits(u32 field_idx);
@@ -3938,6 +3961,9 @@ typedef struct
 	char *temp_file;
 #endif
 	GF_Blob *blob;
+#ifdef GPAC_HAS_FD
+	s32 fd;
+#endif
 } GF_FileDataMap;
 
 /*file mapping handler. used if supported, only on read mode for complete files  (not in file download)*/
@@ -4051,20 +4077,26 @@ struct __tag_isom {
 	s64 read_byte_offset;
 	u64 bytes_removed;
 
+#ifndef GPAC_DISABLE_ISOM_WRITE
 	GF_ISOCompressMode compress_mode;
 	u32 compress_flags;
+#endif
 
 	void (*progress_cbk)(void *udta, u64 nb_done, u64 nb_total);
 	void *progress_cbk_udta;
 
+	/*in WRITE mode, this is the current MDAT where data is written*/
+	/*in READ mode this is the last valid file position before a gf_isom_box_read failed*/
+	u64 current_top_box_start;
+
+	Bool signal_frag_bounds;
+	Bool sample_groups_in_traf;
 	u32 FragmentsFlags;
+
 #ifndef	GPAC_DISABLE_ISOM_FRAGMENTS
 	u32 NextMoofNumber;
 	/*active fragment*/
 	GF_MovieFragmentBox *moof;
-	/*in WRITE mode, this is the current MDAT where data is written*/
-	/*in READ mode this is the last valid file position before a gf_isom_box_read failed*/
-	u64 current_top_box_start;
 	u64 segment_start;
 
 	GF_List *moof_list;
@@ -4073,6 +4105,8 @@ struct __tag_isom {
 	u32 write_styp;
 
 	GF_List *emsgs;
+
+	Bool in_sidx_write;
 
 	/*used when building single-indexed self initializing media segments*/
 	GF_SegmentIndexBox *root_sidx;
@@ -4088,14 +4122,12 @@ struct __tag_isom {
 	Bool single_moof_mode;
 	u32 single_moof_state;
 
-	Bool sample_groups_in_traf;
 	Bool force_sidx_v1;
 
 	/* optional mfra box used in write mode */
 	GF_MovieFragmentRandomAccessBox *mfra;
 
 	Bool store_traf_map;
-	Bool signal_frag_bounds;
 	u64 root_sidx_start_offset, root_sidx_end_offset;
 	u64 sidx_start_offset, sidx_end_offset;
 	u64 styp_start_offset;
@@ -4120,7 +4152,7 @@ struct __tag_isom {
 
 	Bool is_smooth;
 
-	GF_Err (*on_block_out)(void *usr_data, u8 *block, u32 block_size);
+	GF_Err (*on_block_out)(void *usr_data, u8 *block, u32 block_size, void *cbk_data, u32 cbk_magic);
 	GF_Err (*on_block_patch)(void *usr_data, u8 *block, u32 block_size, u64 block_offset, Bool is_insert);
 	void (*on_last_block_start)(void *usr_data);
 	void *on_block_out_usr_data;
@@ -4174,7 +4206,7 @@ Bool IsMP4Description(u32 entryType);
 GF_Err Track_FindRef(GF_TrackBox *trak, u32 ReferenceType, GF_TrackReferenceTypeBox **dpnd);
 /*Time and sample*/
 GF_Err GetMediaTime(GF_TrackBox *trak, Bool force_non_empty, u64 movieTime, u64 *MediaTime, s64 *SegmentStartTime, s64 *MediaOffset, u8 *useEdit, u64 *next_edit_start_plus_one);
-GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp, u32 *sampleDescriptionIndex, Bool no_data, u64 *out_offset);
+GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp, u32 *sampleDescriptionIndex, Bool no_data, u64 *out_offset, Bool ext_realloc);
 GF_Err Media_CheckDataEntry(GF_MediaBox *mdia, u32 dataEntryIndex);
 GF_Err Media_FindSyncSample(GF_SampleTableBox *stbl, u32 searchFromTime, u32 *sampleNumber, u8 mode);
 GF_Err Media_RewriteODFrame(GF_MediaBox *mdia, GF_ISOSample *sample);
@@ -4231,6 +4263,8 @@ GF_Err gf_isom_set_sample_group_description_internal(GF_ISOFile *movie, u32 trac
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
+GF_Err isom_on_block_out(void *cbk, u8 *data, u32 block_size);
+
 GF_Err FlushCaptureMode(GF_ISOFile *movie);
 GF_Err CanAccessMovie(GF_ISOFile *movie, GF_ISOOpenMode Mode);
 GF_ISOFile *gf_isom_create_movie(const char *fileName, GF_ISOOpenMode OpenMode, const char *tmp_dir);
@@ -4279,6 +4313,9 @@ GF_Err stbl_SetRedundant(GF_SampleTableBox *stbl, u32 sampleNumber);
 GF_Err stbl_AddRedundant(GF_SampleTableBox *stbl, u32 sampleNumber);
 
 /*REMOVE functions*/
+#endif
+
+#if !defined(GPAC_DISABLE_ISOM_WRITE) || !defined(GPAC_DISABLE_ISOM_FRAGMENTS)
 GF_Err stbl_RemoveDTS(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples, u32 LastAUDefDuration);
 GF_Err stbl_RemoveCTS(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples);
 GF_Err stbl_RemoveSize(GF_SampleTableBox *stbl, u32 sampleNumber, u32 nb_samples);
@@ -4290,6 +4327,9 @@ GF_Err stbl_RemoveRedundant(GF_SampleTableBox *stbl, u32 SampleNumber, u32 nb_sa
 GF_Err stbl_RemoveSubSample(GF_SampleTableBox *stbl, u32 SampleNumber);
 GF_Err stbl_RemoveSampleGroup(GF_SampleTableBox *stbl, u32 SampleNumber);
 GF_Err stbl_RemoveRAPs(GF_SampleTableBox *stbl, u32 nb_samples);
+#endif
+
+#ifndef	GPAC_DISABLE_ISOM_WRITE
 
 #ifndef	GPAC_DISABLE_ISOM_FRAGMENTS
 GF_Err gf_isom_close_fragments(GF_ISOFile *movie);
@@ -4696,8 +4736,9 @@ GF_Box *boxstring_new_with_data(u32 type, const char *string, GF_List **parent);
 
 GF_Err gf_isom_read_null_terminated_string(GF_Box *s, GF_BitStream *bs, u64 size, char **out_str);
 
+#ifndef GPAC_DISABLE_ISOM_FRAGMENTS
 GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragmentBox *moof, u64 moof_offset, s32 compressed_diff, u64 *cumulated_offset);
-
+#endif
 
 #endif //GPAC_DISABLE_ISOM
 

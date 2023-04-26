@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / mp4box application
@@ -676,6 +676,9 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 	s32 roll = 0;
 	Bool src_is_isom = GF_FALSE;
 	s32 dlb_mode = -2;
+	u32 tkgp_type=0;
+	s32 tkgp_id=0;
+	Bool tkgp_add = GF_TRUE;
 
 	dv_profile[0] = 0;
 	rvc_predefined = 0;
@@ -1301,6 +1304,25 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		else if (!strnicmp(ext+1, "ID=", 3)) {
 			import.target_trackID = (u32) parse_u32(ext+4, "ID");
 		}
+		else if (!strnicmp(ext+1, "tkgp=", 5)) {
+			e = GF_BAD_PARAM;
+			char *sep=strchr(ext+1, ',');
+			if (!sep) {
+				GOTO_EXIT("invalid format for tkgp")
+			}
+			sep[0] = 0;
+			tkgp_id = atoi(sep+1);
+			if (strlen(ext+6)==4) tkgp_type=GF_4CC(ext[6], ext[7], ext[8], ext[9]);
+			sep[0] = ',';
+			if (!tkgp_type) {
+				GOTO_EXIT("invalid format for tkgp")
+			}
+			e = GF_OK;
+			if (tkgp_id<0) {
+				tkgp_id = -tkgp_id;
+				tkgp_add = GF_FALSE;
+			}
+		}
 		/*unrecognized, assume name has colon in it*/
 		else {
 			M4_LOG(GF_LOG_ERROR, ("Unrecognized import option %s, ignoring\n", ext+1));
@@ -1330,9 +1352,11 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 
 	/*check duration import (old syntax)*/
 	ext = strrchr(final_name, '%');
-	if (ext) {
-		gf_parse_frac(ext+1, &import.duration);
-		ext[0] = 0;
+	if (ext && gf_sys_old_arch_compat()) {
+		if (gf_parse_frac(ext+1, &import.duration))
+			ext[0] = 0;
+		else
+			ext = NULL;
 	}
 
 	/*select switches for av containers import*/
@@ -1599,7 +1623,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 				GOTO_EXIT("changing color info")
 			}
 			if (hdr_file) {
-				e = parse_high_dynamc_range_xml_desc(dest, track, hdr_file);
+				e = apply_high_dynamc_range_xml_desc(dest, track, hdr_file);
 				GOTO_EXIT("setting HDR info")
 			}
 			if (dv_profile[0]) {
@@ -1650,6 +1674,10 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		if (group) {
 			e = gf_isom_set_alternate_group_id(dest, track, group);
 			GOTO_EXIT("setting alternate group")
+		}
+		if (tkgp_type) {
+			e = gf_isom_set_track_group(dest, track, tkgp_id, tkgp_type, tkgp_add);
+			GOTO_EXIT("setting trackGroup")
 		}
 
 		if (track_layout) {
@@ -1820,6 +1848,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 					ac3c->atmos_ec3_ext=0;
 					ac3c->complexity_index_type=0;
 				} else {
+#ifndef GPAC_DISABLE_AV_PARSERS
 					u32 di;
 					GF_ISOSample *samp = gf_isom_get_sample(dest, track, 1, &di);
 					u32 pos;
@@ -1829,6 +1858,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 						ac3c->atmos_ec3_ext = 1;
 						ac3c->complexity_index_type = dlb_mode;
 					}
+#endif
 				}
 				gf_isom_ac3_config_update(dest, track, 1, ac3c);
 				gf_free(ac3c);
@@ -1906,7 +1936,6 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 			//TODO - merge, temporal sublayers
 		}
 	}
-#ifndef GPAC_DISABLE_HEVC
 	if (check_track_for_hevc) {
 		if (split_tile_mode) {
 			e = gf_media_split_hevc_tiles(dest, split_tile_mode - 1);
@@ -1918,7 +1947,6 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 			GOTO_EXIT("splitting HEVC temporal sublayers")
 		}
 	}
-#endif
 
 	if (tc_fps_num) {
 		u32 desc_index=0;
@@ -2398,7 +2426,6 @@ static u32 merge_avc_config(GF_ISOFile *dest, u32 tk_id, GF_ISOFile **o_orig, u3
 	return dst_tk;
 }
 
-#ifndef GPAC_DISABLE_HEVC
 static u32 merge_hevc_config(GF_ISOFile *dest, u32 tk_id, GF_ISOFile **o_orig, u32 src_track, Bool force_cat, u32 *orig_nal_len, u32 *dst_nal_len)
 {
 	u32 i;
@@ -2453,7 +2480,6 @@ static u32 merge_hevc_config(GF_ISOFile *dest, u32 tk_id, GF_ISOFile **o_orig, u
 	}
 	return dst_tk;
 }
-#endif /*GPAC_DISABLE_HEVC */
 
 static GF_Err rewrite_nal_size_field(GF_ISOSample *samp, u32 orig_nal_len, u32 dst_nal_len)
 {
@@ -2780,7 +2806,6 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 				        || (stype == GF_ISOM_SUBTYPE_AVC4_H264) ) {
 					dst_tk = merge_avc_config(dest, tk_id, &orig, i+1, force_cat, &orig_nal_len, &dst_nal_len);
 				}
-#ifndef GPAC_DISABLE_HEVC
 				/*merge HEVC config if possible*/
 				else if ((stype == GF_ISOM_SUBTYPE_HVC1)
 				         || (stype == GF_ISOM_SUBTYPE_HEV1)
@@ -2788,7 +2813,6 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 				         || (stype == GF_ISOM_SUBTYPE_HEV2)) {
 					dst_tk = merge_hevc_config(dest, tk_id, &orig, i+1, force_cat, &orig_nal_len, &dst_nal_len);
 				}
-#endif /*GPAC_DISABLE_HEVC*/
 				else if (force_cat) {
 					dst_tk = found_dst_tk;
 				}
@@ -3168,7 +3192,8 @@ GF_Err cat_multiple_files(GF_ISOFile *dest, char *fileName, u32 import_flags, GF
 	}
 	strcpy(cat_enum.szRad2, sep+1);
 	sep[0] = 0;
-	sep = strchr(cat_enum.szRad2, '%');
+	sep = NULL;
+	if (gf_sys_old_arch_compat()) sep = strchr(cat_enum.szRad2, '%');
 	if (!sep) sep = strchr(cat_enum.szRad2, '#');
 	if (!sep) sep = gf_url_colon_suffix(cat_enum.szRad2, '=');
 	strcpy(cat_enum.szOpt, "");
@@ -3866,7 +3891,7 @@ exit:
 	return file;
 }
 
-GF_Err parse_high_dynamc_range_xml_desc(GF_ISOFile *movie, u32 track, char *file_name)
+GF_Err apply_high_dynamc_range_xml_desc(GF_ISOFile *movie, u32 track, char *file_name)
 {
 	GF_DOMParser *parser;
 	GF_XMLNode *root, *stream;

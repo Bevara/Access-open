@@ -72,6 +72,7 @@ static Bool runfor_exit = GF_FALSE;
 static Bool runfor_fast = GF_FALSE;
 static u32 exit_mode = 0;
 static Bool enable_prompt = GF_FALSE;
+static Bool exit_nocleanup = GF_FALSE;
 static u32 enable_reports = 0;
 static char *report_filter = NULL;
 static Bool do_unit_tests = GF_FALSE;
@@ -579,7 +580,7 @@ int gpac_main(int _argc, char **_argv)
 		gpac_exit(1);
 	}
 
-	if (!profile || strcmp(profile, "0") )
+	if (!profile || (strcmp(profile, "0") && strcmp(profile, "n")) )
 		gpac_load_suggested_filter_args();
 
 #ifndef GPAC_DISABLE_LOG
@@ -905,6 +906,8 @@ int gpac_main(int _argc, char **_argv)
 				enable_prompt = GF_FALSE;
 			else
 				enable_prompt = GF_TRUE;
+		} else if (!strcmp(arg, "-qe")) {
+			exit_nocleanup = GF_TRUE;
 		} else if (!strcmp(arg, "-js")) {
 			session_js = arg_val;
 		} else if (!strcmp(arg, "-r")) {
@@ -1400,7 +1403,8 @@ exit:
 					fprintf(stderr, "UI last error %s\n", gf_error_to_string(e) );
 				}
 			}
-			gpac_check_session_args();
+			if (!exit_nocleanup)
+				gpac_check_session_args();
 		}
 
 		if (enable_reports) {
@@ -1409,6 +1413,11 @@ exit:
 			}
 			gpac_print_report(session, GF_FALSE, GF_TRUE);
 		}
+		if (exit_nocleanup) {
+			gf_fs_stop(session);
+			exit(e ? 1 : 0);
+		}
+
 		if (!dump_graph) {
 			gf_fs_print_non_connected_ex(session, alias_is_play);
 			alias_is_play = GF_FALSE;

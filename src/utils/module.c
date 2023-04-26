@@ -50,7 +50,7 @@ static void load_all_modules(GF_ModuleManager *mgr)
 	LOAD_PLUGIN(sdl_out);
 #endif
 
-#ifdef GPAC_HAS_FREETYPE
+#if defined(GPAC_HAS_FREETYPE) && !defined(GPAC_DISABLE_EVG)
 	LOAD_PLUGIN(ftfont);
 #endif
 #ifdef GPAC_HAS_ALSA
@@ -194,10 +194,8 @@ void gf_modules_refresh_module_directories()
 \brief module manager construtcor
  *
  *Constructs a module manager object.
-\param directory absolute path to the directory where the manager shall look for modules
-\param cfgFile GPAC configuration file handle. If this is NULL, the modules won't be able to share the configuration
+\param config GPAC configuration file handle. If this is NULL, the modules won't be able to share the configuration
  *file with the rest of the GPAC framework.
-\return the module manager object
 */
 void gf_modules_new(GF_Config *config)
 {
@@ -253,7 +251,6 @@ void gf_module_reload_dirs()
 \brief module manager destructor
  *
  *Destroys the module manager
-\param pm the module manager
  */
 void gf_modules_del()
 {

@@ -810,14 +810,23 @@ static int h2_send_data_callback(nghttp2_session *session, nghttp2_frame *frame,
 		goto err;
 	}
 
-	if (frame->data.padlen > 0) {
+	while (frame->data.padlen > 0) {
 		u32 padlen = (u32) frame->data.padlen - 1;
 		rv = h2_write_data(sess, padding, padlen);
-		if (rv<0) goto err;
+		if (rv<0) {
+			if (rv==NGHTTP2_ERR_WOULDBLOCK) continue;
+			goto err;
+		}
+		break;
 	}
-	rv = h2_write_data(sess, (u8 *) sess->h2_send_data, length);
-	if (rv<0) goto err;
-
+	while (1) {
+		rv = h2_write_data(sess, (u8 *) sess->h2_send_data, length);
+		if (rv<0) {
+			if (rv==NGHTTP2_ERR_WOULDBLOCK) continue;
+			goto err;
+		}
+		break;
+	}
 	sess->h2_send_data += (u32) length;
 	sess->h2_send_data_len -= (u32) length;
 	return 0;
@@ -825,7 +834,7 @@ err:
 
 	sess->status = GF_NETIO_STATE_ERROR;
 	SET_LAST_ERR(sess->last_error)
-	return NGHTTP2_ERR_CALLBACK_FAILURE;
+	return (int) rv;
 }
 
 static void h2_initialize_session(GF_DownloadSession *sess)
@@ -951,7 +960,7 @@ static GF_Err h2_submit_request(GF_DownloadSession *sess, char *req_name, const 
 	sess->h2_stream_id = nghttp2_submit_request(sess->h2_sess->ng_sess, NULL, hdrs, nb_hdrs+4, has_body ? &sess->data_io : NULL, sess);
 	sess->h2_ready_to_send = 0;
 
-#ifndef GPAC_DISABLE_LOGS
+#ifndef GPAC_DISABLE_LOG
 	if (gf_log_tool_level_on(GF_LOG_HTTP, GF_LOG_DEBUG)) {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_HTTP, ("[HTTP/2] send request (has_body %d) for new stream_id %d:\n", has_body, sess->h2_stream_id));
 		for (i=0; i<nb_hdrs+4; i++) {
@@ -1033,7 +1042,7 @@ GF_Err gf_cache_write_to_cache( const DownloadedCacheEntry entry, const GF_Downl
 \param entry The entry to use
 \param sess The download session
 \param success 1 if cache write is success, false otherwise
-\param GF_OK is everything went fine, GF_BAD_PARAM if entry is NULL, GF_IO_ERR if a failure occurs
+\return GF_OK is everything went fine, GF_BAD_PARAM if entry is NULL, GF_IO_ERR if a failure occurs
  */
 GF_Err gf_cache_close_write_cache( const DownloadedCacheEntry entry, const GF_DownloadSession * sess, Bool success);
 
@@ -1042,7 +1051,7 @@ GF_Err gf_cache_close_write_cache( const DownloadedCacheEntry entry, const GF_Do
  * This function prepares calls for gf_cache_write_to_cache
 \param entry The entry to use
 \param sess The download session
-\param GF_OK is everything went fine, GF_BAD_PARAM if entry is NULL, GF_IO_ERR if a failure occurs
+\return GF_OK is everything went fine, GF_BAD_PARAM if entry is NULL, GF_IO_ERR if a failure occurs
  */
 GF_Err gf_cache_open_write_cache( const DownloadedCacheEntry entry, const GF_DownloadSession * sess );
 
@@ -1116,7 +1125,7 @@ GF_UserCredentials* gf_user_credentials_find_for_site(GF_DownloadManager *dm, co
  * \brief Saves the digest for authentication of password and username
 \param dm The download manager
 \param creds The credentials to fill
-\param GF_OK if info has been filled, GF_BAD_PARAM if creds == NULL or dm == NULL, GF_AUTHENTICATION_FAILURE if user did not filled the info.
+\return GF_OK if info has been filled, GF_BAD_PARAM if creds == NULL or dm == NULL, GF_AUTHENTICATION_FAILURE if user did not filled the info.
  */
 static GF_Err gf_user_credentials_save_digest( GF_DownloadManager * dm, GF_UserCredentials * creds, const char * password, Bool store_info) {
 	int size;
@@ -1199,7 +1208,7 @@ static void on_user_pass(void *udta, const char *user, const char *pass, Bool st
  * \brief Asks the user for credentials for given site
 \param dm The download manager
 \param creds The credentials to fill
-\param GF_OK if info has been filled, GF_BAD_PARAM if creds == NULL or dm == NULL, GF_AUTHENTICATION_FAILURE if user did not filled the info.
+\return GF_OK if info has been filled, GF_BAD_PARAM if creds == NULL or dm == NULL, GF_AUTHENTICATION_FAILURE if user did not filled the info.
  */
 static GF_Err gf_user_credentials_ask_password( GF_DownloadManager * dm, GF_UserCredentials * creds, Bool secure)
 {
@@ -1256,7 +1265,7 @@ static Bool _ssl_is_initialized = GF_FALSE;
 
 /*!
  * initialize the SSL library once for all download managers
-\param GF_FALSE if everyhing is OK, GF_TRUE otherwise
+\return GF_FALSE if everyhing is OK, GF_TRUE otherwise
  */
 Bool gf_ssl_init_lib() {
 	if (_ssl_is_initialized)
@@ -1730,7 +1739,7 @@ static Bool gf_dm_can_handle_url(GF_DownloadManager *dm, const char *url)
 /*!
  * Finds an existing entry in the cache for a given URL
 \param sess The session configured with the URL
-\param NULL if none found, the DownloadedCacheEntry otherwise
+\return NULL if none found, the DownloadedCacheEntry otherwise
  */
 DownloadedCacheEntry gf_dm_find_cached_entry_by_url(GF_DownloadSession * sess)
 {
@@ -1767,7 +1776,7 @@ DownloadedCacheEntry gf_cache_create_entry( GF_DownloadManager * dm, const char 
  * Removes a session for a DownloadedCacheEntry
 \param entry The entry
 \param sess The session to remove
-\param the number of sessions left in the cached entry, -1 if one of the parameters is wrong
+\return the number of sessions left in the cached entry, -1 if one of the parameters is wrong
  */
 s32 gf_cache_remove_session_from_cache_entry(DownloadedCacheEntry entry, GF_DownloadSession * sess);
 
@@ -1815,7 +1824,7 @@ static void gf_dm_remove_cache_entry_from_session(GF_DownloadSession * sess) {
  * implemented in cache.c
 \param entry The entry
 \param sess The session to add
-\param the number of sessions in the cached entry, -1 if one of the parameters is wrong
+\return the number of sessions in the cached entry, -1 if one of the parameters is wrong
  */
 s32 gf_cache_add_session_to_cache_entry(DownloadedCacheEntry entry, GF_DownloadSession * sess);
 Bool gf_cache_entry_persistent(const DownloadedCacheEntry entry);
@@ -2372,7 +2381,7 @@ void gf_dm_url_info_del(GF_URL_Info * info) {
 /**
 \param url The url to parse for protocol
 \param info The info to fill
-\param Returns the offset in url of the protocol found -1 if not found
+\return Returns the offset in url of the protocol found -1 if not found
  */
 static s32 gf_dm_parse_protocol(const char * url, GF_URL_Info * info) {
 	assert(info);
@@ -4747,7 +4756,7 @@ void gf_dm_sess_abort(GF_DownloadSession * sess)
  * Sends the HTTP headers
 \param sess The GF_DownloadSession
 \param sHTTP buffer containing the request
-\param GF_OK if everything went fine, the error otherwise
+\return GF_OK if everything went fine, the error otherwise
  */
 static GF_Err http_send_headers(GF_DownloadSession *sess, char * sHTTP) {
 	GF_Err e;
@@ -5129,7 +5138,7 @@ req_sent:
  * Parse the remaining part of body
 \param sess The session
 \param sHTTP the data buffer
-\param The error code if any
+\return The error code if any
  */
 static GF_Err http_parse_remaining_body(GF_DownloadSession * sess, char * sHTTP)
 {

@@ -311,6 +311,9 @@ char * my_str_lwr(char *str);
 #include <string.h>
 #include <assert.h>
 
+/*! file descriptor support*/
+#define GPAC_HAS_FD
+
 #if __APPLE__ && defined GPAC_CONFIG_IOS
 #include <TargetConditionals.h>
 #endif
@@ -703,6 +706,12 @@ typedef struct {
 # endif
 # ifndef GPAC_DISABLE_SENG
 # define GPAC_DISABLE_SENG
+# endif
+#endif
+
+#ifdef GPAC_DISABLE_MEDIA_IMPORT
+# ifndef GPAC_DISABLE_VTT
+# define GPAC_DISABLE_VTT
 # endif
 #endif
 

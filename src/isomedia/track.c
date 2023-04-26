@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -42,11 +42,10 @@ GF_TrackBox *GetTrackbyID(GF_MovieBox *moov, GF_ISOTrackID TrackID)
 
 GF_TrackBox *gf_isom_get_track(GF_MovieBox *moov, u32 trackNumber)
 {
-	GF_TrackBox *trak;
-	if (!moov || !trackNumber || (trackNumber > gf_list_count(moov->trackList))) return NULL;
-	trak = (GF_TrackBox*)gf_list_get(moov->trackList, trackNumber - 1);
-	return trak;
-
+	if (!moov) return NULL;
+	//no need to check for these, they will anyway result in NULL returned from gf_list_get
+//	if (!moov || !trackNumber || (trackNumber > gf_list_count(moov->trackList))) return NULL;
+	return (GF_TrackBox*)gf_list_get(moov->trackList, trackNumber - 1);
 }
 
 //get the number of a track given its ID
@@ -589,6 +588,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 		if (is_first_merge) {
 			GF_MovieFragmentBox *moof_clone = NULL;
 			gf_isom_box_freeze_order((GF_Box *)moof_box);
+#ifndef GPAC_DISABLE_ISOM_WRITE
 			gf_isom_clone_box((GF_Box *)moof_box, (GF_Box **)&moof_clone);
 
 			if (moof_clone) {
@@ -631,6 +631,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 				gf_bs_get_content(bs, &moof_template, &moof_template_size);
 				gf_bs_del(bs);
 			}
+#endif
 		}
 		if (trak->moov->mov->seg_styp) {
 			is_seg_start = GF_TRUE;
@@ -810,7 +811,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 
 			if (store_traf_map && first_samp_in_traf) {
 				first_samp_in_traf = GF_FALSE;
-				e = stbl_AppendTrafMap(trak->moov->mov, trak->Media->information->sampleTable, is_seg_start, seg_start, frag_start, moof_template, moof_template_size, sidx_start, sidx_end, ent->nb_pack);
+				e = stbl_AppendTrafMap(trak->moov->mov, trak->Media->information->sampleTable, is_seg_start, seg_start, frag_start, tfdt ? tfdt : trak->dts_at_next_frag_start, moof_template, moof_template_size, sidx_start, sidx_end, ent->nb_pack);
 				if (e) return e;
 				//do not deallocate, the memory is now owned by traf map
 				moof_template = NULL;
@@ -819,6 +820,7 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 			if (ent->nb_pack>1) {
 				j+= ent->nb_pack-1;
 				traf_duration += ent->nb_pack*duration;
+				last_dts += (ent->nb_pack-1)*duration;
 				continue;
 			}
 

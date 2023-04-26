@@ -92,9 +92,9 @@ typedef struct
 	u32 profile;
 	u32 nb_comps;
 	UNCVComponentInfo *comps;
-	u8 sampling, interleave, block_size;
+	u32 sampling, interleave, block_size;
 	Bool components_little_endian, block_pad_lsb, block_little_endian, block_reversed, pad_unknown;
-	u8 pixel_size;
+	u32 pixel_size;
 	u32 row_align_size, tile_align_size, num_tile_cols, num_tile_rows;
 
 
@@ -126,7 +126,7 @@ typedef struct
 
 typedef struct __uncvdec
 {
-	Bool force_pf;
+	Bool force_pf, no_tile;
 
 	GF_FilterPid *ipid, *opid;
 	u32 width, height, pixel_format, bpp, stride;
@@ -312,9 +312,9 @@ static UNCVConfig *uncv_parse_config(u8 *dsi, u32 dsi_size, GF_Err *out_err)
 		}
 		pos = (u32) gf_bs_get_position(bs) - pos;
 		pos += 8;
-		if ((pos>size) || gf_bs_is_overflow(bs) )
+		if ((pos > (u32) size) || gf_bs_is_overflow(bs) )
 			*out_err = GF_NON_COMPLIANT_BITSTREAM;
-		else if (pos<size)
+		else if (pos < (u32) size)
 			gf_bs_skip_bytes(bs, size-pos);
 	}
 	gf_bs_del(bs);
@@ -563,7 +563,7 @@ static u32 uncv_get_compat(UNCVDecCtx *ctx)
 				if (cfg->sampling==SAMPLING_420) return GF_PIXEL_YUV;
 			}
 			if (cfg->interleave==INTERLEAVE_MIXED) {
-				if (cfg->sampling==SAMPLING_422) return GF_PIXEL_NV12;
+				if (cfg->sampling==SAMPLING_420) return GF_PIXEL_NV12;
 			}
 		}
 		if ((c[0].type==1) && (c[0].bits==8) && (c[1].type==3) && (c[1].bits==8) && (c[2].type==2) && (c[2].bits==8)
@@ -573,7 +573,7 @@ static u32 uncv_get_compat(UNCVDecCtx *ctx)
 				if (cfg->sampling==SAMPLING_420) return GF_PIXEL_YVU;
 			}
 			if (cfg->interleave==INTERLEAVE_MIXED) {
-				if (cfg->sampling==SAMPLING_422) return GF_PIXEL_NV21;
+				if (cfg->sampling==SAMPLING_420) return GF_PIXEL_NV21;
 			}
 		}
 	}
@@ -716,6 +716,12 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 	if (!ctx->cfg) return e;
 	UNCVConfig *config = ctx->cfg;
 
+	if (ctx->no_tile) {
+		config->num_tile_cols = config->num_tile_rows = 1;
+		if (config->interleave==INTERLEAVE_TILE)
+			config->interleave = INTERLEAVE_COMPONENT;
+	}
+
 	//get our compatible configs
 	ctx->pixel_format = uncv_get_compat(ctx);
 	if (ctx->force_pf) ctx->pixel_format = 0;
@@ -726,7 +732,7 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 
 	//not natively supported, we need a format - we only use 8 bits in reconstruction
 	if (ctx->color_type==UNCV_OUT_YUV) {
-		ctx->pixel_format = ctx->alpha ? GF_PIXEL_YUVA444 : GF_PIXEL_YUV444;
+		ctx->pixel_format = ctx->alpha ? GF_PIXEL_YUVA444_PACK : GF_PIXEL_YUV444_PACK;
 		ctx->bpp = ctx->alpha ? 4 : 3;
 	} else if (ctx->color_type==UNCV_OUT_RGB) {
 		ctx->pixel_format = ctx->alpha ? GF_PIXEL_RGBA : GF_PIXEL_RGB;
@@ -857,7 +863,7 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 		else
 			comp->p_idx = -1;
 
-		if (nb_out_comp<comp->p_idx+1)
+		if (nb_out_comp < (u32) (comp->p_idx+1))
 			nb_out_comp = comp->p_idx+1;
 
 		if (max_align_size < comp->align_size)
@@ -876,6 +882,7 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 			u32 row_align = config->row_align_size;
 
 			if (config->interleave==INTERLEAVE_MIXED) {
+
 				if ((comp->type==2) || (comp->type==3)) {
 					if (!first_comp_uv_idx) {
 						first_comp_uv_idx = i+1;
@@ -891,6 +898,9 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 						bits[2] = comp->bits;
 						bits[3] = comp->align_size;
 						comp->line_size = uncv_get_line_size(ctx, bits, 4);
+						if (config->sampling==SAMPLING_422) comp->line_size /= 2;
+						else if (config->sampling==SAMPLING_420) comp->line_size /= 2;
+						else if (config->sampling==SAMPLING_411) comp->line_size /= 4;
 					}
 				}
 			} else {
@@ -909,6 +919,9 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 
 			comp->plane_size = comp->line_size * ctx->tile_height;
 
+			if ((config->sampling==SAMPLING_420) && ((comp->type==2) || (comp->type==3)))
+				comp->plane_size /= 2;
+
 			if (config->interleave!=INTERLEAVE_TILE) {
 				ctx->tile_size += comp->plane_size;
 			}
@@ -917,10 +930,6 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 					comp->plane_size++;
 				}
 			}
-
-			if ((config->sampling==SAMPLING_420) && ((comp->type==2) || (comp->type==3)))
-				comp->plane_size /= 2;
-
 			if (((comp->type==2) || (comp->type==3)) && first_comp_uv_idx && (first_comp_uv_idx-1 != i) ) {
 				comps[first_comp_uv_idx-1].line_size = comp->line_size;
 				comps[first_comp_uv_idx-1].plane_size = comp->plane_size;
@@ -969,7 +978,7 @@ static GF_Err uncv_config(UNCVDecCtx *ctx, u8 *dsi, u32 dsi_size)
 		}
 	}
 
-	ctx->max_comp_per_block = gf_floor(ctx->blocksize_bits / min_bits);
+	ctx->max_comp_per_block = (u32) gf_floor(ctx->blocksize_bits / min_bits);
 
 
 	ctx->nb_bsrs = 1;
@@ -1102,15 +1111,22 @@ static void uncv_start_frame(UNCVDecCtx *ctx, const u8 *data, u32 size)
 			bsr->plane_size = comp->plane_size;
 			comp_row_size += comp->line_size;
 			//tile size is per comp in this mode, not for the cumulated size
-			if (config->interleave==INTERLEAVE_TILE)
+			if (config->interleave==INTERLEAVE_TILE) {
 				bsr->tile_size = bsr->plane_size;
+			} else if (config->interleave==INTERLEAVE_MIXED) {
+				if ((comp->type==2) || (comp->type==3)) i++;
+			}
 		}
 
 		for (u32 i=0; i<config->nb_comps; i++) {
+			UNCVComponentInfo *comp = &config->comps[i];
 			BSRead *bsr = &ctx->bsrs[i];
 			bsr->comp_row_size = comp_row_size;
-			if (config->interleave!=INTERLEAVE_TILE)
+			if (config->interleave!=INTERLEAVE_TILE) {
 				bsr->tile_size = ctx->tile_size;
+			} else if (config->interleave==INTERLEAVE_MIXED) {
+				if ((comp->type==2) || (comp->type==3)) i++;
+			}
 		}
 	} else {
 		BSRead *bsr = &ctx->bsrs[0];
@@ -1149,7 +1165,7 @@ static void uncv_end_line(UNCVDecCtx *ctx, UNCVConfig *config)
 		}
 
 		if (bsr->row_align_size) {
-			u32 remain = gf_bs_get_position(bsr->bs) - bsr->line_start_pos;
+			u32 remain = (u32) (gf_bs_get_position(bsr->bs) - bsr->line_start_pos);
 			while (remain < bsr->row_align_size) {
 				gf_bs_skip_bytes(bsr->bs, 1);
 				remain++;
@@ -1159,7 +1175,7 @@ static void uncv_end_line(UNCVDecCtx *ctx, UNCVConfig *config)
 		if (config->interleave==INTERLEAVE_ROW) {
 			gf_bs_seek(bsr->bs, bsr->line_start_pos + bsr->comp_row_size);
 		}
-		bsr->line_start_pos = gf_bs_get_position(bsr->bs);
+		bsr->line_start_pos = (u32) gf_bs_get_position(bsr->bs);
 	}
 }
 
@@ -1333,7 +1349,7 @@ static void uncv_pull_val(UNCVDecCtx *ctx, UNCVConfig *config, BSRead *bsr, UNCV
 static void read_pixel_interleave_pixel(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *out_data, u32 offset)
 {
 	BSRead *bsr = &ctx->bsrs[0];
-	u32 psize = gf_bs_get_position(bsr->bs);
+	u32 psize = (u32) gf_bs_get_position(bsr->bs);
 	for (u32 i=0; i<config->nb_comps; i++) {
 		uncv_pull_val(ctx, config, bsr, &ctx->cfg->comps[i], GF_FALSE, x, y);
 	}
@@ -1343,7 +1359,7 @@ static void read_pixel_interleave_pixel(UNCVDecCtx *ctx, UNCVConfig *config, u32
 		} else {
 			gf_bs_align(bsr->bs);
 		}
-		psize = gf_bs_get_position(bsr->bs) - psize;
+		psize = (u32) ( gf_bs_get_position(bsr->bs) - psize );
 		if (psize > config->pixel_size) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[UNCV] Invalid pixel_size %u, less than total size of components %u\n", config->pixel_size, psize));
 		}
@@ -1357,7 +1373,7 @@ static void read_pixel_interleave_pixel(UNCVDecCtx *ctx, UNCVConfig *config, u32
 static void read_pixel_interleave_multiy(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *out_data, u32 offset)
 {
 	BSRead *bsr = &ctx->bsrs[0];
-	u32 psize = gf_bs_get_position(bsr->bs);
+	u32 psize =(u32) gf_bs_get_position(bsr->bs);
 	Bool load_uv = GF_FALSE;
 	u32 pix_idx = x % ctx->subsample_x;
 	if (pix_idx == 0) {
@@ -1369,7 +1385,7 @@ static void read_pixel_interleave_multiy(UNCVDecCtx *ctx, UNCVConfig *config, u3
 
 	if (config->pixel_size) {
 		gf_bs_align(bsr->bs);
-		psize = gf_bs_get_position(bsr->bs) - psize;
+		psize = (u32) (gf_bs_get_position(bsr->bs) - psize);
 		if (psize > config->pixel_size) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[UNCV] Invalid pixel_size %d, less than total size of components %d\n", config->pixel_size, psize));
 		}
@@ -1546,6 +1562,7 @@ static const GF_FilterCapability UNCVDecCaps[] =
 static const GF_FilterArgs UNCVDecArgs[] =
 {
 	{ OFFS(force_pf), "ignore possible mapping to GPAC pixel formats", GF_PROP_BOOL, "false", NULL, 0},
+	{ OFFS(no_tile), "ignore tiling info (debug)", GF_PROP_BOOL, "false", NULL, 0},
 	{0}
 };
 

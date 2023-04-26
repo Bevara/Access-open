@@ -377,7 +377,7 @@ GF_Err gf_fs_get_last_connect_error(GF_FilterSession *session);
 */
 GF_Err gf_fs_get_last_process_error(GF_FilterSession *session);
 
-/*! Adds a user-defined register to the session
+/*! Adds a user-defined register to the session - the register is added regardless of the session blacklist
 \param session filter session
 \param freg filter register to add
 */
@@ -1220,6 +1220,7 @@ enum
 	GF_PROP_PID_MHA_COMPATIBLE_PROFILES = GF_4CC('M','H','C','P'),
 	GF_PROP_PCK_FRAG_START = GF_4CC('P','F','R','B'),
 	GF_PROP_PCK_FRAG_RANGE = GF_4CC('P','F','R','R'),
+	GF_PROP_PCK_FRAG_TFDT = GF_4CC('P','F','R','T'),
 	GF_PROP_PCK_SIDX_RANGE = GF_4CC('P','F','S','R'),
 	GF_PROP_PCK_MOOF_TEMPLATE = GF_4CC('M','F','T','P'),
 	GF_PROP_PCK_INIT = GF_4CC('P','C','K','I'),
@@ -1248,6 +1249,7 @@ enum
 
 	GF_PROP_PID_CHAP_TIMES = GF_4CC('C','H','P','T'),
 	GF_PROP_PID_CHAP_NAMES = GF_4CC('C','H','P','N'),
+	GF_PROP_PID_IS_CHAP = GF_4CC('P','C','H','P'),
 
 	//internal for HLS playlist reference, gives a unique ID identifying media mux, and indicated in packets carrying child playlists
 	GF_PROP_PCK_HLS_REF = GF_4CC('H','P','L','R'),
@@ -1285,6 +1287,9 @@ enum
 
 	//internal, force creation of rewriter filter (only used for forcing reparse of NALU-based codecs)
 	GF_PROP_PID_FORCE_UNFRAME = GF_4CC('P','F','U','F'),
+
+	GF_PROP_PCK_SPLIT_START = GF_4CC('P','S','P','S'),
+	GF_PROP_PCK_SPLIT_END = GF_4CC('P','S','P','E'),
 
 
 	/*! Internal property used for meta demuxers ( FFMPEG, ...) codec ID
@@ -1411,16 +1416,18 @@ typedef enum
 	GF_PROP_DUMP_DATA_INFO,
 	/*! dump data to parsable property, as ADDRESS+'@'+POINTER*/
 	GF_PROP_DUMP_DATA_PTR,
+	/*! do not reduce fractions when dumping*/
+	GF_PROP_DUMP_NO_REDUCE = 1<<16,
 } GF_PropDumpDataMode;
 
 /*! Dumps a property value to string
 \param att property value
 \param dump buffer holding the resulting value for types requiring string conversions (integers, ...)
-\param dump_data_mode data dump mode
+\param dump_data_flags data dump mode and flags
 \param min_max_enum optional, gives the min/max or enum string when the property is a filter argument
 \return string
 */
-const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumpDataMode dump_data_mode, const char *min_max_enum);
+const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumpDataMode dump_data_flags, const char *min_max_enum);
 
 /*! Dumps a property value to string, resolving any built-in types (pix formats, codec id, ...)
 \param p4cc property 4CC
@@ -1648,6 +1655,7 @@ typedef struct
 
 	/*! GF_FEVT_PLAY only, indicates playback should start from given packet number - used by dasher when reloading sources*/
 	u32 from_pck;
+	u32 to_pck;
 
 	/*! GF_FEVT_PLAY only, set when PLAY event is sent upstream to audio out, indicates HW buffer reset*/
 	u8 hw_buffer_reset;
@@ -1694,6 +1702,8 @@ typedef struct
 	u8 skip_cache_expiration;
 	/*! GF_FEVT_SOURCE_SEEK only,  hint block size for source, might not be respected*/
 	u32 hint_block_size;
+	/*! GF_FEVT_SOURCE_SEEK only,  hint tfdt of first sample*/
+	u64 hint_first_tfdt;
 } GF_FEVT_SourceSeek;
 
 /*! Event structure for GF_FEVT_SEGMENT_SIZE*/
@@ -4126,6 +4136,17 @@ The packet has by default no DTS, no CTS, no duration framing set to full frame 
 */
 GF_FilterPacket *gf_filter_pck_new_ref(GF_FilterPid *PID, u32 data_offset, u32 data_size, GF_FilterPacket *source_packet);
 
+/*! Same as  \ref gf_filter_pck_new_ref with packet destructor callbacl
+
+\param PID the target output PID
+\param data_offset offset in the source data block
+\param data_size the size of the data block to dispatch - if 0, the entire data of the source packet beginning at offset is used
+\param source_packet the source packet this data belongs to (at least from the filter point of view).
+\param destruct the callback function used to destroy the packet when no longer used - may be NULL
+\return new packet or NULL if allocation error or not an output PID
+*/
+GF_FilterPacket *gf_filter_pck_new_ref_destructor(GF_FilterPid *PID, u32 data_offset, u32 data_size, GF_FilterPacket *source_packet, gf_fsess_packet_destructor destruct);
+
 /*! Allocates a new packet on the output PID with associated allocated data.
 The packet has by default no DTS, no CTS, no duration framing set to full frame (start=end=1) and all other flags set to 0 (including SAP type).
 \param PID the target output PID
@@ -4179,6 +4200,20 @@ Note that packets created with \ref gf_filter_pck_new_frame_interface are always
 \return error if any
 */
 GF_Err gf_filter_pck_set_readonly(GF_FilterPacket *pck);
+
+
+/*! Checks if packet data has been reallocated
+
+There are cases where memory allocated by \ref gf_filter_pck_new_ref allow needs to be reallocated without using \ref gf_filter_pck_expand .
+This function allows checking if the data has changed, and if so reassign the new block to the packet.
+If the data pointer was not changed, the packet data size is updated to the new size (acts as gf_filter_pck_truncate).
+The data shall have been reallocated with \ref gf_realloc.
+
+\param pck the target  packet to send
+\param data the reallocated data pointer
+\param size the reallocated data size
+*/
+void gf_filter_pck_check_realloc(GF_FilterPacket *pck, u8 *data, u32 size);
 
 /*! Sends the packet on its output PID. Packets SHALL be sent in processing order (eg, decoding order for video).
 However, packets don't have to be sent in their allocation order.

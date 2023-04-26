@@ -61,7 +61,7 @@ GF_EXPORT
 u32 gf_4cc_parse(const char *val)
 {
 	if (val && strlen(val)==4) return GF_4CC(val[0], val[1], val[2], val[3]);
-	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Value is not a properly defined 4CC", val));
+	GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Value %s is not a properly defined 4CC\n", val));
 	return 0;
 }
 
@@ -1872,6 +1872,11 @@ Bool gf_parse_lfrac(const char *value, GF_Fraction64 *frac)
 	sep = strchr(value, '.');
 	if (!sep) sep = strchr(value, ',');
 	if (!sep) {
+		len = (u32) strlen(value);
+		for (i=0; i<len; i++) {
+			if (((value[i]<'0') || (value[i]>'9')) && (value[i]!='-') && (value[i]!='+'))
+				return GF_FALSE;
+		}
 		frac->num = atol(value);
 		frac->den = 1;
 		return GF_TRUE;

@@ -824,7 +824,7 @@ static void gf_m2ts_process_sdt(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *ses, GF
 		pos += 5;
 
 		if (pos+descs_size > data_size) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid descriptors size read from data (%u)\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[MPEG-2 TS] Invalid descriptors size read from data (%u)\n", descs_size));
 			return;
 		}
 
@@ -948,7 +948,7 @@ static void gf_m2ts_process_tdt_tot(GF_M2TS_Demuxer *ts, GF_M2TS_SECTION_ES *tdt
 
 	if (data_size < 5) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[MPEG-2 TS] Section data size too small to read date (len: %u)\n", data_size));
-		return;
+		goto error_exit;
 	}
 
 	/*UTC_time - see annex C of DVB-SI ETSI EN 300468*/

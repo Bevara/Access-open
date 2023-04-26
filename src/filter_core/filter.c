@@ -1078,44 +1078,46 @@ GF_PropertyValue gf_filter_parse_prop_solve_env_var(GF_FilterSession *fs, GF_Fil
 
 	if (!value) return gf_props_parse_value(type, name, NULL, enum_values, fs->sep_list);
 
-
-	if (!strnicmp(value, "$GSHARE", 7)) {
-		if (gf_opts_default_shared_directory(szPath)) {
-			strcat(szPath, value+7);
-			value = szPath;
-		} else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to query GPAC shared resource directory location\n"));
-		}
-	}
-	else if (!strnicmp(value, "$GDOCS", 6)) {
-		if (filter_solve_gdocs(value, szPath)) {
-			value = szPath;
-		} else {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to query GPAC user document directory location\n"));
-		}
-	}
-	else if (!strnicmp(value, "$GJS", 4)) {
-		Bool gf_fs_solve_js_script(char *szPath, const char *file_name, const char *file_ext);
-
-		Bool found = gf_fs_solve_js_script(szPath, value+4, NULL);
-
-		if (!found) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed solve to %s in GPAC script directories, file not found\n", value));
-		}
-	}
-	else if (!strnicmp(value, "$GLANG", 6)) {
-		value = gf_opts_get_key("core", "lang");
-		if (!value) value = "en";
-	}
-	else if (!strnicmp(value, "$GUA", 4)) {
-		value = gf_opts_get_key("core", "user-agent");
-		if (!value) value = "GPAC " GPAC_VERSION;
-	} else if (f && strstr(value, "$GINC(")) {
+	if (f && strstr(value, "$GINC(")) {
 		char *a_value = gf_strdup(value);
 		filter_translate_autoinc(f, a_value);
 		argv = gf_props_parse_value(type, name, a_value, enum_values, fs->sep_list);
 		gf_free(a_value);
 		return argv;
+	}
+	if (value[0]=='$') {
+		if (!strnicmp(value, "$GSHARE", 7)) {
+			if (gf_opts_default_shared_directory(szPath)) {
+				strcat(szPath, value+7);
+				value = szPath;
+			} else {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to query GPAC shared resource directory location\n"));
+			}
+		}
+		else if (!strnicmp(value, "$GDOCS", 6)) {
+			if (filter_solve_gdocs(value, szPath)) {
+				value = szPath;
+			} else {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to query GPAC user document directory location\n"));
+			}
+		}
+		else if (!strnicmp(value, "$GJS", 4)) {
+			Bool gf_fs_solve_js_script(char *szPath, const char *file_name, const char *file_ext);
+
+			Bool found = gf_fs_solve_js_script(szPath, value+4, NULL);
+
+			if (!found) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed solve to %s in GPAC script directories, file not found\n", value));
+			}
+		}
+		else if (!strnicmp(value, "$GLANG", 6)) {
+			value = gf_opts_get_key("core", "lang");
+			if (!value) value = "en";
+		}
+		else if (!strnicmp(value, "$GUA", 4)) {
+			value = gf_opts_get_key("core", "user-agent");
+			if (!value) value = "GPAC " GPAC_VERSION;
+		}
 	}
 	argv = gf_props_parse_value(type, name, value, enum_values, fs->sep_list);
 	return argv;
@@ -4103,6 +4105,8 @@ GF_Err gf_filter_override_caps(GF_Filter *filter, const GF_FilterCapability *cap
 	//we accept caps override event on a running filter, this will only impact the next link solving
 	filter->forced_caps = nb_caps ? caps : NULL;
 	filter->nb_forced_caps = nb_caps;
+	filter->nb_forced_bundles = nb_caps ? gf_filter_caps_bundle_count(caps, nb_caps) : 0;
+
 	filter->bundle_idx_at_resolution = -1;
 	return GF_OK;
 }
@@ -4984,6 +4988,7 @@ GF_Err gf_filter_push_caps(GF_Filter *filter, u32 code, GF_PropertyValue *value,
 	caps[nb_caps].flags = flags;
 	filter->nb_forced_caps++;
 	filter->forced_caps = caps;
+	filter->nb_forced_bundles = filter->nb_forced_caps ? gf_filter_caps_bundle_count(filter->forced_caps, filter->nb_forced_caps) : 0;
 
 	//reload graph for this updated registry!
 	GF_FilterRegister *freg = (GF_FilterRegister *)filter->freg;
@@ -5136,6 +5141,7 @@ void gf_filter_mirror_forced_caps(GF_Filter *filter, GF_Filter *dst_filter)
 	if (filter && dst_filter) {
 		filter->forced_caps = dst_filter->forced_caps;
 		filter->nb_forced_caps = dst_filter->nb_forced_caps;
+		filter->nb_forced_bundles = dst_filter->nb_forced_bundles;
 	}
 }
 

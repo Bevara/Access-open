@@ -1072,17 +1072,9 @@ static Bool jsfs_get_filter_args(JSContext *ctx, GF_FilterSession *fs, GF_Filter
 		(*meta_fs)->registry = gf_list_new();
 		(*meta_fs)->blacklist = fs->blacklist;
 
-		//load internal filters
+		//load filters
 		gf_fs_reg_all(*meta_fs, *meta_fs);
 
-		//load external modules
-		u32 i, count = gf_modules_count();
-		for (i=0; i<count; i++) {
-			GF_FilterRegister *a_freg = (GF_FilterRegister *) gf_modules_load_filter(i, *meta_fs);
-			if (a_freg) {
-				gf_fs_add_filter_register(*meta_fs, a_freg);
-			}
-		}
 		(*meta_fs)->blacklist = NULL;
 	}
 
@@ -1475,8 +1467,12 @@ static JSValue jsff_bind(JSContext *ctx, JSValueConst this_val, int argc, JSValu
 		return GF_JS_EXCEPTION(ctx);
 
 	if (!strcmp(f->freg->name, "dashin")) {
+#ifndef GPAC_DISABLE_DASH_CLIENT
 		JSValue dashdmx_bind_js(GF_Filter *f, JSContext *jsctx, JSValueConst obj);
 		return dashdmx_bind_js(f, ctx, argv[0]);
+#else
+		return js_throw_err_msg(ctx, GF_BAD_PARAM, "DASH client disabled in build");
+#endif
 	}
 
 	return js_throw_err_msg(ctx, GF_BAD_PARAM, "filter class %s has no JS bind capabilities", f->freg->name);

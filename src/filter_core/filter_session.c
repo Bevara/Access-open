@@ -29,7 +29,6 @@
 #ifndef GPAC_DISABLE_3D
 #include <gpac/modules/video_out.h>
 #endif
-#include <gpac/module.h>
 
 //#define CHECK_TASK_LIST_INTEGRITY
 
@@ -90,54 +89,39 @@ static GFINLINE void gf_fs_sema_io(GF_FilterSession *fsess, Bool notify, Bool ma
 #endif // GPAC_CONFIG_EMSCRIPTEN
 }
 
+
 GF_EXPORT
 void gf_fs_add_filter_register(GF_FilterSession *fsess, const GF_FilterRegister *freg)
 {
-	if (!freg || !fsess) return;
+	if (!freg) return;
+	if (!fsess) {
+		if (freg->register_free) freg->register_free(fsess, (GF_FilterRegister *)freg);
+		return;
+	}
 
 	if (!freg->name) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Filter missing name - ignoring\n"));
+		if (freg->register_free) freg->register_free(fsess, (GF_FilterRegister *)freg);
 		return;
 	}
 #if 0
 	if (strchr(freg->name, fsess->sep_args)	) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Filter name cannot contain argument separator %c - ignoring\n", fsess->sep_args));
+		if (freg->register_free) freg->register_free(fsess, (GF_FilterRegister *)freg);
 		return;
 	}
 	if (strchr(freg->name, fsess->sep_name)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Filter name cannot contain argument value separator %c - ignoring\n", fsess->sep_name));
+		if (freg->register_free) freg->register_free(fsess, (GF_FilterRegister *)freg);
 		return;
 	}
 #endif
 	if (!freg->process) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Filter %s missing process function - ignoring\n", freg->name));
+		if (freg->register_free) freg->register_free(fsess, (GF_FilterRegister *)freg);
 		return;
 	}
-	if (fsess->blacklist) {
-		Bool match = GF_FALSE;
-		const char *blacklist = fsess->blacklist;
-		Bool is_whitelist=GF_FALSE;
-		if (blacklist[0]=='-') {
-			blacklist++;
-			is_whitelist = GF_TRUE;
-		}
-		while (blacklist) {
-			char *fname = strstr(blacklist, freg->name);
-			if (!fname) break;
-			u32 len = (u32) strlen(freg->name);
-			if (!fname[len] || (fname[len] == fsess->sep_list)) {
-				match = GF_TRUE;
-				break;
-			}
-			blacklist = fname+len;
-		}
-		if (is_whitelist) match = !match;
 
-		if (match) {
-			if (freg->register_free) freg->register_free(fsess, (GF_FilterRegister *)freg);
-			return;
-		}
-	}
 	//except for meta filters, don't accept a filter with input caps but no output caps
 	//meta filters do follow the same rule, however when expanding them for help we may have weird cases
 	//where no config is set but inputs are listed to expose mime types or extensions (cf ffdmx)
@@ -158,8 +142,6 @@ void gf_fs_add_filter_register(GF_FilterSession *fsess, const GF_FilterRegister 
 		gf_filter_sess_build_graph(fsess, freg);
 	}
 }
-
-
 
 static Bool fs_default_event_proc(void *ptr, GF_Event *evt)
 {
@@ -230,12 +212,11 @@ GF_FilterSession *gf_fs_new(s32 nb_threads, GF_FilterSchedulerType sched_type, u
 	const char *opt;
 	Bool gf_sys_has_filter_global_args();
 	Bool gf_sys_has_filter_global_meta_args();
-
-	u32 i, count;
+	u32 i;
 	GF_FilterSession *fsess, *a_sess;
 
 	//safety check: all built-in properties shall have unique 4CCs
-	if ( ! gf_props_4cc_check_props())
+	if (gf_sys_is_test_mode() && ! gf_props_4cc_check_props())
 		return NULL;
 
 	GF_SAFEALLOC(fsess, GF_FilterSession);
@@ -250,6 +231,9 @@ GF_FilterSession *gf_fs_new(s32 nb_threads, GF_FilterSchedulerType sched_type, u
 		flags |= GF_FS_FLAG_IMPLICIT_MODE;
 
 	fsess->flags = flags;
+
+	if (gf_opts_get_bool("core", "no-mx"))
+		nb_threads=0;
 
 #ifdef __EMSCRIPTEN_PTHREADS__
 	//detect if we run as a worker
@@ -389,19 +373,18 @@ GF_FilterSession *gf_fs_new(s32 nb_threads, GF_FilterSchedulerType sched_type, u
 	gf_fs_set_separators(fsess, NULL);
 
 	fsess->registry = gf_list_new();
-	fsess->blacklist = blacklist;
+#ifdef GPAC_HAS_QJS
+	//keep copy of blacklist for JS
+	fsess->blacklist = blacklist ? gf_strdup(blacklist) : NULL;
+#else
+	fsess->blacklist = (char*)blacklist;
+#endif
 	a_sess = (flags & GF_FS_FLAG_LOAD_META) ? fsess : NULL;
 	gf_fs_reg_all(fsess, a_sess);
 
-	//load external modules
-	count = gf_modules_count();
-	for (i=0; i<count; i++) {
-		GF_FilterRegister *freg = (GF_FilterRegister *) gf_modules_load_filter(i, a_sess);
-		if (freg) {
-			gf_fs_add_filter_register(fsess, freg);
-		}
-	}
+#ifndef GPAC_HAS_QJS
 	fsess->blacklist = NULL;
+#endif
 
 	//todo - find a way to handle events without mutex ...
 	fsess->evt_mx = gf_mx_new("Event mutex");
@@ -903,6 +886,7 @@ void gf_fs_del(GF_FilterSession *fsess)
 	if (fsess->uri_relocators) gf_list_del(fsess->uri_relocators);
 	if (fsess->locales.szAbsRelocatedPath) gf_free(fsess->locales.szAbsRelocatedPath);
 #endif
+	if (fsess->blacklist) gf_free(fsess->blacklist);
 
 	gf_free(fsess);
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Session destroyed\n"));
@@ -2525,7 +2509,10 @@ void gf_fs_print_stats(GF_FilterSession *fsess)
 #ifndef GPAC_DISABLE_THREADS
 	u64 run_time=0, active_time=0, nb_tasks=0;
 #endif
-	u32 i, count, nb_filters=0;
+	u32 i, count;
+#ifndef GPAC_DISABLE_LOG
+	u32 nb_filters=0;
+#endif
 
 	GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("\n"));
 	gf_mx_p(fsess->filters_mx);
@@ -2534,7 +2521,9 @@ void gf_fs_print_stats(GF_FilterSession *fsess)
 	for (i=0; i<count; i++) {
 		GF_Filter *f = gf_list_get(fsess->filters, i);
 		if (f->multi_sink_target) continue;
+#ifndef GPAC_DISABLE_LOG
 		nb_filters++;
+#endif
 	}
 
 	GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("Filter stats - %d filters\n", nb_filters));
@@ -3584,13 +3573,13 @@ static void gf_fs_print_jsf_connection(GF_FilterSession *session, char *filter_n
 				u32 loaded_filter_only_flags = 0;
 				u32 path_weight;
 				if (has_input && !src_match) {
-					path_weight = gf_filter_caps_to_caps_match(a_reg->freg, k, (const GF_FilterRegister *) &loaded_freg, NULL, &bundle_idx, l, &loaded_filter_only_flags, &capstore);
+					path_weight = gf_filter_caps_to_caps_match(a_reg->freg, k, (const GF_FilterRegister *) &loaded_freg, 0, NULL, &bundle_idx, l, &loaded_filter_only_flags, &capstore);
 					if (path_weight && (bundle_idx == l))
 						src_match = GF_TRUE;
 				}
 				if (has_output && !sink_match) {
 					loaded_filter_only_flags = 0;
-					path_weight = gf_filter_caps_to_caps_match(&loaded_freg, l, a_reg->freg, NULL, &bundle_idx, k, &loaded_filter_only_flags, &capstore);
+					path_weight = gf_filter_caps_to_caps_match(&loaded_freg, l, a_reg->freg, 0, NULL, &bundle_idx, k, &loaded_filter_only_flags, &capstore);
 
 					if (path_weight && (bundle_idx == k))
 						sink_match = GF_TRUE;
@@ -3850,6 +3839,7 @@ static Bool gf_fsess_get_user_pass(void *usr_cbk, Bool secure, const char *site_
 	return gf_fs_forward_gf_event(fsess, &evt, GF_FALSE, GF_FALSE);
 }
 #endif
+
 static GF_DownloadManager *gf_fs_get_download_manager(GF_FilterSession *fs)
 {
 #ifdef GPAC_USE_DOWNLOADER
