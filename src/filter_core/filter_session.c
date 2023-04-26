@@ -4606,6 +4606,8 @@ void gf_fs_force_non_blocking(GF_FilterSession *fs)
 {
 	if (fs) fs->non_blocking = GF_TRUE;
 }
+
+GF_EXPORT
 Bool gf_filter_on_main_thread(GF_Filter *filter)
 {
 	if (!filter) return GF_TRUE;

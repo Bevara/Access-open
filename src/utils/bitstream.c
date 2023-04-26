@@ -1855,6 +1855,7 @@ void gf_bs_reassign(GF_BitStream *bs, FILE *stream)
 }
 #endif
 
+GF_EXPORT
 u64 gf_bs_set_cookie(GF_BitStream *bs, u64 cookie)
 {
 	u64 res = 0;
@@ -1865,6 +1866,7 @@ u64 gf_bs_set_cookie(GF_BitStream *bs, u64 cookie)
 	return res;
 }
 
+GF_EXPORT
 u64 gf_bs_get_cookie(GF_BitStream *bs)
 {
 	if (!bs) return 0;
