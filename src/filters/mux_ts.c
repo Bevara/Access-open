@@ -2114,11 +2114,7 @@ GF_FilterRegister TSMuxRegister = {
 };
 
 
-<<<<<<< HEAD
 const GF_FilterRegister *dynCall_tsmux_register(GF_FilterSession *session)
-=======
-const GF_FilterRegister *m2tsmx_register(GF_FilterSession *session)
->>>>>>> 586113942f9e1efdfa75eac1aae2b27b610bcb27
 {
 	return &TSMuxRegister;
 }
