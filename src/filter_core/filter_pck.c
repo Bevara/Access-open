@@ -113,7 +113,7 @@ static GF_FilterPacket *gf_filter_pck_new_alloc_internal(GF_FilterPid *pid, u32 
 	count = gf_fq_count(pid->filter->pcks_alloc_reservoir);
 
 	if (count) {
-		//don't let reservoir grow too large (may happen if burst of packets are stored/cosumed in the upper chain)
+		//don't let reservoir grow too large (may happen if burst of packets are stored/consumed in the upper chain)
 		while (count>30) {
 			GF_FilterPacket *head_pck = gf_fq_pop(pid->filter->pcks_alloc_reservoir);
 			gf_free(head_pck->data);
@@ -1768,7 +1768,7 @@ u64 gf_filter_pck_get_byte_offset(GF_FilterPacket *pck)
 GF_EXPORT
 GF_Err gf_filter_pck_set_crypt_flags(GF_FilterPacket *pck, u8 crypt_flag)
 {
-	PCK_SETTER_CHECK("byteOffset")
+	PCK_SETTER_CHECK("cryptFlag")
 	pck->info.flags &= ~GF_PCK_CRYPT_MASK;
 	pck->info.flags |= crypt_flag << GF_PCK_CRYPT_POS;
 	return GF_OK;
@@ -1892,7 +1892,10 @@ GF_EXPORT
 void gf_filter_pck_check_realloc(GF_FilterPacket *pck, u8 *data, u32 size)
 {
 	if (PCK_IS_INPUT(pck)) return;
-	if ((u8*)pck->data != data) {
+	if (((u8*)pck->data != data)
+		//in case realloc returned the same adress !!
+		|| (size > pck->data_length)
+	) {
 		pck->alloc_size = pck->data_length = size;
 		pck->data = data;
 	} else {

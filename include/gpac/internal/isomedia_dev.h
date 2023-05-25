@@ -530,6 +530,9 @@ enum
 	GF_ISOM_BOX_TYPE_MSHP	= GF_4CC( 'm', 's', 'h', 'p' ),
 	GF_ISOM_BOX_TYPE_MESH	= GF_4CC( 'm', 'e', 's', 'h' ),
 
+	GF_QT_BOX_TYPE_CMOV	= GF_4CC( 'c', 'm', 'o', 'v' ),
+	GF_QT_BOX_TYPE_DCOM	= GF_4CC( 'd', 'c', 'o', 'm' ),
+	GF_QT_BOX_TYPE_CMVD	= GF_4CC( 'c', 'm', 'v', 'd' ),
 
 	GF_ISOM_BOX_TYPE_AVCE	= GF_4CC( 'a', 'v', 'c', 'E' ),
 	GF_ISOM_BOX_TYPE_HVCE	= GF_4CC( 'h', 'v', 'c', 'E' ),
@@ -855,6 +858,7 @@ typedef struct
 	GF_ISOFile *mov;
 
 	Bool mvex_after_traks;
+	Bool has_cmvd;
 	//for compressed mov, stores the difference between compressed and uncompressed payload
 	s32 compressed_diff;
 	//for compressed mov, indicates the file offset of the moov box start
@@ -3360,6 +3364,7 @@ typedef struct
 
 	u32 default_description_index;
 	GF_List *group_descriptions;
+	Bool is_opaque;
 } GF_SampleGroupDescriptionBox;
 
 /*default entry */
@@ -3504,6 +3509,12 @@ typedef struct
 	u32 nb_entries;
 	u16 *groupIDs;
 } GF_SubpictureLayoutMapEntry;
+
+typedef struct
+{
+	u32 nb_types;
+	u32 *group_types;
+} GF_EssentialSamplegroupEntry;
 
 /*
 		CENC stuff
@@ -4080,6 +4091,7 @@ struct __tag_isom {
 #ifndef GPAC_DISABLE_ISOM_WRITE
 	GF_ISOCompressMode compress_mode;
 	u32 compress_flags;
+	u32 pad_cmov;
 #endif
 
 	void (*progress_cbk)(void *udta, u64 nb_done, u64 nb_total);
@@ -4259,7 +4271,7 @@ GF_Err gf_isom_rewrite_text_sample(GF_ISOSample *samp, u32 sampleDescriptionInde
 GF_UserDataMap *udta_getEntry(GF_UserDataBox *ptr, u32 box_type, bin128 *uuid);
 
 
-GF_Err gf_isom_set_sample_group_description_internal(GF_ISOFile *movie, u32 track, u32 sample_number, u32 grouping_type, u32 grouping_type_parameter, void *data, u32 data_size, Bool check_access);
+GF_Err gf_isom_set_sample_group_description_internal(GF_ISOFile *movie, u32 track, u32 sample_number, u32 grouping_type, u32 grouping_type_parameter, void *data, u32 data_size, Bool check_access, u32 sgpd_flags);
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
@@ -4342,7 +4354,8 @@ GF_Err gf_isom_flush_sidx(GF_ISOFile *movie, u32 sidx_max_size, Bool force_v1);
 Bool gf_isom_is_identical_sgpd(void *ptr1, void *ptr2, u32 grouping_type);
 void sgpd_del_entry(u32 grouping_type, void *entry);
 
-GF_DefaultSampleGroupDescriptionEntry * gf_isom_get_sample_group_info_entry(GF_ISOFile *the_file, GF_TrackBox *trak, u32 grouping_type, u32 sample_description_index, u32 *default_index, GF_SampleGroupDescriptionBox **out_sgdp);
+/*return type is either GF_DefaultSampleGroupDescriptionEntry if opaque sample group, or the structure associated with the grouping type*/
+void *gf_isom_get_sample_group_info_entry(GF_ISOFile *the_file, GF_TrackBox *trak, u32 grouping_type, u32 sample_description_index, u32 *default_index, GF_SampleGroupDescriptionBox **out_sgdp);
 
 GF_Err GetNextMediaTime(GF_TrackBox *trak, u64 movieTime, u64 *OutMovieTime);
 GF_Err GetPrevMediaTime(GF_TrackBox *trak, u64 movieTime, u64 *OutMovieTime);

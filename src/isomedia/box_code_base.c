@@ -760,7 +760,7 @@ GF_Err unkn_box_read(GF_Box *s, GF_BitStream *bs)
 
 	if (!bytesToRead) return GF_OK;
 	if (bytesToRead>1000000) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Unknown box %s (0x%08X) with payload larger than 1 MBytes, ignoring\n", gf_4cc_to_str(ptr->type), ptr->type ));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Unknown box %s (0x%08X) with payload larger than 1 MBytes, ignoring\n", gf_4cc_to_str(ptr->original_4cc), ptr->original_4cc ));
 		gf_bs_skip_bytes(bs, ptr->dataSize);
 		return GF_OK;
 	}
@@ -3760,7 +3760,7 @@ GF_Err moov_on_child_box(GF_Box *s, GF_Box *a, Bool is_rem)
 			GF_TrackBox *tk = (GF_TrackBox *)a;
 			//set our pointer to this obj
 			tk->moov = ptr;
-			tk->index = gf_list_count(ptr->trackList);
+			tk->index = 1+gf_list_count(ptr->trackList);
 			if (tk->References) {
 				GF_TrackReferenceTypeBox *dpnd=NULL;
 				Track_FindRef(tk, GF_ISOM_REF_BASE, &dpnd);
@@ -3769,6 +3769,9 @@ GF_Err moov_on_child_box(GF_Box *s, GF_Box *a, Bool is_rem)
 			}
 		}
 		return gf_list_add(ptr->trackList, a);
+	case GF_QT_BOX_TYPE_CMVD:
+		ptr->has_cmvd = GF_TRUE;
+		break;
 	}
 	return GF_OK;
 }
@@ -6654,13 +6657,15 @@ static GF_Err gf_isom_check_sample_desc(GF_TrackBox *trak)
 		GF_ProtectionSchemeInfoBox *sinf;
 		u32 base_ent_type = 0;
 		u32 type = a->type;
+		u32 sinf_type = GF_ISOM_BOX_TYPE_SINF;
 		switch (a->type) {
+		case GF_ISOM_BOX_TYPE_RESV:
+			sinf_type = GF_ISOM_BOX_TYPE_RINF;
 		case GF_ISOM_BOX_TYPE_ENCS:
 		case GF_ISOM_BOX_TYPE_ENCA:
 		case GF_ISOM_BOX_TYPE_ENCV:
-		case GF_ISOM_BOX_TYPE_RESV:
 		case GF_ISOM_BOX_TYPE_ENCT:
-			sinf = (GF_ProtectionSchemeInfoBox *) gf_isom_box_find_child(a->child_boxes, GF_ISOM_BOX_TYPE_SINF);
+			sinf = (GF_ProtectionSchemeInfoBox *) gf_isom_box_find_child(a->child_boxes, sinf_type);
 			if (!sinf || !sinf->original_format) return GF_ISOM_INVALID_FILE;
 			type = sinf->original_format->data_format;
 			base_ent_type = ((GF_SampleEntryBox *)a)->internal_type;
@@ -9719,12 +9724,12 @@ GF_Err sbgp_box_size(GF_Box *s)
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
-static void *sgpd_parse_entry(u32 grouping_type, GF_BitStream *bs, s32 bytes_in_box, u32 entry_size, u32 *total_bytes)
+void *sgpd_parse_entry(GF_SampleGroupDescriptionBox *p, GF_BitStream *bs, s32 bytes_in_box, u32 entry_size, u32 *total_bytes)
 {
 	Bool null_size_ok = GF_FALSE;
 	GF_DefaultSampleGroupDescriptionEntry *def_ptr;
-
-	switch (grouping_type) {
+	p->is_opaque = GF_FALSE;
+	switch (p->grouping_type) {
 	case GF_ISOM_SAMPLE_GROUP_ROLL:
 	case GF_ISOM_SAMPLE_GROUP_PROL:
 	{
@@ -9993,6 +9998,29 @@ static void *sgpd_parse_entry(u32 grouping_type, GF_BitStream *bs, s32 bytes_in_
 		}
 		return ptr;
 	}
+	case GF_ISOM_SAMPLE_GROUP_ESGH:
+	{
+		u32 i;
+		GF_EssentialSamplegroupEntry *ptr;
+		GF_SAFEALLOC(ptr, GF_EssentialSamplegroupEntry);
+		if (!ptr) return NULL;
+		ptr->nb_types = gf_bs_read_u32(bs);
+		if (ptr->nb_types * 4 + 4 > entry_size) {
+			gf_free(ptr);
+			return NULL;
+		}
+		*total_bytes = 4;
+		ptr->group_types = gf_malloc(sizeof(u32) * ptr->nb_types);
+		if (!ptr->group_types) {
+			gf_free(ptr);
+			return NULL;
+		}
+		for (i=0; i<ptr->nb_types; i++) {
+			ptr->group_types[i] = gf_bs_read_u32(bs);
+			*total_bytes += 4;
+		}
+		return ptr;
+	}
 	case 0:
 		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] sgpd entry null grouping_type is invalid\n") );
 		return NULL;
@@ -10001,9 +10029,10 @@ static void *sgpd_parse_entry(u32 grouping_type, GF_BitStream *bs, s32 bytes_in_
 	}
 
 	if (!entry_size && !null_size_ok) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] %s sample group does not indicate entry size and is not implemented, cannot parse!\n", gf_4cc_to_str( grouping_type) ));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] %s sample group does not indicate entry size and is not implemented, cannot parse!\n", gf_4cc_to_str( p->grouping_type) ));
 		return NULL;
 	}
+	p->is_opaque = GF_TRUE;
 	GF_SAFEALLOC(def_ptr, GF_DefaultSampleGroupDescriptionEntry);
 	if (!def_ptr) return NULL;
 	if (entry_size) {
@@ -10056,6 +10085,13 @@ void sgpd_del_entry(u32 grouping_type, void *entry)
 		GF_SubpictureLayoutMapEntry *sulm = (GF_SubpictureLayoutMapEntry *) entry;
 		if (sulm->groupIDs) gf_free(sulm->groupIDs);
 		gf_free(sulm);
+		return;
+	}
+	case GF_ISOM_SAMPLE_GROUP_ESGH:
+	{
+		GF_EssentialSamplegroupEntry *esgh = (GF_EssentialSamplegroupEntry *) entry;
+		if (esgh->group_types) gf_free(esgh->group_types);
+		gf_free(esgh);
 		return;
 	}
 
@@ -10156,6 +10192,16 @@ void sgpd_write_entry(u32 grouping_type, void *entry, GF_BitStream *bs)
 		}
 		return;
 	}
+	case GF_ISOM_SAMPLE_GROUP_ESGH:
+	{
+		u32 i;
+		GF_EssentialSamplegroupEntry *esgh = (GF_EssentialSamplegroupEntry *) entry;
+		gf_bs_write_u32(bs, esgh->nb_types);
+		for (i=0; i<esgh->nb_types; i++) {
+			gf_bs_write_u32(bs, esgh->group_types[i]);
+		}
+		return;
+	}
 
 	default:
 	{
@@ -10211,6 +10257,11 @@ static u32 sgpd_size_entry(u32 grouping_type, void *entry)
 	{
 		GF_SubpictureLayoutMapEntry *sulm = (GF_SubpictureLayoutMapEntry *) entry;
 		return 6 + 2*sulm->nb_entries;
+	}
+	case GF_ISOM_SAMPLE_GROUP_ESGH:
+	{
+		GF_EssentialSamplegroupEntry *esgh = (GF_EssentialSamplegroupEntry *) entry;
+		return 4 + 4*esgh->nb_types;
 	}
 
 	default:
@@ -10269,7 +10320,7 @@ GF_Err sgpd_box_read(GF_Box *s, GF_BitStream *bs)
 			size = gf_bs_read_u32(bs);
 			ISOM_DECREASE_SIZE(p, 4);
 		}
-		ptr = sgpd_parse_entry(p->grouping_type, bs, (s32) p->size, size, &parsed_bytes);
+		ptr = sgpd_parse_entry(p, bs, (s32) p->size, size, &parsed_bytes);
 		//don't return an error, just stop parsing so that we skip over the sgpd box
 		if (!ptr) return GF_OK;
 		gf_list_add(p->group_descriptions, ptr);
@@ -12468,7 +12519,7 @@ GF_Err chnl_box_read(GF_Box *s,GF_BitStream *bs)
 	if (ptr->layout.stream_structure & 1) {
 		ISOM_DECREASE_SIZE(s, 1)
 		ptr->layout.definedLayout = gf_bs_read_u8(bs);
-		if (ptr->layout.definedLayout) {
+		if (ptr->layout.definedLayout==0) {
 			u32 remain = (u32) ptr->size;
 			if (ptr->layout.stream_structure & 2) remain--;
 			ptr->layout.channels_count = 0;

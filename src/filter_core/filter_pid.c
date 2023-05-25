@@ -336,6 +336,9 @@ static void gf_filter_pid_update_caps(GF_FilterPid *pid)
 					pid_in->pid->max_buffer_time = 0;
 				}
 			}
+			//if we have max_buffer_time set, don't use buffer units
+			if (pid->max_buffer_time)
+				pid->max_buffer_unit = 0;
 		}
 		//input is file, output is not and codec ID is raw, this is a raw media pid
 		else if ((i_type==GF_STREAM_FILE) && (mtype!=GF_STREAM_FILE) && (codecid==GF_CODECID_RAW) ) {
@@ -2843,13 +2846,21 @@ static void gf_filter_reg_build_graph_single(GF_FilterRegDesc *reg_desc, const G
 	u32 nb_src_caps, k, l;
 	u32 path_weight;
 
+	Bool freg_has_input = gf_filter_has_in_caps(freg->caps, freg->nb_caps);
+	Bool a_reg_has_input = gf_filter_has_in_caps(a_reg->freg->caps, a_reg->freg->nb_caps);
+	Bool a_reg_has_output = gf_filter_has_out_caps(a_reg->freg->caps, a_reg->freg->nb_caps);
+	//for scripts force checking inputs
+	if (freg->flags & GF_FS_REG_SCRIPT) {
+		freg_has_input = GF_TRUE;
+	}
+
 	//check which cap of this filter matches our destination
 	nb_src_caps = a_reg->nb_bundles;
 	for (k=0; k<nb_src_caps; k++) {
 		for (l=0; l<nb_dst_caps; l++) {
 			s32 bundle_idx;
 
-			if (gf_filter_has_out_caps(a_reg->freg->caps, a_reg->freg->nb_caps)) {
+			if (freg_has_input && a_reg_has_output) {
 				u32 loaded_filter_only_flags = 0;
 
 				path_weight = gf_filter_caps_to_caps_match(a_reg->freg, k, (const GF_FilterRegister *) freg, nb_bundles, dst_filter, &bundle_idx, l, &loaded_filter_only_flags, capstore);
@@ -2880,7 +2891,7 @@ static void gf_filter_reg_build_graph_single(GF_FilterRegDesc *reg_desc, const G
 				}
 			}
 
-			if ( freg_has_output ) {
+			if ( freg_has_output && a_reg_has_input) {
 				u32 loaded_filter_only_flags = 0;
 
 				path_weight = gf_filter_caps_to_caps_match(freg, l, a_reg->freg, a_reg->nb_bundles, dst_filter, &bundle_idx, k, &loaded_filter_only_flags, capstore);
@@ -3561,6 +3572,20 @@ static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filt
 				}
 
 				if (f->freg == chain_start_freg) {
+					//if we link to a sink
+					if (dst_is_sink
+						//and intermediate filter already has a destination (ie graph is loaded)
+						&& gf_list_count(f->destination_filters)
+						//and this destination is not the target sink
+						&& (gf_list_find(f->destination_filters, dst)<0)
+					) {
+						//do not skip filter but force resolving the graph
+						//this allows e.g. fin->DMX-> -o dash1.mpd -o dash2.mpd
+						//the filter loaded for DMX->dasher->fout(dash1.mpd) will be rejected when checking DMX->dash2.mpd link
+						//cf https://github.com/gpac/gpac/issues/2453#issuecomment-1548112064
+						continue;
+					}
+
 					//store destination as future destination link for this new filter
 					if (gf_list_find(f->destination_links, dst)<0)
 						gf_list_add(f->destination_links, dst);
@@ -4874,6 +4899,13 @@ single_retry:
 			cap_matched = gf_filter_pid_caps_match(pid, filter_dst->freg, NULL, NULL, NULL, pid->filter->dst_filter, -1);
 		}
 
+		//implicit mode with a possible link found and this destination is a sink, do not match caps in first pass
+		//otherwise we could link directly to destination (due to caps mismatch) while a valid path could be found to a previously
+		//specified filter
+		//see testsuite restamp-fps
+		if (!num_pass && possible_link_found_implicit_mode && is_sink)
+			cap_matched = GF_FALSE;
+
 		if (!cap_matched) {
 			Bool skipped = GF_FALSE;
 			Bool reassigned=GF_FALSE;
@@ -6137,7 +6169,10 @@ GF_FilterPacket *gf_filter_pid_get_packet(GF_FilterPid *pid)
 {
 	GF_FilterPacketInstance *pcki;
 	GF_FilterPidInst *pidinst = (GF_FilterPidInst *)pid;
-
+	if (!pid) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_FILTER, ("Attempt to fetch a packet on a NULL pid, please report to GPAC devs!\n"));
+		return NULL;
+	}
 	if (PID_IS_OUTPUT(pid)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to fetch a packet on an output PID in filter %s\n", pid->filter->name));
 		return NULL;
@@ -8977,6 +9012,8 @@ GF_Err gf_filter_pid_get_rfc_6381_codec_string(GF_FilterPid *pid, char *szCodec,
 
 			if (vpcc) {
 				GF_Err e = rfc_6381_get_codec_vpx(szCodec, subtype, vpcc, colr);
+				if (vpcc->level == 0 && !strcmp(pid->filter->name, "dasher"))
+					GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[RFC6381] DASHing VPx codec with undefined level=0: stream might not play. Consider adding \"#Codec=foo.bar\" to force value.\n"));
 				gf_odf_vp_cfg_del(vpcc);
 				return e;
 			}

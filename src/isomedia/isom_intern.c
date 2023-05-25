@@ -124,7 +124,7 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 			gf_bs_get_content(pssh_bs, &pssh_data, &pssh_len);
 			gf_bs_del(pssh_bs);
 
-			gf_isom_set_sample_group_description_internal(mov, gf_list_find(mov->moov->trackList, trak)+1, 1+prev_sample_count, GF_4CC('P','S','S','H'), 0, pssh_data, pssh_len, GF_FALSE);
+			gf_isom_set_sample_group_description_internal(mov, gf_list_find(mov->moov->trackList, trak)+1, 1+prev_sample_count, GF_4CC('P','S','S','H'), 0, pssh_data, pssh_len, GF_FALSE, 0);
 			gf_free(pssh_data);
 #endif
 		}
@@ -144,7 +144,7 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 			gf_bs_get_content(emsg_bs, &emsg_data, &emsg_len);
 			gf_bs_del(emsg_bs);
 
-			gf_isom_set_sample_group_description_internal(mov, gf_list_find(mov->moov->trackList, trak)+1, 1+prev_sample_count, GF_4CC('E','M','S','G'), 0, emsg_data, emsg_len, GF_FALSE);
+			gf_isom_set_sample_group_description_internal(mov, gf_list_find(mov->moov->trackList, trak)+1, 1+prev_sample_count, GF_4CC('E','M','S','G'), 0, emsg_data, emsg_len, GF_FALSE, 0);
 			gf_free(emsg_data);
 		}
 #endif
@@ -411,6 +411,18 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				return GF_ISOM_INVALID_FILE;
 			}
 			mov->moov = (GF_MovieBox *)a;
+			if (mov->moov->has_cmvd) {
+				GF_Box *cmvd = gf_isom_box_find_child(a->child_boxes, GF_QT_BOX_TYPE_CMVD);
+				mov->moov = (GF_MovieBox *) (cmvd ? gf_isom_box_find_child(cmvd->child_boxes, GF_ISOM_BOX_TYPE_MOOV) : NULL);
+				if (!mov->moov) {
+					gf_isom_box_del(a);
+					return GF_ISOM_INVALID_FILE;
+				}
+				gf_list_del_item(cmvd->child_boxes, mov->moov);
+				gf_isom_box_del(a);
+				a = (GF_Box*)mov->moov;
+				mov->moov->type = GF_ISOM_BOX_TYPE_MOOV;
+			}
 			mov->original_moov_offset = mov->current_top_box_start;
 			/*set our pointer to the movie*/
 			mov->moov->mov = mov;

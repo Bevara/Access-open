@@ -158,6 +158,8 @@ typedef struct
 	GF_List *sps, *pps, *vps, *sps_ext, *pps_svc, *vvc_aps_pre, *vvc_dci, *vvc_opi;
 	//set to true if one of the PS has been modified, will potentially trigger a PID reconfigure
 	Bool ps_modified;
+	//set to true if one PS has been changed - if false and ps_modified is set, only new PS have been added
+	Bool ps_changed;
 
 	//stats
 	u32 nb_idr, nb_i, nb_p, nb_b, nb_sp, nb_si, nb_sei, nb_nalus, nb_aud, nb_cra;
@@ -241,6 +243,10 @@ typedef struct
 	u32 nb_dv_rpu, nb_dv_el;
 
 	u32 valid_ps_flags;
+
+	Bool check_prev_sap2;
+	s32 prev_sap2_poc;
+	GF_FilterPacket *prev_sap;
 } GF_NALUDmxCtx;
 
 static void naludmx_enqueue_or_dispatch(GF_NALUDmxCtx *ctx, GF_FilterPacket *n_pck, Bool flush_ref);
@@ -1505,10 +1511,13 @@ Bool naludmx_create_avc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 *dsi_si
 					else
 						DeltaTfiDivisorIdx = (ctx->avc_state->sei.pic_timing.pic_struct+1) / 2;
 				}
-				if (ctx->notime && sps->vui.time_scale && sps->vui.num_units_in_tick) {
-					ctx->cur_fps.num = 2 * sps->vui.time_scale;
-					ctx->cur_fps.den = 2 * sps->vui.num_units_in_tick * DeltaTfiDivisorIdx;
-
+				if (ctx->notime) {
+					u32 fps_num = 2 * sps->vui.time_scale;
+					u32 fps_den = 2 * sps->vui.num_units_in_tick * DeltaTfiDivisorIdx;
+					if (fps_num && fps_den) {
+						ctx->cur_fps.num = fps_num;
+						ctx->cur_fps.den = fps_den;
+					}
 					if (!ctx->fps.num && ctx->dts==ctx->fps.den)
 						ctx->dts = ctx->cur_fps.den;
 				}
@@ -1770,6 +1779,7 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 	Bool has_hevc_base = GF_TRUE;
 	Bool has_colr_info = GF_FALSE;
 	Bool res;
+	Bool dsi_is_superset = (!ctx->crc_cfg || ctx->ps_changed) ? GF_FALSE : GF_TRUE;
 
 	if (ctx->analyze) {
 		if (ctx->opid && !ctx->ps_modified) return;
@@ -1779,6 +1789,7 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 			return;
 	}
 	ctx->ps_modified = GF_FALSE;
+	ctx->ps_changed = GF_FALSE;
 
 	dsi = dsi_enh = NULL;
 
@@ -1865,6 +1876,7 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_FPS, & PROP_FRAC(ctx->cur_fps));
 
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_TIMESCALE, & PROP_UINT(ctx->timescale ? ctx->timescale : ctx->cur_fps.num));
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DSI_SUPERSET, dsi_is_superset ? & PROP_BOOL(GF_TRUE) : NULL);
 
 	if (ctx->explicit || !has_hevc_base) {
 		u32 enh_cid = GF_CODECID_SVC;
@@ -2158,6 +2170,7 @@ static void naludmx_queue_param_set(GF_NALUDmxCtx *ctx, char *data, u32 size, u3
 		sl->size = size;
 		sl->crc = crc;
 		ctx->ps_modified = GF_TRUE;
+		ctx->ps_changed = GF_TRUE;
 		//flush AU if we have a slice
 		if (ctx->opid && flush_au && ctx->first_pck_in_au && ctx->nb_slices_in_au) {
 			naludmx_end_access_unit(ctx);
@@ -2883,6 +2896,7 @@ static s32 naludmx_parse_nal_avc(GF_NALUDmxCtx *ctx, char *data, u32 size, u32 n
 					if (!ctx->pps_svc) ctx->pps_svc = gf_list_new();
 					gf_list_add(ctx->pps_svc, slc);
 					ctx->ps_modified = GF_TRUE;
+					ctx->ps_changed = GF_TRUE;
 				}
 			}
 		}
@@ -2939,10 +2953,12 @@ static void naldmx_switch_timestamps(GF_NALUDmxCtx *ctx, GF_FilterPacket *pck)
 {
 	//input pid sets some timescale - we flushed pending data , update cts
 	if (!ctx->notime) {
+		Bool cts_swap=GF_FALSE;
 		u64 ts = gf_filter_pck_get_cts(pck);
 		if (ts != GF_FILTER_NO_TS) {
 			ctx->prev_cts = ctx->cts;
 			ctx->cts = ts;
+			cts_swap=GF_TRUE;
 		}
 		ts = gf_filter_pck_get_dts(pck);
 		if (ts != GF_FILTER_NO_TS) {
@@ -2960,9 +2976,18 @@ static void naldmx_switch_timestamps(GF_NALUDmxCtx *ctx, GF_FilterPacket *pck)
 				else if (ctx->prev_dts != ts) {
 					u64 diff = ts;
 					diff -= ctx->prev_dts;
-					if (!ctx->cur_fps.den)
+					if (!ctx->cur_fps.den) {
 						ctx->cur_fps.den = (u32) diff;
-					else if (ctx->cur_fps.den > diff)
+						//we initialized wiith 3000, patch back
+						if (ctx->dts && (ctx->dts!=ts)) {
+							ctx->dts -= 3000;
+							ctx->dts += diff;
+						}
+						if (ctx->prev_cts && cts_swap) {
+							ctx->prev_cts -= 3000;
+							ctx->prev_cts += diff;
+						}
+					} else if (ctx->cur_fps.den > diff)
 						ctx->cur_fps.den = (u32) diff;
 
 					ctx->prev_dts = ts;
@@ -3343,8 +3368,11 @@ naldmx_flush:
 			naludmx_end_access_unit(ctx);
 		}
 
-		naludmx_check_pid(filter, ctx, force_au_flush);
-		if (!ctx->opid) skip_nal = GF_TRUE;
+		if (!ctx->opid) {
+			//check output pid cfg before checking NAL skip only if no output pid
+			naludmx_check_pid(filter, ctx, force_au_flush);
+			if (!ctx->opid) skip_nal = GF_TRUE;
+		}
 
 		if (skip_nal) {
 			nal_size += sc_size;
@@ -3354,6 +3382,8 @@ naldmx_flush:
 			naldmx_check_timestamp_switch(ctx, &nalu_store_before, nal_size, &drop_packet, pck);
 			continue;
 		}
+		//check output pid cfg after skiping nal, to make sure we can flush pending packets when config change
+		naludmx_check_pid(filter, ctx, force_au_flush);
 
 		if (!ctx->is_playing) {
 			ctx->resume_from = (u32) (start - ctx->nal_store);
@@ -3424,11 +3454,16 @@ naldmx_flush:
 			au_sap_type = GF_FILTER_SAP_NONE;
 			if (gf_hevc_slice_is_IDR(ctx->hevc_state)) {
 				au_sap_type = GF_FILTER_SAP_1;
+				switch (ctx->hevc_state->s_info.nal_unit_type) {
+				case GF_HEVC_NALU_SLICE_IDR_W_DLP:
+				case GF_HEVC_NALU_SLICE_BLA_W_DLP:
+					au_sap_type = GF_FILTER_SAP_2;
+					break;
+				}
 			}
 			else {
 				switch (ctx->hevc_state->s_info.nal_unit_type) {
 				case GF_HEVC_NALU_SLICE_BLA_W_LP:
-				case GF_HEVC_NALU_SLICE_BLA_W_DLP:
 					au_sap_type = GF_FILTER_SAP_3;
 					break;
 				case GF_HEVC_NALU_SLICE_BLA_N_LP:
@@ -3622,8 +3657,25 @@ naldmx_flush:
 					if (bIntraSlice && ctx->force_sync && (ctx->sei_recovery_frame_count==0))
 						slice_force_ref = GF_TRUE;
 				}
-				ctx->au_sap = au_sap_type;
 				ctx->bottom_field_flag = bottom_field_flag;
+
+				if (ctx->check_prev_sap2) {
+					if ((ctx->prev_sap2_poc > slice_poc) && ctx->prev_sap && (gf_list_find(ctx->pck_queue, ctx->prev_sap)>=0)) {
+						gf_filter_pck_set_sap(ctx->prev_sap, GF_FILTER_SAP_2);
+					}
+					ctx->check_prev_sap2 = GF_FALSE;
+					ctx->prev_sap = NULL;
+				}
+				//move all sap2 to sap1 and check POC of next frame
+				//we do this because many encoders use IDR+Decodable leading pic NAL types (eg SAP2)
+				//when encoding for IDR without DLP (eg SAP1)...
+				if (au_sap_type==GF_FILTER_SAP_2) {
+					au_sap_type = GF_FILTER_SAP_1;
+					ctx->check_prev_sap2 = GF_TRUE;
+					ctx->prev_sap2_poc = slice_poc;
+				}
+
+				ctx->au_sap = au_sap_type;
 			}
 
 			if (slice_poc < ctx->poc_shift) {
@@ -3789,6 +3841,11 @@ naldmx_flush:
 
 		//bytes only come from the data packet
 		memcpy(pck_data, nal_data, (size_t) nal_size);
+
+		if ((ctx->nb_slices_in_au==1) && ctx->check_prev_sap2) {
+			ctx->prev_sap = ctx->first_pck_in_au;
+		}
+
 
 		nal_size += sc_size;
 		start += nal_size;

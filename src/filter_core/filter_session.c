@@ -510,7 +510,7 @@ void gf_fs_push_arg(GF_FilterSession *session, const char *szArg, Bool was_found
 		}
 		if (was_found)
 			ai->meta_state = 2;
-	} else if (was_found && !ai->meta_state) {
+	} else if (was_found && (!ai->meta_state || !meta_filter) ) {
 		ai->opt_found = 1;
 		//initial declaration from filter setup: meta args are declared as true by default
 		if (type==GF_ARGTYPE_LOCAL) {
@@ -518,6 +518,7 @@ void gf_fs_push_arg(GF_FilterSession *session, const char *szArg, Bool was_found
 			ai->meta_state = 1;
 			//meta option, mark as not found
 			if (meta_filter) ai->meta_state = 3;
+			else ai->meta_filter = NULL;
 		}
 	}
 }
@@ -3163,6 +3164,8 @@ GF_Filter *gf_fs_load_source_dest_internal(GF_FilterSession *fsess, const char *
 			szForceExt[19]=0;
 			ext = strchr(szForceExt, fsess->sep_args);
 			if (ext) ext[0] = 0;
+		} else {
+			szForceExt[0] = 0;
 		}
 	}
 	sURL = NULL;
@@ -3300,8 +3303,9 @@ restart:
 			continue;
 
 		s = freg->probe_url(sURL, mime_type);
-		if (szForceExt[0] && (s==GF_FPROBE_NOT_SUPPORTED))
-			s = freg->probe_url(szForceExt, mime_type);
+		if (!for_source && (s==GF_FPROBE_MAYBE_NOT_SUPPORTED)) {
+			s = szForceExt[0] ? freg->probe_url(szForceExt, mime_type) : GF_FPROBE_NOT_SUPPORTED;
+		}
 		/* destination meta filter: change GF_FPROBE_SUPPORTED to GF_FPROBE_MAYBE_SUPPORTED for internal mux formats
 		in order to avoid always giving the hand to the meta filter*/
 		if (!for_source && (s == GF_FPROBE_SUPPORTED) && (freg->flags & GF_FS_REG_META)) {
@@ -3658,9 +3662,9 @@ void gf_fs_print_all_connections(GF_FilterSession *session, char *filter_name, v
 
 		found = GF_TRUE;
 		if (print_fn)
-			print_fn(stderr, 1, "%s sources:%s", src->freg->name, src->nb_edges ? "" : " none");
+			print_fn(stderr, 1, "%s sources:%s", src->freg->name, src->nb_edges ? "" : " none\n");
 		else {
-			GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("%s sources:%s", src->freg->name, src->nb_edges ? "" : " none"));
+			GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("%s sources:%s", src->freg->name, src->nb_edges ? "" : " none\n"));
 		}
 		if (!src->nb_edges)
 			continue;
@@ -4139,6 +4143,9 @@ GF_Err gf_filter_get_stats(GF_Filter *f, GF_FilterStats *stats)
 			stats->last_ts_drop = pidi->last_ts_drop;
 
 		if ((f->num_input_pids!=1) && f->num_output_pids)
+			continue;
+
+		if (!pidi->pid)
 			continue;
 
 		if (!stats->codecid)

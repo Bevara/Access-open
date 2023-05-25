@@ -15,7 +15,11 @@
 - Dasher support for inputs with multiple stsd entries
 - Allow multiplexed representations for LL-HLS
 - Improved eac3 support
-
+- QT cmov support (reading and writing)
+- QT lpcm support
+- Support for big-endian PCM formats
+- Support for uncv (raw video in mp4 and heir)
+ 
 ## Filters
 - Async HTTP request in all filters
 - Fixed cors and mime types in httpout for wasm and sharedArrayuffer support
@@ -25,15 +29,19 @@
 - Added seeking in mp4dmx in mem mode
 - vout updated to use VBO (required for gles2)
 - Allow ffdmx to work as demux filter on gpac input file pids
-- GHI format for pre-indexing DASH/HLS session for JIT packaging
+- GHI format for pre-indexing DASH/HLS session for JIT packaging/encryption/transcode
 - Zero-copy for mp4dmx and fragmented mp4mx
-- Various speed optimizations (filter session, isomedia lib, disk io)
+- Various speed optimizations (filter session, isomedia lib, disk io, xml)
 - Allow running the session without mutexes
 
+
+## MP4Box
+- add track reordering option
 
 ## Misc
 - FFMPEG 6 support
 - Added features for configure (vout, aout, fonts, doc, evg)
+- Allow specifying network interface by name or IP instead of IP only
 
 
 # 19/12/2022: GPAC 2.2

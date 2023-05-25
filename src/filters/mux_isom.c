@@ -36,6 +36,7 @@
 
 #define GF_VENDOR_GPAC		GF_4CC('G','P','A','C')
 
+#define GF_IMPORT_AUDIO_SAMPLE_ENTRY_v2_QTFF (GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF+1)
 
 #define ISOM_FILE_EXT "mp4|mpg4|m4a|m4i|3gp|3gpp|3g2|3gp2|iso|ismv|m4s|heif|heic|iff|avci|avif|mj2|mov|qt"
 #define ISOM_FILE_MIME "video/mp4|audio/mp4|application/mp4|video/3gpp|audio/3gpp|video/3gp2|audio/3gp2|video/iso.segment|audio/iso.segment|image/heif|image/heic|image/avci|video/jp2|video/quicktime"
@@ -939,6 +940,7 @@ static GF_Err mp4_mux_setup_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_tr
 	u32 raw_bitdepth=0;
 	u32 override_stype=0;
 	u32 width, height, sr, nb_chan, nb_bps, z_order, txt_fsize;
+	u32 afmt_flags = 0;
 	u64 ch_layout;
 	GF_Fraction fps, sar;
 	GF_List *multi_pid_stsd = NULL;
@@ -990,6 +992,12 @@ static GF_Err mp4_mux_setup_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_tr
 				ctx->make_qt = 1;
 			}
 			gf_free(dst);
+		}
+	} else {
+		const char *fname = gf_isom_get_filename(ctx->file);
+		char *ext = fname ? gf_file_ext_start(fname) : NULL;
+		if (ext && (!stricmp(ext, ".mov") || !stricmp(ext, ".qt")) ) {
+			ctx->make_qt = 1;
 		}
 	}
 	//copy properties at init or reconfig
@@ -2162,17 +2170,22 @@ sample_entry_setup:
 		if (tkw->stream_type == GF_STREAM_AUDIO) {
 			u32 afmt;
 			u32 req_non_planar_type = 0;
+			Bool qt_only=GF_FALSE;
 			p = gf_filter_pid_get_property(pid, GF_PROP_PID_AUDIO_FORMAT);
 			if (!p) break;
 			comp_name = "RawAudio";
 			unknown_generic = GF_FALSE;
+
 			afmt = p->value.uint;
+			afmt_flags |= 1<<2; //signed
 			//m_subtype used for QTFF-style raw media, m_subtype_alt_raw for ISOBMFF raw audio
 			switch (afmt) {
 			case GF_AUDIO_FMT_U8P:
 			 	req_non_planar_type = GF_AUDIO_FMT_U8;
 			case GF_AUDIO_FMT_U8:
 				m_subtype = GF_QT_SUBTYPE_RAW;
+				afmt_flags &= ~(1<<2); //unsigned
+				qt_only = GF_TRUE;
 				break;
 			case GF_AUDIO_FMT_S16P:
 			 	req_non_planar_type = GF_AUDIO_FMT_S16;
@@ -2181,11 +2194,18 @@ sample_entry_setup:
 				m_subtype_alt_raw = GF_ISOM_SUBTYPE_IPCM;
 				break;
 			case GF_AUDIO_FMT_S16_BE:
+				afmt_flags |= 1<<1;
 				m_subtype = GF_QT_SUBTYPE_TWOS;
+				m_subtype_alt_raw = GF_ISOM_SUBTYPE_IPCM;
 				break;
 			case GF_AUDIO_FMT_S24P:
 			 	req_non_planar_type = GF_AUDIO_FMT_S24;
 			case GF_AUDIO_FMT_S24:
+				m_subtype = GF_QT_SUBTYPE_IN24;
+				m_subtype_alt_raw = GF_ISOM_SUBTYPE_IPCM;
+				break;
+			case GF_AUDIO_FMT_S24_BE:
+				afmt_flags |= 1<<1;
 				m_subtype = GF_QT_SUBTYPE_IN24;
 				m_subtype_alt_raw = GF_ISOM_SUBTYPE_IPCM;
 				break;
@@ -2195,23 +2215,51 @@ sample_entry_setup:
 				m_subtype = GF_QT_SUBTYPE_IN32;
 				m_subtype_alt_raw = GF_ISOM_SUBTYPE_IPCM;
 				break;
+			case GF_AUDIO_FMT_S32_BE:
+				afmt_flags |= 1<<1;
+				m_subtype = GF_QT_SUBTYPE_IN32;
+				m_subtype_alt_raw = GF_ISOM_SUBTYPE_IPCM;
+				break;
 			case GF_AUDIO_FMT_FLTP:
 			 	req_non_planar_type = GF_AUDIO_FMT_FLTP;
 			case GF_AUDIO_FMT_FLT:
 				m_subtype = GF_QT_SUBTYPE_FL32;
 				m_subtype_alt_raw = GF_ISOM_SUBTYPE_FPCM;
+				afmt_flags |= 1;
+				break;
+			case GF_AUDIO_FMT_FLT_BE:
+				afmt_flags |= 1<<1;
+				m_subtype = GF_QT_SUBTYPE_FL32;
+				m_subtype_alt_raw = GF_ISOM_SUBTYPE_FPCM;
+				afmt_flags |= 1;
 				break;
 			case GF_AUDIO_FMT_DBLP:
 			 	req_non_planar_type = GF_AUDIO_FMT_DBL;
 			case GF_AUDIO_FMT_DBL:
 				m_subtype = GF_QT_SUBTYPE_FL64;
 				m_subtype_alt_raw = GF_ISOM_SUBTYPE_FPCM;
+				afmt_flags |= 1;
+				break;
+			case GF_AUDIO_FMT_DBL_BE:
+				afmt_flags |= 1<<1;
+				m_subtype = GF_QT_SUBTYPE_FL64;
+				m_subtype_alt_raw = GF_ISOM_SUBTYPE_FPCM;
+				afmt_flags |= 1;
 				break;
 			default:
 				unknown_generic = GF_TRUE;
 				m_subtype = p->value.uint;
 				break;
 			}
+
+			if (ctx->make_qt && (ase_mode==GF_IMPORT_AUDIO_SAMPLE_ENTRY_v2_QTFF)) {
+				m_subtype = GF_QT_SUBTYPE_LPCM;
+			}
+			//if qt-only sample desc available, force ase mode
+			else if (!ctx->make_qt && qt_only) {
+				ase_mode = GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF;
+			}
+
 			if (req_non_planar_type) {
 				if (is_true_pid)
 					gf_filter_pid_negociate_property(pid, GF_PROP_PID_AUDIO_FORMAT, &PROP_UINT(GF_AUDIO_FMT_S16));
@@ -2308,6 +2356,12 @@ sample_entry_setup:
 	if (is_text_subs && !width && !height) {
 		mp4_mux_get_video_size(ctx, &width, &height);
 	}
+
+	//if not LPCM and qt v2 is requested, move to qtv1
+	if ((ase_mode==GF_IMPORT_AUDIO_SAMPLE_ENTRY_v2_QTFF) && (m_subtype != GF_QT_SUBTYPE_LPCM) ) {
+		ase_mode = GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF;
+	}
+
 
 	if (!ctx->init_movie_done && !tkw->nb_samples && (ctx->mediats<0) && (tkw->tk_timescale==1000)) {
 		if (sr) {
@@ -2413,9 +2467,13 @@ sample_entry_setup:
 	}
 
 	tkw->xps_inband = xps_inband;
+	p = needs_sample_entry ? gf_filter_pid_get_property(tkw->ipid, GF_PROP_PID_DSI_SUPERSET) : NULL;
 
-	//little optim here: if no samples were added on the stream description remove it
-	if (!tkw->samples_in_stsd && tkw->stsd_idx && needs_sample_entry) {
+	//if dsi is a superset of previous one, remove stream description
+	if ((p && p->value.boolean)
+		//little optim here: if no samples were added on the stream description remove it
+		|| (!tkw->samples_in_stsd && tkw->stsd_idx && needs_sample_entry)
+	) {
 		gf_isom_remove_stream_description(ctx->file, tkw->track_num, tkw->stsd_idx);
 	}
 
@@ -2471,8 +2529,6 @@ sample_entry_setup:
 #endif
 
 	} else if (use_avc) {
-		if (tkw->avcc) gf_odf_avc_cfg_del(tkw->avcc);
-
 		//not yet known
 		if (!dsi && !enh_dsi) return GF_OK;
 
@@ -2480,10 +2536,10 @@ sample_entry_setup:
 			dsi = enh_dsi;
 			enh_dsi = NULL;
 		}
+		if (tkw->avcc) gf_odf_avc_cfg_del(tkw->avcc);
 		tkw->avcc = gf_odf_avc_cfg_read(dsi->value.data.ptr, dsi->value.data.size);
 
 		if (needs_sample_entry) {
-
 			if (tkw->codecid == GF_CODECID_SVC) {
 				e = gf_isom_svc_config_new(ctx->file, tkw->track_num, tkw->avcc, NULL, NULL, &tkw->stsd_idx);
 			} else if (tkw->codecid == GF_CODECID_MVC) {
@@ -2996,8 +3052,21 @@ sample_entry_setup:
 
 		udesc.samplerate = sr;
 		udesc.nb_channels = nb_chan;
-		if (codec_id==GF_CODECID_RAW) {
-			if (ase_mode==GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_MPEG) {
+		udesc.bits_per_sample = raw_bitdepth;
+		udesc.lpcm_flags = afmt_flags | (1<<3); //add packed flag
+		//for raw audio, select qt vs isom and set version
+		if (sr && (codec_id==GF_CODECID_RAW)) {
+			if (ctx->make_qt && (ase_mode==GF_IMPORT_AUDIO_SAMPLE_ENTRY_v0_BS)) {
+				udesc.is_qtff = GF_TRUE;
+				//if extensions or not 'raw ' or 'twos', use v1
+				if (dsi ||
+					((m_subtype!=GF_QT_SUBTYPE_TWOS) && (m_subtype!=GF_QT_SUBTYPE_RAW))
+				) {
+					udesc.version = 1;
+					ase_mode = GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF;
+				}
+			}
+			else if (ase_mode<=GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_MPEG) {
 				m_subtype = m_subtype_alt_raw;
 				udesc.extension_buf_size = 14;
 				udesc.extension_buf = isor_ext_buf;
@@ -3007,8 +3076,10 @@ sample_entry_setup:
 				isor_ext_buf[5] = 'c';
 				isor_ext_buf[6] = 'm';
 				isor_ext_buf[7] = 'C';
-				isor_ext_buf[12] = 1; //little endian only for now
-				isor_ext_buf[13] = raw_bitdepth; //little endian only for now
+				isor_ext_buf[12] = (afmt_flags & (1<<1)) ? 0 : 1; //big/little endian
+				isor_ext_buf[13] = raw_bitdepth;
+				if (ase_mode==GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_MPEG)
+					udesc.version = 1;
 			} else {
 				udesc.is_qtff = GF_TRUE;
 				udesc.version = 1;
@@ -3349,7 +3420,10 @@ sample_entry_done:
 					sr = val;
 				}
 			}
-			gf_isom_set_audio_info(ctx->file, tkw->track_num, tkw->stsd_idx, sr, nb_chan, nb_bps, ctx->make_qt ? GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF : ase_mode);
+			if (m_subtype!=GF_QT_SUBTYPE_LPCM) {
+				gf_isom_set_audio_info(ctx->file, tkw->track_num, tkw->stsd_idx, sr, nb_chan, nb_bps, ctx->make_qt ? GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF : ase_mode);
+			}
+
 			if ((m_subtype==GF_ISOM_SUBTYPE_IPCM) || (m_subtype==GF_ISOM_SUBTYPE_FPCM)) {
 				GF_AudioChannelLayout layout;
 				memset(&layout, 0, sizeof(GF_AudioChannelLayout));
@@ -4223,7 +4297,7 @@ static GF_Err mp4_mux_cenc_update(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Filter
 		if (ctx->store>=MP4MX_MODE_FRAG) {
 			mp4_mux_cenc_insert_pssh(ctx, tkw, p, GF_FALSE);
 		} else {
-			gf_isom_set_sample_group_description(ctx->file, tkw->track_num, sample_num, GF_4CC('P','S','S','H'), 0, p->value.data.ptr, p->value.data.size);
+			gf_isom_set_sample_group_description(ctx->file, tkw->track_num, sample_num, GF_4CC('P','S','S','H'), 0, p->value.data.ptr, p->value.data.size, 0);
 		}
 	}
 
@@ -4920,7 +4994,7 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 	u32 idx = 0;
 	while (1) {
 		Bool is_sample_group=GF_FALSE;
-		u32 aux_type=0, aux_info=0;
+		u32 aux_type=0, aux_info=0, sg_flags=0;
 		u32 p4cc;
 		const char *pname=NULL;
 		const GF_PropertyValue *p = gf_filter_pck_enum_properties(pck, &idx, &p4cc, &pname);
@@ -4940,14 +5014,33 @@ static GF_Err mp4_mux_process_sample(GF_MP4MuxCtx *ctx, TrackWriter *tkw, GF_Fil
 		}
 
 		pname+=4;
-		if (strlen(pname) < 4) continue;
-		aux_type = GF_4CC(pname[0], pname[1], pname[2], pname[3]);
-		if (pname[4] == '_') aux_info = atoi(pname+5);
-
+		u32 plen = (u32) strlen(pname);
+		if (plen==3) {
+			aux_type = GF_4CC(pname[0], pname[1], pname[2], ' ');
+			pname+=3;
+		} else if (plen >= 4) {
+			aux_type = GF_4CC(pname[0], pname[1], pname[2], pname[3]);
+			pname+=4;
+		} else {
+			continue;
+		}
+		if (pname[0] == '_') {
+			if (is_sample_group) {
+				char *flags = strstr(pname, "_z");
+				if (flags) flags[0]=0;
+				if (pname[0]) aux_info = atoi(pname);
+				if (flags) {
+					sscanf(flags+2, "%x", &sg_flags);
+					flags[0]='_';
+				}
+			} else {
+				aux_info = atoi(pname);
+			}
+		}
 		if (!aux_type) continue;
 
 		if (is_sample_group) {
-			gf_isom_set_sample_group_description(ctx->file, tkw->track_num, for_fragment ? 0 : tkw->nb_samples, aux_type, aux_info, p->value.data.ptr, p->value.data.size);
+			gf_isom_set_sample_group_description(ctx->file, tkw->track_num, for_fragment ? 0 : tkw->nb_samples, aux_type, aux_info, p->value.data.ptr, p->value.data.size, sg_flags);
 		} else {
 			if (for_fragment) {
 #ifndef GPAC_DISABLE_ISOM_FRAGMENTS
@@ -7829,7 +7922,7 @@ static const GF_FilterCapability MP4MuxCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_OD),
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_TEXT),
 	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
-	CAP_UINT(GF_CAPS_INPUT_EXCLUDED,  GF_PROP_PID_CODECID, GF_CODECID_RAW),
+	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_RAW),
 };
 
 
@@ -7911,8 +8004,9 @@ static const GF_FilterArgs MP4MuxArgs[] =
 			"- v0: use v0 signaling but channel count from stream, recommended for backward compatibility\n"
 			"- v0s: use v0 signaling and force channel count to 2 (stereo) if more than 2 channels\n"
 			"- v1: use v1 signaling, ISOBMFF style (will mux raw PCM as ISOBMFF style)\n"
-			"- v1qt: use v1 signaling, QTFF style"
-		, GF_PROP_UINT, "v0", "|v0|v0s|v1|v1qt", 0},
+			"- v1qt: use v1 signaling, QTFF style\n"
+			"- v2qt: use v2 signaling, QTFF style (lpcm entry type)"
+		, GF_PROP_UINT, "v0", "|v0|v0s|v1|v1qt|v2qt", 0},
 	{ OFFS(ssix), "create `ssix` box when `sidx` box is present, level 1 mapping I-frames byte ranges, level 0xFF mapping the rest", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(ccst), "insert coding constraint box for video tracks", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(maxchunk), "set max chunk size in bytes for runs (only used in non-fragmented mode). 0 means no constraints", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_ADVANCED},
@@ -7928,7 +8022,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 
 	{ OFFS(compress), "set top-level box compression mode\n"
 						"- no: disable box compression\n"
-						"- moov: compress only moov box\n"
+						"- moov: compress only moov box (uses cmov for QT)\n"
 						"- moof: compress only moof boxes\n"
 						"- sidx: compress moof and sidx boxes\n"
 						"- ssix: compress moof, sidx and ssix boxes\n"

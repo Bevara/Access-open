@@ -26,6 +26,7 @@
 #include <gpac/main.h>
 #include <gpac/filters.h>
 #include <gpac/thread.h>
+#include <gpac/network.h>
 #include "gpac.h"
 
 /*
@@ -438,6 +439,26 @@ static const char *session_js=NULL;
 static Bool has_xopt = GF_FALSE;
 static Bool nothing_to_do = GF_TRUE;
 
+
+#ifndef GPAC_DISABLE_NETWORK
+static Bool enum_net_ifces(void *cbk, const char *name, const char *IP, u32 flags)
+{
+	char *prev_name = cbk;
+	if (strcmp(prev_name, name)) {
+		if (prev_name[0]) fprintf(stdout, "\n");
+		strcpy(prev_name, name);
+		fprintf(stdout, "%s", name);
+		fprintf(stdout, ": %s", (flags & GF_NETIF_ACTIVE) ? "Up" : "Down");
+		if (flags & GF_NETIF_NO_MCAST) fprintf(stdout, " NoMulticast");
+		if (flags & GF_NETIF_RECV_ONLY) fprintf(stdout, " ReceiveOnly");
+		if (flags & GF_NETIF_LOOPBACK) fprintf(stdout, " Loopback");
+		fprintf(stdout, "\n");
+	}
+	fprintf(stdout, "\tIPv%d %s\n", (flags & GF_NETIF_IPV6) ? 6 : 4, IP ? IP : "address not assigned");
+	return GF_FALSE;
+}
+#endif
+
 #ifndef GPAC_CONFIG_ANDROID
 static
 #endif
@@ -692,6 +713,13 @@ int gpac_main(int _argc, char **_argv)
 				dump_proto_schemes = GF_TRUE;
 				sflags |= GF_FS_FLAG_LOAD_META | GF_FS_FLAG_NO_GRAPH_CACHE;
 				i++;
+			} else if (!strcmp(argv[i+1], "net")) {
+#ifndef GPAC_DISABLE_NETWORK
+				char szName[100];
+				szName[0]=0;
+				gf_net_enum_interfaces(enum_net_ifces, szName);
+#endif
+				gpac_exit(0);
 			} else if (!strcmp(argv[i+1], "links")) {
 				view_filter_conn = GF_TRUE;
 				if ((i+2<argc)	&& (argv[i+2][0] != '-')) {
@@ -992,9 +1020,6 @@ int gpac_main(int _argc, char **_argv)
 		GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("System info: %d MB RAM - %d cores - main thread ID %d\n", (u32) (rti.physical_memory/1024/1024), rti.nb_cores, gf_th_id() ));
 	}
 	if ((list_filters>=2) || print_meta_filters || dump_codecs || dump_formats || print_filter_info) sflags |= GF_FS_FLAG_LOAD_META;
-
-	if (view_filter_conn || list_filters || (print_filter_info && (argmode == GF_ARGMODE_ALL)) )
-		gf_opts_set_key("temp", "gendoc", "yes");
 
 	if (list_filters || print_filter_info)
 		gf_opts_set_key("temp", "helponly", "yes");
@@ -1419,7 +1444,9 @@ exit:
 		}
 
 		if (!dump_graph) {
-			gf_fs_print_non_connected_ex(session, alias_is_play);
+			//don't print when generating doc, JS filters are loaded and not connected
+			if (!gf_opts_get_bool("temp", "gendoc") && !gf_opts_get_bool("temp", "helponly") && !view_filter_conn)
+				gf_fs_print_non_connected_ex(session, alias_is_play);
 			alias_is_play = GF_FALSE;
 		}
 	}

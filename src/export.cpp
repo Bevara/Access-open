@@ -163,6 +163,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_gz_compress_payload) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_gz_compress_payload_ex) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_gz_decompress_payload) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_gz_decompress_payload_ex) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_lz_compress_payload) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_lz_decompress_payload) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_file_handles_count) )
@@ -361,6 +362,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_net_get_timezone) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_net_has_ipv6) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_net_is_ipv6) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_net_enum_interfaces) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_base64_encode) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_base64_decode) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_base16_encode) )
@@ -979,6 +981,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_clean_aperture) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_dovi_config_get) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_opus_config_get_desc) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_pcm_config) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_lpcm_config) )
 
 # ifndef GPAC_DISABLE_ISOM_DUMP
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_dump) )
@@ -1183,6 +1187,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_vvc_config_new) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_vvc_set_inband_config) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_subtitle_set_mime) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_track_index) )
 
 
 #ifndef GPAC_DISABLE_ISOM_HINTING

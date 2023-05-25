@@ -1737,8 +1737,20 @@ static void av1_parse_sequence_header_obu(GF_BitStream *bs, AV1State *state)
 				state->decoder_model_present_for_this_op[i] = 0;
 			}
 			if (initial_display_delay_present_flag) {
-				if (gf_bs_read_int_log_idx(bs, 1, "initial_display_delay_present_for_this_op", i) ) {
-					gf_bs_read_int_log_idx(bs, 4, "initial_display_delay_minus1", i);
+				state->initial_display_delay_present_for_this_op[i] = gf_bs_read_int_log_idx(bs, 1, "initial_display_delay_present_for_this_op", i);
+				if (state->initial_display_delay_present_for_this_op[i]) {
+					state->initial_display_delay_minus1_for_this_op[i] = gf_bs_read_int_log_idx(bs, 4, "initial_display_delay_minus1", i);
+					// the procedure to compute the initial_presentation_delay (IPD) measured in ISOBMFF samples
+					// from the initial_display_delay (IDD) measured in decoded frames is a bit complex,
+					// and cannot be computed until samples have been formed
+					// except when the number of operating points is 1 (usual, non scalable case)
+					// and for the special case where IDD = 1 (low delay encodes)
+					// because that first frame is necessarily contained in the first sample, so IPD = 1
+					if (state->operating_points_count == 1
+						&& state->initial_display_delay_minus1_for_this_op[i] == 0) {
+						state->config->initial_presentation_delay_present = GF_TRUE;
+						state->config->initial_presentation_delay_minus_one = 0;
+					}
 				}
 			}
 		}
@@ -6372,6 +6384,74 @@ static u8 avc_hevc_get_sar_idx(u32 w, u32 h)
 	return 0xFF;
 }
 
+static void sub_layer_hrd_parameters(GF_BitStream *bs, int subLayerId, u32 cpb_cnt, Bool sub_pic_hrd_params_present_flag, u32 idx1, u32 idx2)
+{
+	u32 i;
+	if (!gf_bs_available(bs)) return;
+
+	for (i = 0; i <= cpb_cnt; i++) {
+		gf_bs_read_ue_log_idx3(bs, "bit_rate_value_minus1", idx1, idx2, i);
+		gf_bs_read_ue_log_idx3(bs, "cpb_size_value_minus1", idx1, idx2, i);
+		if (sub_pic_hrd_params_present_flag) {
+			gf_bs_read_ue_log_idx3(bs, "cpb_size_du_value_minus1", idx1, idx2, i);
+			gf_bs_read_ue_log_idx3(bs, "bit_rate_du_value_minus1", idx1, idx2, i);
+		}
+		gf_bs_read_int_log_idx3(bs, 1, "cbr_flag", idx1, idx2, i);
+	}
+}
+
+static void hevc_parse_hrd_parameters(GF_BitStream *bs, Bool commonInfPresentFlag, int maxNumSubLayersMinus1, u32 idx)
+{
+	int i;
+	Bool nal_hrd_parameters_present_flag = GF_FALSE;
+	Bool vcl_hrd_parameters_present_flag = GF_FALSE;
+	Bool sub_pic_hrd_params_present_flag = GF_FALSE;
+
+	if (commonInfPresentFlag) {
+		nal_hrd_parameters_present_flag = gf_bs_read_int_log_idx(bs, 1, "nal_hrd_parameters_present_flag", idx);
+		vcl_hrd_parameters_present_flag = gf_bs_read_int_log_idx(bs, 1, "vcl_hrd_parameters_present_flag", idx);
+		if (nal_hrd_parameters_present_flag || vcl_hrd_parameters_present_flag) {
+			sub_pic_hrd_params_present_flag = gf_bs_read_int_log_idx(bs, 1, "sub_pic_hrd_params_present_flag", idx);
+			if (sub_pic_hrd_params_present_flag) {
+				gf_bs_read_int_log_idx(bs, 8, "tick_divisor_minus2", idx);
+				gf_bs_read_int_log_idx(bs, 5, "du_cpb_removal_delay_increment_length_minus1", idx);
+				gf_bs_read_int_log_idx(bs, 1, "sub_pic_cpb_params_in_pic_timing_sei_flag", idx);
+				gf_bs_read_int_log_idx(bs, 5, "dpb_output_delay_du_length_minus1", idx);
+			}
+			gf_bs_read_int_log_idx(bs, 4, "bit_rate_scale", idx);
+			gf_bs_read_int_log_idx(bs, 4, "cpb_size_scale", idx);
+			if (sub_pic_hrd_params_present_flag) {
+				gf_bs_read_int_log_idx(bs, 4, "cpb_size_du_scale", idx);
+			}
+			gf_bs_read_int_log_idx(bs, 5, "initial_cpb_removal_delay_length_minus1", idx);
+			gf_bs_read_int_log_idx(bs, 5, "au_cpb_removal_delay_length_minus1", idx);
+			gf_bs_read_int_log_idx(bs, 5, "dpb_output_delay_length_minus1", idx);
+		}
+	}
+	for (i = 0; i <= maxNumSubLayersMinus1; i++) {
+		Bool fixed_pic_rate_general_flag_i = gf_bs_read_int_log_idx(bs, 1, "fixed_pic_rate_general_flag", idx);
+		Bool fixed_pic_rate_within_cvs_flag_i = GF_TRUE;
+		Bool low_delay_hrd_flag_i = GF_FALSE;
+		u32 cpb_cnt_minus1_i = 0;
+		if (!fixed_pic_rate_general_flag_i) {
+			fixed_pic_rate_within_cvs_flag_i = gf_bs_read_int_log_idx(bs, 1, "fixed_pic_rate_within_cvs_flag", idx);
+		}
+		if (fixed_pic_rate_within_cvs_flag_i)
+			gf_bs_read_ue_log_idx(bs, "elemental_duration_in_tc_minus1", idx);
+		else
+			low_delay_hrd_flag_i = gf_bs_read_int_log_idx(bs, 1, "low_delay_hrd_flag", idx);
+		if (!low_delay_hrd_flag_i) {
+			cpb_cnt_minus1_i = gf_bs_read_ue_log_idx(bs, "cpb_cnt_minus1", idx);
+		}
+		if (nal_hrd_parameters_present_flag) {
+			sub_layer_hrd_parameters(bs, i, cpb_cnt_minus1_i, sub_pic_hrd_params_present_flag, idx, i);
+		}
+		if (vcl_hrd_parameters_present_flag) {
+			sub_layer_hrd_parameters(bs, i, cpb_cnt_minus1_i, sub_pic_hrd_params_present_flag, idx, i);
+		}
+	}
+}
+
 static void avc_hevc_vvc_rewrite_vui(GF_VUIInfo *vui_info, GF_BitStream *orig, GF_BitStream *mod, GF_CodecID codec)
 {
 	/* VUI present flag*/
@@ -6518,6 +6598,8 @@ static void avc_hevc_vvc_rewrite_vui(GF_VUIInfo *vui_info, GF_BitStream *orig, G
 					poc_proportional_to_timing_flag = gf_bs_read_int(orig, 1);
 					if (poc_proportional_to_timing_flag)
 						/*vui_num_ticks_poc_diff_one_minus1 = */gf_bs_read_ue(orig);
+					if (/*vui_hrd_parameters_present_flag = */gf_bs_read_int(orig, 1))
+						hevc_parse_hrd_parameters(orig, GF_TRUE, 0/*assumes max_sub_layers_minus1=0*/, 0);
 
 					//LAST bit read for HEVC
 				}
@@ -7912,74 +7994,6 @@ static Bool hevc_parse_vps_extension(HEVC_VPS *vps, GF_BitStream *bs)
 	return GF_TRUE;
 }
 
-static void sub_layer_hrd_parameters(GF_BitStream *bs, int subLayerId, u32 cpb_cnt, Bool sub_pic_hrd_params_present_flag, u32 idx1, u32 idx2)
-{
-	u32 i;
-	if (!gf_bs_available(bs)) return;
-
-	for (i = 0; i <= cpb_cnt; i++) {
-		gf_bs_read_ue_log_idx3(bs, "bit_rate_value_minus1", idx1, idx2, i);
-		gf_bs_read_ue_log_idx3(bs, "cpb_size_value_minus1", idx1, idx2, i);
-		if (sub_pic_hrd_params_present_flag) {
-			gf_bs_read_ue_log_idx3(bs, "cpb_size_du_value_minus1", idx1, idx2, i);
-			gf_bs_read_ue_log_idx3(bs, "bit_rate_du_value_minus1", idx1, idx2, i);
-		}
-		gf_bs_read_int_log_idx3(bs, 1, "cbr_flag", idx1, idx2, i);
-	}
-}
-
-static void hevc_parse_hrd_parameters(GF_BitStream *bs, Bool commonInfPresentFlag, int maxNumSubLayersMinus1, u32 idx)
-{
-	int i;
-	Bool nal_hrd_parameters_present_flag = GF_FALSE;
-	Bool vcl_hrd_parameters_present_flag = GF_FALSE;
-	Bool sub_pic_hrd_params_present_flag = GF_FALSE;
-
-	if (commonInfPresentFlag) {
-		nal_hrd_parameters_present_flag = gf_bs_read_int_log_idx(bs, 1, "nal_hrd_parameters_present_flag", idx);
-		vcl_hrd_parameters_present_flag = gf_bs_read_int_log_idx(bs, 1, "vcl_hrd_parameters_present_flag", idx);
-		if (nal_hrd_parameters_present_flag || vcl_hrd_parameters_present_flag) {
-			sub_pic_hrd_params_present_flag = gf_bs_read_int_log_idx(bs, 1, "sub_pic_hrd_params_present_flag", idx);
-			if (sub_pic_hrd_params_present_flag) {
-				gf_bs_read_int_log_idx(bs, 8, "tick_divisor_minus2", idx);
-				gf_bs_read_int_log_idx(bs, 5, "du_cpb_removal_delay_increment_length_minus1", idx);
-				gf_bs_read_int_log_idx(bs, 1, "sub_pic_cpb_params_in_pic_timing_sei_flag", idx);
-				gf_bs_read_int_log_idx(bs, 5, "dpb_output_delay_du_length_minus1", idx);
-			}
-			gf_bs_read_int_log_idx(bs, 4, "bit_rate_scale", idx);
-			gf_bs_read_int_log_idx(bs, 4, "cpb_size_scale", idx);
-			if (sub_pic_hrd_params_present_flag) {
-				gf_bs_read_int_log_idx(bs, 4, "cpb_size_du_scale", idx);
-			}
-			gf_bs_read_int_log_idx(bs, 5, "initial_cpb_removal_delay_length_minus1", idx);
-			gf_bs_read_int_log_idx(bs, 5, "au_cpb_removal_delay_length_minus1", idx);
-			gf_bs_read_int_log_idx(bs, 5, "dpb_output_delay_length_minus1", idx);
-		}
-	}
-	for (i = 0; i <= maxNumSubLayersMinus1; i++) {
-		Bool fixed_pic_rate_general_flag_i = gf_bs_read_int_log_idx(bs, 1, "fixed_pic_rate_general_flag", idx);
-		Bool fixed_pic_rate_within_cvs_flag_i = GF_TRUE;
-		Bool low_delay_hrd_flag_i = GF_FALSE;
-		u32 cpb_cnt_minus1_i = 0;
-		if (!fixed_pic_rate_general_flag_i) {
-			fixed_pic_rate_within_cvs_flag_i = gf_bs_read_int_log_idx(bs, 1, "fixed_pic_rate_within_cvs_flag", idx);
-		}
-		if (fixed_pic_rate_within_cvs_flag_i)
-			gf_bs_read_ue_log_idx(bs, "elemental_duration_in_tc_minus1", idx);
-		else
-			low_delay_hrd_flag_i = gf_bs_read_int_log_idx(bs, 1, "low_delay_hrd_flag", idx);
-		if (!low_delay_hrd_flag_i) {
-			cpb_cnt_minus1_i = gf_bs_read_ue_log_idx(bs, "cpb_cnt_minus1", idx);
-		}
-		if (nal_hrd_parameters_present_flag) {
-			sub_layer_hrd_parameters(bs, i, cpb_cnt_minus1_i, sub_pic_hrd_params_present_flag, idx, i);
-		}
-		if (vcl_hrd_parameters_present_flag) {
-			sub_layer_hrd_parameters(bs, i, cpb_cnt_minus1_i, sub_pic_hrd_params_present_flag, idx, i);
-		}
-	}
-}
-
 static s32 gf_hevc_read_vps_bs_internal(GF_BitStream *bs, HEVCState *hevc, Bool stop_at_vps_ext)
 {
 	u8 vps_sub_layer_ordering_info_present_flag, vps_extension_flag;
@@ -8252,8 +8266,8 @@ static s32 gf_hevc_read_sps_bs_internal(GF_BitStream *bs, HEVCState *hevc, u8 la
 	}
 	sps->ptl = ptl;
 	vps = &hevc->vps[vps_id];
-	sps->max_sub_layers_minus1 = 0;
-	sps->sps_ext_or_max_sub_layers_minus1 = 0;
+	sps->max_sub_layers_minus1 = max_sub_layers_minus1;
+	sps->sps_ext_or_max_sub_layers_minus1 = sps_ext_or_max_sub_layers_minus1;
 
 	/* default values */
 	sps->colour_primaries = 2;

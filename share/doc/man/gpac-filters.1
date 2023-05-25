@@ -36,7 +36,7 @@ Note: specifying .I xml, .I analyze, .I fmt or using -for-test will force .I ful
 .br
 
 .br
-.SH Custom property duming
+.SH Custom property dumping
 .LP
 .br
 The packet inspector can be configured to dump specific properties of packets using .I fmt.
@@ -168,7 +168,7 @@ gpac -i SRC reframer:rt=on inspect:buffer=10000:rbuffer=1000:mbuffer=30000:speed
 .br
 
 .br
-This will play the session at 2x speed, using 30s of maximum buffering, consumming packets after 10s of media are ready and rebuffering if less than 1s of media.
+This will play the session at 2x speed, using 30s of maximum buffering, consuming packets after 10s of media are ready and rebuffering if less than 1s of media.
 .br
 
 .br
@@ -2365,7 +2365,7 @@ compress (enum, default: no):  set top-level box compression mode
 .br
 * no: disable box compression
 .br
-* moov: compress only moov box
+* moov: compress only moov box (uses cmov for QT)
 .br
 * moof: compress only moof boxes
 .br
@@ -3186,7 +3186,15 @@ cat (enum, default: none):     cat each file of input PID rather than creating o
 .br
 
 .br
-ow (bool, default: true):      overwrite output if existing
+ow (enum, default: yes):       overwrite output mode when concatenation is not used
+.br
+* yes: override file if existing
+.br
+* no: throw error if file existing
+.br
+* ask: interactive prompt
+.br
+
 .br
 mvbk (uint, default: 8192):    block size used when moving parts of the file around in patch mode
 .br
@@ -4592,6 +4600,8 @@ sigcues (bool, default: false): inject CueStart property at each source begin (n
 .br
 fdel (bool, default: false):   delete source files after processing in playlist mode (does not delete the playlist)
 .br
+keepts (bool, default: false): keep initial timestamps unmodified (no reset to 0)
+.br
 raw (enum, default: no):       force input AV streams to be in raw format
 .br
 * no: do not force decoding of inputs
@@ -4837,6 +4847,8 @@ log_freq (uint, default: 500): delay between logs for realtime mux
 latm (bool, default: false):   use LATM AAC encapsulation instead of regular ADTS
 .br
 subs_sidx (sint, default: -1): number of subsegments per sidx (negative value disables sidx)
+.br
+keepts (bool, default: false): keep cts/dts untouched and adjust PCR accordingly, used to keep TS unmodified when dashing
 .br
 
 .br
@@ -5424,6 +5436,8 @@ dmode (enum, default: static, updatable): dash content mode
 .br
 * dynlast: last call for live, will turn the MPD into static
 .br
+* dynauto: live generation and move to static manifest upon end of stream
+.br
 
 .br
 sseg (bool, default: false):   single segment is used
@@ -5956,7 +5970,7 @@ speed (dbl, default: 1.0):     set playback speed. If negative and start is 0, s
 .br
 mkp (bool, default: false):    create pipe if not found
 .br
-block_size (uint, default: 5000): buffer size used to write to pipe, windows only
+block_size (uint, default: 5000): buffer size used to write to pipe, Windows only
 .br
 ka (bool, default: false):     keep pipe alive when broken pipe is detected
 .br
@@ -9017,6 +9031,10 @@ This filter handles pre-indexed content for just-in-time processing of HAS manif
 .br
 
 .br
+Warning: This is work in progress, the format of indexes (binary or XML) may change until finalization of this filter.
+.br
+
+.br
 .SH Generating indexes
 .LP
 .br
@@ -9044,20 +9062,24 @@ Warning: XML indexes should only be used for debug purposes as they can take a s
 .br
 
 .br
+When indexing, the default template used is $Representation$_$Number$. The template is stored in the index and shouldn't be re-specified when generating content.
+.br
+
+.br
 .SH Using indexes
 .LP
 .br
-To generate manifest(s) and init segment(s) from the index, use:
+The index can be used to generate manifest, child variants for HLS, init segments and segments.
 .br
 Example
 .br
-gpac -i index.ghi:genman -o dash/vod.mpd
+gpac -i index.ghi:gm=all -o dash/vod.mpd
 .br
 
 .br
-
+This generates manifest(s) and init segment(s).
 .br
-To generate the 10th segment of representation with ID FOO, use:
+
 .br
 Example
 .br
@@ -9065,7 +9087,41 @@ gpac -i index.ghi:rep=FOO:sn=10 -o dash/vod.mpd
 .br
 
 .br
+This generates the 10th segment of representation with ID FOO.
+.br
+
+.br
 Note: The manifest file(s) and init segment(s) are not written when generating a segment. The manifest target (mpd or m3u8) is only used to setup the filter chain and target output path.
+.br
+
+.br
+Example
+.br
+gpac -i index.ghi:gm=main -o dash/vod.m3u8
+.br
+
+.br
+This generates main manifest only (MPD or master HLS playlist).
+.br
+
+.br
+Example
+.br
+gpac -i index.ghi:gm=child:rep=FOO:out=BAR -o dash/vod.m3u8
+.br
+
+.br
+This generates child manifest for representation FOO in file BAR.
+.br
+
+.br
+Example
+.br
+gpac -i index.ghi:gm=init:rep=FOO:out=BAR2 -o dash/vod.m3u8
+.br
+
+.br
+This generates init segment for representation FOO in file BAR2.
 .br
 
 .br
@@ -9075,7 +9131,7 @@ The filter outputs are PIDs using framed packets marked with segment boundaries 
 .br
 If representation IDs are not assigned during index creation, they default to the 1-based index of the source. You can check them using:
 .br
-EX: gpac -i src.ghi:genman inspect:full
+EX: gpac -i src.ghi inspect:full
 .br
 
 .br
@@ -9084,37 +9140,37 @@ EX: gpac -i src.ghi:genman inspect:full
 .br
 The filter can be used to generate muxed representations, either at manifest generation time or when generating a segment.
 .br
-To generate a manifest muxing representations A with representations V1 and V2 use:
+Example
+.br
+gpac -i index.ghi:mux=A@V1@V2 -o dash/vod.mpd
+.br
+
+.br
+This will generate a manifest muxing representations A with representations V1 and V2.
+.br
+
 .br
 Example
 .br
-gpac -i index.ghi:genman:mux=A-V1-V2 -o dash/vod.mpd
+gpac -i index.ghi:mux=A@V1@V2,T@V1@V2 -o dash/vod.mpd
 .br
 
 .br
-
+This will generate a manifest muxing representations A and T with representations V1 and V2.
 .br
-To generate a manifest muxing representations A and T with representations V1 and V2 use:
+
 .br
 Example
 .br
-gpac -i index.ghi:genman:mux=A-V1-V2,T-V1-V2 -o dash/vod.mpd
+gpac -i index.ghi:rep=V2:sn=5:mux=A@V2 -o dash/vod.mpd
 .br
 
 .br
-
-.br
-To generate the 5th segment containing representations A and V2 use:
-.br
-Example
-.br
-gpac -i index.ghi:rep=V2:sn=5:mux=A-V2 -o dash/vod.mpd
+This will generate the 5th segment containing representations A and V2.
 .br
 
 .br
-
-.br
-The filter does not store any state, it is the user respansability to use consistent informations across calls:
+The filter does not store any state, it is the user responsability to use consistent informations across calls:
 .br
 - do not change segment templates
 .br
@@ -9125,26 +9181,132 @@ The filter does not store any state, it is the user respansability to use consis
 .SH Recommandations
 .LP
 .br
-Indexing currently supports as sources fragmented and non-fragmented MP4 inputs.
+Indexing supports fragmented and non-fragmented MP4, MPEG-2 TS and seekable inputs.
 .br
-It is recommended to use fragmented MP4 as input format since this greatly reduces file loading times.
+- It is recommended to use fragmented MP4 as input format since this greatly reduces file loading times.
 .br
-If non-fragmented MP4 are used, it is recommended to use single-track files to decrease the movie box size and speedup parsing.
+- If non-fragmented MP4 are used, it is recommended to use single-track files to decrease the movie box size and speedup parsing.
+.br
+- MPEG-2 TS sources will be slower since they require PES reframing and AU reformating, resulting in more IOs than with mp4.
+.br
+- other seekable sources will likely be slower (seeking, reframing) and are not recommended.
 .br
 
 .br
 .SH Options (expert):
 .LP
 .br
-genman (bool, default: false): manifest generation mode
+gm (enum, default: main):      manifest generation mode
 .br
-force (bool, default: false):  force loading sources in manifest generation
+* none: no manifest generation (implied if sn is not 0)
+.br
+* all: generate all manifests and init segments
+.br
+* main: generate main manifest (MPD or master M3U8)
+.br
+* child: generate child playlist for HLS
+.br
+* init: generate init segment
+.br
+
+.br
+force (bool, default: false):  force loading sources in manifest generation for debug
 .br
 rep (str):                     representation to generate
 .br
-sn (uint):                     segment number to generate
+sn (uint):                     segment number to generate, 0 means init segment
 .br
 mux (strl):                    representation to mux - cf filter help
+.br
+out (str):                     output filename to generate
+.br
+
+.br
+.SH evgs
+.LP
+.br
+Description: EVG video rescaler
+.br
+
+.br
+This filter rescales raw video data using GPAC's EVG library to the specified size and pixel format.
+.br
+.SS Output size assignment
+.br
+If .I osize is {0,0}, the output dimensions will be set to the input size, and input aspect ratio will be ignored.
+.br
+
+.br
+If .I osize is {0,H} (resp. {W,0}), the output width (resp. height) will be set to respect input aspect ratio. If .I keepar=nosrc, input sample aspect ratio is ignored.
+.br
+.SS Aspect Ratio and Sample Aspect Ratio
+.br
+When output sample aspect ratio is set, the output dimensions are divided by the output sample aspect ratio.
+.br
+Example
+.br
+evgs:osize=288x240:osar=3/2
+.br
+
+.br
+The output dimensions will be 192x240.
+.br
+
+.br
+When aspect ratio is not kept (.I keepar=off):
+.br
+- source is resampled to desired dimensions
+.br
+- if output aspect ratio is not set, output will use source sample aspect ratio
+.br
+
+.br
+When aspect ratio is partially kept (.I keepar=nosrc):
+.br
+- resampling is done on the input data without taking input sample aspect ratio into account
+.br
+- if output sample aspect ratio is not set (.I osar=0/N), source aspect ratio is forwarded to output.
+.br
+
+.br
+When aspect ratio is fully kept (.I keepar=full), output aspect ratio is force to 1/1 if not set.
+.br
+
+.br
+When sample aspect ratio is kept, the filter will:
+.br
+- center the rescaled input frame on the output frame
+.br
+- fill extra pixels with .I padclr
+.br
+
+.br
+.SH Options (expert):
+.LP
+.br
+osize (v2di):                  osize of output video
+.br
+ofmt (pfmt, default: none):    pixel format for output video. When not set, input format is used
+.br
+ofr (bool, default: false):    force output full range
+.br
+keepar (enum, default: off):   keep aspect ratio
+.br
+* off: ignore aspect ratio
+.br
+* full: respect aspect ratio, applying input sample aspect ratio info
+.br
+* nosrc: respect aspect ratio but ignore input sample aspect ratio
+.br
+
+.br
+padclr (str, default: black):  clear color when aspect ration preservation is used
+.br
+osar (frac, default: 0/1):     force output pixel aspect ratio
+.br
+nbth (sint, default: -1):      number of threads to use, -1 means all cores
+.br
+hq (bool, default: false):     use bilinear interpolation instead of closest pixel
 .br
 
 .br
@@ -9229,7 +9391,7 @@ This filter provides generation of test images for ISO/IEC 23001-17
 .br
 Generated pixels can be:
 .br
-- a pattern of colors in columns or in rectangles if .I sq is used using the spectified palette.
+- a pattern of colors in columns, or in rectangles if .I sq is set, using the specified palette.
 .br
 - an image source if .I img is used.
 .br
@@ -9256,11 +9418,11 @@ Components are described as N[bpc][+k] with
 .SH Options (expert):
 .LP
 .br
-vsize (v2d, default: 128x128): width of output image
+vsize (v2d, default: 128x128): width and height of output image
 .br
 c (strl, default: R8,G8,B8):   image components
 .br
-tiles (v2d, default: 1x1):     number of horizontal tiles
+tiles (v2d, default: 1x1):     number of horizontal and vertical tiles
 .br
 interleave (enum, default: pix): interleave type
 .br
@@ -9314,19 +9476,21 @@ pal (strl, default: red,green,blue,white,black,yellow,cyan,grey,orange,violet): 
 .br
 fa (strl, default: B,G,G,R):   bayer-like filter - only 2x2 on R,G,B components is supported
 .br
-bpm (strl, default: ):         set broken pixel map
+bpm (strl, default: ):         set sensor bad pixel map
 .br
 fps (frac, default: 25/1):     frame rate to generate - using 0 will trigger item muxing
 .br
 dur (frac, default: 1/1):      duration to generate - using 0 will trigger item muxing
 .br
-cloc (uint, default: -1, minmax: -1,6): set chrom location type
+cloc (uint, default: -1, minmax: -1,6): set chroma location type
 .br
 stereo (bool, default: false): dump a stereo image
 .br
 sq (flt, default: 0):          generate square patterns instead of columns
 .br
 shade (bool, default: false):  shade pixels from black at bottom to full intensity at top
+.br
+scpt (bool, default: false):   use single color per tile, first tile using the first color in palette
 .br
 
 .br
@@ -11491,7 +11655,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 2.3-DEV-rev196-g8ddd05544-master
+build: 2.3-DEV-rev263-g2afa05f4d-master
 .br
 Copyright: (c) 2000-2023 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

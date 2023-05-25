@@ -23,7 +23,7 @@ filter.set_version("1.0");
 filter.set_author("GPAC team - (c) Telecom ParisTech 2023 - license LGPL v2");
 filter.set_help("This filter provides generation of test images for ISO/IEC 23001-17\n"
 +"Generated pixels can be:\n"
-+"- a pattern of colors in columns or in rectangles if [-sq]() is used using the spectified palette.\n"
++"- a pattern of colors in columns, or in rectangles if [-sq]() is set, using the specified palette.\n"
 +"- an image source if [-img]() is used.\n"
 +"\n"
 +"Colors specified in the palette can be default GPAC colors (see gpac -h colors), 0xRRGGBB or 0xAARRGGBB\n"
@@ -36,9 +36,9 @@ filter.set_help("This filter provides generation of test images for ISO/IEC 2300
 +"- k: force component alignment on k bytes, default is 0 (no alignment)\n"
 );
 
-filter.set_arg({ name: "vsize", desc: "width of output image", type: GF_PROP_VEC2, def: "128x128"} );
+filter.set_arg({ name: "vsize", desc: "width and height of output image", type: GF_PROP_VEC2, def: "128x128"} );
 filter.set_arg({ name: "c", desc: "image components", type: GF_PROP_STRING_LIST, def: ["R8", "G8", "B8"]} );
-filter.set_arg({ name: "tiles", desc: "number of horizontal tiles", type: GF_PROP_VEC2, def: "1x1"} );
+filter.set_arg({ name: "tiles", desc: "number of horizontal and vertical tiles", type: GF_PROP_VEC2, def: "1x1"} );
 filter.set_arg({ name: "interleave", desc: `interleave type
 - comp: component-based interleaving (planar modes)
 - pix: pixel-based interleaving (packed modes)
@@ -64,13 +64,14 @@ filter.set_arg({ name: "img", desc: "use specified image as input instead of RGB
 filter.set_arg({ name: "asize", desc: "use input image size", type: GF_PROP_BOOL, def: "false"} );
 filter.set_arg({ name: "pal", desc: "default palette for color generation", type: GF_PROP_STRING_LIST, def: ["red", "green", "blue", "white", "black", "yellow", "cyan", "grey", "orange", "violet"]} );
 filter.set_arg({ name: "fa", desc: "bayer-like filter - only 2x2 on R,G,B components is supported", type: GF_PROP_STRING_LIST, def: ["B", "G", "G", "R"]} );
-filter.set_arg({ name: "bpm", desc: "set broken pixel map", type: GF_PROP_STRING_LIST, def: []} );
+filter.set_arg({ name: "bpm", desc: "set sensor bad pixel map", type: GF_PROP_STRING_LIST, def: []} );
 filter.set_arg({ name: "fps", desc: "frame rate to generate - using 0 will trigger item muxing", type: GF_PROP_FRACTION, def: "25/1"} );
 filter.set_arg({ name: "dur", desc: "duration to generate - using 0 will trigger item muxing", type: GF_PROP_FRACTION, def: "1/1"} );
-filter.set_arg({ name: "cloc", desc: "set chrom location type", type: GF_PROP_UINT, def: "-1", minmax_enum: "-1,6"} );
+filter.set_arg({ name: "cloc", desc: "set chroma location type", type: GF_PROP_UINT, def: "-1", minmax_enum: "-1,6"} );
 filter.set_arg({ name: "stereo", desc: "dump a stereo image", type: GF_PROP_BOOL, def: "false"} );
 filter.set_arg({ name: "sq", desc: "generate square patterns instead of columns", type: GF_PROP_FLOAT, def: "0"} );
 filter.set_arg({ name: "shade", desc: "shade pixels from black at bottom to full intensity at top", type: GF_PROP_BOOL, def: "false"} );
+filter.set_arg({ name: "scpt", desc: "use single color per tile, first tile using the first color in palette", type: GF_PROP_BOOL, def: "false"} );
 
 let components = [];
 
@@ -280,14 +281,14 @@ filter.initialize = function()
 			if (c.indexOf('r')==0) {
 				bad_rows.push( parseInt(c.slice(1) ) );
 			}
-			if (c.indexOf('c')==0) {
+			else if (c.indexOf('c')==0) {
 				bad_cols.push( parseInt(c.slice(1) ) );
 			}
 			else {
 				let s = c.indexOf('x');
 				if (s>0) {
-					let x = parseInt(c.slice(0, x-1) );
-					let y = parseInt(c.slice(x+1) );
+					let x = parseInt(c.slice(0, s) );
+					let y = parseInt(c.slice(s+1) );
 					bad_pix.push({x: x, y: y});
 				}
 			}
@@ -583,7 +584,7 @@ function setup_uncv()
 		}
 		else if (filter.sampling==SAMPLING_411) {
 			if (nb_y != 4)
-				throw "Component pattern must have 4 Y";
+				throw "Component pattern must have 4 Y, not " + nb_y;
 		}
 		else {
 			throw "Unsupported interleave type for sampling type " +filter.sampling;
@@ -696,9 +697,9 @@ function setup_uncv()
 			throw "bad sampling type for mixed interleave mode";
 
 		if (filter.row_align)
-			throw "row align not supported in intearleave=2 mode";
+			throw "row align not supported in interleave=2 mode";
 		if (filter.tile_align)
-			throw "tile align not supported in intearleave=2 mode";
+			throw "tile align not supported in interleave=2 mode";
 
 		let uv_found=false;
 		//write component-interleave (planar), get the size of each component
@@ -859,16 +860,24 @@ function get_pixel(i, j)
 		else
 			a = tx_p.a;
 	} else {
-		let tidx = Math.floor(i / col_width);
-		if (filter.sq!=0) {
-			let ridx = Math.floor(filter.sq*j / col_width);
-			tidx += ridx;
-			
-			while (tidx>=filter.pal.length)
-				tidx -= filter.pal.length;
-			while (tidx<0)
-				tidx += filter.pal.length;
-		}		
+		let tidx;
+		if (filter.scpt) {
+			let tile_x = Math.floor(i / tile_width);
+			let tile_y = Math.floor(j / tile_height);
+			tidx = (tile_x * filter.tiles.x + tile_y) % filter.pal.length;
+		} else {
+			tidx = Math.floor(i / col_width);
+			if (filter.sq!=0) {
+				let ridx = Math.floor(filter.sq*j / col_width);
+				tidx += ridx;
+				
+				while (tidx>=filter.pal.length)
+					tidx -= filter.pal.length;
+				while (tidx<0)
+					tidx += filter.pal.length;
+			}
+		}
+
 		if (use_palette) {
 			pixel[r_y_idx] = tidx;
 			return;
@@ -1020,6 +1029,7 @@ function start_tile(tile_x, tile_y)
 		offs += bsw.init_offset;
 		bsw.bs.pos = offs;
 		bsw.tile_start_pos = offs;
+		bsw.line_start_pos = offs;
 	});
 }
 
@@ -1044,8 +1054,8 @@ function end_tile()
 
 	if (tile_align_bytes) {		
 		let remain = max_pos - tile_start_offset;
-		if (remain<0) throw "Internal error in tile padding: remain is negative " + remain;
-		if (remain>tile_align_bytes) throw "Internal error in tile padding: remain " + remain + " is greater than tile size " + tile_align_bytes;
+		if (remain<0) throw "Internal error in tile padding: remainder is negative " + remain;
+		if (remain>tile_align_bytes) throw "Internal error in tile padding: remainder " + remain + " is greater than tile size " + tile_align_bytes + ' tile start ' + tile_start_offset;
 
 		while (remain<tile_align_bytes) {
 			max_bs.put_u8(0);
@@ -1054,7 +1064,7 @@ function end_tile()
 	}
 }
 
-function end_line()
+function end_line(last_line_in_tile)
 {
 	bs_array.forEach (bsw => {
 		if (filter.block_size && bsw.next_block_idx) {
@@ -1068,12 +1078,16 @@ function end_line()
 				bsw.bs.put_u8(0);
 				remain++;
 			}
-		} 
-		//row interleave, seek to next row start
-		if (filter.interleave==INTERLEAVE_ROW) {
-			bsw.bs.pos = bsw.line_start_pos + bsw.comp_row_size;
 		}
-		bsw.line_start_pos = bsw.bs.pos;
+		//not last line of tile, update offsets
+		//for last line we don't update, so that padding can be properly computed. We update the line offset at the beginning of next tile 
+		if (!last_line_in_tile) {
+			//row interleave, seek to next row start
+			if (filter.interleave==INTERLEAVE_ROW) {
+				bsw.bs.pos = bsw.line_start_pos + bsw.comp_row_size;
+			}
+			bsw.line_start_pos = bsw.bs.pos;
+		}
 	});
 }
 
@@ -1389,7 +1403,7 @@ filter.process = function()
 					get_pixel(t_x + i, t_y + j);
 					this.write_pixel(t_x + i, t_y + j);
 				}
-				end_line();
+				end_line((j+1==tile_height) ? true : false);
 			}
 			end_tile();
 		}

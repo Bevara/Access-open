@@ -577,7 +577,7 @@ MP4BoxArg m4b_gen_args[] =
 	MP4BOX_ARG_S("patch", "[tkID=]FILE", "apply box patch described in FILE, for given trackID if set", GF_ARG_HINT_ADVANCED, parse_boxpatch, 0, ARG_IS_FUN),
 	MP4BOX_ARG("bo", "freeze the order of boxes in input file", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &freeze_box_order, 0, 0),
 	MP4BOX_ARG("init-seg", "use the given file as an init segment for dumping or for encryption", GF_ARG_STRING, GF_ARG_HINT_ADVANCED, &use_init_seg, 0, 0),
-	MP4BOX_ARG("zmov", "compress movie box according to ISOBMFF box compression", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, parse_compress, 0, ARG_IS_FUN),
+	MP4BOX_ARG("zmov", "compress movie box according to ISOBMFF box compression or QT if mov extension", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, parse_compress, 0, ARG_IS_FUN),
 	MP4BOX_ARG("xmov", "same as zmov and wraps ftyp in otyp", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, parse_compress, 1, ARG_IS_FUN),
  	MP4BOX_ARG_S("edits", "tkID=EDITS", "set edit list. The following syntax is used (no separators between entries):\n"
 			" - `r`: removes all edits\n"
@@ -1009,7 +1009,8 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 		"  - a value of -1 will ignore source track ID\n"
 		"  - other value will try to set track ID to this value if no other track with same ID is present"
 		"", NULL, NULL, GF_ARG_INT, 0),
-	GF_DEF_ARG("tkgp", NULL, "`S` assign tack group to track. Value is formatted as `TYPE,N` with TYPE the track group type (4CC) and N the track group ID. A negative ID removes from track group ID -N", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("tkgp", NULL, "`S` assign track group to track. Value is formatted as `TYPE,N` with TYPE the track group type (4CC) and N the track group ID. A negative ID removes from track group ID -N", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("tkidx", NULL, "`S` set track position in tracklist, 1 being first track in file", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("stats", "fstat", "`C` print filter session stats after import", NULL, NULL, GF_ARG_BOOL, 0),
 	GF_DEF_ARG("graph", "fgraph", "`C` print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
 	{"sopt:[OPTS]", NULL, "set `OPTS` as additional arguments to source filter. `OPTS` can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
@@ -3057,6 +3058,7 @@ u32 parse_compress(char *arg_val, u32 opt)
 {
 	compress_moov = opt ? 2 : 1;
 	open_edit = GF_TRUE;
+	do_save = GF_TRUE;
 	return 0;
 }
 
@@ -4487,7 +4489,6 @@ static u32 do_add_cat(int argc, char **argv)
 	}
 
 	for (ipass=0; ipass<nb_pass; ipass++) {
-		u32 tk_idx = 0;
 		for (i=0; i<(u32) argc; i++) {
 			char *margs=NULL;
 			char *msid = NULL;
@@ -4524,12 +4525,15 @@ static u32 do_add_cat(int argc, char **argv)
 						sep[0] = '+';
 						loc_src = sep+1;
 					}
+					u32 tk_idx = gf_isom_get_track_count(file);
+					//if existing tracks in file, set default index to next track
+					if (tk_idx) tk_idx++;
+
 					if (fs && (ipass==0)) {
 						e = import_file(file, src, import_flags, import_fps, agg_samples, fs, &margs, &msid, tk_idx);
 					} else {
 						e = import_file(file, src, import_flags, import_fps, agg_samples, fs, NULL, NULL, tk_idx);
 					}
-					tk_idx++;
 
 					if (margs) {
 						gf_dynstrcat(&mux_args, margs, ":");
@@ -6424,6 +6428,10 @@ int mp4box_main(int argc, char **argv)
 
 		if (conv_type)
 			conv_type_from_ext = GF_TRUE;
+		//if not same ext, force conversion
+		char *szExtOrig = gf_file_ext_start(inName);
+		if (szExtOrig && strcmp(szExtOrig, szExt))
+			conv_type_from_ext = GF_FALSE;
 		//remove extension from outfile
 		*szExt = 0;
 	}
@@ -6536,6 +6544,7 @@ int mp4box_main(int argc, char **argv)
 
 #if !defined(GPAC_DISABLE_ISOM_WRITE) && !defined(GPAC_DISABLE_MEDIA_IMPORT)
 	if (split_duration || split_size || split_range_str) {
+		if (force_new && !outName) outName = inName;
 		e = split_isomedia_file(file, split_duration, split_size, inName, interleaving_time, split_start, adjust_split_end, outName, seg_at_rap, split_range_str, fs_dump_flags);
 		if (e) goto err_exit;
 

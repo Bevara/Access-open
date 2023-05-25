@@ -139,6 +139,7 @@ static void init_reader(ISOMChannel *ch)
 		}
 
 		if (ch->sample && !ch->sample->data && ch->owner->frag_type && !ch->has_edit_list) {
+			ch->static_sample->alloc_size = 0;
 			ch->sample = NULL;
 			ch->sample_num = 1;
 			ch->sample = gf_isom_get_sample_ex(ch->owner->mov, ch->track, ch->sample_num, &sample_desc_index, ch->static_sample, &ch->sample_data_offset);
@@ -307,8 +308,17 @@ u8 *isor_sample_alloc(u32 size, void *udta)
 {
 	u8 *output;
 	ISOMChannel *ch = (ISOMChannel *)udta;
-	if (ch->pck) return NULL;
+	if (ch->pck) {
+		if (size<ch->alloc_size) {
+			u32 size;
+			return (u8 *) gf_filter_pck_get_data(ch->pck, &size);
+		}
+		gf_filter_pck_expand(ch->pck, size - ch->alloc_size, &output, NULL, NULL);
+		ch->alloc_size = size;
+		return output;
+	}
 	ch->pck = gf_filter_pck_new_alloc(ch->pid, size, &output);
+	ch->alloc_size = size;
 	return output;
 }
 
@@ -342,12 +352,14 @@ void isor_reader_get_sample(ISOMChannel *ch)
 		}
 
 		e = gf_isom_get_sample_for_movie_time(ch->owner->mov, ch->track, ch->sample_time + 1, &sample_desc_index, GF_ISOM_SEARCH_FORWARD, &ch->static_sample, &ch->sample_num, NULL);
+		ch->static_sample->alloc_size = 0;
 
 		if ((e==GF_EOS) || (ch->static_sample->IsRAP)) {
 			if (!ch->last_rap_sample_time) {
 				e = GF_EOS;
 			} else {
 				e = gf_isom_get_sample_for_movie_time(ch->owner->mov, ch->track, ch->last_rap_sample_time - 1, &sample_desc_index, GF_ISOM_SEARCH_SYNC_BACKWARD, &ch->static_sample, &ch->sample_num, NULL);
+				ch->static_sample->alloc_size = 0;
 			}
 		}
 
@@ -372,6 +384,7 @@ void isor_reader_get_sample(ISOMChannel *ch)
 	} else if (ch->has_edit_list) {
 		u32 prev_sample = ch->sample_num;
 		e = gf_isom_get_sample_for_movie_time(ch->owner->mov, ch->track, ch->sample_time + 1, &sample_desc_index, GF_ISOM_SEARCH_FORWARD, &ch->static_sample, &ch->sample_num, &ch->sample_data_offset);
+		ch->static_sample->alloc_size = 0;
 
 		if (e == GF_OK) {
 			ch->sample = ch->static_sample;
@@ -402,6 +415,7 @@ void isor_reader_get_sample(ISOMChannel *ch)
 						} else {
 							u32 time_diff = gf_isom_get_sample_duration(ch->owner->mov, ch->track, sample_num);
 							e = gf_isom_get_sample_for_movie_time(ch->owner->mov, ch->track, ch->sample_time + time_diff, &sample_desc_index, GF_ISOM_SEARCH_FORWARD, &ch->static_sample, &ch->sample_num, &ch->sample_data_offset);
+							ch->static_sample->alloc_size = 0;
 							if (e==GF_OK) {
 								if (ch->sample_num == prev_sample) {
 									ch->sample_time += time_diff;
@@ -423,6 +437,7 @@ void isor_reader_get_sample(ISOMChannel *ch)
 					ch->sample = NULL;
 					e = gf_isom_get_sample_for_movie_time(ch->owner->mov, ch->track, ch->sample_time + 1, &sample_desc_index, GF_ISOM_SEARCH_SYNC_BACKWARD, &ch->static_sample, &ch->sample_num, &ch->sample_data_offset);
 
+					ch->static_sample->alloc_size = 0;
 					ch->sample = (e == GF_OK) ? ch->static_sample : NULL;
 
 					/*if no sync point in the past, use the first non-sync for the given time*/
@@ -554,10 +569,11 @@ void isor_reader_get_sample(ISOMChannel *ch)
 		return;
 	}
 
-	if ((ch->sample_num==1) && ch->first_tfdt && ch->sample->DTS) {
-		ch->first_tfdt = 0;
+	//first sample fetched has DTS, we have a tfdt so ignore the hinted one
+	if ((ch->sample_num==1) && ch->hint_first_tfdt && ch->sample->DTS) {
+		ch->hint_first_tfdt = 0;
 	}
-	ch->sample->DTS += ch->first_tfdt;
+	ch->sample->DTS += ch->hint_first_tfdt;
 
 	if (sample_desc_index != ch->last_sample_desc_index) {
 		if (!ch->owner->stsd) {
@@ -1087,29 +1103,35 @@ void isor_reader_check_config(ISOMChannel *ch)
 	}
 }
 
-
-
 void isor_set_sample_groups_and_aux_data(ISOMReader *read, ISOMChannel *ch, GF_FilterPacket *pck)
 {
-	char szPName[30];
+	char szPName[100];
 
 	u32 grp_idx=0;
 	while (1) {
-		u32 grp_type=0, grp_size=0, grp_parameter=0;
-		const u8 *grp_data=NULL;
-		GF_Err e = gf_isom_enum_sample_group(read->mov, ch->track, ch->sample_num, &grp_idx, &grp_type, &grp_parameter, &grp_data, &grp_size);
+		u32 grp_type=0, grp_size=0, grp_parameter=0, grp_flags=0;
+		u8 *grp_data=NULL;
+		GF_Err e = gf_isom_enum_sample_group(read->mov, ch->track, ch->sample_num, &grp_idx, &grp_type, &grp_flags, &grp_parameter, &grp_data, &grp_size);
 		if (e || !grp_type) break;
 		if (!grp_size || !grp_data) continue;
 
-		if (grp_type == GF_4CC('P','S','S','H')) {
-			gf_filter_pck_set_property(pck, GF_PROP_PID_CENC_PSSH, &PROP_DATA((u8*)grp_data, grp_size) );
-			continue;
-		}
-		//all other are mapped to sample groups
+		//prepare prop name sample groups
 		if (grp_parameter) sprintf(szPName, "grp_%s_%d", gf_4cc_to_str(grp_type), grp_parameter);
 		else sprintf(szPName, "grp_%s", gf_4cc_to_str(grp_type));
+		if (grp_flags) {
+			char szPFLags[30];
+			sprintf(szPFLags, "_z%x", grp_flags);
+			strcat(szPName, szPFLags);
+		}
 
-		gf_filter_pck_set_property_dyn(pck, szPName, &PROP_DATA((u8*)grp_data, grp_size) );
+		switch (grp_type) {
+		case GF_4CC('P','S','S','H'):
+			gf_filter_pck_set_property(pck, GF_PROP_PID_CENC_PSSH, &PROP_DATA_NO_COPY((u8*)grp_data, grp_size) );
+			break;
+		default:
+			gf_filter_pck_set_property_dyn(pck, szPName, &PROP_DATA_NO_COPY(grp_data, grp_size) );
+			break;
+		}
 	}
 
 	u32 sai_idx=0;

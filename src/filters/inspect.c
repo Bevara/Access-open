@@ -1994,6 +1994,7 @@ static void inspect_dump_property(GF_InspectCtx *ctx, FILE *dump, u32 p4cc, cons
 	case GF_PROP_PCK_UTC_TIME:
 	case GF_PROP_PCK_MEDIA_TIME:
 	case GF_PROP_PID_CENC_HAS_ROLL:
+	case GF_PROP_PID_DSI_SUPERSET:
 		if (gf_sys_is_test_mode())
 			return;
 		break;
@@ -4646,7 +4647,7 @@ const GF_FilterRegister InspectRegister = {
 	"Otherwise, all properties are dumped.\n"
 	"Note: specifying [-xml](), [-analyze](), [-fmt]() or using `-for-test` will force [-full]() to true.\n"
 	"\n"
-	"# Custom property duming\n"
+	"# Custom property dumping\n"
 	"The packet inspector can be configured to dump specific properties of packets using [-fmt]().\n"
 	"When the option is not present, all properties are dumped. Otherwise, only properties identified by `$TOKEN$` "
 	"are printed. You may use '$', '@' or '%' for `TOKEN` separator. `TOKEN` can be:\n"
@@ -4708,7 +4709,7 @@ const GF_FilterRegister InspectRegister = {
 	"The [-speed]() option is only used to configure the filter chain but is ignored by the filter when consuming packets.\n"
 	"If real-time consumption is required, a reframer filter must be setup before the inspect filter.\n"
 	"EX gpac -i SRC reframer:rt=on inspect:buffer=10000:rbuffer=1000:mbuffer=30000:speed=2\n"
-	"This will play the session at 2x speed, using 30s of maximum buffering, consumming packets after 10s of media are ready and rebuffering if less than 1s of media.\n"
+	"This will play the session at 2x speed, using 30s of maximum buffering, consuming packets after 10s of media are ready and rebuffering if less than 1s of media.\n"
 	"\n"
 	)
 	.private_size = sizeof(GF_InspectCtx),
