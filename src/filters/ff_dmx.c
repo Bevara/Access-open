@@ -1138,6 +1138,15 @@ GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, u32 grab_type)
 		if (codec_height)
 			gf_filter_pid_set_property(pid, GF_PROP_PID_HEIGHT, &PROP_UINT( codec_height ) );
 
+
+#if (LIBAVFORMAT_VERSION_MAJOR >= 59)
+		ffmpeg_codec_par_to_gpac(stream->codecpar, pid, 0);
+		if (gpac_codec_id!=GF_CODECID_RAW) {
+			gf_filter_pid_set_property(pid, GF_PROP_PID_PIXFMT, NULL);
+			gf_filter_pid_set_property(pid, GF_PROP_PID_AUDIO_FORMAT, NULL);
+		}
+#endif
+
 		if (codec_width && codec_height) {
 			if (codec_framerate.num && codec_framerate.den) {
 				gf_media_get_reduced_frame_rate(&codec_framerate.num, &codec_framerate.den);
@@ -1648,7 +1657,7 @@ static GF_FilterProbeScore ffdmx_probe_url(const char *url, const char *mime)
 	return GF_FPROBE_MAYBE_SUPPORTED;
 }
 
-
+extern Bool ff_probe_mode;
 static const char *ffdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeScore *score)
 {
 	int ffscore;
@@ -1660,6 +1669,7 @@ static const char *ffdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeScor
 #endif
 
 	memset(&pb, 0, sizeof(AVProbeData));
+	ff_probe_mode=GF_TRUE;
 	//not setting this crashes some probers in ffmpeg
 	pb.filename = "";
 	if (size <= AVPROBE_PADDING_SIZE) {
@@ -1680,6 +1690,7 @@ static const char *ffdmx_probe_data(const u8 *data, u32 size, GF_FilterProbeScor
 		if (!probe_fmt) probe_fmt = av_probe_input_format3(&pb, GF_FALSE, &ffscore);
 		if (ffscore<=AVPROBE_SCORE_RETRY/2) probe_fmt=NULL;
 	}
+	ff_probe_mode=GF_FALSE;
 
 	if (!probe_fmt) return NULL;
 	if (probe_fmt->mime_type) {
@@ -1721,7 +1732,6 @@ GF_FilterRegister FFDemuxRegister = {
 	SETCAPS(FFDmxCaps),
 	.initialize = ffdmx_initialize,
 	.finalize = ffdmx_finalize,
-	.configure_pid = ffdmx_configure_pid,
 	.process = ffdmx_process,
 	.update_arg = ffdmx_update_arg,
 	.probe_url = ffdmx_probe_url,

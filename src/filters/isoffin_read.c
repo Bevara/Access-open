@@ -25,7 +25,7 @@
 
 #include "isoffin.h"
 
-#ifndef GPAC_DISABLE_ISOM
+#if !defined(GPAC_DISABLE_ISOM) && !defined(GPAC_DISABLE_MP4DMX)
 
 #include <gpac/crypt_tools.h>
 #include <gpac/media_tools.h>
@@ -1191,7 +1191,7 @@ static void isoffin_push_buffer(GF_Filter *filter, ISOMReader *read, const u8 *p
 
 	if (read->mem_load_mode==1) {
 		u32 box_type;
-		e = gf_isom_open_progressive_ex(read->mem_url, 0, 0, GF_FALSE, &read->mov, &bytes_missing, &box_type);
+		e = gf_isom_open_progressive_ex(read->mem_url, 0, 0, read->sigfrag, &read->mov, &bytes_missing, &box_type);
 
 		if (e && (e != GF_ISOM_INCOMPLETE_FILE)) {
 			gf_filter_setup_failure(filter, e);
@@ -1237,7 +1237,7 @@ static void isoffin_purge_mem(ISOMReader *read, u64 min_offset)
 	u32 nb_bytes_to_purge;
 	u64 bytes_missing;
 
-	//purge every
+	//purge every mstore_purge bytes
 	if (read->mstore_purge && (min_offset - read->last_min_offset < read->mstore_purge))
 		return;
 
@@ -1246,6 +1246,8 @@ static void isoffin_purge_mem(ISOMReader *read, u64 min_offset)
 		//bytes (we would trash the top-level box header)
 		gf_isom_get_current_top_box_offset(read->mov, &top_offset);
 		if (top_offset<min_offset) {
+			//force loading more data - we usually get here when mdat is not completely loaded
+			read->force_fetch = GF_TRUE;
 			return;
 		}
 	}
@@ -1255,7 +1257,10 @@ static void isoffin_purge_mem(ISOMReader *read, u64 min_offset)
 	//min_offset is given in absolute file position
 	nb_bytes_to_purge = (u32) (min_offset - read->bytes_removed);
 	assert(nb_bytes_to_purge<=read->mem_blob.size);
-
+	if (!nb_bytes_to_purge) {
+		read->force_fetch = GF_TRUE;
+		return;
+	}
 	memmove(read->mem_blob.data, read->mem_blob.data+nb_bytes_to_purge, read->mem_blob.size - nb_bytes_to_purge);
 	read->mem_blob.size -= nb_bytes_to_purge;
 	read->bytes_removed += nb_bytes_to_purge;
@@ -1297,6 +1302,7 @@ static GF_Err isoffin_process(GF_Filter *filter)
 	u32 i, count = gf_list_count(read->channels);
 	Bool is_active = GF_FALSE;
 	Bool in_is_eos = GF_FALSE;
+	Bool in_is_flush = GF_FALSE;
 	Bool check_forced_end = GF_FALSE;
 	Bool has_new_data = GF_FALSE;
 	u64 min_offset_plus_one = 0;
@@ -1313,7 +1319,7 @@ static GF_Err isoffin_process(GF_Filter *filter)
 			if (read->moov_not_loaded) return GF_OK;
 		}
 		if (read->mem_load_mode==2) {
-			if (!read->force_fetch && read->mem_blob.size > read->mstore_size) {
+			if (!read->force_fetch && (read->mem_blob.size > read->mstore_size)) {
 				fetch_input = GF_FALSE;
 			}
 			read->force_fetch = GF_FALSE;
@@ -1349,8 +1355,12 @@ static GF_Err isoffin_process(GF_Filter *filter)
 				return read->in_error;
 		}
 		if (gf_filter_pid_is_eos(read->pid)) {
-			read->input_loaded = GF_TRUE;
-			in_is_eos = GF_TRUE;
+			if (!gf_filter_pid_is_flush_eos(read->pid)) {
+				read->input_loaded = GF_TRUE;
+				in_is_eos = GF_TRUE;
+			} else {
+				in_is_flush = GF_TRUE;
+			}
 		}
 		if (read->input_is_stop) {
 			read->input_loaded = GF_TRUE;
@@ -1451,7 +1461,7 @@ static GF_Err isoffin_process(GF_Filter *filter)
 
 		while (nb_pck) {
 			ch->sample_data_offset = 0;
-			if (!read->full_segment_flush && gf_filter_pid_would_block(ch->pid) )
+			if (!in_is_flush && !read->full_segment_flush && gf_filter_pid_would_block(ch->pid) )
 				break;
 
 			if (ch->item_id) {
@@ -1616,9 +1626,13 @@ static GF_Err isoffin_process(GF_Filter *filter)
 				isor_reader_release_sample(ch);
 
 				ch->last_valid_sample_data_offset = ch->sample_data_offset;
-				nb_pck--;
+				if (!in_is_flush)
+					nb_pck--;
 			} else if (ch->last_state==GF_EOS) {
-				if (ch->playing == 2) {
+				if (in_is_flush) {
+					gf_filter_pid_send_flush(ch->pid);
+				}
+				else if (ch->playing == 2) {
 					if (in_is_eos) {
 						ch->playing = 0;
 					} else {
@@ -1795,15 +1809,14 @@ GF_FilterRegister ISOFFInRegister = {
 	.probe_data = isoffin_probe_data
 };
 
-
-#endif /*GPAC_DISABLE_ISOM*/
-
-const GF_FilterRegister *dynCall_isoffin_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_mp4dmx_register(GF_FilterSession *session)
 {
-#ifdef GPAC_DISABLE_ISOM
-	return NULL;
-#else
 	return &ISOFFInRegister;
-#endif /*GPAC_DISABLE_ISOM*/
 }
+#else
+const GF_FilterRegister *dynCall_mp4dmx_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif // !defined(GPAC_DISABLE_ISOM) && !defined(GPAC_DISABLE_MP4DMX)
 

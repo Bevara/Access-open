@@ -31,6 +31,8 @@
 #include <gpac/base_coding.h>
 #include <gpac/network.h>
 
+#ifndef GPAC_DISABLE_GHIDMX
+
 typedef struct
 {
 	u64 first_tfdt, first_pck_seq, seg_duration, frag_start_offset, frag_tfdt;
@@ -210,7 +212,7 @@ static void ghi_dmx_send_seg_times(GHIDmxCtx *ctx, GHIStream *st, GF_FilterPid *
 		gf_filter_pck_set_seek_flag(pck, GF_TRUE);
 		gf_filter_pck_send(pck);
 	}
-	//dasher expects at least one packet to start, send a dummy one - this happens whn generating init segments only
+	//dasher expects at least one packet to start, send a dummy one - this happens when generating init segments only
 	if (!count) {
 		GF_FilterPacket *pck = gf_filter_pck_new_alloc(opid, 0, NULL);
 		gf_filter_pck_set_dts(pck, 0);
@@ -342,7 +344,9 @@ static Bool ghi_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			fevt.play.start_range /= st->pid_timescale;
 		}
 		fevt.play.from_pck = (u32) st->seg_info.first_pck_seq;
-		fevt.play.to_pck = (u32) st->seg_info.first_pck_seq + st->nb_pck;
+		//if we know the amount of packets (not last seg), signal it otherwise use 0 (no pck end range)
+		if (st->nb_pck != (u32) -1)
+			fevt.play.to_pck = (u32) st->seg_info.first_pck_seq + st->nb_pck;
 		fevt.play.orig_delay = st->delay;
 
 		gf_filter_pid_send_event(st->ipid, &fevt);
@@ -1072,7 +1076,7 @@ GF_Err ghi_dmx_init(GF_Filter *filter, GHIDmxCtx *ctx)
 			if (bs) gf_bs_del(bs);
 			gf_filter_pid_drop_packet(ctx->ipid);
 
-			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[GHIXDmx] error locating source filter for rep %d name %s: %s\n", st->rep_id, st->res_url, gf_error_to_string(e) ));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[GHIXDmx] error locating source filter for rep %s name %s: %s\n", st->rep_id, st->res_url, gf_error_to_string(e) ));
 			gf_filter_setup_failure(filter, e);
 			return e;
 		}
@@ -1346,4 +1350,10 @@ const GF_FilterRegister *ghidmx_register(GF_FilterSession *session)
 {
 	return &GHIDXDmxRegister;
 }
+#else
+const GF_FilterRegister *ghidmx_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif // GPAC_DISABLE_GHIDMX
 

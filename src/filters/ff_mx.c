@@ -760,7 +760,7 @@ static GF_Err ffmx_process(GF_Filter *filter)
 			AVPacket *pkt;
 			GF_FilterPacket *ipck = gf_filter_pid_get_packet(ipid);
 			if (!ipck) {
-				if (gf_filter_pid_is_eos(ipid)) {
+				if (gf_filter_pid_is_eos(ipid) && !gf_filter_pid_is_flush_eos(ipid)) {
 					nb_done++;
 				}
 				break;
@@ -1482,6 +1482,8 @@ GF_FilterRegister FFMuxRegister = {
 		"Unlike other multiplexing filters in GPAC, this filter is a sink filter and does not produce any PID to be redirected in the graph.\n"
 		"The filter can however use template names for its output, using the first input PID to resolve the final name.\n"
 		"The filter watches the property `FileNumber` on incoming packets to create new files.\n"
+		"\n"
+		"All PID properties prefixed with `meta:` will be added as metadata.\n"
 	)
 	.private_size = sizeof(GF_FFMuxCtx),
 	SETCAPS(FFMuxCaps),

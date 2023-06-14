@@ -28,6 +28,8 @@
 #include <gpac/constants.h>
 #include <gpac/xml.h>
 
+#ifndef GPAC_DISABLE_FOUT
+
 enum
 {
 	FOUT_CAT_NONE = 0,
@@ -375,8 +377,7 @@ static GF_Err fileout_initialize(GF_Filter *filter)
 	if (ctx->ext) ext = ctx->ext;
 	else if (dst) {
 		ext = gf_file_ext_start(dst);
-		if (!ext) ext = ".*";
-		ext += 1;
+		if (ext) ext += 1;
 	}
 
 	if (!ext && !ctx->mime) {
@@ -445,7 +446,7 @@ restart:
 
 	pck = gf_filter_pid_get_packet(ctx->pid);
 	if (!pck) {
-		if (gf_filter_pid_is_eos(ctx->pid)) {
+		if (gf_filter_pid_is_eos(ctx->pid) && !gf_filter_pid_is_flush_eos(ctx->pid)) {
 			if (gf_filter_reporting_enabled(filter)) {
 				char szStatus[1024];
 				snprintf(szStatus, 1024, "%s: done - wrote "LLU" bytes", gf_file_basename(ctx->szFileName), ctx->nb_write);
@@ -941,4 +942,9 @@ const GF_FilterRegister * fileout_register(GF_FilterSession *session)
 	}
 	return &FileOutRegister;
 }
-
+#else
+const GF_FilterRegister *fout_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif //GPAC_DISABLE_FOUT

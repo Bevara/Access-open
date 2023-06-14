@@ -30,7 +30,7 @@
 //for oinf stuff
 #include <gpac/internal/isomedia_dev.h>
 
-#ifndef GPAC_DISABLE_AV_PARSERS
+#if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_RFNALU)
 
 #define CTS_POC_OFFSET_SAFETY	1000
 
@@ -1045,7 +1045,8 @@ static void naludmx_set_hevc_linf(GF_NALUDmxCtx *ctx)
 		if (ctx->linf[i].layer_id_plus_one) nb_layers++;
 		if (ctx->linf[i].min_temporal_id != ctx->linf[i].max_temporal_id) nb_sublayers++;
 	}
-	if (!nb_layers && !nb_sublayers)
+	//only set linf if more than one layer
+	if ((nb_layers<=1) && !nb_sublayers)
 		return;
 
 	bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
@@ -4285,10 +4286,10 @@ const GF_FilterRegister *dynCall_naludmx_register(GF_FilterSession *session)
 {
 	return &NALUDmxRegister;
 }
-
 #else
 const GF_FilterRegister *dynCall_naludmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-#endif //GPAC_DISABLE_AV_PARSERS
+#endif //#if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_RFNALU)
+

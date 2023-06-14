@@ -122,6 +122,18 @@ void ffmpeg_tags_from_gpac(GF_FilterPid *pid, AVDictionary **metadata)
 	if (p && (p->type==GF_PROP_STRING) && p->value.string && !strstr(p->value.string, "@GPAC")) {
 		av_dict_set(metadata, "title", p->value.string, 0);
 	}
+	u32 idx=0;
+	while (1) {
+		u32 p4cc;
+		const char *pname, *res;
+		char dump[GF_PROP_DUMP_ARG_SIZE];
+		p = gf_filter_pid_enum_properties(pid, &idx, &p4cc, &pname);
+		if (!p) break;
+		if (p4cc) continue;
+		if (strncmp(pname, "meta:", 5)) continue;
+		res = gf_props_dump_val(p, dump, GF_PROP_DUMP_DATA_INFO, NULL);
+		if (res) av_dict_set(metadata, pname+5, res, 0);
+	}
 }
 
 void ffmpeg_tags_to_gpac(AVDictionary *metadata, GF_FilterPid *pid)
@@ -671,13 +683,14 @@ static GF_LOG_Tool gpac_to_ffmpeg_log_tool(AVClass* avc)
 }
 
 #define FF_LOG_SIZE 2000
+Bool ff_probe_mode=GF_FALSE;
 static void ff_log_callback(void *avcl, int level, const char *fmt, va_list vl)
 {
 	AVClass* avc = avcl ? *(AVClass**)avcl : NULL;
 	GF_LOG_Level glevel = ffmpeg_to_gpac_log_level(level);
 	GF_LOG_Tool gtool = gpac_to_ffmpeg_log_tool(avc);
 
-	if (!gf_log_tool_level_on(gtool, glevel))
+	if (!gf_log_tool_level_on(gtool, glevel) || ff_probe_mode)
 		return;
 	gf_log_lt(glevel, gtool);
 
@@ -2124,26 +2137,29 @@ GF_Err ffmpeg_codec_par_to_gpac(AVCodecParameters *codecpar, GF_FilterPid *opid,
 	if (codecpar->width)
 		gf_filter_pid_set_property(opid, GF_PROP_PID_WIDTH, &PROP_UINT(codecpar->width));
 	if (codecpar->height)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_WIDTH, &PROP_UINT(codecpar->height));
+		gf_filter_pid_set_property(opid, GF_PROP_PID_HEIGHT, &PROP_UINT(codecpar->height));
 	if (codecpar->sample_aspect_ratio.num) {
 		gf_filter_pid_set_property(opid, GF_PROP_PID_SAR, &PROP_FRAC_INT(codecpar->sample_aspect_ratio.num, codecpar->sample_aspect_ratio.den));
 	}
-	if (codecpar->color_primaries)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_PRIMARIES, &PROP_UINT(codecpar->color_primaries));
+	//not supported by all versions of ffmpeg
+	if (!gf_sys_is_test_mode()) {
+		if (codecpar->color_range==AVCOL_RANGE_JPEG)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_TRUE));
+		else if (codecpar->color_range==AVCOL_RANGE_MPEG)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_FALSE));
 
-	if (codecpar->color_range==AVCOL_RANGE_JPEG)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_TRUE));
-	else if (codecpar->color_range==AVCOL_RANGE_MPEG)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_FALSE));
+		if (codecpar->color_primaries)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_PRIMARIES, &PROP_UINT(codecpar->color_primaries));
 
-	if (codecpar->color_trc)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_TRANSFER, &PROP_UINT(codecpar->color_trc));
+		if (codecpar->color_trc)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_TRANSFER, &PROP_UINT(codecpar->color_trc));
 
-	if (codecpar->color_space)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_MX, &PROP_UINT(codecpar->color_space));
+		if (codecpar->color_space)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_MX, &PROP_UINT(codecpar->color_space));
 
-	if (codecpar->chroma_location)
-		gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_CHROMALOC, &PROP_UINT(codecpar->chroma_location));
+		if (codecpar->chroma_location)
+			gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_CHROMALOC, &PROP_UINT(codecpar->chroma_location));
+	}
 
 	if (codecpar->format>=0) {
 		if (codecpar->width) {

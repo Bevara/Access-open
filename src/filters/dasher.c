@@ -32,7 +32,7 @@
 #include <gpac/network.h>
 #include <gpac/crypt_tools.h>
 
-#if !defined(GPAC_DISABLE_MPD)
+#ifndef GPAC_DISABLE_DASHER
 
 #define DEFAULT_PERIOD_ID	 "_gf_dash_def_period"
 
@@ -186,7 +186,7 @@ typedef struct
 	char *title, *source, *info, *cprt, *lang;
 	char *chain, *chain_fbk;
 	GF_PropStringList location, base;
-	Bool check_dur, skip_seg, loop, reschedule, scope_deps, keep_src;
+	Bool check_dur, skip_seg, loop, reschedule, scope_deps, keep_src, tpl_force;
 	Double refresh, tsb, subdur;
 	u64 *_p_gentime, *_p_mpdtime;
 	Bool cmpd, dual, sreg;
@@ -1231,9 +1231,11 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_HAS_SYNC);
 		u32 sync_type = DASHER_SYNC_UNKNOWN;
 		if (p) sync_type = p->value.boolean ? DASHER_SYNC_PRESENT : DASHER_SYNC_NONE;
-		if (sync_type != ds->sync_points_type) period_switch = GF_TRUE;
-		ds->sync_points_type = sync_type;
-
+		if ((sync_type != DASHER_SYNC_UNKNOWN) && (sync_type != ds->sync_points_type)) {
+			period_switch = GF_TRUE;
+			ds->sync_points_type = sync_type;
+		}
+		
 		if (ds->inband_cues)
 			period_switch = old_period_switch;
 
@@ -1415,18 +1417,20 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			else if (ds->codec_id == GF_CODECID_AVC || ds->codec_id == GF_CODECID_SVC || ds->codec_id == GF_CODECID_MVC) {
 				AVCState avc;
 				GF_AVCConfig* avccfg = gf_odf_avc_cfg_read(dsi->value.data.ptr, dsi->value.data.size);
-				GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_list_get(avccfg->sequenceParameterSets, 0);
-				if (sl) {
-					s32 idx;
-					memset(&avc, 0, sizeof(AVCState));
-					idx = gf_avc_read_sps(sl->data, sl->size, &avc, 0, NULL);
-					if (idx>=0) {
-						Bool is_interlaced = avc.sps[idx].frame_mbs_only_flag ? GF_FALSE : GF_TRUE;
-						if (ds->interlaced != is_interlaced) period_switch = GF_TRUE;
-						ds->interlaced = is_interlaced;
+				if (avccfg) {
+					GF_NALUFFParam *sl = (GF_NALUFFParam *)gf_list_get(avccfg->sequenceParameterSets, 0);
+					if (sl) {
+						s32 idx;
+						memset(&avc, 0, sizeof(AVCState));
+						idx = gf_avc_read_sps(sl->data, sl->size, &avc, 0, NULL);
+						if (idx>=0) {
+							Bool is_interlaced = avc.sps[idx].frame_mbs_only_flag ? GF_FALSE : GF_TRUE;
+							if (ds->interlaced != is_interlaced) period_switch = GF_TRUE;
+							ds->interlaced = is_interlaced;
+						}
 					}
+					gf_odf_avc_cfg_del(avccfg);
 				}
-				gf_odf_avc_cfg_del(avccfg);
 			}
 		}
 #endif /*!GPAC_DISABLE_AV_PARSERS*/
@@ -1796,10 +1800,16 @@ static GF_Err dasher_update_mpd(GF_DasherCtx *ctx)
 	}
 
 	if (ctx->profX) {
-		char profiles_w_ext[GF_MAX_PATH+256];
-		sprintf(profiles_w_ext, "%s,%s", profiles_string, ctx->profX);
-		if (ctx->mpd->profiles) gf_free(ctx->mpd->profiles);
-		ctx->mpd->profiles = gf_strdup(profiles_w_ext);
+		if (ctx->profX[0] == '+') {
+			if (ctx->mpd->profiles) gf_free(ctx->mpd->profiles);
+			ctx->mpd->profiles = gf_strdup(ctx->profX+1);
+			ctx->mpd->profiles = gf_strdup(ctx->profX+1);
+		} else {
+			char profiles_w_ext[GF_MAX_PATH+256];
+			sprintf(profiles_w_ext, "%s,%s", profiles_string, ctx->profX);
+			if (ctx->mpd->profiles) gf_free(ctx->mpd->profiles);
+			ctx->mpd->profiles = gf_strdup(profiles_w_ext);
+		}
 	} else {
 		if (ctx->mpd->profiles) gf_free(ctx->mpd->profiles);
 		ctx->mpd->profiles = gf_strdup(profiles_string);
@@ -3800,7 +3810,7 @@ static void dasher_setup_sources(GF_Filter *filter, GF_DasherCtx *ctx, GF_MPD_Ad
 		}
 		//we need dash suffix in template, but the template may be user-provided without dash suffix. If so add it
 		//we don't add suffic if we have $RepresentationID or $Path set, we assume the user knows what he's doing
-		if (use_dash_suffix && !strstr(szTemplate, "$FS$") && !strstr(szTemplate, "$RepresentationID$") && !strstr(szTemplate, "$Path=")) {
+		if (!ctx->tpl_force && use_dash_suffix && !strstr(szTemplate, "$FS$") && !strstr(szTemplate, "$RepresentationID$") && !strstr(szTemplate, "$Path=")) {
 			strcat(szTemplate, "$FS$");
 		}
 
@@ -3813,16 +3823,17 @@ static void dasher_setup_sources(GF_Filter *filter, GF_DasherCtx *ctx, GF_MPD_Ad
 			continue;
 		}
 
-
-		if (single_template && ds->split_set_names && !use_dash_suffix) {
-			char szStrName[20];
-			sprintf(szStrName, "_set%d", 1 + gf_list_find(ctx->current_period->period->adaptation_sets, set)  );
-			strcat(szDASHTemplate, szStrName);
-		}
-		else if (split_rep_names) {
-			char szStrName[20];
-			sprintf(szStrName, "_rep%d", 1 + gf_list_find(set->representations, ds->rep)  );
-			strcat(szDASHTemplate, szStrName);
+		if (!ctx->tpl_force) {
+			if (single_template && ds->split_set_names && !use_dash_suffix) {
+				char szStrName[20];
+				sprintf(szStrName, "_set%d", 1 + gf_list_find(ctx->current_period->period->adaptation_sets, set)  );
+				strcat(szDASHTemplate, szStrName);
+			}
+			else if (split_rep_names) {
+				char szStrName[20];
+				sprintf(szStrName, "_rep%d", 1 + gf_list_find(set->representations, ds->rep)  );
+				strcat(szDASHTemplate, szStrName);
+			}
 		}
 
 		ds->rawmux = GF_FALSE;
@@ -3926,7 +3937,7 @@ static void dasher_setup_sources(GF_Filter *filter, GF_DasherCtx *ctx, GF_MPD_Ad
 			//we however don't want to change templates if they are indeed reused but resolve to something different due to representationID
 			//we therefore resolve the segment template with startNumber 0 time 0, use this resolved name as base check.
 
-			gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_SEGMENT, is_bs_switch, szInitSegmentFilename, ds->rep_id, NULL, szDASHTemplate, is_source_template ? NULL : "mp4", 0, ds->bitrate, 0, ds->stl);
+			gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_SEGMENT, is_bs_switch, szInitSegmentFilename, ds->rep_id, NULL, szDASHTemplate, is_source_template ? NULL : "mp4", 0, ds->bitrate, 0, ds->stl, ctx->tpl_force);
 
 			reused_template_idx = dasher_check_template_reuse(ctx, szInitSegmentFilename);
 			if (reused_template_idx) {
@@ -3938,27 +3949,28 @@ static void dasher_setup_sources(GF_Filter *filter, GF_DasherCtx *ctx, GF_MPD_Ad
 					single_template = GF_FALSE;
 			}
 		}
-		
+
 		//get final segment template with path resolution - output file name is NULL, we already have solved this
-		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_TEMPLATE_WITH_PATH, is_bs_switch, szSegmentName, ds->rep_id, NULL, szDASHTemplate, seg_ext, 0, 0, 0, ds->stl);
+		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_TEMPLATE_WITH_PATH, is_bs_switch, szSegmentName, ds->rep_id, NULL, szDASHTemplate, seg_ext, 0, 0, 0, ds->stl, ctx->tpl_force);
 		ds->seg_template = gf_strdup(szSegmentName);
 
 		//get final segment template - output file name is NULL, we already have solved this
-		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_TEMPLATE, is_bs_switch, szSegmentName, ds->rep_id, NULL, szDASHTemplate, seg_ext, 0, 0, 0, ds->stl);
+		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_TEMPLATE, is_bs_switch, szSegmentName, ds->rep_id, NULL, szDASHTemplate, seg_ext, 0, 0, 0, ds->stl, ctx->tpl_force);
+
 
 		//get index templates
 		if (idx_ext) {
-			gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_REPINDEX_TEMPLATE_WITH_PATH, is_bs_switch, szIndexSegmentName, ds->rep_id, NULL, szDASHTemplate, idx_ext, 0, 0, 0, ds->stl);
+			gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_REPINDEX_TEMPLATE_WITH_PATH, is_bs_switch, szIndexSegmentName, ds->rep_id, NULL, szDASHTemplate, idx_ext, 0, 0, 0, ds->stl, ctx->tpl_force);
 			ds->idx_template = gf_strdup(szIndexSegmentName);
 
-			gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_REPINDEX_TEMPLATE, is_bs_switch, szIndexSegmentName, ds->rep_id, NULL, szDASHTemplate, idx_ext, 0, 0, 0, ds->stl);
+			gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_REPINDEX_TEMPLATE, is_bs_switch, szIndexSegmentName, ds->rep_id, NULL, szDASHTemplate, idx_ext, 0, 0, 0, ds->stl, ctx->tpl_force);
 		}
 
 		//get final init name - output file name is NULL, we already have solved this
-		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_INITIALIZATION, is_bs_switch, szInitSegmentFilename, ds->rep_id, NULL, szDASHTemplate, init_ext, 0, ds->bitrate, 0, ds->stl);
+		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_INITIALIZATION, is_bs_switch, szInitSegmentFilename, ds->rep_id, NULL, szDASHTemplate, init_ext, 0, ds->bitrate, 0, ds->stl, ctx->tpl_force);
 
 		//get final init template name - output file name is NULL, we already have solved this
-		gf_media_mpd_format_segment_name(init_template_mode, is_bs_switch, szInitSegmentTemplate, ds->rep_id, NULL, szDASHTemplate, init_ext, 0, 0, 0, ds->stl);
+		gf_media_mpd_format_segment_name(init_template_mode, is_bs_switch, szInitSegmentTemplate, ds->rep_id, NULL, szDASHTemplate, init_ext, 0, 0, 0, ds->stl, ctx->tpl_force);
 
 		if (ctx->sigfrag) {
 			if (ctx->template || ds->template) {
@@ -6903,9 +6915,16 @@ static GF_Err dasher_setup_period(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashS
 		ds->presentation_time_offset = 0;
 		ds->seg_done = GF_FALSE;
 		ds->next_seg_start = (u32) ( ((u64) ds->dash_dur.num * ds->timescale) / ds->dash_dur.den);
-		//adjust next_seg_start of first seg to presentation time if skip edit
-		if (!ds->cues && (ds->pts_minus_cts<0) && (ds->next_seg_start> (u32) -ds->pts_minus_cts))
+
+		//in sbound=0 mode, if stream has sync and non-sync and uses skip samples, allow spliting
+		//slightly before - typically needed for audio with sync points (usac, mpegh) where the segment duration is set
+		//to the intra interval, we need to take into account the skip samples
+		if (!ctx->sbound && !ds->cues && (ds->sync_points_type==DASHER_SYNC_PRESENT)
+			&& (ds->pts_minus_cts<0) && (ds->next_seg_start > (u32) -ds->pts_minus_cts)
+		) {
 			ds->next_seg_start -= (u32) -ds->pts_minus_cts;
+		}
+
 		ds->adjusted_next_seg_start = ds->next_seg_start;
 		ds->segment_started = GF_FALSE;
 		ds->seg_number = ds->startNumber;
@@ -7749,7 +7768,7 @@ static void dasher_mark_segment_start(GF_DasherCtx *ctx, GF_DashStream *ds, GF_F
 	szIndexName[0] = 0;
 	if (ds->idx_template) {
 		//get final segment template - output file name is NULL, we already have solved this in source_setup
-		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_REPINDEX, ds->set->bitstream_switching, szIndexName, base_ds->rep_id, NULL, base_ds->idx_template, NULL, base_ds->seg_start_time, base_ds->rep->bandwidth, base_ds->seg_number, base_ds->stl);
+		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_REPINDEX, ds->set->bitstream_switching, szIndexName, base_ds->rep_id, NULL, base_ds->idx_template, NULL, base_ds->seg_start_time, base_ds->rep->bandwidth, base_ds->seg_number, base_ds->stl, ctx->tpl_force);
 
 		strcpy(szSegmentFullPath, szIndexName);
 		if (ctx->out_path) {
@@ -7887,7 +7906,8 @@ static void dasher_mark_segment_start(GF_DasherCtx *ctx, GF_DashStream *ds, GF_F
 			pto = gf_timestamp_rescale(pto, base_ds->timescale, base_ds->mpd_timescale);
 		}
 
-		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_SEGMENT, ds->set->bitstream_switching, szSegmentName, base_ds->rep_id, NULL, base_ds->seg_template, NULL, base_ds->seg_start_time + pto, base_ds->rep->bandwidth, base_ds->seg_number, ds->stl);
+		gf_media_mpd_format_segment_name(GF_DASH_TEMPLATE_SEGMENT, ds->set->bitstream_switching, szSegmentName, base_ds->rep_id, NULL, base_ds->seg_template, NULL, base_ds->seg_start_time + pto, base_ds->rep->bandwidth, base_ds->seg_number, ds->stl, ctx->tpl_force);
+
 	}
 
 
@@ -8211,14 +8231,14 @@ static void dasher_drop_input(GF_DasherCtx *ctx, GF_DashStream *ds, Bool discard
 	}
 }
 
-static void dasher_inject_eods(GF_DasherCtx *ctx, GF_DashStream *ds)
+static void dasher_inject_eods(GF_DasherCtx *ctx, GF_DashStream *ds, Bool forced)
 {
 	//in dynamic mode, send end of dash segment marker to flush segment right away, otherwise we will
 	//flush the segment at next segment start which could be after the segment AST => 404
 	//
 	//if subdur no need to do so as we will close the muxer right after
 	//if sigfrag no need to do so since we don't generate media packets
-	if (!ctx->subdur && (ctx->dmode>=GF_DASH_DYNAMIC) && !ctx->sigfrag && !ctx->do_index) {
+	if (!ctx->subdur && ((ctx->dmode>=GF_DASH_DYNAMIC) || forced) && !ctx->sigfrag && !ctx->do_index) {
 		GF_FilterPacket *eods_pck;
 		eods_pck = gf_filter_pck_new_alloc(ds->opid, 0, NULL);
 		if (eods_pck) {
@@ -8243,7 +8263,7 @@ static void dasher_send_empty_segment(GF_DasherCtx *ctx, GF_DashStream *ds)
 		ds->split_dur_next = 0;
 		ds->seg_done = GF_TRUE;
 
-		dasher_inject_eods(ctx, ds);
+		dasher_inject_eods(ctx, ds, GF_FALSE);
 
 		//force to be last rep in set to be done
 		ds->nb_rep_done = ds->nb_rep-1;
@@ -8487,6 +8507,7 @@ static GF_Err dasher_process(GF_Filter *filter)
 
 
 			if (!pck) {
+				Bool ds_is_done=GF_FALSE;
 				if (ds->request_period_switch) {
 					e = dasher_stream_period_changed(filter, ctx, ds, (ds->request_period_switch==2) ? GF_TRUE : GF_FALSE);
 					if (e < 0) {
@@ -8500,8 +8521,25 @@ static GF_Err dasher_process(GF_Filter *filter)
 					break;
 				}
 
-
-				if (gf_filter_pid_is_eos(ds->ipid) || ds->clamp_done) {
+				if (ds->clamp_done) ds_is_done=GF_TRUE;
+				else if (gf_filter_pid_is_eos(ds->ipid)) {
+					if (gf_filter_pid_is_flush_eos(ds->ipid)) {
+						if (ds->segment_started && !ds->seg_done) {
+							ds->seg_done = GF_TRUE;
+							ds->first_cts_in_next_seg = ds->est_first_cts_in_next_seg;
+							ds->est_first_cts_in_next_seg = 0;
+							assert(base_ds->nb_comp_done < base_ds->nb_comp);
+							base_ds->nb_comp_done ++;
+							if (base_ds->nb_comp_done == base_ds->nb_comp) {
+								dasher_flush_segment(ctx, base_ds, GF_FALSE);
+								dasher_inject_eods(ctx, base_ds, GF_TRUE);
+							}
+						}
+ 					} else {
+						ds_is_done=GF_TRUE;
+					}
+				}
+				if (ds_is_done) {
 					u32 ds_done = 1;
 
 					if (!ds->clamp_done && !ds->muxed_base && (ds->stream_type==GF_STREAM_TEXT)) {
@@ -8614,6 +8652,18 @@ static GF_Err dasher_process(GF_Filter *filter)
 			cts = gf_filter_pck_get_cts(pck);
 			dts = gf_filter_pck_get_dts(pck);
 			if (dts==GF_FILTER_NO_TS) dts = cts;
+
+			if (!sap_type && (ds->sync_points_type != DASHER_SYNC_PRESENT)) {
+				ds->sync_points_type = DASHER_SYNC_PRESENT;
+				//cf setup_period: in sbound=0 mode, if stream has sync and non-sync and uses skip samples, allow spliting
+				//slightly before - typically needed for audio with sync points (usac, mpegh) where the segment duration is set
+				//to the intra interval, we need to take into account the skip samples
+				if (!ctx->sbound && !ds->cues
+					&& (ds->pts_minus_cts<0) && (ds->next_seg_start> (u32) -ds->pts_minus_cts)
+				) {
+					ds->next_seg_start -= (u32) -ds->pts_minus_cts;
+				}
+			}
 
 			if ((ctx->strict_sap==DASHER_SAP_INTRA_ONLY) && (sap_type>=4))
 				sap_type = 0;
@@ -8809,7 +8859,7 @@ static GF_Err dasher_process(GF_Filter *filter)
 			//base rep has been forced to another period, we switch asap
 			else if (base_ds->forced_period_switch) {
 				ds->seg_done = GF_TRUE;
-				dasher_inject_eods(ctx, ds);
+				dasher_inject_eods(ctx, ds, GF_FALSE);
 				seg_done = GF_TRUE;
 				dasher_stream_period_changed(filter, ctx, ds, GF_FALSE);
 				i--;
@@ -8840,11 +8890,17 @@ static GF_Err dasher_process(GF_Filter *filter)
 						if (ds == base_ds) {
 							base_ds->adjusted_next_seg_start = cts;
 						}
-					} else if (!size) {
-						ds->first_cts_in_seg = gf_filter_pck_get_cts(pck);
-						dasher_send_empty_segment(ctx, ds);
-						dasher_drop_input(ctx, ds, GF_TRUE);
-						continue;
+					}
+					//packet with no size, used by GHI demuxer:
+					//- if seek flag is set, this is a dummy packet sent to generate segment timeline / child HLS
+					//- if seek flag is not set, this is an empty segment for sparse streams
+					else if (!size) {
+						if (!gf_filter_pck_get_seek_flag(pck) ) {
+							ds->first_cts_in_seg = gf_filter_pck_get_cts(pck);
+							dasher_send_empty_segment(ctx, ds);
+							dasher_drop_input(ctx, ds, GF_TRUE);
+							continue;
+						}
 					}
 					p = gf_filter_pck_get_property(pck, GF_PROP_PCK_SPLIT_START);
 					if (p) {
@@ -9051,6 +9107,15 @@ static GF_Err dasher_process(GF_Filter *filter)
 			//we exceed segment duration - if segment was started, check if we need to stop segment
 			//if segment was not started we insert the packet anyway
 			else if (!ds->sbound && ds->segment_started && gf_timestamp_greater_or_equal(cts + check_dur, ds->timescale, base_ds->adjusted_next_seg_start, base_ds->timescale) ) {
+
+
+				//we have a base (muxed rep) and it is not yet done, and we exceed estimated next seg start on base
+				//wait for the base to be done as the next seg estimate may change if next segment duration is quite
+				//different from requested duration - cf #2488
+				if ((ds != base_ds) && !base_ds->seg_done) {
+					break;
+				}
+
 				//no sap, segment is over
 				if (! ctx->sap) {
 					seg_over = GF_TRUE;
@@ -9150,7 +9215,7 @@ static GF_Err dasher_process(GF_Filter *filter)
 					ds->rep->segment_list->use_split_dur = GF_TRUE;
 				}
 
-				dasher_inject_eods(ctx, ds);
+				dasher_inject_eods(ctx, ds, GF_FALSE);
 
 				ds->first_cts_in_next_seg = cts;
 				assert(base_ds->nb_comp_done < base_ds->nb_comp);
@@ -10207,7 +10272,7 @@ static const GF_FilterArgs DasherArgs[] =
 		"- dashavc264.onDemand: DASH-IF onDemand profile\n"
 		"- dashif.ll: DASH IF low-latency profile (set UTC server to time.akamai.com if none set)"
 		"", GF_PROP_UINT, "auto", "auto|live|onDemand|main|full|hbbtv1.5.live|dashavc264.live|dashavc264.onDemand|dashif.ll", 0 },
-	{ OFFS(profX), "list of profile extensions, as used by DASH-IF and DVB. The string will be colon-concatenated with the profile used", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED },
+	{ OFFS(profX), "list of profile extensions, as used by DASH-IF and DVB. The string will be colon-concatenated with the profile used. If starting with `+`, the profile string by default is erased and `+` is skipped", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_ADVANCED },
 	{ OFFS(cp), "content protection element location\n"
 	"- set: in adaptation set element\n"
 	"- rep: in representation element\n"
@@ -10319,6 +10384,7 @@ static const GF_FilterArgs DasherArgs[] =
 		"- on: default KID always injected\n"
 		"- auto: default KID only injected if no key roll is detected (as per DASH-IF guidelines)"
 		, GF_PROP_UINT, "auto", "off|on|auto", GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(tpl_force), "use template string as is without trying to add extension or solve conflicts in names", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 
 	{0}
 };
@@ -10530,6 +10596,13 @@ GF_FilterRegister DasherRegister = {
 "- second period clear\n"
 "- third period crypted with another key\n"
 "\n"
+"## Forced-Template mode\n"
+"When [-tpl_force]() is set, the [-template]() string is not analyzed nor modified for missing elements.\n"
+"This is typically used to redirect segments to a given destination regardless of the dash profile.\n"
+"EX gpac -i SRC -o null:ext=mpd:tpl_force --template=pipe://mypipe\n"
+"This will trash the manifest and open `mypipe` as destination for the muxer result.\n"
+"Warning: Options for segment destination cannot be set through the [-template](), global options must be used.\n"
+"\n"
 "## Multiplexer development considerations\n"
 "Output multiplexers allowing segmented output must obey the following:\n"
 "- inspect packet properties\n"
@@ -10573,4 +10646,4 @@ const GF_FilterRegister *dynCall_dasher_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-#endif /*#if !defined(GPAC_DISABLE_MPD)*/
+#endif // GPAC_DISABLE_DASHER

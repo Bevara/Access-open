@@ -30,7 +30,7 @@
 #include <gpac/crypt.h>
 #include <gpac/network.h>
 
-#ifndef GPAC_DISABLE_CRYPTO
+#if !defined(GPAC_DISABLE_CRYPTO) && !defined(GPAC_DISABLE_CRYPTFILE)
 
 enum
 {
@@ -497,7 +497,7 @@ static GF_Err cryptfout_process(GF_Filter *filter)
 		return ctx->in_error;
 
 	if (!pck_in) {
-		if (gf_filter_pid_is_eos(ctx->ipid)) {
+		if (gf_filter_pid_is_eos(ctx->ipid) && !gf_filter_pid_is_flush_eos(ctx->ipid)) {
 			if (!ctx->remain && ctx->file_done) {
 				gf_filter_pid_set_eos(ctx->opid);
 				return GF_EOS;
@@ -693,4 +693,4 @@ GF_Err gf_cryptfout_push_key(GF_Filter *filter, bin128 *key, bin128 *IV)
 {
 	return GF_NOT_SUPPORTED;
 }
-#endif
+#endif // !defined(GPAC_DISABLE_CRYPTO) && !defined(GPAC_DISABLE_CRYPTFILE)

@@ -29,6 +29,7 @@
 #include <gpac/iso639.h>
 #include <gpac/webvtt.h>
 
+#if !defined(GPAC_DISABLE_MPEG2TS_MUX) || !defined(GPAC_DISABLE_MP4MX)
 
 void mux_assign_mime_file_ext(GF_FilterPid *ipid, GF_FilterPid *opid, const char *file_exts, const char *mime_types, const char *def_ext)
 {
@@ -60,6 +61,8 @@ void mux_assign_mime_file_ext(GF_FilterPid *ipid, GF_FilterPid *opid, const char
 	if (!found)
 		gf_filter_pid_set_property(opid, GF_PROP_PID_MIME, &PROP_STRING("*") );
 }
+#endif
+
 
 #ifndef GPAC_DISABLE_MPEG2TS_MUX
 
@@ -410,8 +413,10 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 					tspid->nb_repeat_last++;
 					tspid->is_repeat = GF_TRUE;
 				} else {
-					tspid->done = GF_TRUE;
-					ifce->caps |= GF_ESI_STREAM_IS_OVER;
+					if (!gf_filter_pid_is_flush_eos(tspid->ipid)) {
+						tspid->done = GF_TRUE;
+						ifce->caps |= GF_ESI_STREAM_IS_OVER;
+					}
 				}
 				if (tspid->ctx->dash_mode)
 					tspid->has_seen_eods = M2TS_EODS_FOUND;
@@ -1799,6 +1804,17 @@ static GF_Err tsmux_process(GF_Filter *filter)
 		}
 		if (nb_pck_in_call>100)
 			break;
+	}
+
+	if (ctx->wait_dash_flush || ctx->wait_llhls_flush) {
+		u32 i, done=0, count = gf_list_count(ctx->pids);
+		for (i=0; i<count; i++) {
+			M2Pid *tspid = gf_list_get(ctx->pids, i);
+			if (!tspid->done && tspid->has_seen_eods) done++;
+		}
+		if (done==count) {
+			gf_filter_pid_send_flush(ctx->opid);
+		}
 	}
 
 	if (gf_filter_reporting_enabled(filter)) {

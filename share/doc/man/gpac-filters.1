@@ -498,7 +498,7 @@ ach (uint, default: 0):        force output channels (0 for auto)
 .br
 alayout (uint, default: 0):    force output channel layout (0 for auto)
 .br
-afmt (afmt, default: s16, minmax: none,u8,s16,s16b,s24,s32,flt,dbl,u8p,s16p,s24p,s32p,fltp,dblp): force output channel format (0 for auto)
+afmt (afmt, default: s16, minmax: none,u8,s16,s16b,s24,s24b,s32,s32b,flt,fltb,dbl,dblb,u8p,s16p,s24p,s32p,fltp,dblp): force output channel format (0 for auto)
 .br
 asize (uint, default: 1024):   audio output packet size in samples
 .br
@@ -2249,7 +2249,7 @@ fsap (bool, default: true):    split truns in video fragments at SAPs to reduce 
 .br
 subs_sidx (sint, default: -1): number of subsegments per sidx. negative value disables sidx, -2 removes sidx if present in source PID
 .br
-m4cc (str):                    4 character code of empty box to append at the end of a segment
+m4cc (str):                    4 character code of empty box to append at the end of a segment (DASH mode) or of a fragment (non-DASH mode)
 .br
 chain_sidx (bool, default: false): use daisy-chaining of SIDX
 .br
@@ -2344,6 +2344,8 @@ ase (enum, default: v0):       set audio sample entry mode for more than stereo 
 * v1: use v1 signaling, ISOBMFF style (will mux raw PCM as ISOBMFF style)
 .br
 * v1qt: use v1 signaling, QTFF style
+.br
+* v2qt: use v2 signaling, QTFF style (lpcm entry type)
 .br
 
 .br
@@ -2444,6 +2446,18 @@ chapm (enum, default: both):   chapter storage mode
 
 .br
 patch_dts (bool, default: false): patch previous samples duration when dts do not increase monotonically
+.br
+uncv (enum, default: prof):    use uncv (ISO 23001-17) for raw video
+.br
+* off: disabled (always the case when muxing to QT)
+.br
+* gen: enabled, do not write profile
+.br
+* prof: enabled and write profile if known
+.br
+* tiny: enabled and write reduced version if profile known and compatible
+.br
+
 .br
 
 .br
@@ -3593,6 +3607,18 @@ utc_ref (enum, default: any):  set reference mode for UTC range extraction
 .br
 utc_probe (uint, default: 5000): timeout in milliseconds to try to acquire UTC reference from media
 .br
+copy (bool, default: false):   try copying frame interface into packets
+.br
+cues (enum, default: no):      cue filtering mode
+.br
+* no: do no filter frames based on cue info
+.br
+* segs: only forward frames marked as segment start
+.br
+* frags: only forward frames marked as fragment start
+.br
+
+.br
 
 .br
 .SH writegen
@@ -3615,7 +3641,7 @@ exporter (bool, default: false): compatibility with old exporter, displays expor
 .br
 pfmt (pfmt, default: none, minmax: none,yuv420,yvu420,yuv420_10,yuv422,yuv422_10,yuv444,yuv444_10,uyvy,vyuy,yuyv,yvyu,uyvl,vyul,yuyl,yvyl,nv12,nv21,nv1l,nv2l,yuva,yuvd,yuv444a,yuv444p,v308,yuv444ap,v408,v410,v210,grey,algr,gral,rgb4,rgb5,rgb6,rgba,argb,bgra,abgr,rgb,bgr,xrgb,rgbx,xbgr,bgrx,rgbd,rgbds,uncv): pixel format for raw extract. If not set, derived from extension
 .br
-afmt (afmt, default: none, minmax: none,u8,s16,s16b,s24,s32,flt,dbl,u8p,s16p,s24p,s32p,fltp,dblp): audio format for raw extract. If not set, derived from extension
+afmt (afmt, default: none, minmax: none,u8,s16,s16b,s24,s24b,s32,s32b,flt,fltb,dbl,dblb,u8p,s16p,s24p,s32p,fltp,dblp): audio format for raw extract. If not set, derived from extension
 .br
 decinfo (enum, default: auto): decoder config insert mode
 .br
@@ -4179,7 +4205,7 @@ This filter parses raw PCM file/data or WAVE files and outputs corresponding raw
 .br
 sr (uint, default: 44100):     sample rate
 .br
-safmt (afmt, default: none, minmax: none,u8,s16,s16b,s24,s32,flt,dbl,u8p,s16p,s24p,s32p,fltp,dblp): audio format
+safmt (afmt, default: none, minmax: none,u8,s16,s16b,s24,s24b,s32,s32b,flt,fltb,dbl,dblb,u8p,s16p,s24p,s32p,fltp,dblp): audio format
 .br
 ch (uint, default: 2):         number of channels
 .br
@@ -5375,6 +5401,24 @@ If the DRM file uses keyRoll=period, this will generate:
 .br
 
 .br
+.SS Forced-Template mode
+.br
+When .I tpl_force is set, the .I template string is not analyzed nor modified for missing elements.
+.br
+This is typically used to redirect segments to a given destination regardless of the dash profile.
+.br
+Example
+.br
+gpac -i SRC -o null:ext=mpd:tpl_force --template=pipe://mypipe
+.br
+
+.br
+This will trash the manifest and open mypipe as destination for the muxer result.
+.br
+Warning: Options for segment destination cannot be set through the .I template, global options must be used.
+.br
+
+.br
 .SS Multiplexer development considerations
 .br
 Output multiplexers allowing segmented output must obey the following:
@@ -5532,7 +5576,7 @@ profile (enum, default: auto): target DASH profile. This will set default option
 .br
 
 .br
-profX (str):                   list of profile extensions, as used by DASH-IF and DVB. The string will be colon-concatenated with the profile used
+profX (str):                   list of profile extensions, as used by DASH-IF and DVB. The string will be colon-concatenated with the profile used. If starting with +, the profile string by default is erased and + is skipped
 .br
 cp (enum, default: set):       content protection element location
 .br
@@ -5754,6 +5798,8 @@ dkid (enum, default: auto):    control injection of default KID in MPD
 .br
 
 .br
+tpl_force (bool, default: false): use template string as is without trying to add extension or solve conflicts in names
+.br
 
 .br
 .SH tileagg
@@ -5875,7 +5921,7 @@ Input pipes can be setup to run forever using .I ka. In this case:
 .br
 - any potential pipe close on the writing side will be ignored
 .br
-- end of stream will be triggered upon pipe close if .I sigeos is set
+- pipeline flushing will be triggered upon pipe close if .I sigflush is set
 .br
 - final end of stream will be triggered upon session close.
 .br
@@ -5886,6 +5932,22 @@ This can be useful to pipe raw streams from different process into gpac:
 * Receiver side: gpac -i pipe://mypipe:ext=.264:mkp:ka
 .br
 * Sender side: cat raw1.264 > mypipe && gpac -i raw2.264 -o pipe://mypipe:ext=.264  
+.br
+The pipeline flush is signaled as EOS while keeping the stream active.
+.br
+This is typically needed for mux filters waiting for EOS to flush their data.
+.br
+Warning: Usage of  .I sigflush may not be properly supported by some filters.
+.br
+If .I marker is set, the following strings (all 8-bytes 0 terminator) will be scanned:
+.br
+* `GPACPIF`: triggers a pipeline flush event after the marker
+.br
+* `GPACPIR`: triggers a reconfigration of the format after the marker
+.br
+The marker mode should be used carefully as it will slow down pipe processing (higher CPU usage and delayed output).
+.br
+  
 .br
 The pipe input can be created in blocking mode or non-blocking mode.
 .br
@@ -5908,7 +5970,7 @@ ka (bool, default: false):     keep-alive pipe when end of input is detected
 .br
 mkp (bool, default: false):    create pipe if not found
 .br
-sigeos (bool, default: false): signal end of stream whenever a pipe breaks in keep-alive mode
+sigflush (bool, default: false): signal end of stream upon pipe close - cf filter help
 .br
 
 .br
@@ -5951,6 +6013,10 @@ When a keep-alive pipe is broken, input data is discarded and the filter will ke
 .br
 It is therefore recommended to use this mode with real-time inputs (use a reframer if needed).
 .br
+If .I marker is set, the string GPACPIF (8 bytes including 0-terminator) will be written to the pipe at each detected pipeline flush.
+.br
+Pipeline flushing is currently triggered by DASH segment end or ISOBMF fragment end.
+.br
 
 .br
 .SH Options (expert):
@@ -5973,6 +6039,8 @@ mkp (bool, default: false):    create pipe if not found
 block_size (uint, default: 5000): buffer size used to write to pipe, Windows only
 .br
 ka (bool, default: false):     keep pipe alive when broken pipe is detected
+.br
+marker (bool, default: false): inject marker upon pipeline flush events
 .br
 
 .br
@@ -7830,7 +7898,7 @@ No options
 .br
 Description: FFMPEG demultiplexer
 .br
-Version: Lavf60.4.100
+Version: Lavf60.5.100
 .br
 
 .br
@@ -7868,7 +7936,7 @@ strbuf_min (uint, default: 1MB): internal buffer size when demuxing from GPAC's 
 .br
 Description: FFMPEG decoder
 .br
-Version: Lavc60.6.101
+Version: Lavc60.14.101
 .br
 
 .br
@@ -8138,7 +8206,7 @@ osar (frac, default: 0/1):     force output pixel aspect ratio
 .br
 Description: FFMPEG encoder
 .br
-Version: Lavc60.6.101
+Version: Lavc60.14.101
 .br
 
 .br
@@ -8216,7 +8284,7 @@ rld (bool, default: false, updatable): force reloading of encoder when arguments
 .br
 Description: FFMPEG multiplexer
 .br
-Version: Lavf60.4.100
+Version: Lavf60.5.100
 .br
 
 .br
@@ -8241,6 +8309,10 @@ Unlike other multiplexing filters in GPAC, this filter is a sink filter and does
 The filter can however use template names for its output, using the first input PID to resolve the final name.
 .br
 The filter watches the property FileNumber on incoming packets to create new files.
+.br
+
+.br
+All PID properties prefixed with meta: will be added as metadata.
 .br
 
 .br
@@ -8276,7 +8348,7 @@ keepts (bool, default: true):  do not shift input timeline back to 0
 .br
 Description: FFMPEG AVFilter
 .br
-Version: Lavfi9.4.100
+Version: Lavfi9.8.101
 .br
 
 .br
@@ -8419,7 +8491,7 @@ dump (bool, default: false, updatable): dump graph as log media@info or stderr i
 .br
 Description: FFMPEG BitStream filter
 .br
-Version: Lavu58.3.100
+Version: Lavu58.9.100
 .br
 
 .br
@@ -8463,7 +8535,7 @@ f (strl):                      bitstream filters name - see filter help
 .br
 Description: FFMPEG BitStream filter
 .br
-Version: Lavu58.3.100
+Version: Lavu58.9.100
 .br
 
 .br
@@ -11655,7 +11727,7 @@ Authors: GPAC developers, see git repo history (-log)
 .br
 For bug reports, feature requests, more information and source code, visit https://github.com/gpac/gpac
 .br
-build: 2.3-DEV-rev263-g2afa05f4d-master
+build: 2.3-DEV
 .br
 Copyright: (c) 2000-2023 Telecom Paris distributed under LGPL v2.1+ - http://gpac.io
 .br

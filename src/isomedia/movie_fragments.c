@@ -2342,7 +2342,7 @@ exit:
 				movie->on_last_block_start(movie->on_block_out_usr_data);
 
 			seg[0] = seg[1] = seg[2] = 0;
-			seg[3] = 9;
+			seg[3] = 8;
 			seg[4] = (segment_marker_4cc>>24) & 0xFF;
 			seg[5] = (segment_marker_4cc>>16) & 0xFF;
 			seg[6] = (segment_marker_4cc>>8) & 0xFF;
@@ -3180,7 +3180,7 @@ static GF_Err gf_isom_copy_sample_group_entry_to_traf(GF_TrackFragmentBox *traf,
 		}
 	}
 
-	return gf_isom_add_sample_group_entry(traf->sampleGroups, 0, grouping_type, grouping_type_parameter, sampleGroupDescriptionIndex, NULL);
+	return gf_isom_add_sample_group_entry(traf->sampleGroups, 0, sgdesc, grouping_type_parameter, sampleGroupDescriptionIndex, NULL);
 }
 /*copy over the subsample and sampleToGroup information of the given sample from the source track/file to the last sample added to the current track fragment of the destination file*/
 GF_Err gf_isom_fragment_copy_subsample(GF_ISOFile *dest, GF_ISOTrackID TrackID, GF_ISOFile *orig, u32 track, u32 sampleNumber, Bool sgpd_in_traf)

@@ -2995,6 +2995,25 @@ static void gf_mpd_print_descriptors(FILE *out, GF_List *desc_list, char *desc_n
 	}
 }
 
+#include <gpac/iso639.h>
+
+static void mpd_print_lang(FILE *out, const char *attVal, const char *attName)
+{
+	if (!attVal) return;
+
+	if (!gf_sys_is_test_mode()) {
+		if (!strcmp(attVal, "und")) return;
+		if (strlen(attVal)==3) {
+			s32 res = gf_lang_find(attVal);
+			if (res>0) {
+				const char *lang = gf_lang_get_2cc(res);
+				if (lang) attVal = lang;
+			}
+		}
+	}
+	gf_fprintf(out, " %s=\"%s\"", attName ? attName : "lang", attVal);
+}
+
 static void gf_mpd_print_content_component(FILE *out, GF_List *content_component , s32 indent)
 {
 	u32 i=0;
@@ -3002,8 +3021,7 @@ static void gf_mpd_print_content_component(FILE *out, GF_List *content_component
 	while ((cc = gf_list_enum(content_component, &i))) {
 		gf_mpd_nl(out, indent);
 		gf_fprintf(out, "<ContentComponent id=\"%d\" contentType=\"%s\"", cc->id, cc->type);
-		if (cc->lang)
-			gf_fprintf(out, " lang=\"%s\"", cc->lang);
+		mpd_print_lang(out, cc->lang, NULL);
 		gf_fprintf(out, "/>");
 		gf_mpd_lf(out, indent);
 	}
@@ -3324,7 +3342,7 @@ static void gf_mpd_print_adaptation_set(GF_MPD_AdaptationSet *as, FILE *out, Boo
 	}
 	if (as->par && (as->par->num != 0) && (as->par->den != 0))
 		gf_fprintf(out, " par=\"%d:%d\"", as->par->num, as->par->den);
-	if (as->lang) gf_fprintf(out, " lang=\"%s\"", as->lang);
+	mpd_print_lang(out, as->lang, NULL);
 	if (as->bitstream_switching) gf_fprintf(out, " bitstreamSwitching=\"true\"");
 
 	gf_mpd_print_common_attributes(out, (GF_MPD_CommonAttributes*)as);
@@ -4311,9 +4329,7 @@ GF_Err gf_mpd_write(GF_MPD const * const mpd, FILE *out, Bool compact)
 
 		gf_mpd_nl(out, indent+1);
 		gf_fprintf(out, "<ProgramInformation");
-		if (info->lang) {
-			gf_fprintf(out, " lang=\"%s\"", info->lang);
-		}
+		mpd_print_lang(out, info->lang, NULL);
 		if (info->more_info_url) {
 			gf_xml_dump_string(out, " moreInformationURL=\"", info->more_info_url, "\"");
 		}
@@ -5537,7 +5553,7 @@ GF_Err gf_mpd_smooth_to_mpd(char * smooth_file, GF_MPD *mpd, const char *default
 			char_template+=1;	\
 
 GF_EXPORT
-GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Bool is_bs_switching, char *segment_name, const char *rep_id, const char *base_url, const char *seg_rad_name, const char *seg_ext, u64 start_time, u32 bandwidth, u32 segment_number, Bool use_segment_timeline)
+GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Bool is_bs_switching, char *segment_name, const char *rep_id, const char *base_url, const char *seg_rad_name, const char *seg_ext, u64 start_time, u32 bandwidth, u32 segment_number, Bool use_segment_timeline, Bool forced)
 {
 	Bool has_number= GF_FALSE;
 	Bool force_path = GF_FALSE;
@@ -5617,7 +5633,7 @@ GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Boo
 			EXTRACT_FORMAT(5);
 			if (is_init || is_init_template) {
 				if (!has_init_keyword && needs_init) {
-					strcat(segment_name, "init");
+					if (!forced) strcat(segment_name, "init");
 					needs_init = GF_FALSE;
 				}
 				continue;
@@ -5634,7 +5650,7 @@ GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Boo
 
 			if (is_init || is_init_template) {
 				if (!has_init_keyword && needs_init) {
-					strcat(segment_name, "init");
+					if (!forced) strcat(segment_name, "init");
 					needs_init = GF_FALSE;
 				}
 				continue;
@@ -5721,7 +5737,7 @@ GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Boo
 		}
 	}
 
-	if (is_template && !strstr(seg_rad_name, "$Number") && !strstr(seg_rad_name, "$Time")) {
+	if (is_template && !forced && !strstr(seg_rad_name, "$Number") && !strstr(seg_rad_name, "$Time")) {
 		if (use_segment_timeline) {
 			strcat(segment_name, "$Time$");
 		} else {
@@ -5729,12 +5745,12 @@ GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Boo
 		}
 	}
 
-	if (needs_init)
+	if (needs_init && !forced)
 		strcat(segment_name, "init");
-	if (needs_index)
+	if (needs_index && !forced)
 		strcat(segment_name, "idx");
 
-	if (!is_init && !is_template && !is_init_template && !is_index && !has_number) {
+	if (!is_init && !is_template && !is_init_template && !is_index && !has_number && !forced) {
 		if (use_segment_timeline) {
 			sprintf(tmp, LLU, start_time);
 			strcat(segment_name, tmp);
@@ -5745,11 +5761,12 @@ GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Boo
 		}
 	}
 
+
 	if (strlen(segment_ext_override) > 0) {
 		strcat(segment_name, ".");
 		strcat(segment_name, segment_ext_override);
 	}
-	else if (seg_ext) {
+	else if (seg_ext && !forced) {
 		strcat(segment_name, ".");
 		strcat(segment_name, seg_ext);
 	}

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2022
+ *			Copyright (c) Telecom ParisTech 2017-2023
  *					All rights reserved
  *
  *  This file is part of GPAC / force reframer filter
@@ -26,6 +26,8 @@
 #include <gpac/avparse.h>
 #include <gpac/constants.h>
 #include <gpac/filters.h>
+
+#ifndef GPAC_DISABLE_REFRAMER
 
 enum
 {
@@ -148,6 +150,8 @@ typedef struct
 	u32 xround, utc_ref, utc_probe;
 	Double seeksafe;
 	GF_PropStringList props;
+	Bool copy;
+	u32 cues;
 
 	//internal
 	Bool filter_sap1;
@@ -1044,9 +1048,12 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 		}
 
 		gf_filter_pck_send(new_pck);
-
 	} else {
-		gf_filter_pck_forward(pck, st->opid);
+		GF_FilterPacket *dst = ctx->copy ? gf_filter_pck_new_copy(st->opid, pck, NULL) : NULL;
+		if (dst)
+			gf_filter_pck_send(dst);
+		else
+			gf_filter_pck_forward(pck, st->opid);
 	}
 
 
@@ -2443,6 +2450,15 @@ refetch_streams:
 					break;
 				}
 			}
+			if (ctx->cues) {
+				forward = GF_FALSE;
+				const GF_PropertyValue *p = gf_filter_pck_get_property(pck, GF_PROP_PCK_CUE_START);
+				if (p && p->value.boolean) forward = GF_TRUE;
+				else if (ctx->cues==2) {
+					p = gf_filter_pck_get_property(pck, GF_PROP_PCK_FRAG_START);
+					if (p) forward = GF_TRUE;
+				}
+			}
 			if (ctx->range_type==RANGE_DONE)
 				forward = GF_FALSE;
 
@@ -2714,6 +2730,11 @@ static const GF_FilterArgs ReframerArgs[] =
 	"- any: use UTC of media, or UTC of local host if not found in media after probing time\n"
 	"- media: use UTC of media (abort if none found)", GF_PROP_UINT, "any", "local|any|media", GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(utc_probe), "timeout in milliseconds to try to acquire UTC reference from media", GF_PROP_UINT, "5000", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(copy), "try copying frame interface into packets", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(cues), "cue filtering mode\n"
+	"- no: do no filter frames based on cue info\n"
+	"- segs: only forward frames marked as segment start\n"
+	"- frags: only forward frames marked as fragment start", GF_PROP_UINT, "no", "no|segs|frags", GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 
@@ -2839,3 +2860,10 @@ const GF_FilterRegister *reframer_register(GF_FilterSession *session)
 {
 	return &ReframerRegister;
 }
+#else
+const GF_FilterRegister *reframer_register(GF_FilterSession *session)
+{
+	return NULL;
+}
+#endif //GPAC_DISABLE_REFRAMER
+

@@ -4300,9 +4300,10 @@ GF_Err gf_isom_text_dump(GF_ISOFile *the_file, u32 track, FILE *dump, GF_TextDum
 /* ISMA 1.0 Encryption and Authentication V 1.0  dump */
 GF_Err sinf_box_dump(GF_Box *a, FILE * trace)
 {
-	gf_isom_box_dump_start(a, "ProtectionSchemeInfoBox", trace);
+	const char *name = (a->type==GF_ISOM_BOX_TYPE_SINF) ? "ProtectionSchemeInfoBox" : "RestrictedSchemeInfoBox";
+	gf_isom_box_dump_start(a, name, trace);
 	gf_fprintf(trace, ">\n");
-	gf_isom_box_dump_done("ProtectionSchemeInfoBox", a, trace);
+	gf_isom_box_dump_done(name, a, trace);
 	return GF_OK;
 }
 
@@ -5409,7 +5410,7 @@ GF_Err sgpd_box_dump(GF_Box *a, FILE * trace)
 
 	if (ptr->grouping_type)
 		gf_fprintf(trace, "grouping_type=\"%s\"", gf_4cc_to_str(ptr->grouping_type) );
-	if (ptr->version==1) gf_fprintf(trace, " default_length=\"%d\"", ptr->default_length);
+	if (ptr->version>=1) gf_fprintf(trace, " default_length=\"%d\"", ptr->default_length);
 	if ((ptr->version>=2) && ptr->default_description_index) gf_fprintf(trace, " default_group_index=\"%d\"", ptr->default_description_index);
 	if (ptr->flags & 1) gf_fprintf(trace, " static_samplegroup=\"yes\"");
 	if (ptr->flags & 2) gf_fprintf(trace, " static_mapping=\"yes\"");

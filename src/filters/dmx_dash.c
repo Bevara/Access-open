@@ -26,7 +26,7 @@
 #include <gpac/filters.h>
 #include <gpac/constants.h>
 
-#ifndef GPAC_DISABLE_DASH_CLIENT
+#ifndef GPAC_DISABLE_DASHIN
 
 #include <gpac/dash.h>
 
@@ -157,7 +157,7 @@ typedef struct
 	GF_DownloadSession *sess;
 #endif
 	Bool is_timestamp_based, pto_setup;
-	Bool prev_is_init_segment;
+	Bool prev_is_init_segment, init_from_media;
 	//media timescale for which the pto, max_cts_in_period and timedisc_ts_offset were computed
 	u32 timescale;
 	s64 pto;
@@ -265,7 +265,12 @@ static void dashdmx_forward_packet(GF_DASHDmxCtx *ctx, GF_FilterPacket *in_pck, 
 				GF_Fraction64 seg_time;
 				const char *seg_name = NULL;
 				u32 seg_number, seg_dur;
-				gf_dash_group_next_seg_info(ctx->dash, group->idx, group->current_dependent_rep_idx, &seg_name, &seg_number, &seg_time, &seg_dur, NULL);
+				if (group->init_from_media) {
+					group->init_from_media = GF_FALSE;
+					gf_dash_group_next_seg_info(ctx->dash, group->idx, 0, NULL, &seg_number, &seg_time, &seg_dur, &seg_name);
+				} else {
+					gf_dash_group_next_seg_info(ctx->dash, group->idx, group->current_dependent_rep_idx, &seg_name, &seg_number, &seg_time, &seg_dur, NULL);
+				}
 				if (seg_name) {
 					gf_filter_pck_set_property(ref, GF_PROP_PCK_FILENAME, &PROP_STRING(seg_name) );
 					gf_filter_pck_set_property(ref, GF_PROP_PCK_FILENUM, &PROP_UINT(seg_number) );
@@ -532,7 +537,7 @@ static Bool dashdmx_on_filter_setup_error(GF_Filter *failed_filter, void *udta, 
 	return GF_FALSE;
 }
 
-#ifndef GPAC_DISABLE_CRYPTO
+#if !defined(GPAC_DISABLE_CRYPTO) && !defined(GPAC_DISABLE_CRYPTFILE)
 void gf_cryptfin_set_kms(GF_Filter *f, const char *key_url, bin128 key_IV);
 #endif
 
@@ -625,8 +630,10 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 
 	gf_filter_set_setup_failure_callback(ctx->filter, group->seg_filter_src, dashdmx_on_filter_setup_error, group);
 
-	if (gf_dash_group_init_segment_is_media(ctx->dash, group_index))
+	if (gf_dash_group_init_segment_is_media(ctx->dash, group_index)) {
 		group->prev_is_init_segment = GF_FALSE;
+		group->init_from_media = GF_TRUE;
+	}
 	else {
 		group->prev_is_init_segment = GF_TRUE;
 		//consider init is always in clear if AES-128, might need further checks
@@ -638,7 +645,7 @@ static GF_Err dashdmx_load_source(GF_DASHDmxCtx *ctx, u32 group_index, const cha
 	//if HLS AES-CBC, set key BEFORE discarding segment URL (if TS, discarding the segment will discard the key uri)
 	if (key_uri) {
 		if (crypto_type==1) {
-#ifndef GPAC_DISABLE_CRYPTO
+#if !defined(GPAC_DISABLE_CRYPTO) && !defined(GPAC_DISABLE_CRYPTFILE)
 			gf_cryptfin_set_kms(group->seg_filter_src, key_uri, key_IV);
 #else
 			gf_free(sURL);
@@ -2664,6 +2671,7 @@ static Bool dashdmx_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 		}
 		group->is_playing = GF_FALSE;
 		group->prev_is_init_segment = GF_FALSE;
+		group->init_from_media = GF_FALSE;
 		if (ctx->nb_playing) {
 			ctx->initial_play = GF_FALSE;
 			group->force_seg_switch = GF_TRUE;
@@ -2999,7 +3007,7 @@ fetch_next:
 
 	if (next_url_init_or_switch_segment && !group->init_switch_seg_sent) {
 		if (group->in_is_cryptfile) {
-#ifndef GPAC_DISABLE_CRYPTO
+#if !defined(GPAC_DISABLE_CRYPTO) && !defined(GPAC_DISABLE_CRYPTFILE)
 			gf_cryptfin_set_kms(group->seg_filter_src, key_url, key_IV);
 #endif
 		}
@@ -3027,6 +3035,7 @@ fetch_next:
 
 	group->segment_sent = GF_TRUE;
 	group->prev_is_init_segment = GF_FALSE;
+	group->init_from_media = GF_FALSE;
 	group->init_switch_seg_sent = GF_FALSE;
 	group->signal_seg_name = (ctx->forward==DFWD_FILE) ? GF_TRUE : GF_FALSE;
 	group->us_at_seg_start = gf_sys_clock_high_res();
@@ -3045,7 +3054,7 @@ fetch_next:
 	}
 
 	if (group->in_is_cryptfile) {
-#ifndef GPAC_DISABLE_CRYPTO
+#if !defined(GPAC_DISABLE_CRYPTO) && !defined(GPAC_DISABLE_CRYPTFILE)
 		gf_cryptfin_set_kms(group->seg_filter_src, key_url, key_IV);
 #endif
 	}
@@ -3631,11 +3640,11 @@ GF_FilterRegister DASHDmxRegister = {
 };
 
 
-#endif //GPAC_DISABLE_DASH_CLIENT
+#endif // GPAC_DISABLE_DASHIN
 
 const GF_FilterRegister *dynCall_dashdmx_register(GF_FilterSession *session)
 {
-#ifndef GPAC_DISABLE_DASH_CLIENT
+#ifndef GPAC_DISABLE_DASHIN
 	return &DASHDmxRegister;
 #else
 	return NULL;
@@ -3643,7 +3652,7 @@ const GF_FilterRegister *dynCall_dashdmx_register(GF_FilterSession *session)
 }
 
 
-#ifndef GPAC_DISABLE_DASH_CLIENT
+#ifndef GPAC_DISABLE_DASHIN
 static s32 dashdmx_rate_adaptation_ext(void *udta, u32 group_idx, u32 base_group_idx, Bool force_lower_complexity, GF_DASHCustomAlgoInfo *stats)
 {
 	GF_DASHDmxCtx *ctx = (GF_DASHDmxCtx*) udta;
@@ -3674,7 +3683,7 @@ static s32 dashdmx_download_monitor_ext(void *udta, u32 group_idx, u32 bits_per_
 	stats.current_seg_dur = current_seg_dur;
 	return ctx->on_download_monitor(ctx->rt_udta, group_idx, &stats);
 }
-#endif /*GPAC_DISABLE_DASH_CLIENT*/
+#endif // GPAC_DISABLE_DASHIN
 
 
 GF_EXPORT
@@ -3685,9 +3694,7 @@ GF_Err gf_filter_bind_dash_algo_callbacks(GF_Filter *filter, void *udta,
 		s32 (*download_monitor)(void *udta, u32 group_idx, void *stats)
 )
 {
-#ifdef GPAC_DISABLE_DASH_CLIENT
-	return GF_NOT_SUPPORTED;
-#else
+#ifndef GPAC_DISABLE_DASHIN
 	if (!gf_filter_is_instance_of(filter, &DASHDmxRegister))
 		return GF_BAD_PARAM;
 	GF_DASHDmxCtx *ctx = (GF_DASHDmxCtx*) gf_filter_get_udta(filter);
@@ -3710,6 +3717,7 @@ GF_Err gf_filter_bind_dash_algo_callbacks(GF_Filter *filter, void *udta,
 		gf_dash_set_algo(ctx->dash, GF_DASH_ALGO_GPAC_LEGACY_BUFFER);
 	}
 	return GF_OK;
-
+#else
+	return GF_NOT_SUPPORTED;
 #endif
 }
