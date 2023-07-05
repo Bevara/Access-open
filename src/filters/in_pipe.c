@@ -57,8 +57,8 @@ typedef struct
 	char *src;
 	char *ext;
 	char *mime;
-	u32 block_size;
-	Bool blk, ka, mkp, sigflush;
+	u32 block_size, bpcnt;
+	Bool blk, ka, mkp, sigflush, marker;
 
 	u32 read_block_size;
 	//only one output pid declared
@@ -80,7 +80,6 @@ typedef struct
 	u32 left_over, copy_offset;
 	u8 store_char;
 	Bool has_recfg;
-	u32 nb_empty;
 } GF_PipeInCtx;
 
 static Bool pipein_process_event(GF_Filter *filter, const GF_FilterEvent *evt);
@@ -118,7 +117,7 @@ static GF_Err pipein_initialize(GF_Filter *filter)
 		return GF_NOT_SUPPORTED;
 	}
 
-	//strip any fragment identifer
+	//strip any fragment identifier
 	frag_par = strchr(ctx->src, '#');
 	if (frag_par) frag_par[0] = 0;
 	cgi_par = strchr(ctx->src, '?');
@@ -318,10 +317,14 @@ static Bool pipein_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 
 #define PIPE_FLUSH_MARKER	"GPACPIF"
 #define PIPE_RECFG_MARKER	"GPACPIR"
+#define PIPE_CLOSE_MARKER	"GPACPIC"
 
 static void pipein_pck_destructor(GF_Filter *filter, GF_FilterPid *pid, GF_FilterPacket *pck)
 {
 	GF_PipeInCtx *ctx = (GF_PipeInCtx *) gf_filter_get_udta(filter);
+	u32 size;
+	gf_filter_pck_get_data(pck, &size);
+	ctx->buffer[size] = ctx->store_char;
 	ctx->pck_out = GF_FALSE;
 	//ready to process again
 	gf_filter_post_process_task(filter);
@@ -354,7 +357,6 @@ static GF_Err pipein_process(GF_Filter *filter)
 		total_read = ctx->left_over;
 		ctx->left_over = 0;
 		ctx->copy_offset = 0;
-		ctx->buffer[0] = PIPE_FLUSH_MARKER[0];
 	}
 	if (ctx->has_recfg) {
 		ctx->do_reconfigure = GF_TRUE;
@@ -384,11 +386,6 @@ refill:
 			}
 		}
 	} else {
-		if (ctx->bytes_read && (ctx->nb_empty>50)) {
-			ctx->nb_empty = 0;
-			ctx->bytes_read = 0;
-		}
-
 		errno = 0;
 #ifdef WIN32
 		nb_read = -1;
@@ -443,6 +440,13 @@ refill:
 				}
 				else if (error == ERROR_BROKEN_PIPE) {
 					if (ctx->ka) {
+						if (ctx->bpcnt) {
+							ctx->bpcnt--;
+							if (!ctx->bpcnt) {
+								gf_filter_pid_set_eos(ctx->pid);
+								return GF_EOS;
+							}
+						}
 						GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] Pipe closed by remote side, reopening!\n"));
 						CloseHandle(ctx->pipe);
 						ctx->pipe = INVALID_HANDLE_VALUE;
@@ -456,9 +460,10 @@ refill:
 						return GF_EOS;
 					}
 				}
-				ctx->nb_empty++;
 				if (!ctx->bytes_read)
 					gf_filter_ask_rt_reschedule(filter, 10000);
+				else
+					gf_filter_ask_rt_reschedule(filter, 1000);
 				return GF_OK;
 			}
 		}
@@ -469,28 +474,41 @@ refill:
 				nb_read = 0;
 			} else {
 				s32 res = errno;
+				//writers still active
 				if (res == EAGAIN) {
-					//non blocking pipe with writers active
-				} else if (nb_read < 0) {
+				}
+				//broken pipe
+				else if (nb_read < 0) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[PipeIn] Failed to read, error %s\n", gf_errno_str(res) ));
 					return GF_IO_ERR;
-				} else if (!ctx->ka && ctx->bytes_read) {
-					GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] end of stream detected after %d bytes\n", ctx->bytes_read));
-					if (ctx->pid) gf_filter_pid_set_eos(ctx->pid);
-					close(ctx->fd);
-					ctx->fd=-1;
-					ctx->is_end = GF_TRUE;
-					return GF_EOS;
-				} else {
-					//set keepalive eos
-					if (ctx->ka && ctx->bytes_read && ctx->sigflush && ctx->pid) {
-						gf_filter_pid_send_flush(ctx->pid);
-						ctx->bytes_read = 0;
-					}
 				}
-				ctx->nb_empty++;
+				//wait for data
+				else if (ctx->bytes_read) {
+					if (ctx->ka && ctx->bpcnt) {
+						ctx->bpcnt--;
+						if (!ctx->bpcnt) {
+							GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] exiting keep-alive mode\n"));
+							ctx->ka = GF_FALSE;
+						}
+					}
+					if (!ctx->ka) {
+						GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] end of stream detected\n"));
+						if (ctx->pid) gf_filter_pid_set_eos(ctx->pid);
+						close(ctx->fd);
+						ctx->fd=-1;
+						ctx->is_end = GF_TRUE;
+						return GF_EOS;
+					}
 
+					//signal flush
+					if (ctx->sigflush && ctx->pid) {
+						gf_filter_pid_send_flush(ctx->pid);
+					}
+					//reset for longer reschedule time
+					ctx->bytes_read = 0;
+				}
 				if (!ctx->bytes_read) gf_filter_ask_rt_reschedule(filter, 10000);
+				else gf_filter_ask_rt_reschedule(filter, 1000);
 				return GF_OK;
 			}
 		}
@@ -505,45 +523,60 @@ refill:
 		}
 	}
 	nb_read = total_read;
-	ctx->nb_empty = 0;
 
 	Bool has_marker=GF_FALSE;
-	if (ctx->sigflush) {
+	if (ctx->marker) {
 		u8 *start = ctx->buffer;
 		u32 avail = nb_read;
 		if (nb_read<8) {
 			ctx->left_over = nb_read;
 			nb_read = 0;
 			ctx->copy_offset = 0;
-			ctx->store_char = ctx->buffer[0];
 		}
 		while (nb_read) {
 			u8 *m = memchr(start, PIPE_FLUSH_MARKER[0], avail);
 			if (!m) break;
-			u32 remain = (u8*) ctx->buffer + nb_read - m;
+			u32 remain = (u32) ((u8*) ctx->buffer + nb_read - m);
 			if (remain<8) {
+				//check if we start with 'GPACPI', if not move to next 'G'
+				u32 check = MIN(remain, 6);
+				if (memcmp(m, PIPE_FLUSH_MARKER, check)) {
+					start = m+1;
+					avail = (u32) ((u8*)ctx->buffer+nb_read - start);
+					continue;
+				}
 				ctx->left_over = remain;
 				nb_read -= remain;
-				ctx->copy_offset = m - (u8*)ctx->buffer;
-				ctx->store_char = ctx->buffer[nb_read];
+				ctx->copy_offset = (u32) (m - (u8*)ctx->buffer);
 				break;
 			}
-			if (!memcmp(m, PIPE_FLUSH_MARKER, 8)) {
+			if (!memcmp(m, PIPE_FLUSH_MARKER, 7) && ((m[7]=='\0') || (m[7]=='\n'))) {
 				ctx->left_over = remain-8;
-				nb_read = m - (u8*)ctx->buffer;
+				nb_read = (u32) (m - (u8*)ctx->buffer);
 				ctx->copy_offset = nb_read+8;
 				has_marker = GF_TRUE;
+				GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] Found flush marker\n"));
 				break;
 			}
-			if (!memcmp(m, PIPE_RECFG_MARKER, 8)) {
+			if (!memcmp(m, PIPE_RECFG_MARKER, 7) && ((m[7]=='\0') || (m[7]=='\n'))) {
 				ctx->left_over = remain-8;
-				nb_read = m - (u8*)ctx->buffer;
+				nb_read = (u32) (m - (u8*)ctx->buffer);
 				ctx->copy_offset = nb_read+8;
 				ctx->has_recfg = GF_TRUE;
+				GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] Found reconfig marker\n"));
+				break;
+			}
+			if (!memcmp(m, PIPE_CLOSE_MARKER, 7) && ((m[7]=='\0') || (m[7]=='\n'))) {
+				nb_read = (u32) (m - (u8*)ctx->buffer);
+				ctx->copy_offset = 0;
+				ctx->left_over=0;
+				ctx->bytes_read=8; //for above test
+				ctx->ka = GF_FALSE;
+				GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] Found close marker\n"));
 				break;
 			}
 			start = m+1;
-			avail = (u8*)ctx->buffer+nb_read - start;
+			avail = (u32) ((u8*)ctx->buffer+nb_read - start);
 		}
 	}
 
@@ -551,11 +584,14 @@ refill:
 		if (has_marker) {
 			gf_filter_pid_send_flush(ctx->pid);
 		}
-		if (!ctx->bytes_read) gf_filter_ask_rt_reschedule(filter, 10000);
-		else gf_filter_ask_rt_reschedule(filter, 1000);
+		if (!ctx->bytes_read)
+			gf_filter_ask_rt_reschedule(filter, 10000);
+		else if (!total_read)
+			gf_filter_ask_rt_reschedule(filter, 1000);
 		return GF_OK;
 	}
 
+	ctx->store_char = ctx->buffer[nb_read];
 	ctx->buffer[nb_read] = 0;
 	if (!ctx->pid || ctx->do_reconfigure) {
 		GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeIn] configuring stream %d probe bytes\n", nb_read));
@@ -571,7 +607,7 @@ refill:
 	pck = gf_filter_pck_new_shared(ctx->pid, ctx->buffer, nb_read, pipein_pck_destructor);
 	if (!pck) return GF_OUT_OF_MEM;
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[PipeIn] sending %d bytes\n", nb_read));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[PipeIn] Got %d bytes\n", nb_read));
 	gf_filter_pck_set_framing(pck, ctx->is_first, ctx->is_end);
 	gf_filter_pck_set_sap(pck, GF_FILTER_SAP_1);
 
@@ -604,6 +640,9 @@ static const GF_FilterArgs PipeInArgs[] =
 	{ OFFS(ka), "keep-alive pipe when end of input is detected", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(mkp), "create pipe if not found", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(sigflush), "signal end of stream upon pipe close - cf filter help", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(marker), "inspect payload for flush and reconfigure signals - cf filter help", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(bpcnt), "number of broken pipe allowed before exiting, 0 means forever", GF_PROP_UINT, "0", NULL, GF_FS_ARG_HINT_EXPERT},
+
 	{0}
 };
 
@@ -648,11 +687,13 @@ GF_FilterRegister PipeInRegister = {
 		"  \n"
 		"The pipeline flush is signaled as EOS while keeping the stream active.\n"
 		"This is typically needed for mux filters waiting for EOS to flush their data.\n"
-		"Warning: Usage of  [-sigflush]() may not be properly supported by some filters.\n"
-		"If [-marker]() is set, the following strings (all 8-bytes `0` terminator) will be scanned:\n"
-		"- `GPACPIF`: triggers a pipeline flush event after the marker\n"
-		"- `GPACPIR`: triggers a reconfiguration of the format after the marker (used to signal mux type changes)\n"
-		"The marker mode should be used carefully as it will slow down pipe processing (higher CPU usage and delayed output).\n"
+		"  \n"
+		"If [-marker]() is set, the following strings (all 8-bytes with `\0` or `\n` terminator) will be scanned:\n"
+		"- `GPACPIF`: triggers a pipeline flush event\n"
+		"- `GPACPIR`: triggers a reconfiguration of the format (used to signal mux type changes)\n"
+		"- `GPACPIC`: triggers a regular end of stream and aborts keepalive\n"
+		"The [-marker]() mode should be used carefully as it will slow down pipe processing (higher CPU usage and delayed output).\n"
+		"Warning: Usage of pipeline flushing may not be properly supported by some filters.\n"
 		"  \n"
 		"The pipe input can be created in blocking mode or non-blocking mode.\n"
 	"")

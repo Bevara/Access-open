@@ -255,7 +255,7 @@ GF_FilterSession *gf_fs_new_defaults(u32 flags);
 */
 void gf_fs_del(GF_FilterSession *session);
 /*! Loads a given filter by its register name. Filter are created using their register name, with options appended as a list of colon-separated Name=Value pairs.
-Value can be omitted for boolean, defaulting to true (eg :noedit). Using '!' before the name negates the result (eg :!moof_first).
+Value can be omitted for boolean, defaulting to true (eg :allt). Using '!' before the name negates the result (eg :!moof_first).
 Name can be omitted for enumerations (eg :disp=pbo is equivalent to :pbo), provided that filter developers pay attention to not reuse enum names in one filter.
 
 \param session filter session
@@ -479,7 +479,7 @@ void gf_fs_print_non_connected_ex(GF_FilterSession *session, Bool ignore_sinks);
 /*! Prints the list of arguments specified but not used by the filter session using \code LOG_APP@LOG_WARNING \endcode
  \note This is simply a wrapper to \ref gf_fs_enum_unmapped_options
 \param session filter session
-\param ignore_args ignore unused arguments if present in this comma-seperated list - may be NULL
+\param ignore_args ignore unused arguments if present in this comma-separated list - may be NULL
 */
 void gf_fs_print_unused_args(GF_FilterSession *session, const char *ignore_args);
 
@@ -1386,7 +1386,7 @@ const char *gf_props_enum_name(u32 type, u32 value);
 
 /*! Get the possible names of an enum type property
 \param type  property type
-\return comma-seperated list of possible values
+\return comma-separated list of possible values
 */
 const char *gf_props_enum_all_names(u32 type);
 
@@ -2316,7 +2316,7 @@ struct __gf_filter_register
 
 	/*! optional - callback for arguments update. If GF_OK is returned, the filter private stack is updated accordingly.
 	If function is NULL, all updatable arguments will be changed in the filter private stack without the filter being notified.
-	If argument is a meta argument, it is the filter responsability to handle the update, as meta arguments do not live on the filter private stack.
+	If argument is a meta argument, it is the filter responsibility to handle the update, as meta arguments do not live on the filter private stack.
 	If the filter is a meta filter and argument is not declared in the argument list, the function is always called.
 
 	\param filter the target filter
@@ -3814,6 +3814,11 @@ The packet is still present in the PID buffer until explicitly removed by \ref g
 The returned packet is only valid for the current filter execution (process callback, task, ...), and may be discarded in-between calls, typically when the session is aborted.
 If a filter needs to keep a packet across calls, it must use \ref gf_filter_pck_ref and \ref gf_filter_pck_unref
 
+If no packet is returned, the pid may be empty, in end of stream (cf \ref gf_filter_pid_is_eos) or in flush (cf \ref gf_filter_pid_is_flush_eos).
+
+The first time this function is called on a PID at a flush point, it will return NULL even if some packets are pending. This allows the calling filter to detect if a flush point is reached and take appropriate actions.
+Subsequent calls will return the pending packet if any.
+
 \param PID the target filter PID
 \return packet or NULL of empty or reconfigure error
 */
@@ -4454,14 +4459,17 @@ GF_FilterSAPType gf_filter_pck_get_sap(GF_FilterPacket *pck);
 
 /*! Sets packet video interlacing flag
 \param pck target packet
-\param is_interlaced set to 0 if not interlaced, 1 for top field first/contains only top field, 2 for bottom field first/contains only bottom field.
+\param is_interlaced set to
+	0:  not interlaced
+	1:  top field first or contains only top field if packet not full frame
+	2:  bottom field first or contains only bottom field.
 \return error code if any
 */
 GF_Err gf_filter_pck_set_interlaced(GF_FilterPacket *pck, u32 is_interlaced);
 
 /*! Gets packet video interlacing flag
 \param pck target packet
-\return interlaced flag, set to 0 if not interlaced, 1 for top field first, 2 otherwise.
+\return interlaced flag, see \ref gf_filter_pck_set_interlaced
 */
 u32 gf_filter_pck_get_interlaced(GF_FilterPacket *pck);
 

@@ -323,7 +323,7 @@ static GF_Err isom_create_init_from_mem(const char *fileName, GF_ISOFile *file)
 	if (!stbl->SampleSize) return GF_OUT_OF_MEM;
 	stbl->TimeToSample = (GF_TimeToSampleBox *) gf_isom_box_new_parent(&stbl->child_boxes, GF_ISOM_BOX_TYPE_STTS);
 	if (!stbl->TimeToSample) return GF_OUT_OF_MEM;
-	stbl->ChunkOffset = (GF_Box *) gf_isom_box_new_parent(&stbl->child_boxes, GF_ISOM_BOX_TYPE_STCO);
+	stbl->ChunkOffset = gf_isom_box_new_parent(&stbl->child_boxes, GF_ISOM_BOX_TYPE_STCO);
 	if (!stbl->ChunkOffset) return GF_OUT_OF_MEM;
 	stbl->SampleToChunk = (GF_SampleToChunkBox *) gf_isom_box_new_parent(&stbl->child_boxes, GF_ISOM_BOX_TYPE_STSC);
 	if (!stbl->SampleToChunk) return GF_OUT_OF_MEM;
@@ -2684,6 +2684,7 @@ u32 gf_isom_get_udta_count(GF_ISOFile *movie, u32 trackNumber)
 		if (!trak) return 0;
 		udta = trak->udta;
 	} else {
+		if (!movie->moov) return 0;
 		udta = movie->moov->udta;
 	}
 	if (udta) return gf_list_count(udta->recordList);
@@ -2703,6 +2704,7 @@ GF_Err gf_isom_get_udta_type(GF_ISOFile *movie, u32 trackNumber, u32 udta_idx, u
 		if (!trak) return GF_OK;
 		udta = trak->udta;
 	} else {
+		if (!movie->moov) return GF_BAD_PARAM;
 		udta = movie->moov->udta;
 	}
 	if (!udta) return GF_BAD_PARAM;
@@ -2732,6 +2734,7 @@ u32 gf_isom_get_user_data_count(GF_ISOFile *movie, u32 trackNumber, u32 UserData
 		if (!trak) return 0;
 		udta = trak->udta;
 	} else {
+		if (!movie->moov) return 0;
 		udta = movie->moov->udta;
 	}
 	if (!udta) return 0;
@@ -2764,6 +2767,7 @@ GF_Err gf_isom_get_user_data(GF_ISOFile *movie, u32 trackNumber, u32 UserDataTyp
 		if (!trak) return GF_BAD_PARAM;
 		udta = trak->udta;
 	} else {
+		if (!movie->moov) return GF_BAD_PARAM;
 		udta = movie->moov->udta;
 	}
 	if (!udta) return GF_BAD_PARAM;
@@ -3142,6 +3146,7 @@ GF_Err gf_isom_reset_data_offset(GF_ISOFile *movie, u64 *top_box_start)
 	for (i=0; i<count; i++) {
 		GF_TrackBox *tk = gf_list_get(movie->moov->trackList, i);
 		tk->first_traf_merged = GF_FALSE;
+		tk->Media->information->sampleTable->TimeToSample->cumulated_start_dts = 0;
 	}
 #endif
 	return GF_OK;
@@ -3201,6 +3206,30 @@ GF_Err gf_isom_purge_samples(GF_ISOFile *the_file, u32 trackNumber, u32 nb_sampl
 	stbl_RemoveRedundant(stbl, 1, nb_samples);
 	stbl_RemoveRAPs(stbl, nb_samples);
 
+	//purge saiz and saio
+	if (trak->sample_encryption && trak->sample_encryption->cenc_saiz) {
+		GF_SampleAuxiliaryInfoSizeBox *saiz = trak->sample_encryption->cenc_saiz;
+		if (saiz->sample_count <= nb_samples) {
+			saiz->sample_count = 0;
+		} else {
+			if (!saiz->default_sample_info_size) {
+				memmove(saiz->sample_info_size, &saiz->sample_info_size[nb_samples], sizeof(u8)*(saiz->sample_count-nb_samples));
+			}
+			saiz->sample_count-=nb_samples;
+		}
+		saiz->cached_sample_num = 0;
+		saiz->cached_prev_size = 0;
+	}
+	if (trak->sample_encryption && trak->sample_encryption->cenc_saio) {
+		GF_SampleAuxiliaryInfoOffsetBox *saio = trak->sample_encryption->cenc_saio;
+		if (saio->entry_count>1) {
+			if (saio->entry_count <= nb_samples) saio->entry_count = 0;
+			else {
+				memmove(saio->offsets, &saio->offsets[nb_samples], sizeof(u64)*(saio->entry_count-nb_samples));
+				saio->entry_count-=nb_samples;
+			}
+		}
+	}
 	//then remove sample per sample for the rest, which is either
 	//- sparse data
 	//- allocated structure rather than memmove-able array
@@ -3210,6 +3239,10 @@ GF_Err gf_isom_purge_samples(GF_ISOFile *the_file, u32 trackNumber, u32 nb_sampl
 		stbl_RemoveSubSample(stbl, 1);
 		stbl_RemovePaddingBits(stbl, 1);
 		stbl_RemoveSampleGroup(stbl, 1);
+		if (trak->sample_encryption) {
+			GF_CENCSampleAuxInfo *sai = gf_list_pop_front(trak->sample_encryption->samp_aux_info);
+			gf_isom_cenc_samp_aux_info_del(sai);
+		}
 		nb_samples--;
 	}
 	return GF_OK;
@@ -5469,8 +5502,7 @@ GF_Err gf_isom_get_sample_cenc_info_internal(GF_TrackBox *trak, void *traf, GF_S
 	u32 j, group_desc_index;
 	GF_SampleGroupDescriptionBox *sgdesc;
 	u32 i, count;
-	u32 descIndex=1, chunkNum;
-	u64 offset;
+	u32 descIndex=1;
 	u32 first_sample_in_entry, last_sample_in_entry;
 	GF_CENCSampleEncryptionGroupEntry *entry;
 
@@ -5490,6 +5522,8 @@ GF_Err gf_isom_get_sample_cenc_info_internal(GF_TrackBox *trak, void *traf, GF_S
 #endif
 
 	if (trak->Media->information->sampleTable->SampleSize && trak->Media->information->sampleTable->SampleSize->sampleCount>=sample_number) {
+		u32 chunkNum;
+		u64 offset;
 		stbl_GetSampleInfos(trak->Media->information->sampleTable, sample_number, &offset, &chunkNum, &descIndex, NULL);
 	} else {
 #ifndef	GPAC_DISABLE_ISOM_FRAGMENTS

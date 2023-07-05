@@ -607,6 +607,7 @@ static void reframer_load_range(GF_ReframerCtx *ctx)
 	}
 	if (end_date) {
 		Bool is_dur = GF_FALSE;
+		ctx->end_frame_idx_plus_one = 0;
 		if (!reframer_parse_date(end_date, &ctx->cur_end, &ctx->end_frame_idx_plus_one, NULL, &is_dur)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] cannot parse end date, assuming open range\n"));
 			ctx->range_type = RANGE_OPEN;
@@ -616,7 +617,7 @@ static void reframer_load_range(GF_ReframerCtx *ctx)
 				ctx->cur_end.den = ctx->cur_start.den;
 				ctx->cur_end.num += ctx->cur_start.num;
 			}
-			if (gf_timestamp_greater_or_equal(ctx->cur_start.num, ctx->cur_start.den, ctx->cur_end.num, ctx->cur_end.den) ) {
+			if (!ctx->end_frame_idx_plus_one && gf_timestamp_greater_or_equal(ctx->cur_start.num, ctx->cur_start.den, ctx->cur_end.num, ctx->cur_end.den) ) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[Reframer] End range before start range, assuming open range\n"));
 				ctx->range_type = RANGE_OPEN;
 			}
@@ -772,9 +773,12 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 	if (!ctx->range_type && ctx->frames.nb_items) {
 		u32 i;
 		Bool found=GF_FALSE;
+		s32 max_f=0;
 		for (i=0; i<ctx->frames.nb_items; i++) {
 			s32 v = ctx->frames.vals[i];
 			if (v>=0) {
+				if (!max_f || (max_f<v))
+					max_f = v;
 				if (v == st->nb_frames + 1) {
 					found=GF_TRUE;
 					break;
@@ -790,6 +794,12 @@ Bool reframer_send_packet(GF_Filter *filter, GF_ReframerCtx *ctx, RTStream *st, 
 			//drop
 			gf_filter_pid_drop_packet(st->ipid);
 			st->nb_frames++;
+			if (max_f && ((u32) max_f < st->nb_frames + 1)) {
+				GF_FilterEvent evt;
+				GF_FEVT_INIT(evt, GF_FEVT_STOP, st->ipid);
+				gf_filter_pid_send_event(st->ipid, &evt);
+				gf_filter_pid_set_eos(st->opid);
+			}
 			return GF_TRUE;
 		}
 	}
@@ -1073,7 +1083,7 @@ static u32 reframer_check_pck_range(GF_Filter *filter, GF_ReframerCtx *ctx, RTSt
 {
 	if (ctx->start_frame_idx_plus_one) {
 		//frame not after our range start
-		if (frame_idx<ctx->start_frame_idx_plus_one) {
+		if (frame_idx+1<ctx->start_frame_idx_plus_one) {
 			return 0;
 		} else {
 			//closed range, check
@@ -1618,7 +1628,7 @@ static void check_gop_split(GF_ReframerCtx *ctx)
 		} else {
 			//this will be a eos signal
 			st->range_end_reached_ts = 0;
-			assert(st->range_start_computed==2);
+			assert((st->range_start_computed==2) || st->in_eos);
 		}
 	}
 	ctx->cur_end.num = ctx->min_ts_computed;
@@ -2080,7 +2090,7 @@ refetch_streams:
 				GF_FilterPid *ipid = gf_filter_get_ipid(filter, i);
 				RTStream *st = gf_filter_pid_get_udta(ipid);
 				if (!st->is_playing) continue;
-				assert(st->range_start_computed);
+				assert(st->range_start_computed || st->in_eos);
 				//eos
 				if (st->range_start_computed==2) {
 					continue;
@@ -2774,7 +2784,7 @@ GF_FilterRegister ReframerRegister = {
 		"- 'T'H:M:S.MS, 'T'M:S.MS, 'T'S.MS: specify time in hours, minutes, seconds and milliseconds\n"
 		"- INT, FLOAT, NUM/DEN: specify time in seconds (number or fraction)\n"
 		"- 'D'INT, 'D'FLOAT, 'D'NUM/DEN: specify end time as offset to start time in seconds (number or fraction) - only valid for [-xe]()\n"
-		"- 'F'NUM: specify time as frame number\n"
+		"- 'F'NUM: specify time as frame number, 1 being first\n"
 		"- XML DateTime: specify absolute UTC time\n"
 		"  \n"
 		"In this mode, the timestamps are rewritten to form a continuous timeline, unless [-xots]() is set.\n"

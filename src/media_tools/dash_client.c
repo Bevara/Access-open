@@ -4529,7 +4529,7 @@ static void dash_do_rate_adaptation(GF_DashClient *dash, GF_DASH_Group *group)
 	}
 
 	/* The bytes_per_sec field is set each time a segment is downloaded,
-	   (this may need to be adjusted in the future to accomodate algorithms
+	   (this may need to be adjusted in the future to accommodate algorithms
 	   that smooth download rate over several segments)
 	   if set to 0, this means that no segment was downloaded since the last call
 	   because this AdaptationSet is not selected
@@ -9398,7 +9398,7 @@ GF_Err gf_dash_group_next_seg_info(GF_DashClient *dash, u32 group_idx, u32 depen
 					seg_time->den = seg_scale;
 				}
 				if (seg_dur_ms) {
-					*seg_dur_ms = gf_timestamp_rescale(segment_dur, seg_scale, 1000);
+					*seg_dur_ms = (u32) gf_timestamp_rescale(segment_dur, seg_scale, 1000);
 				}
 				group->download_segment_index = cur_grp_idx;
 			}

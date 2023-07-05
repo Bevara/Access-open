@@ -85,7 +85,7 @@ const char *gpac_doc =
 "# Filter declaration [__FILTER__]\n"
 "## Generic declaration\n"
 "Each filter is declared by its name, with optional filter arguments appended as a list of colon-separated `name=value` pairs. Additional syntax is provided for:\n"
-"- boolean: `value` can be omitted, defaulting to `true` (e.g. `:noedit`). Using `!` before the name negates the result (e.g. `:!moof_first`)\n"
+"- boolean: `value` can be omitted, defaulting to `true` (e.g. `:allt`). Using `!` before the name negates the result (e.g. `:!moof_first`)\n"
 "- enumerations: name can be omitted, e.g. `:disp=pbo` is equivalent to `:pbo`.\n"
 "\n  \n"
 "When string parameters are used (e.g. URLs), it is recommended to escape the string using the keyword `gpac`.  \n"
@@ -917,7 +917,7 @@ static const char *gpac_credentials =
 "Passwords are not stored, only a SHA256 hash is stored.\n"
 "\n"
 "Servers using authentication rules can use a configuration file instead of a directory name.\n"
-"This configuration file is organized in sections, each section name descibing a directory.\n"
+"This configuration file is organized in sections, each section name describing a directory.\n"
 "EX [somedir]\n"
 "EX ru=foo\n"
 "EX rg=bar\n"
@@ -1189,6 +1189,7 @@ redo_pass:
 						}
 						continue;
 					}
+
 					if (!gf_sys_word_match(fname, arg->arg_name)) continue;
 
 					if (!first) {
@@ -1197,7 +1198,7 @@ redo_pass:
 							GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("No such filter %s\n", fname));
 							found = GF_TRUE;
 						}
-						GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("\nClosest matching filter options:\n", fname));
+						GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("\nClosest matching filter options:\n"));
 					}
 					gf_sys_format_help(helpout, help_flags | GF_PRINTARG_HIGHLIGHT_FIRST, "%s.%s \n", reg->name, arg->arg_name);
 				}

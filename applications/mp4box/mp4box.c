@@ -564,7 +564,7 @@ MP4BoxArg m4b_gen_args[] =
 	MP4BOX_ARG("group-rem-track", "remove given track from its group", GF_ARG_INT, GF_ARG_HINT_ADVANCED, parse_tsel_args, TSEL_ACTION_REMOVE_TSEL, ARG_IS_FUN),
 	MP4BOX_ARG("group-rem", "remove the track's group", GF_ARG_INT, GF_ARG_HINT_ADVANCED, parse_tsel_args, TSEL_ACTION_REMOVE_ALL_TSEL_IN_GROUP, ARG_IS_FUN),
 	MP4BOX_ARG("group-clean", "remove all group information from all tracks", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &clean_groups, 0, ARG_OPEN_EDIT),
-	MP4BOX_ARG_S("ref", "tkID:XXXX:refID", "add a reference of type 4CC from track ID to track refID", GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_REFERENCE, ARG_IS_FUN),
+	MP4BOX_ARG_S("ref", "tkID:R4CC:refID", "add a reference of type R4CC from track ID to track refID (remove track reference if refID is 0)", GF_ARG_HINT_ADVANCED, parse_track_action, TRACK_ACTION_REFERENCE, ARG_IS_FUN),
 	MP4BOX_ARG("keep-utc", "keep UTC timing in the file after edit", GF_ARG_BOOL, GF_ARG_HINT_ADVANCED, &keep_utc, 0, 0),
 	MP4BOX_ARG_S("udta", "tkID:[OPTS]", "set udta for given track or movie if tkID is 0. OPTS is a colon separated list of:\n"
 	        "- type=CODE: 4CC code of the UDTA (not needed for `box=` option)\n"
@@ -616,7 +616,7 @@ void PrintGeneralUsage()
 		"- `audioN`, `videoN`, `textN`: target is the `N`th `audio`, `video` or `text` track, with `N=1` being the first track of desired type\n"
 		"  \n"
 		"Option values:\n"
-		"Unless specified otherwise, a track operation option of type `integer` expects a track identifer value following it.\n"
+		"Unless specified otherwise, a track operation option of type `integer` expects a track identifier value following it.\n"
 		"An option of type `boolean` expects no following value.\n"
 		"  \n"
 	);
@@ -683,7 +683,7 @@ static void PrintSplitUsage()
 		"  \n"
 		"The default output storage mode is to full interleave and will require a temp file for each output. This behavior can be modified using `-flat`, `-newfs`, `-inter` and `-frag`.\n"
 		"The output file name(s) can be specified using `-out` and templates (e.g. `-out split$num%%04d$.mp4` produces split0001.mp4, split0002.mp4, ...).\n"
-		"Multiple time ranges can be specified as a comma-seperated list for `-splitx`, `-splitz` and `-splitg`.\n"
+		"Multiple time ranges can be specified as a comma-separated list for `-splitx`, `-splitz` and `-splitg`.\n"
 		"  \n"
 	);
 
@@ -955,7 +955,7 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 	GF_DEF_ARG("dlba", NULL, "`S` force DolbyAtmos mode for EAC3. Value can be\n"
 		"- no: disable Atmos signaling\n"
 		"- auto: use Atmos signaling from first sample\n"
-		"- N: force Atmos signaling using complexibility type index N", NULL, NULL, GF_ARG_STRING, 0),
+		"- N: force Atmos signaling using compatibility type index N", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("font", NULL, "specify font name for text import (default `Serif`)", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("size", NULL, "specify font size for text import (default `18`)", NULL, NULL, GF_ARG_INT, 0),
 	GF_DEF_ARG("text_layout", NULL, "specify the track text layout as WxHxXxY\n"
@@ -1010,7 +1010,7 @@ static MP4BoxArg m4b_imp_fileopt_args [] = {
 		"  - other value will try to set track ID to this value if no other track with same ID is present"
 		"", NULL, NULL, GF_ARG_INT, 0),
 	GF_DEF_ARG("tkgp", NULL, "`S` assign track group to track. Value is formatted as `TYPE,N` with TYPE the track group type (4CC) and N the track group ID. A negative ID removes from track group ID -N", NULL, NULL, GF_ARG_STRING, 0),
-	GF_DEF_ARG("tkidx", NULL, "`S` set track position in tracklist, 1 being first track in file", NULL, NULL, GF_ARG_STRING, 0),
+	GF_DEF_ARG("tkidx", NULL, "`S` set track position in track list, 1 being first track in file", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("stats", "fstat", "`C` print filter session stats after import", NULL, NULL, GF_ARG_BOOL, 0),
 	GF_DEF_ARG("graph", "fgraph", "`C` print filter session graph after import", NULL, NULL, GF_ARG_BOOL, 0),
 	{"sopt:[OPTS]", NULL, "set `OPTS` as additional arguments to source filter. `OPTS` can be any usual filter argument, see [filter doc `gpac -h doc`](Filters)"},
@@ -1528,7 +1528,7 @@ void PrintTags()
 	"- `tag_name` starts with `QT/`\n"
 	"- or `tag_name` is not recognized and longer than 4 characters\n"
 	"  \n"
-	"The `tag_name` can optionnally be prefixed with `HDLR@`, indicating the tag namespace 4CC, the default namespace being `mdta`.\n"
+	"The `tag_name` can optionally be prefixed with `HDLR@`, indicating the tag namespace 4CC, the default namespace being `mdta`.\n"
 	"The `tag_value` can be prefixed with:\n"
 	"- S: force string encoding (must be placed first) instead of parsing the tag value\n"
 	"- b: use 8-bit encoding for signed or unsigned int\n"
@@ -5594,7 +5594,10 @@ static GF_Err do_track_act()
 			}
 			break;
 		case TRACK_ACTION_REFERENCE:
-			e = gf_isom_set_track_reference(file, track, GF_4CC(tka->lang[0], tka->lang[1], tka->lang[2], tka->lang[3]), newTrackID);
+			if (newTrackID)
+				e = gf_isom_set_track_reference(file, track, GF_4CC(tka->lang[0], tka->lang[1], tka->lang[2], tka->lang[3]), newTrackID);
+			else
+				e = gf_isom_remove_track_reference(file, track, GF_4CC(tka->lang[0], tka->lang[1], tka->lang[2], tka->lang[3]) );
 			do_save = GF_TRUE;
 			break;
 		case TRACK_ACTION_REM_NON_RAP:

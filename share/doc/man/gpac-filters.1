@@ -822,7 +822,15 @@ src (cstr):                    local file name of source content (only used when
 .br
 allt (bool, default: false):   load all tracks even if unknown media type
 .br
-noedit (bool, default: false): do not use edit lists
+edits (enum, default: auto):   do not use edit lists
+.br
+* auto: track delay and no edit list when possible
+.br
+* no: ignore edit list
+.br
+* strict: use edit list even if only signaling a delay
+.br
+
 .br
 itt (bool, default: false):    convert all items of root meta into a single PID
 .br
@@ -876,7 +884,7 @@ xps_check (enum, default: auto): parameter sets extraction mode from AVC/HEVC/VV
 .br
 * rem: removes all inband xPS and notify configuration changes accordingly
 .br
-* auto: resolves to keep for smode=splix (dasher mode), rem otherwise
+* auto: resolves to keep for smode=splitx (dasher mode), rem otherwise
 .br
 
 .br
@@ -3368,7 +3376,7 @@ The formats allowed for times specifiers are:
 .br
 * 'D'INT, 'D'FLOAT, 'D'NUM/DEN: specify end time as offset to start time in seconds (number or fraction) - only valid for .I xe
 .br
-* 'F'NUM: specify time as frame number
+* 'F'NUM: specify time as frame number, 1 being first
 .br
 * XML DateTime: specify absolute UTC time
 .br
@@ -5937,19 +5945,9 @@ The pipeline flush is signaled as EOS while keeping the stream active.
 .br
 This is typically needed for mux filters waiting for EOS to flush their data.
 .br
-Warning: Usage of  .I sigflush may not be properly supported by some filters.
-.br
-If .I marker is set, the following strings (all 8-bytes 0 terminator) will be scanned:
-.br
-* `GPACPIF`: triggers a pipeline flush event after the marker
-.br
-* `GPACPIR`: triggers a reconfigration of the format after the marker
-.br
-The marker mode should be used carefully as it will slow down pipe processing (higher CPU usage and delayed output).
-.br
   
 .br
-The pipe input can be created in blocking mode or non-blocking mode.
+If .I marker is set, the following strings (all 8-bytes with 
 .br
 
 .br
@@ -5971,6 +5969,10 @@ ka (bool, default: false):     keep-alive pipe when end of input is detected
 mkp (bool, default: false):    create pipe if not found
 .br
 sigflush (bool, default: false): signal end of stream upon pipe close - cf filter help
+.br
+marker (bool, default: false): inspect payload for flush and reconfigure signals - cf filter help
+.br
+bpcnt (uint, default: 0):      number of broken pipe allowed before exiting, 0 means forever
 .br
 
 .br
@@ -7236,7 +7238,7 @@ hmode (enum, default: default): filter operation mode, ignored if .I wdir is set
 .br
 
 .br
-timeout (uint, default: 5):    timeout in seconds for persistent connections (0 disable timeout)
+timeout (uint, default: 30):   timeout in seconds for persistent connections (0 disable timeout)
 .br
 ext (cstr):                    set extension for graph resolution, regardless of file extension
 .br
@@ -7273,6 +7275,8 @@ reopen (bool, default: false): in server mode with no read dir, accept requests 
 max_async_buf (uint, default: 100000): maximum async buffer size in bytes when sharing output over multiple connection without file IO
 .br
 blockio (bool, default: false): use blocking IO in push or source mode or in server mode with no read dir
+.br
+ka (bool, default: true):      keep input alive if failure in push mode
 .br
 
 .br
@@ -7419,7 +7423,7 @@ This filter parses FLAC files/data and outputs corresponding audio PID and frame
 .br
 By default the reframer will only check CRC footer of frames if a change in sample rate or channel mapping is detected.
 .br
-This should accomodate for most configurations, but CRC check can be enforced using .I docrc.
+This should accommodate for most configurations, but CRC check can be enforced using .I docrc.
 .br
 
 .br
@@ -8975,6 +8979,12 @@ Note: frames are simply copied or dropped with no motion compensation.
 .br
 
 .br
+When .I align is not 0, if the difference between two consecutive timestamps is greater than the specified threshold, the new timestamp 
+.br
+is set to the last computed timestamp plus the minimum packet duration for the stream.
+.br
+
+.br
 .SH Options (expert):
 .LP
 .br
@@ -9002,6 +9012,10 @@ rawv (enum, default: no):      copy video frames
 .br
 tsinit (lfrac, default: -1/1): initial timestamp to resync to, negative values disables resync
 .br
+align (uint, default: 0):      timestamp alignment threshold (0 disables alignment) - see filter help
+.br
+reorder (bool, default: false): reorder input packets by CTS (resulting PID may fail decoding)
+.br
 
 .br
 .SH oggmx
@@ -9015,7 +9029,7 @@ This filter multiplexes audio and video to produce an OGG stream.
 .br
 
 .br
-The .I cdur option allows specifiying the interleaving duration (max time difference between consecutive packets of different streams). 
+The .I cdur option allows specifying the interleaving duration (max time difference between consecutive packets of different streams). 
 .br
 
 .br
@@ -9049,7 +9063,7 @@ This will:
 .br
 - trigger reframers to be instanciated after the unframer filter.
 .br
-Using the unframer filter avoids doing a dump to disk then reimport or other complex data piping.
+Using the unframer filter avoids doing a dump to disk then re-import or other complex data piping.
 .br
 
 .br
@@ -9242,7 +9256,7 @@ This will generate the 5th segment containing representations A and V2.
 .br
 
 .br
-The filter does not store any state, it is the user responsability to use consistent informations across calls:
+The filter does not store any state, it is the user responsibility to use consistent information across calls:
 .br
 - do not change segment templates
 .br
@@ -9250,7 +9264,7 @@ The filter does not store any state, it is the user responsability to use consis
 .br
 
 .br
-.SH Recommandations
+.SH Recommendations
 .LP
 .br
 Indexing supports fragmented and non-fragmented MP4, MPEG-2 TS and seekable inputs.
@@ -9382,6 +9396,27 @@ hq (bool, default: false):     use bilinear interpolation instead of closest pix
 .br
 
 .br
+.SH ccdec
+.LP
+.br
+Description: Closed-Caption decoder
+.br
+
+.br
+This filter decodes Closed Captions to unframed SRT.
+.br
+Supported video media types are MPEG2, AVC, HEVC, VVC and AV1 streams.
+.br
+
+.br
+Only a subset of CEA 608/708 is supported.
+.br
+
+.br
+No options
+.br
+
+.br
 .SH dtout
 .LP
 .br
@@ -9479,7 +9514,7 @@ When generating video, the pixels are shifted to the left at every frame
 .br
 Components are described as N[bpc][+k] with
 .br
-* N: component type, one of M(ono), Y, U, V, R, G, B, A, d(epth), disp, p(alette), f(ilterArray), x (pad)
+* N: component type, one of M(mono), Y, U, V, R, G, B, A, d(depth), disp, p(palette), f(filterArray), x (pad)
 .br
 * bpc: bits per component value, default is 8
 .br
@@ -9508,19 +9543,19 @@ interleave (enum, default: pix): interleave type
 .br
 * tile: tile-component interleaving
 .br
-* multi: pixel-based interleaving (packed modes) for subsampled modes
+* multi: pixel-based interleaving (packed modes) for sub-sampled modes
 .br
 
 .br
 sampling (enum, default: none): sampling types
 .br
-* none: no subsampling
+* none: no sub-sampling
 .br
-* 422: YUV 4:2:2 subsampling
+* 422: YUV 4:2:2 sub-sampling
 .br
-* 420: YUV 4:2:0 subsampling
+* 420: YUV 4:2:0 sub-sampling
 .br
-* 411: YUV 4:1:1 subsampling
+* 411: YUV 4:1:1 sub-sampling
 .br
 
 .br
@@ -9600,7 +9635,7 @@ This filter generates screenshots from a video stream.
 .br
 
 .br
-The input video is downsampled by the .I scale factor. The output size is configured based on the number of images per line and per column in the .I grid. 
+The input video is down-sampled by the .I scale factor. The output size is configured based on the number of images per line and per column in the .I grid. 
 .br
 Once configured, the output size is no longer modified.
 .br
@@ -9776,7 +9811,7 @@ dropfirst (bool, default: false): drop first image
 .br
 list (str, default: null):     export json list of frame times and positions to given file
 .br
-lxy (bool, default: false):    add explict x and y in json export
+lxy (bool, default: false):    add explicit x and y in json export
 .br
 
 .br

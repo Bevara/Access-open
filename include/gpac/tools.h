@@ -281,7 +281,7 @@ Bool gf_parse_frac(const char *str, GF_Fraction *frac);
 /*!
 \brief search string without case
 
-Search a aubstring in a string witout checking for case
+Search a substring in a string without checking for case
 \param text text to search
 \param subtext string to find
 \param subtext_len length of string to find
@@ -1770,7 +1770,7 @@ typedef int (*gfio_printf_proc)(GF_FileIO *fileio, const char *format, va_list a
 
 /*! Creates a new file IO object
 
-There is no guarantee that the corresponding resource will be opened by the framework, it is therefore the caller responsability to track objects created by
+There is no guarantee that the corresponding resource will be opened by the framework, it is therefore the caller responsibility to track objects created by
 gf_fileio_new or as a response to open with mode "url".
 
 \param url the original URL this file IO object wraps

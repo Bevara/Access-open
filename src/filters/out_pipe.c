@@ -56,7 +56,7 @@ typedef struct
 	//options
 	Double start, speed;
 	char *dst, *mime, *ext;
-	Bool dynext, mkp, ka, marker;
+	Bool dynext, mkp, ka, marker, force_close;
 	u32 block_size;
 
 
@@ -92,6 +92,7 @@ static GF_Err pipeout_open_close(GF_PipeOutCtx *ctx, const char *filename, const
 		if (ctx->fd>=0) close(ctx->fd);
 		ctx->fd = -1;
 #endif
+		ctx->force_close = GF_FALSE;
 		return GF_OK;
 	}
 
@@ -268,6 +269,7 @@ static GF_Err pipeout_initialize(GF_Filter *filter)
 		ext = gf_file_ext_start(ctx->dst);
 		if (ext) ext++;
 	}
+	ctx->force_close = GF_TRUE;
 
 #ifdef WIN32
 	ctx->pipe = INVALID_HANDLE_VALUE;
@@ -302,6 +304,12 @@ static GF_Err pipeout_initialize(GF_Filter *filter)
 static void pipeout_finalize(GF_Filter *filter)
 {
 	GF_PipeOutCtx *ctx = (GF_PipeOutCtx *) gf_filter_get_udta(filter);
+
+	//pipe was not open, do an open/close - this allows signaling broken pipe when we had an error before opening
+	if (ctx->force_close) {
+		pipeout_open_close(ctx, ctx->dst, NULL, 0, GF_FALSE);
+	}
+
 	pipeout_open_close(ctx, NULL, NULL, 0, GF_FALSE);
 
 	if (ctx->szFileName) {
@@ -314,7 +322,7 @@ static void pipeout_finalize(GF_Filter *filter)
 #define PIPE_FLUSH_MARKER	"GPACPIF"
 static void pout_write_marker(GF_PipeOutCtx *ctx)
 {
-	if (ctx->marker && gf_filter_pid_is_flush_eos(ctx->pid)) {
+	if (ctx->marker) {
 		u32 nb_write;
 #ifdef WIN32
 		if (! WriteFile(ctx->pipe, PIPE_FLUSH_MARKER, 8, (LPDWORD) &nb_write, NULL)) {
@@ -328,7 +336,9 @@ static void pout_write_marker(GF_PipeOutCtx *ctx)
 			return;
 		}
 #endif
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[PipeOut] Wrote marker\n"));
+		GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[PipeOut] Wrote flush marker\n"));
+	} else {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[PipeOut] Got flush marker (write disabled)\n"));
 	}
 }
 
@@ -396,7 +406,6 @@ static GF_Err pipeout_process(GF_Filter *filter)
 			}
 		}
 	}
-	pout_write_marker(ctx);
 
 	pck_data = gf_filter_pck_get_data(pck, &pck_size);
 	if (
@@ -483,6 +492,7 @@ static GF_Err pipeout_process(GF_Filter *filter)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[PipeOut] Output file handle is not opened, discarding %d bytes\n", pck_size));
 	}
 	gf_filter_pid_drop_packet(ctx->pid);
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[PipeOut] Wrote packet %d bytes\n", pck_size));
 
 	if (broken && !ctx->ka) {
 		//abort and send stop

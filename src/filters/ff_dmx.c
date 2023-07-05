@@ -462,8 +462,14 @@ restart:
 		if (!ctx->strbuf_size) return GF_OK;
 	}
 
-	if (!ctx->nb_playing)
+	if (!ctx->nb_playing) {
+		if (ctx->stop_seen) {
+			for (i=0; i<ctx->nb_streams; i++) {
+				if (ctx->pids_ctx[i].pid) gf_filter_pid_set_eos(ctx->pids_ctx[i].pid);
+			}
+		}
 		return GF_EOS;
+	}
 
 	if (ctx->raw_pck_out)
 		return GF_EOS;
@@ -1792,7 +1798,16 @@ static const GF_FilterArgs FFDemuxPidArgs[] =
 	{0}
 };
 
+static void ffdmxpid_finalize(GF_Filter *filter)
+{
+	GF_FFDemuxCtx *ctx = gf_filter_get_udta(filter);
+	if (ctx->src) {
+		gf_free((char *)ctx->src);
+		ctx->src = NULL;
+	}
+	ffdmx_finalize(filter);
 
+}
 const GF_FilterRegister FFDemuxPidRegister = {
 	.name = "ffdmxpid",
 	.version=LIBAVFORMAT_IDENT,
@@ -1801,7 +1816,7 @@ const GF_FilterRegister FFDemuxPidRegister = {
 	.private_size = sizeof(GF_FFDemuxCtx),
 	SETCAPS(FFPidDmxCaps),
 	.initialize = ffdmx_initialize,
-	.finalize = ffdmx_finalize,
+	.finalize = ffdmxpid_finalize,
 	.configure_pid = ffdmx_configure_pid,
 	.process = ffdmx_process,
 	.update_arg = ffdmx_update_arg,

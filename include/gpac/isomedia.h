@@ -384,6 +384,8 @@ enum
 	GF_ISOM_SUBTYPE_DTSH = GF_4CC('d','t','s','h'),
 	GF_ISOM_SUBTYPE_DTSL = GF_4CC('d','t','s','l'),
 	GF_ISOM_SUBTYPE_DTSE = GF_4CC('d','t','s','e'),
+	GF_ISOM_SUBTYPE_DTSX = GF_4CC('d','t','s','x'),
+	GF_ISOM_SUBTYPE_DTSY = GF_4CC('d','t','s','y'),
 
 	GF_ISOM_SUBTYPE_UNCV	= GF_4CC( 'u', 'n', 'c', 'v' ),
 	GF_ISOM_ITEM_TYPE_UNCI	= GF_4CC( 'u', 'n', 'c', 'i' ),
@@ -3591,7 +3593,7 @@ GF_Err gf_isom_hevc_set_inband_config(GF_ISOFile *isom_file, u32 trackNumber, u3
 */
 GF_Err gf_isom_lhvc_force_inband_config(GF_ISOFile *isom_file, u32 trackNumber, u32 sampleDescriptionIndex);
 
-/*! sets hvt1 entry type (tile track) or hev2/hvc2 type if is_base_track is set. It is the use responsability to set the tbas track reference to the base hevc track
+/*! sets hvt1 entry type (tile track) or hev2/hvc2 type if is_base_track is set. It is the use responsibility to set the tbas track reference to the base hevc track
 \param isom_file the target ISO file
 \param trackNumber the target track
 \param sampleDescriptionIndex the target sample description index
@@ -4257,7 +4259,7 @@ GF_Err gf_isom_reset_tables(GF_ISOFile *isom_file, Bool reset_sample_count);
 
 /*! sets the offset for parsing from the input buffer to 0 (used to reclaim input buffer)
 \param isom_file the target ISO file
-\param top_box_start set to the byte offset in the source buffer of the first top level box
+\param top_box_start set to the byte offset in the source buffer of the first top level box, may be NULL
 \return error if any
 */
 GF_Err gf_isom_reset_data_offset(GF_ISOFile *isom_file, u64 *top_box_start);

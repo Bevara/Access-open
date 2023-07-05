@@ -1452,12 +1452,13 @@ static void vout_draw_gl(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 		vout_draw_gl_hw_textures(ctx, frame_ifce);
 	} else {
 		data = (char*) gf_filter_pck_get_data(pck, &wsize);
+		if ((data && wsize) || frame_ifce) {
+			//upload texture
+			gf_gl_txw_upload(&ctx->tx, data, frame_ifce);
 
-		//upload texture
-		gf_gl_txw_upload(&ctx->tx, data, frame_ifce);
-
-		//and draw
-		vout_draw_gl_quad(ctx, GF_FALSE);
+			//and draw
+			vout_draw_gl_quad(ctx, GF_FALSE);
+		}
 	}
 
 exit:
@@ -1730,7 +1731,7 @@ static GF_Err vout_process(GF_Filter *filter)
 
 	pck = gf_filter_pid_get_packet(ctx->pid);
 	if (!pck) {
-		if (gf_filter_pid_is_eos(ctx->pid)) {
+		if (gf_filter_pid_is_eos(ctx->pid) && !gf_filter_pid_is_flush_eos(ctx->pid)) {
 			if (!ctx->aborted) {
 				GF_FilterEvent evt;
 				GF_FEVT_INIT(evt, GF_FEVT_STOP, ctx->pid);

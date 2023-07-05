@@ -15,7 +15,7 @@ LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/jpeg/
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/png/
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/faad
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/openjpeg
-+LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/openssl_android/
+LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../extra_lib/include/openssl_android/
 LOCAL_C_INCLUDES 	+= $(LOCAL_PATH)/../../../../modules
 
 LOCAL_LDLIBS    += -L$(LOCAL_PATH)/../../../../extra_lib/lib/android/$(TARGET_ARCH_ABI)
@@ -151,6 +151,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/filters/dasher.c \
 	../../../../src/filters/dec_ac52.c \
 	../../../../src/filters/dec_bifs.c \
+	../../../../src/filters/dec_cc.c \
 	../../../../src/filters/dec_faad.c \
 	../../../../src/filters/dec_img.c \
 	../../../../src/filters/dec_j2k.c \

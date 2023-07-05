@@ -2484,9 +2484,13 @@ u32 gf_filter_caps_to_caps_match(const GF_FilterRegister *src, u32 src_bundle_id
 
 					//prop type matched, output includes it and input excludes it: no match, don't look any further
 					if (prop_equal) {
-						matched = GF_FALSE;
-						exclude = GF_TRUE;
-						prop_found = GF_FALSE;
+						//ignore if we have a previous match for same cap - this is needed for filters declaring multiple stream types
+						//which are only known after filter loading
+						if (!bundles_cap_found[cur_dst_bundle]) {
+							matched = GF_FALSE;
+							exclude = GF_TRUE;
+							prop_found = GF_FALSE;
+						}
 					} else {
 						//remember we found a prop of same type but excluded value
 						// we will match unless we match an excluded value
@@ -5534,7 +5538,7 @@ static GF_Err gf_filter_pid_set_property_full(GF_FilterPid *pid, u32 prop_4cc, c
 
 	//if change of codecid or streamtype, remove ISOBMFF templates and subtype for codec
 	if (oldp && value) {
-		Bool reset=0;
+		u32 reset=0;
 		if (prop_4cc == GF_PROP_PID_CODECID) {
 			reset = 2;
 		} else if (prop_4cc == GF_PROP_PID_STREAM_TYPE) {
@@ -6198,10 +6202,17 @@ restart:
 	assert(pcki->pck);
 
 	if (gf_filter_pid_filter_internal_packet(pidinst, pcki)) {
+		//first time we get here in keepalive, return NULL even if we have a packet to force flush
+		if (pid->pid->eos_keepalive && !pidinst->keepalive_signaled) {
+			pidinst->keepalive_signaled=GF_TRUE;
+			pid->filter->nb_pck_io++;
+			return NULL;
+		}
 		//avoid recursion
 		goto restart;
 	}
 	pcki->pid->is_end_of_stream = GF_FALSE;
+	pidinst->keepalive_signaled = GF_FALSE;
 
 	if (filter_pck_check_prop_change(pidinst, pcki, GF_TRUE))
 		return NULL;
@@ -6553,9 +6564,7 @@ void gf_filter_pid_drop_packet(GF_FilterPid *pid)
 	}
 #endif
 
-	if (pid->filter->pcks_inst_reservoir) {
-		gf_fq_add(pid->filter->pcks_inst_reservoir, pcki);
-	} else {
+	if (gf_fq_res_add(pid->filter->pcks_inst_reservoir, pcki)) {
 		gf_free(pcki);
 	}
 	//unref pck
@@ -6600,6 +6609,7 @@ Bool gf_filter_pid_is_eos(GF_FilterPid *pid)
 	if (!pid->pid) return GF_TRUE;
 	if (!pid->pid->has_seen_eos && !pidi->discard_inputs && !pidi->discard_packets) {
 		pidi->is_end_of_stream = GF_FALSE;
+		pidi->keepalive_signaled = GF_FALSE;
 		return GF_FALSE;
 	}
 	//peek next for eos
@@ -6626,7 +6636,7 @@ Bool gf_filter_pid_is_flush_eos(GF_FilterPid *pid)
 		return GF_FALSE;
 
 	if (!pid->pid) return GF_FALSE;
-	return pid->pid->eos_keepalive;
+	return pid->pid->eos_keepalive&&pidi->keepalive_signaled;
 }
 
 
@@ -6641,18 +6651,24 @@ void gf_filter_pid_set_eos(GF_FilterPid *pid)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to signal EOS on input PID %s in filter %s\n", pid->pid->name, pid->filter->name));
 		return;
 	}
-	if (pid->has_seen_eos) return;
-
-	GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("EOS signaled on PID %s in filter %s\n", pid->name, pid->filter->name));
-	//we create a fake packet for eos signaling
-	pck = gf_filter_pck_new_shared_internal(pid, NULL, 0, NULL, GF_TRUE);
-	if (!pck) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new packet for EOS on PID %s in filter %s\n", pid->name, pid->filter->name));
+	//don't resend EOS if not keepalive - in keepalive we need to reevaluate and potentially trigger eos from filters
+	if (pid->has_seen_eos && !pid->eos_keepalive) {
 		return;
 	}
-	gf_filter_pck_set_framing(pck, GF_TRUE, GF_TRUE);
-	pck->pck->info.flags |= GF_PCK_CMD_PID_EOS;
-	gf_filter_pck_send(pck);
+	//reset eos keepalive at each first eos signal. If a source pid is in keepalive, we propagate below
+	pid->eos_keepalive = GF_FALSE;
+	if (!pid->has_seen_eos) {
+		GF_LOG(GF_LOG_INFO, GF_LOG_FILTER, ("EOS signaled on PID %s in filter %s\n", pid->name, pid->filter->name));
+		//we create a fake packet for eos signaling
+		pck = gf_filter_pck_new_shared_internal(pid, NULL, 0, NULL, GF_TRUE);
+		if (!pck) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to allocate new packet for EOS on PID %s in filter %s\n", pid->name, pid->filter->name));
+			return;
+		}
+		gf_filter_pck_set_framing(pck, GF_TRUE, GF_TRUE);
+		pck->pck->info.flags |= GF_PCK_CMD_PID_EOS;
+		gf_filter_pck_send(pck);
+	}
 
 	gf_mx_p(pid->filter->tasks_mx);
 	u32 i;
@@ -6969,6 +6985,7 @@ static void gf_filter_pid_reset_task_ex(GF_FSTask *task, Bool *had_eos)
 	pidi->last_block_ended = GF_TRUE;
 	pidi->first_block_started = GF_FALSE;
 	pidi->is_end_of_stream = GF_FALSE;
+	pidi->keepalive_signaled = GF_FALSE;
 	pidi->buffer_duration = 0;
 	pidi->nb_eos_signaled = 0;
 	pidi->pid->has_seen_eos = GF_FALSE;
@@ -7975,6 +7992,7 @@ void gf_filter_pid_clear_eos(GF_FilterPid *pid, Bool clear_all)
 
 			if (apidi->is_end_of_stream) {
 				apidi->is_end_of_stream = GF_FALSE;
+				apidi->keepalive_signaled = GF_FALSE;
 			}
 			if (apid->has_seen_eos) {
 				apid->has_seen_eos = GF_FALSE;
@@ -9136,6 +9154,10 @@ void gf_filter_pid_send_flush(GF_FilterPid *pid)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Attempt to signal flush on input PID %s in filter %s\n", pid->pid->name, pid->filter->name));
 		return;
 	}
-	pid->eos_keepalive = GF_TRUE;
+	if (pid->eos_keepalive)
+		return;
+
 	gf_filter_pid_set_eos(pid);
+	//set keepalive once eos has been called
+	pid->eos_keepalive = GF_TRUE;
 }
