@@ -434,6 +434,7 @@ enum
 	GF_ISOM_BOX_TYPE_TOLS	= GF_4CC( 't', 'o', 'l', 's' ),
 	GF_ISOM_BOX_TYPE_IENC	= GF_4CC( 'i', 'e', 'n', 'c' ),
 	GF_ISOM_BOX_TYPE_IAUX 	= GF_4CC('i', 'a', 'u', 'x'),
+	GF_ISOM_BOX_TYPE_ILCE   = GF_4CC( 'i', 'l', 'c', 'e' ),
 
 	/* MIAF Boxes */
 	GF_ISOM_BOX_TYPE_CLLI	= GF_4CC('c', 'l', 'l', 'i'),
@@ -766,7 +767,7 @@ typedef struct
 	GF_ISOM_BOX
 	u8 *data;
 	u32 dataSize;
-	u32 original_4cc;
+	u32 original_4cc, parent_4cc;
 	u32 sai_type, sai_aux_info;
 	u64 sai_offset;
 	struct _gf_saio_box *saio_box;
@@ -3530,6 +3531,13 @@ typedef struct
 	u32 *group_types;
 } GF_EssentialSamplegroupEntry;
 
+/*interlace group - 'ilce' type*/
+typedef struct
+{
+	u8 ilce_type;
+} GF_FieldInterlaceType;
+
+
 /*
 		CENC stuff
 */
@@ -3756,6 +3764,11 @@ typedef struct {
 	GF_ISOM_BOX
 	u8 axis;
 } GF_ImageMirrorBox;
+
+typedef struct {
+	GF_ISOM_BOX
+	u8 interlace_type;
+} GF_FieldInterlaceTypeBox;
 
 typedef struct
 {

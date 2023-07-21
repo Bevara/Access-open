@@ -653,8 +653,13 @@ int gpac_main(int _argc, char **_argv)
 			} else if (!strcmp(argv[i+1], "core")) {
 				gpac_core_help(argmode, GF_FALSE);
 				gpac_exit(0);
-			} else if (!strcmp(argv[i+1], "modules")) {
-				gpac_modules_help();
+			} else if (!strcmp(argv[i+1], "modules") || !strcmp(argv[i+1], "module")) {
+				if (i+2<argc) {
+					gf_sys_mark_arg_used(i+2, GF_TRUE);
+					gpac_modules_help(argv[i+2]);
+				} else {
+					gpac_modules_help(NULL);
+				}
 				gpac_exit(0);
 			} else if (!strcmp(argv[i+1], "doc")) {
 				gpac_filter_help();
@@ -1320,6 +1325,10 @@ restart:
 		}
 		ERR_EXIT
 	}
+
+	if (gf_opts_get_bool("temp", "use_libcaca"))
+		enable_reports = 0;
+
 	if (enable_reports) {
 		if (enable_reports==2)
 			gf_fs_set_ui_callback(session, gpac_event_proc, session);

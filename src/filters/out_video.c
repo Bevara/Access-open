@@ -105,6 +105,7 @@ typedef struct
 	GF_Fraction vdelay;
 	const char *out;
 	GF_PropUIntList dumpframes;
+	char *oltxt;
 
 	GF_PropVec4i olwnd;
 	GF_PropVec2i olsize;
@@ -805,6 +806,17 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 				ctx->num_textures = 1;
 			}
 			break;
+		}
+		u32 force_pf = ctx->pfmt;
+		if (ctx->is_yuv && ! (ctx->video_out->hw_caps & GF_VIDEO_HW_HAS_YUV)) {
+			force_pf = GF_PIXEL_RGB;
+		}
+		else if (gf_pixel_fmt_is_transparent(ctx->pfmt) && ! (ctx->video_out->hw_caps & GF_VIDEO_HW_HAS_RGBA)) {
+			force_pf = GF_PIXEL_RGB;
+		}
+		if (ctx->pfmt != force_pf) {
+			gf_filter_pid_negociate_property(pid, GF_PROP_PID_PIXFMT, &PROP_UINT(force_pf) );
+			return GF_OK;
 		}
 	}
 	GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[VideoOut] Reconfig input wsize %d x %d, %d textures\n", ctx->width, ctx->height, ctx->num_textures));
@@ -1619,6 +1631,27 @@ void vout_draw_2d(GF_VideoOutCtx *ctx, GF_FilterPacket *pck)
 	if (e != GF_OK)
 		return;
 
+	if (ctx->oldata.ptr) {
+		GF_VideoSurface olay;
+		memset(&olay, 0, sizeof(GF_VideoSurface));
+		olay.width = ctx->olsize.x;
+		olay.height = ctx->olsize.y;
+		olay.pixel_format = GF_PIXEL_RGBA;
+		olay.pitch_y = 4*olay.width;
+		olay.video_buffer = ctx->oldata.ptr;
+		dst_wnd.x = (u32) (ctx->dw/2 + ctx->olwnd.x - ctx->olwnd.z/2);
+		dst_wnd.y = (u32) (ctx->dh/2 - ctx->olwnd.y);
+		dst_wnd.w = ctx->olwnd.z;
+		dst_wnd.h = ctx->olwnd.w;
+		e = ctx->video_out->Blit(ctx->video_out, &olay, NULL, &dst_wnd, 0);
+	}
+	else if (ctx->oltxt && ctx->oltxt[0]) {
+		GF_Event evt;
+		memset(&evt, 0, sizeof(GF_Event));
+		evt.type = GF_EVENT_MESSAGE;
+		evt.message.message = ctx->oltxt;
+		ctx->video_out->ProcessEvent(ctx->video_out, &evt);
+	}
 
 	if (ctx->dump_f_idx) {
 		char szFileName[1024];
@@ -1720,7 +1753,7 @@ static GF_Err vout_process(GF_Filter *filter)
 		if (ctx->oldata.ptr && ctx->update_oldata)
 			return vout_draw_frame(ctx);
 
-		if (gf_filter_has_connect_errors(filter))
+		if (gf_filter_has_connect_errors(filter) || gf_filter_all_sinks_done(filter))
 			return GF_EOS;
 		//when we use vout+aout on audio only, we want the filter to still be active to process events
 		gf_filter_post_process_task(filter);
@@ -2300,6 +2333,7 @@ static const GF_FilterArgs VideoOutArgs[] =
 		"- 180: rotate 180 degree\n"
 		"- 270: rotate 90 degree clockwise"
 	, GF_PROP_UINT, "0","0|90|180|270", GF_FS_ARG_UPDATE | GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(oltxt), "overlay text", GF_PROP_STRING, NULL, NULL, GF_ARG_HINT_HIDE|GF_FS_ARG_UPDATE_SYNC},
 	{0}
 };
 

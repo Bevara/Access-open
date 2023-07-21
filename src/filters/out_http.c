@@ -158,6 +158,7 @@ typedef struct __httpout_input
 	u64 offset_at_seg_start;
 	u64 nb_write, write_start_range, write_end_range;
 	char range_hdr[100];
+	Bool seg_info_sent;
 
 	//for server mode, recording
 	char *local_path;
@@ -234,7 +235,7 @@ typedef struct __httpout_session
 	u32 nb_ranges, alloc_ranges, range_idx;
 	HTTByteRange *ranges;
 
-	Bool do_log;
+	u32 do_log;
 	u64 req_id;
 	u32 method_type, reply_code, nb_consecutive_errors;
 
@@ -699,7 +700,7 @@ static void httpout_set_local_path(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in)
 
 static Bool httpout_sess_parse_range(GF_HTTPOutSession *sess, char *range)
 {
-	Bool request_ok = GF_TRUE;;
+	Bool request_ok = GF_TRUE;
 	u32 i;
 	Bool has_open_start=GF_FALSE;
 	Bool has_file_end=GF_FALSE;
@@ -827,35 +828,41 @@ static Bool httpout_sess_parse_range(GF_HTTPOutSession *sess, char *range)
 	return GF_TRUE;
 }
 
-static Bool httpout_do_log(GF_HTTPOutSession *sess, u32 method)
+static u32 httpout_do_log(GF_HTTPOutSession *sess, u32 method)
 {
-	if (!sess->ctx->reqlog) return GF_FALSE;
+	u32 ret = 1;
+	if (!sess->ctx->reqlog) return 0;
+	char *reqs = sess->ctx->reqlog;
+	if (reqs[0] =='-') {
+		reqs++;
+		ret=2;
+	}
 
-	if (!strcmp(sess->ctx->reqlog, "*")) return GF_TRUE;
+	if (!strcmp(reqs, "*")) return ret;
 
 	switch (method) {
 	case GF_HTTP_GET:
-		if (strstr(sess->ctx->reqlog, "GET") || strstr(sess->ctx->reqlog, "get")) return GF_TRUE;
+		if (strstr(reqs, "GET") || strstr(reqs, "get")) return ret;
 		break;
 	case GF_HTTP_PUT:
-		if (strstr(sess->ctx->reqlog, "PUT") || strstr(sess->ctx->reqlog, "put")) return GF_TRUE;
+		if (strstr(reqs, "PUT") || strstr(reqs, "put")) return ret;
 		break;
 	case GF_HTTP_POST:
-		if (strstr(sess->ctx->reqlog, "POST") || strstr(sess->ctx->reqlog, "post")) return GF_TRUE;
+		if (strstr(reqs, "POST") || strstr(reqs, "post")) return ret;
 		break;
 	case GF_HTTP_DELETE:
-		if (strstr(sess->ctx->reqlog, "DEL") || strstr(sess->ctx->reqlog, "del")) return GF_TRUE;
+		if (strstr(reqs, "DEL") || strstr(reqs, "del")) return ret;
 		break;
 	case GF_HTTP_HEAD:
-		if (strstr(sess->ctx->reqlog, "HEAD") || strstr(sess->ctx->reqlog, "head")) return GF_TRUE;
+		if (strstr(reqs, "HEAD") || strstr(reqs, "head")) return ret;
 		break;
 	case GF_HTTP_OPTIONS:
-		if (strstr(sess->ctx->reqlog, "OPT") || strstr(sess->ctx->reqlog, "opt")) return GF_TRUE;
+		if (strstr(reqs, "OPT") || strstr(reqs, "opt")) return ret;
 		break;
 	default:
-		return GF_TRUE;
+		return ret;
 	}
-	return GF_FALSE;
+	return 0;
 }
 
 #ifndef GPAC_DISABLE_LOG
@@ -2663,7 +2670,7 @@ static GF_Err httpout_sess_data_upload(GF_HTTPOutSession *sess, const u8 *data, 
 
 static void log_request_done(GF_HTTPOutSession *sess)
 {
-	if (!sess->do_log) return;
+	if (sess->do_log!=1) return;
 	const char *sprefix = sess->is_h2 ? "H2 " : "";
 
 	if (!sess->socket) {
@@ -3324,9 +3331,31 @@ static void httpout_input_in_error(GF_HTTPOutInput *in)
 	}
 }
 
+//for upload of LLHLS in seperate file mode only
+static void httpout_close_input_llhls(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in)
+{
+	GF_Err e;
+	if (!in->llhls_is_open) return;
+
+	GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTPOut] Closing LL-HLS %s upload\n", in->llhls_url));
+
+	in->llhls_is_open = GF_FALSE;
+	//close prev session
+	if (!in->is_h2) {
+		e = gf_dm_sess_send(in->llhls_upload, "0\r\n\r\n", 5);
+		if (e) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPOut] Error sending last chunk of LLHLS part %s: %s\n", in->llhls_url, gf_error_to_string(e) ));
+		}
+	}
+	//signal we're done sending the body
+	gf_dm_sess_send(in->llhls_upload, NULL, 0);
+
+	httpout_close_upload(ctx, in, GF_TRUE);
+}
 
 static void httpout_close_input(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in)
 {
+	httpout_close_input_llhls(ctx, in);
 	if (!in->is_open) return;
 	in->is_open = GF_FALSE;
 	in->done = GF_TRUE;
@@ -3405,29 +3434,9 @@ static void httpout_close_input(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in)
 		}
 	}
 	in->nb_write = 0;
+	in->offset_at_seg_start = 0;
 }
 
-//for upload of LLHLS in seperate file mode only
-static void httpout_close_input_llhls(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in)
-{
-	GF_Err e;
-	if (!in->llhls_is_open) return;
-
-	GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTPOut] Closing LL-HLS %s upload\n", in->llhls_url));
-
-	in->llhls_is_open = GF_FALSE;
-	//close prev session
-	if (!in->is_h2) {
-		e = gf_dm_sess_send(in->llhls_upload, "0\r\n\r\n", 5);
-		if (e) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPOut] Error sending last chunk of LLHLS part %s: %s\n", in->llhls_url, gf_error_to_string(e) ));
-		}
-	}
-	//signal we're done sending the body
-	gf_dm_sess_send(in->llhls_upload, NULL, 0);
-
-	httpout_close_upload(ctx, in, GF_TRUE);
-}
 
 //for upload of LLHLS in seperate file mode only
 static Bool httpout_open_input_llhls(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in, char *dst)
@@ -3671,6 +3680,7 @@ static Bool httpout_input_write_ready(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in)
 static void httpin_send_seg_info(GF_HTTPOutInput *in)
 {
 	GF_FilterEvent evt;
+
 	GF_FEVT_INIT(evt, GF_FEVT_SEGMENT_SIZE, in->ipid);
 	evt.seg_size.seg_url = NULL;
 
@@ -3681,11 +3691,15 @@ static void httpin_send_seg_info(GF_HTTPOutInput *in)
 		evt.seg_size.media_range_end = 0;
 		gf_filter_pid_send_event(in->ipid, &evt);
 	} else {
+		//we already sent the info
+		if (in->seg_info_sent) return;
 		evt.seg_size.is_init = 0;
 		evt.seg_size.media_range_start = in->offset_at_seg_start;
-		evt.seg_size.media_range_end = in->nb_write-1;
+		//end range excludes last byte, except if 0 size (some text segments)
+		evt.seg_size.media_range_end = in->nb_write ? (in->nb_write-1) : 0;
 		in->offset_at_seg_start = 1+evt.seg_size.media_range_end;
 		gf_filter_pid_send_event(in->ipid, &evt);
+		in->seg_info_sent = GF_TRUE;
 	}
 }
 
@@ -3759,7 +3773,7 @@ next_pck:
 			//check end of PID state
 			if (gf_filter_pid_is_eos(in->ipid) && !gf_filter_pid_is_flush_eos(in->ipid)) {
 				nb_eos++;
-				if (in->dash_mode && in->is_open) {
+				if (in->dash_mode && !in->seg_info_sent) {
 					httpin_send_seg_info(in);
 				}
 				httpout_close_input(ctx, in);
@@ -3781,8 +3795,18 @@ next_pck:
 			if (p) {
 				httpin_send_seg_info(in);
 
-				if ( gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENAME))
+				if ( gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENAME)) {
 					start = GF_TRUE;
+				} else {
+					//single-file case, reset seg_info_flag right away
+					in->seg_info_sent = GF_FALSE;
+				}
+			}
+			p = gf_filter_pck_get_property(pck, GF_PROP_PCK_EODS);
+			if (p && p->value.boolean) {
+				httpin_send_seg_info(in);
+				end = GF_TRUE;
+				goto packet_done;
 			}
 		}
 		//we are waiting for open ack
@@ -3814,8 +3838,9 @@ next_pck:
 			const char *name = NULL;
 			fname = NULL;
 
-			if (in->is_open)
+			if (in->is_open) {
 				httpout_close_input(ctx, in);
+			}
 
 			httpout_prune_files(ctx, in);
 
@@ -3879,6 +3904,8 @@ next_pck:
 			if (in->flush_open) {
 				continue;
 			}
+			//reset seg_info_sent only once we have acknowledged opening of the file
+			in->seg_info_sent = GF_FALSE;
 		}
 
 		p = gf_filter_pck_get_property(pck, GF_PROP_PCK_HLS_FRAG_NUM);
@@ -3943,7 +3970,6 @@ next_pck:
 		if (!ctx->hmode && !ctx->has_read_dir && !in->nb_dest && !in->hold) {
 			if (end) {
 				httpout_close_input(ctx, in);
-				httpout_close_input_llhls(ctx, in);
 			}
 			gf_filter_pid_drop_packet(in->ipid);
 			if (in->nb_write && ctx->quit) {
@@ -4074,13 +4100,14 @@ next_pck:
 			} else {
 				GF_LOG(GF_LOG_DEBUG, GF_LOG_HTTP, ("[HTTPOut] No data associated with packet, cannot write\n"));
 			}
-		} else {
+		} else if (pck_size) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPOut] output file handle is not opened, discarding %d bytes\n", pck_size));
 		}
+
+packet_done:
 		gf_filter_pid_drop_packet(in->ipid);
 		if (end) {
 			httpout_close_input(ctx, in);
-			httpout_close_input_llhls(ctx, in);
 		}
 		if (!ctx->blockio && in->upload && gf_dm_sess_async_pending(in->upload))
 			continue;
@@ -4311,7 +4338,7 @@ static const GF_FilterArgs HTTPOutArgs[] =
 		"- off: disable CORS\n"
 		"- on: enable CORS\n"
 		"- auto: enable CORS when `Origin` is found in request", GF_PROP_UINT, "auto", "auto|off|on", GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(reqlog), "provide short log of the requests indicated in this option (comma separated list, `*` for all) regardless of HTTP log settings. Value `REC` logs file writing start/end", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(reqlog), "provide short log of the requests indicated in this option (comma separated list, `*` for all) regardless of HTTP log settings. Value `REC` logs file writing start/end. If prefix `-` is set, do not log request end", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(ice), "insert ICE meta-data in response headers in sink mode", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(max_client_errors), "force disconnection after specified number of consecutive errors from HTTTP 1.1 client (ignored in H/2 or when `close` is set)", GF_PROP_UINT, "20", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(max_cache_segs), "maximum number of segments cached per HAS quality (see filter help)", GF_PROP_SINT, "5", NULL, GF_FS_ARG_HINT_EXPERT},

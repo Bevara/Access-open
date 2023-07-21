@@ -875,7 +875,7 @@ static Bool tsmux_setup_esi(GF_TSMuxCtx *ctx, GF_M2TS_Mux_Program *prog, M2Pid *
 	else if ((tspid->esi.caps & GF_ESI_FORCE_DOLBY_VISION) != (bckp.caps & GF_ESI_FORCE_DOLBY_VISION))
 		changed = GF_TRUE;
 
-	u32 crc_old = 0, crc_new = 0;;
+	u32 crc_old = 0, crc_new = 0;
 	if (tspid->esi.gpac_meta_dsi) {
 		crc_old = gf_crc_32(tspid->esi.gpac_meta_dsi, tspid->esi.gpac_meta_dsi_size);
 		gf_free(tspid->esi.gpac_meta_dsi);
@@ -1209,7 +1209,7 @@ static GF_Err tsmux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		u32 pmt_id = ctx->pmt_id;
 
 		if (!pmt_id) pmt_id = 100;
-		nb_progs = gf_m2ts_mux_program_count(ctx->mux);
+		nb_progs = 1+gf_m2ts_mux_program_count(ctx->mux);
 		if (nb_progs>1) {
 			if (ctx->dash_mode) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[M2TSMux] Muxing several programs (%d) in DASH mode is not allowed\n", nb_progs+1));

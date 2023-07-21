@@ -881,6 +881,9 @@ Bool gf_sys_is_cov_mode()
 #endif
 
 const char *gpac_log_file_name=NULL;
+#ifndef GPAC_DISABLE_LOG
+extern Bool gpac_log_dual;
+#endif
 
 GF_EXPORT
 void gf_log_reset_file()
@@ -965,6 +968,10 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 				gpac_log_file_name = arg_val;
 #endif
 				if (!use_sep) i += 1;
+			} else if (!strcmp(arg, "-log-dual") || !strcmp(arg, "-ld")) {
+#ifndef GPAC_DISABLE_LOG
+				gpac_log_dual = GF_TRUE;
+#endif
 			} else if (!strcmp(arg, "-logs") ) {
 				e = gf_log_set_tools_levels(arg_val, GF_FALSE);
 				if (e) return e;
@@ -1039,8 +1046,12 @@ GF_Err gf_sys_set_args(s32 argc, const char **argv)
 		gpac_argc = (u32) argc;
 		gpac_argv = argv;
 		gpac_argv_state = gf_realloc(gpac_argv_state, sizeof(Bool) * argc);
-		for (i=0; i<argc; i++)
+		for (i=0; i<argc; i++) {
 			gpac_argv_state[i] = GF_FALSE;
+			if (!strncmp(argv[i], "-p", 2)) gpac_argv_state[i] = GF_TRUE;
+			else if (!strcmp(argv[i], "-mem-track")) gpac_argv_state[i] = GF_TRUE;
+			else if (!strcmp(argv[i], "-mem-track-stack")) gpac_argv_state[i] = GF_TRUE;
+		}
 	}
 	return GF_OK;
 }

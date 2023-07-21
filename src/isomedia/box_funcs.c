@@ -1405,6 +1405,7 @@ static struct box_registry_entry {
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_RLOC, rloc, "ipco", 0, "iff"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_IROT, irot, "ipco", "iff"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_IMIR, imir, "ipco", "iff"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_ILCE, imir, "ipco", "iff"),
 	FBOX_DEFINE_FLAGS_S( GF_ISOM_BOX_TYPE_IPMA, ipma, "iprp", 1, 1, "iff"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_GRPL, grpl, "meta", "iff"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_CCST, ccst, "sample_entry", 0, "iff"),
@@ -1809,6 +1810,7 @@ static u32 get_box_reg_idx(u32 boxCode, u32 parent_type, u32 start_from)
 GF_Box *gf_isom_box_new_ex(u32 boxType, u32 parentType, Bool skip_logs, Bool is_root_box)
 {
 	GF_Box *a;
+	const char *opt;
 	s32 idx = get_box_reg_idx(boxType, parentType, 0);
 	if (idx==0) {
 #ifndef GPAC_DISABLE_LOG
@@ -1826,6 +1828,14 @@ GF_Box *gf_isom_box_new_ex(u32 boxType, u32 parentType, Bool skip_logs, Bool is_
 				//fallthrough
 			default:
 				if (boxType==GF_ISOM_BOX_TYPE_GDAT) break;
+
+				opt = gf_opts_get_key("core", "boxdir");
+				if (opt) {
+					char szPath[GF_MAX_PATH];
+					snprintf(szPath, GF_MAX_PATH-1, "%s/%s.js", opt, gf_4cc_to_str(boxType) );
+					if (gf_file_exists(szPath))
+						break;
+				}
 
 				if (is_root_box) {
 					GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[iso file] Unknown top-level box type %s\n", gf_4cc_to_str(boxType)));
@@ -1847,6 +1857,7 @@ GF_Box *gf_isom_box_new_ex(u32 boxType, u32 parentType, Bool skip_logs, Bool is_
             a = unkn_box_new();
             if (a) {
             	((GF_UnknownBox *)a)->original_4cc = boxType;
+				((GF_UnknownBox *)a)->parent_4cc = parentType;
             	a->registry = &box_registry[0];
 			}
         }

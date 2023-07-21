@@ -53,7 +53,7 @@ endif
 
 ifeq ($(STATIC_BUILD),yes)
 LINKFLAGS+=$(zlib_ldflags) $(opensvc_ldflags) $(ssl_ldflags) $(jpeg_ldflags) $(openjpeg_ldflags) $(png_ldflags) $(mad_ldflags) $(a52_ldflags) $(xvid_ldflags) $(faad_ldflags)
-LINKFLAGS+=$(ffmpeg_ldflags) $(ogg_ldflags) $(vorbis_ldflags) $(theora_ldflags) $(nghttp2_ldflags) $(vtb_ldflags) $(caption_ldflags)
+LINKFLAGS+=$(ffmpeg_ldflags) $(ogg_ldflags) $(vorbis_ldflags) $(theora_ldflags) $(nghttp2_ldflags) $(vtb_ldflags) $(caption_ldflags) $(mpeghdec_ldflags)
 endif
 
 
@@ -84,6 +84,11 @@ EXTRALIBS+= $(sdl_ldflags)
 OBJS+=../modules/sdl_out/sdl_out.o ../modules/sdl_out/audio.o ../modules/sdl_out/video.o
 endif
 
+ifeq ($(CONFIG_CACA),yes)
+CFLAGS+= $(libcaca_cflags)
+EXTRALIBS+= $(libcaca_ldflags)
+OBJS+=../modules/caca_out/caca_out.o
+endif
 
 ifeq ($(CONFIG_X11),yes)
 OBJS+= ../modules/x11_out/x11_out.o
@@ -160,4 +165,3 @@ endif
 
 #end of static modules
 endif
-

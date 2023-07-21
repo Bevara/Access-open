@@ -421,6 +421,15 @@ const char *gpac_doc =
 "This will assign property `MyProp` to `Super Audio` for first audio PID declared.\n"
 "EX gpac -i source.mp4:#MyProp=(Width+1280)HD\n"
 "This will assign property `MyProp` to `HD` for PIDs with property `Width` greater than 1280.\n"
+"\n"
+"The property value can be templated using the following keywords:\n"
+"- $GINC(init[,inc]) or @GINC(...): replaced by integer for each new output PID of the filter (see specific filter options for details on syntax)\n"
+"- PROP (enclosed between `$` or `@`): replaced by serialized value of property `PROP` (name or 4CC) of the PID or with empty string if no such property\n"
+"EX gpac -i source.ts:#ASID=$PID$\n"
+"This will assign DASH AdaptationSet ID to the PID ID value.\n"
+"EX gpac -i source.ts:#RepresentationID=$ServiceID$\n"
+"This will assign DASH Representation ID to the PID ServiceID value.\n"
+"\n"
 "# Using option files\n"
 "It is possible to use a file to define options of a filter, by specifying the target file name as an option without value, i.e. `:myopts.txt`.\n"
 "Warning: Only local files are allowed.\n"
@@ -507,38 +516,64 @@ void gpac_filter_help(void)
 #include <gpac/modules/hardcoded_proto.h>
 #include <gpac/modules/font.h>
 
-void gpac_modules_help(void)
+void gpac_modules_help(char *mod_name)
 {
 	u32 i;
+	if (mod_name) {
+		gf_opts_set_key("temp", "gendoc", "yes");
+		GF_BaseInterface *ifce = gf_modules_load_by_name(mod_name, GF_VIDEO_OUTPUT_INTERFACE, GF_TRUE);
+		if (!ifce) ifce = gf_modules_load_by_name(mod_name, GF_AUDIO_OUTPUT_INTERFACE, GF_TRUE);
+		if (!ifce) ifce = gf_modules_load_by_name(mod_name, GF_FONT_READER_INTERFACE, GF_TRUE);
+		if (!ifce) ifce = gf_modules_load_by_name(mod_name, GF_COMPOSITOR_EXT_INTERFACE, GF_TRUE);
+		if (!ifce) ifce = gf_modules_load_by_name(mod_name, GF_HARDCODED_PROTO_INTERFACE, GF_TRUE);
+
+		if (!ifce) {
+			fprintf(stderr, "No such module %s\n", mod_name);
+			return;
+		}
+		gf_sys_format_help(helpout, help_flags, "%s\n", ifce->description ? ifce->description : "No description available");
+		if (ifce->args) {
+			gf_sys_format_help(helpout, help_flags, "Options:\n");
+			i=0;
+			while (ifce->args && ifce->args[i].name) {
+				gf_sys_print_arg(helpout, help_flags, &ifce->args[i], ifce->module_name);
+				i++;
+			}
+		} else {
+			gf_sys_format_help(helpout, help_flags, "No Option\n");
+		}
+		gf_modules_close_interface(ifce);
+		return;
+	}
 	gf_sys_format_help(helpout, help_flags, "Available modules:\n");
 	for (i=0; i<gf_modules_count(); i++) {
 		char *str = (char *) gf_modules_get_file_name(i);
 		if (!str) continue;
 		gf_sys_format_help(helpout, help_flags | GF_PRINTARG_HIGHLIGHT_FIRST, "%s: implements ", str);
 		if (!strncmp(str, "gm_", 3) || !strncmp(str, "gsm_", 4)) {
-			GF_BaseInterface *ifce = gf_modules_load_by_name(str, GF_VIDEO_OUTPUT_INTERFACE);
+			GF_BaseInterface *ifce = gf_modules_load_by_name(str, GF_VIDEO_OUTPUT_INTERFACE, GF_FALSE);
 			if (ifce) {
-				gf_sys_format_help(helpout, help_flags, "VideoOutput ");
+				gf_sys_format_help(helpout, help_flags, "VideoOutput (%s) ", ifce->module_name);
 				gf_modules_close_interface(ifce);
 			}
-			ifce = gf_modules_load_by_name(str, GF_AUDIO_OUTPUT_INTERFACE);
+			ifce = gf_modules_load_by_name(str, GF_AUDIO_OUTPUT_INTERFACE, GF_FALSE);
 			if (ifce) {
-				gf_sys_format_help(helpout, help_flags, "AudioOutput ");
+				gf_sys_format_help(helpout, help_flags, "AudioOutput (%s) ", ifce->module_name);
 				gf_modules_close_interface(ifce);
 			}
-			ifce = gf_modules_load_by_name(str, GF_FONT_READER_INTERFACE);
+			ifce = gf_modules_load_by_name(str, GF_FONT_READER_INTERFACE, GF_FALSE);
 			if (ifce) {
-				gf_sys_format_help(helpout, help_flags, "FontReader ");
+				gf_sys_format_help(helpout, help_flags, "FontReader (%s) ", ifce->module_name);
 				gf_modules_close_interface(ifce);
 			}
-			ifce = gf_modules_load_by_name(str, GF_COMPOSITOR_EXT_INTERFACE);
+			ifce = gf_modules_load_by_name(str, GF_COMPOSITOR_EXT_INTERFACE, GF_FALSE);
 			if (ifce) {
-				gf_sys_format_help(helpout, help_flags, "CompositorExtension ");
+				gf_sys_format_help(helpout, help_flags, "CompositorExtension (%s) ", ifce->module_name);
 				gf_modules_close_interface(ifce);
 			}
-			ifce = gf_modules_load_by_name(str, GF_HARDCODED_PROTO_INTERFACE);
+			ifce = gf_modules_load_by_name(str, GF_HARDCODED_PROTO_INTERFACE, GF_FALSE);
 			if (ifce) {
-				gf_sys_format_help(helpout, help_flags, "HardcodedProto ");
+				gf_sys_format_help(helpout, help_flags, "HardcodedProto (%s) ", ifce->module_name);
 				gf_modules_close_interface(ifce);
 			}
 		} else {
@@ -710,6 +745,7 @@ static GF_GPACArg gpac_args[] =
 			"- net: print network interfaces\n"
 			"- prompt: print the GPAC prompt help when running in interactive mode (see [-k](GPAC) )\n"
 			"- modules: print available modules\n"
+			"- module NAME: print info and options of module `NAME`\n"
 			"- creds: print credential help\n"
 			"- filters: print name of all available filters\n"
 			"- filters:*: print name of all available filters, including meta filters\n"
@@ -2378,6 +2414,7 @@ void dump_all_audio_cicp(void)
 	const char *name;
 	u64 layout;
 
+	gf_sys_format_help(helpout, help_flags, "CICP Layouts as \"name (index): flags\"\n");
 	while ((cicp = gf_audio_fmt_cicp_enum(i, &name, &layout)) ) {
 		gf_sys_format_help(helpout, help_flags|GF_PRINTARG_HIGHLIGHT_FIRST, "%s (%d): 0x%016"LLX_SUF"\n", name, cicp, layout);
 		i++;
@@ -2525,7 +2562,7 @@ void dump_all_codecs(GF_SysArgMode argmode)
 				break;
 			}
 			for (k=0; k<count; k++) {
-				if (k==i) continue;;
+				if (k==i) continue;
 				reg = gf_list_get(meta_codecs, k);
 				const char *rname = strchr(reg->name, ':');
 				if (rname) rname++;
