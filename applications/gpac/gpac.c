@@ -84,6 +84,9 @@ static Bool in_sig_handler = GF_FALSE;
 static Bool custom_event_proc=GF_FALSE;
 static u64 run_start_time = 0;
 
+//Bevara
+GF_Filter *dst;
+
 #ifdef GPAC_CONFIG_EMSCRIPTEN
 static Bool has_console;
 void SET_CONSOLE(int code)
@@ -1167,6 +1170,7 @@ restart:
 			} else {
 				filter = gf_fs_load_destination(session, argv[i+1], NULL, NULL, &e);
 			}
+			dst = filter;
 			arg = argv[i+1];
 			i++;
 			f_loaded = GF_TRUE;
