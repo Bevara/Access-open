@@ -1251,6 +1251,8 @@ enum
 	GF_PROP_PID_CHAP_TIMES = GF_4CC('C','H','P','T'),
 	GF_PROP_PID_CHAP_NAMES = GF_4CC('C','H','P','N'),
 	GF_PROP_PID_IS_CHAP = GF_4CC('P','C','H','P'),
+	//internal prop indicating the (main) streamtype of a PID before mux, only used for route setup
+	GF_PROP_PID_PREMUX_STREAM_TYPE = GF_4CC('P','P','S','T'),
 
 	//internal for HLS playlist reference, gives a unique ID identifying media mux, and indicated in packets carrying child playlists
 	GF_PROP_PCK_HLS_REF = GF_4CC('H','P','L','R'),
@@ -1276,7 +1278,6 @@ enum
 	//internal, indicate DASH dependency group
 	GF_PROP_PID_DASH_DEP_GROUP = GF_4CC('D','G','D','I'),
 
-
 	//internal property indicating pointer to associated GF_DownloadSession
 	GF_PROP_PID_DOWNLOAD_SESSION = GF_4CC('G','H','T','T'),
 
@@ -1285,6 +1286,7 @@ enum
 	//PID has no init segment associated (file forward mode of dasher)
 	GF_PROP_PID_NO_INIT = GF_4CC('P','N','I','N'),
 
+	//PID carries a manifest
 	GF_PROP_PID_IS_MANIFEST = GF_4CC('P','H','S','M'),
 
 	GF_PROP_PCK_XPS_MASK = GF_4CC('P','X','P','M'),
