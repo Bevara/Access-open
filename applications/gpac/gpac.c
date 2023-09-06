@@ -1453,7 +1453,7 @@ exit:
 		}
 		if (exit_nocleanup) {
 			gf_fs_stop(session);
-			exit(e ? 1 : 0);
+			gpac_exit(e ? 1 : 0);
 		}
 
 		if (!dump_graph) {
