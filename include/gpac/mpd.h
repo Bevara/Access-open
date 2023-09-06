@@ -674,6 +674,8 @@ typedef struct {
 	Bool in_progress;
 	char *res_url;
 	u32 trackID;
+
+	Bool sub_forced;
 } GF_MPD_Representation;
 
 /*! AdaptationSet*/
@@ -924,6 +926,7 @@ typedef struct {
 	//als absolute url flag
 	u32 hls_abs_url;
 	Bool m3u8_use_repid;
+	Bool hls_audio_primary;
 
 	/*! requested segment duration for index mode */
 	u32 segment_duration;

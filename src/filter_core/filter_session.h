@@ -60,6 +60,7 @@ struct __gf_prop_entry
 //we use the same value internally but with reverse meaning
 #define GF_FS_FLAG_IMPLICIT_MODE	GF_FS_FLAG_NO_IMPLICIT
 
+#define GF_FS_FLAG_FORCE_DEBUG	(1<<30)
 
 #ifndef GF_PROPS_HASHTABLE_SIZE
 #define GF_PROPS_HASHTABLE_SIZE 0
@@ -296,6 +297,7 @@ struct __gf_fs_task
 	const char *log_name;
 	void *udta;
 	u32 class_type;
+	u32 thid;
 };
 
 void gf_fs_post_task(GF_FilterSession *fsess, gf_fs_task_callback fun, GF_Filter *filter, GF_FilterPid *pid, const char *log_name, void *udta);
@@ -524,6 +526,9 @@ struct __gf_filter_session
 	Bool is_worker;
 	volatile u32 pending_threads;
 #endif
+
+
+	u32 dbg_flags;
 };
 
 #ifdef GPAC_HAS_QJS
@@ -642,7 +647,8 @@ struct __gf_filter
 	Bool no_probe;
 	Bool no_inputs;
 	Bool is_blocking_source;
-	Bool force_demux;
+	//0: no action, 1: force demux if input is file, 2: force demux if input is not file (i.e :nomux=0)
+	u32 force_demux;
 
 	s32 nb_pids_playing;
 

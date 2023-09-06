@@ -1638,6 +1638,10 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	"- 3: GHI(X) manifest", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_SPARSE, "Sparse", "PID has potentially empty times between packets", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_CHARSET, "CharSet", "Character set for input text PID", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PID_FORCED_SUB, "ForcedSub", "PID or Packet is forced sub\n"
+	"0: not forced\n"
+	"1: forced frame\n"
+	"2: all frames are forced (PID only)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
 
 	DEC_PROP_F( GF_PROP_PID_CHAP_TIMES, "ChapTimes", "Chapter start times", GF_PROP_UINT_LIST, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_CHAP_NAMES, "ChapNames", "Chapter names", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM),
@@ -1742,7 +1746,7 @@ Bool gf_props_4cc_check_props()
 }
 
 GF_EXPORT
-const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], u32 dump_data_flags, const char *min_max_enum)
+const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumpDataMode dump_data_flags, const char *min_max_enum)
 {
 	switch (att->type) {
 	case GF_PROP_NAME:
@@ -1929,7 +1933,7 @@ const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUM
 
 
 GF_EXPORT
-const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], u32 dump_data_mode)
+const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PROP_DUMP_ARG_SIZE], GF_PropDumpDataMode dump_data_mode)
 {
 	switch (p4cc) {
 	case GF_PROP_PID_STREAM_TYPE:

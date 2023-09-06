@@ -302,6 +302,7 @@ typedef struct
 	Bool fcomp, otyp;
 	Bool deps;
 	Bool mvex;
+	Bool trunv1;
 	u32 sdtp_traf;
 	u32 cmaf;
 #ifdef GF_ENABLE_CTRN
@@ -3991,6 +3992,7 @@ static GF_Err mp4_mux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 		TrackWriter *tkw = gf_filter_pid_get_udta(pid);
 		if (tkw) {
 			gf_list_del_item(ctx->tracks, tkw);
+			if (ctx->ref_tkw == tkw) ctx->ref_tkw = gf_list_get(ctx->tracks, 0);
 			gf_free(tkw);
 		}
 		//removing last pid
@@ -5713,7 +5715,7 @@ static GF_Err mp4_mux_initialize_movie(GF_MP4MuxCtx *ctx)
 		if (p && p->value.lfrac.den) {
 			tkw->pid_dur = p->value.lfrac;
 			if (tkw->pid_dur.num<0) tkw->pid_dur.num = -tkw->pid_dur.num;
-			if (max_dur.num * (s64) tkw->pid_dur.den < (s64) max_dur.den * tkw->pid_dur.num) {
+			if (gf_timestamp_less(max_dur.num, max_dur.den, tkw->pid_dur.num, tkw->pid_dur.den)) {
 				max_dur.num = tkw->pid_dur.num;
 				max_dur.den = tkw->pid_dur.den;
 			}
@@ -6122,10 +6124,13 @@ static GF_Err mp4_mux_start_fragment(GF_MP4MuxCtx *ctx, GF_FilterPacket *pck)
 		if (ctx->truns_first) {
 			gf_isom_set_fragment_option(ctx->file, tkw->track_id, GF_ISOM_TRAF_TRUNS_FIRST, 1);
 		}
-		//7.7 cmf2 For video CMAF Tracks not contained in Track Files, Version 1 shall be used.
-		if ((ctx->cmaf==MP4MX_CMAF_CMF2) && (tkw->stream_type==GF_STREAM_VISUAL))
-			gf_isom_set_fragment_option(ctx->file, tkw->track_id, GF_ISOM_TRAF_TRUN_V1, 1);
 
+		if (ctx->trunv1 ||
+			//7.7 cmf2 For video CMAF Tracks not contained in Track Files, Version 1 shall be used.
+			((ctx->cmaf==MP4MX_CMAF_CMF2) && (tkw->stream_type==GF_STREAM_VISUAL))
+		) {
+			gf_isom_set_fragment_option(ctx->file, tkw->track_id, GF_ISOM_TRAF_TRUN_V1, 1);
+		}
 		if (ctx->sdtp_traf)
 			gf_isom_set_fragment_option(ctx->file, tkw->track_id, GF_ISOM_TRAF_USE_SAMPLE_DEPS_BOX, ctx->sdtp_traf);
 
@@ -7463,7 +7468,7 @@ static GF_Err mp4_mux_on_data(void *cbk, u8 *data, u32 block_size, void *cbk_dat
 			ctx->dst_pck = gf_filter_pck_new_ref(ctx->opid, cbk_magic, block_size, srcp);
 		}
 		gf_list_del_item(ctx->ref_pcks, srcp);
-		src_pck_dur = gf_timestamp_rescale(gf_filter_pck_get_duration(srcp), gf_filter_pck_get_timescale(srcp), 1000);
+		src_pck_dur = (u32) gf_timestamp_rescale(gf_filter_pck_get_duration(srcp), gf_filter_pck_get_timescale(srcp), 1000);
 		gf_filter_pck_unref(srcp);
 	}
 	//allocate new one
@@ -7912,6 +7917,10 @@ static GF_Err mp4_mux_done(GF_MP4MuxCtx *ctx, Bool is_final)
 			}
 			gf_isom_set_last_sample_duration(ctx->file, tkw->track_num, (u32) val);
 		}
+		p = gf_filter_pid_get_info(tkw->ipid, GF_PROP_PID_FORCED_SUB, &pe);
+		if (p) {
+			gf_isom_set_forced_text(ctx->file, tkw->track_num, tkw->stsd_idx, p->value.uint);
+		}
 
 		if (tkw->is_nalu && ctx->pack_nal && (gf_isom_get_mode(ctx->file)!=GF_ISOM_OPEN_WRITE)) {
 			u32 msize = 0;
@@ -8201,6 +8210,7 @@ static const GF_FilterArgs MP4MuxArgs[] =
 	"- gen: enabled, do not write profile\n"
 	"- prof: enabled and write profile if known\n"
 	"- tiny: enabled and write reduced version if profile known and compatible", GF_PROP_UINT, "prof", "off|gen|prof|tiny", GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(trunv1), "force using version 1 of trun regardless of media type or CMAF brand", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{0}
 };
 

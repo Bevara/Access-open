@@ -89,6 +89,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_get_default_cache_directory) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_get_default_font_dir) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_4cc_to_str) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_4cc_to_str_safe) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_4cc_parse) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_error_to_string) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_rand_init) )
@@ -988,6 +989,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_pcm_config) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_lpcm_config) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_enum_track_references) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_get_text_description) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_is_track_referenced) )
 
 # ifndef GPAC_DISABLE_ISOM_DUMP
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_dump) )
@@ -1129,6 +1132,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_set_box) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_add_blink) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_set_wrap) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_set_forced) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_set_display_flags) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_text_to_sample) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_isom_set_ismacryp_protection) )
@@ -1518,6 +1522,8 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_av1_get_obu_name) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_av1_reset_state) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_av1_init_state) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_av1_leb128_read) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_av1_parse_obu_header) )
 
 #endif /*GPAC_DISABLE_AV_PARSERS*/
 
@@ -2440,6 +2446,7 @@
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_set_filter_creation_callback) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_get_rt_udta) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_fs_set_external_gl_provider) )
+#pragma comment (linker, EXPORT_SYMBOL(gf_fs_print_debug_info) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_send_update ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_arg ) )
 #pragma comment (linker, EXPORT_SYMBOL(gf_filter_get_arg_str ) )

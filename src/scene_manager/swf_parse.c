@@ -182,37 +182,17 @@ static void swf_get_rec(SWFReader *read, SWFRec *rc)
 
 static u32 swf_get_32(SWFReader *read)
 {
-	u32 val, res;
-	val = swf_read_int(read, 32);
-	res = (val&0xFF);
-	res <<=8;
-	res |= ((val>>8)&0xFF);
-	res<<=8;
-	res |= ((val>>16)&0xFF);
-	res<<=8;
-	res|= ((val>>24)&0xFF);
-	return res;
+	return gf_bs_read_u32_le(read->bs);
 }
 
 static u16 swf_get_16(SWFReader *read)
 {
-	u16 val, res;
-	val = swf_read_int(read, 16);
-	res = (val&0xFF);
-	res <<=8;
-	res |= ((val>>8)&0xFF);
-	return res;
+	return gf_bs_read_u16_le(read->bs);
 }
 
 static s16 swf_get_s16(SWFReader *read)
 {
-	s16 val;
-	u8 v1;
-	v1 = swf_read_int(read, 8);
-	val = swf_read_sint(read, 8);
-	val = (val<<8)&0xFF00;
-	val |= (v1&0xFF);
-	return val;
+	return (s16) gf_bs_read_u16_le(read->bs);
 }
 
 static u32 swf_get_color(SWFReader *read)
@@ -1438,7 +1418,7 @@ static GF_Err swf_def_font(SWFReader *read, u32 revision)
 	ft->glyphs = gf_list_new();
 	ft->fontID = swf_get_16(read);
 	e = GF_OK;
-
+	gf_list_add(read->fonts, ft);
 
 	if (revision==0) {
 		start = swf_get_file_pos(read);
@@ -1446,7 +1426,7 @@ static GF_Err swf_def_font(SWFReader *read, u32 revision)
 		count = swf_get_16(read);
 		ft->nbGlyphs = count / 2;
 		offset_table = (u32*)gf_malloc(sizeof(u32) * ft->nbGlyphs);
-		offset_table[0] = 0;
+		if (ft->nbGlyphs) offset_table[0] = 0;
 		for (i=1; i<ft->nbGlyphs; i++) offset_table[i] = swf_get_16(read);
 
 		for (i=0; i<ft->nbGlyphs; i++) {
@@ -1538,8 +1518,6 @@ static GF_Err swf_def_font(SWFReader *read, u32 revision)
 			}
 		}
 	}
-
-	gf_list_add(read->fonts, ft);
 	return GF_OK;
 }
 
@@ -2642,6 +2620,7 @@ GF_Err gf_swf_read_header(SWFReader *read)
 	read->frame_rate = swf_get_16(read)>>8;
 	read->frame_count = swf_get_16(read);
 	GF_LOG(GF_LOG_INFO, GF_LOG_PARSER, ("SWF Import - Scene Size %gx%g - %d frames @ %d FPS\n", read->width, read->height, read->frame_count, read->frame_rate));
+	if (!read->frame_rate) read->frame_rate = 1;
 	return GF_OK;
 }
 

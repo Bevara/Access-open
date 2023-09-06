@@ -1192,7 +1192,7 @@ void unload_compositor()
 Bool mp4c_task()
 {
 	if (eos_seen && gf_sc_get_option(compositor, GF_OPT_IS_OVER)) {
-		if (!auto_exit) return GF_FALSE;
+		if (auto_exit) return GF_TRUE;
 		if (!loop_at_end) {
 			gf_sc_disconnect(compositor);
 			return GF_TRUE;
@@ -1515,7 +1515,7 @@ static void mp4c_take_screenshot(Bool for_coverage)
 			e = gf_sc_get_offscreen_buffer(compositor, &fb, offscreen_view-1, 0);
 		} else {
 			sprintf(szFileName, "gpac_video_dump_"LLU".png", gf_net_get_utc() );
-			e = gf_sc_get_screen_buffer(compositor, &fb, 0);
+			e = gf_sc_get_screen_buffer(compositor, &fb, GF_SC_GRAB_DEPTH_NONE);
 		}
 		offscreen_view++;
 		if (e) {

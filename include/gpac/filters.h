@@ -736,6 +736,33 @@ typedef	GF_Err (*gf_fs_gl_activate)(void *udta, Bool do_activate);
  */
 GF_Err gf_fs_set_external_gl_provider(GF_FilterSession *session, gf_fs_gl_activate on_gl_activate, void *udta);
 
+/*! Flags for debug info*/
+typedef enum
+{
+	/*! print filter graph*/
+	GF_FS_DEBUG_GRAPH = 1,
+	/*! print filter stats*/
+	GF_FS_DEBUG_STATS = 1<<1,
+	/*! print tasks present in scheduler*/
+	GF_FS_DEBUG_TASKS = 1<<2,
+	/*! print filter status and task scheduled on filter*/
+	GF_FS_DEBUG_FILTERS = 1<<3,
+	/*! print all info*/
+	GF_FS_DEBUG_ALL = 0x00FFFFFF,
+	/*! enable continuous reporting*/
+	GF_FS_DEBUG_CONTINUOUS = 0x80000000,
+} GF_SessionDebugFlag;
+
+/*! prints session debug info on stderr
+
+ To turn on (resp.off) continous reporting, set (resp. unset) the flag GF_FS_DEBUG_CONTINUOUS. Continuous reporting is done in the main thread using the last flags provided
+
+\param session filter session
+\param dbg_flags set of flags indicating what to print
+ */
+void gf_fs_print_debug_info(GF_FilterSession *session, GF_SessionDebugFlag dbg_flags);
+
+
 /*! @} */
 
 
@@ -1243,6 +1270,7 @@ enum
 	GF_PROP_PID_EQR_CLAMP = GF_4CC('P','E','Q','C'),
 	GF_PROP_PID_SPARSE = GF_4CC('P','S','P','A'),
 	GF_PROP_PID_CHARSET = GF_4CC('P','C','H','S'),
+	GF_PROP_PID_FORCED_SUB = GF_4CC('P','F','C','S'),
 
 	GF_PROP_PID_SCENE_NODE = GF_4CC('P','S','N','D'),
 	GF_PROP_PID_ORIG_CRYPT_SCHEME = GF_4CC('P','O','C','S'),
@@ -2124,7 +2152,7 @@ void gf_filter_lock(GF_Filter *filter, Bool do_lock);
 
 
 
-/*! Lock global filter session. This is needed when assigning source IDs after a connect  source or destination to the loaded source to connect in an async way
+/*! Lock global filter session. This is needed when assigning source IDs after a connect source or destination to the loaded source to connect in an async way
 \param filter target filter
 \param do_lock if GF_TRUE, locks the filter session global mutex, otherwise unlocks it
 */
@@ -2135,7 +2163,7 @@ void gf_filter_lock_all(GF_Filter *filter, Bool do_lock);
  This is used by filters loading subchains to enforce that filters from these subchain only connect to each other or the target filter but not other filters outside this chain.
  Filters using this function must setup source IDs on filters of the sunchain(s) they load.
 
- Noye: This has the same effect has setting `:RSID` option on the filter
+ Note: This has the same effect as setting the `:RSID` option on the filter
 
 \param filter target filter
 */
@@ -2330,8 +2358,8 @@ struct __gf_filter_register
 	*/
 	GF_Err (*update_arg)(GF_Filter *filter, const char *arg_name, const GF_PropertyValue *new_val);
 
-	/*! optional - process a given event. Retruns TRUE if the event has to be canceled, FALSE otherwise
-		- If a downstream (towards source)  event is not canceled, it will be forwarded to each input PID of the filter.
+	/*! optional - process a given event. Returns TRUE if the event has to be canceled, FALSE otherwise
+		- If a downstream (towards source) event is not canceled, it will be forwarded to each input PID of the filter.
 		- If you need to forward the event only to one input pid, send a copy of the event to the desired input and cancel the event.
 	\param filter the target filter
 	\param evt the event to process

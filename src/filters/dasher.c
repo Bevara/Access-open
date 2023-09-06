@@ -205,6 +205,7 @@ typedef struct
 	Bool gencues, force_init, gxns;
 	Double ll_part_hb;
 	u32 hls_absu, seg_sync;
+	Bool hls_ap;
 
 	//internal
 	Bool in_error;
@@ -1172,6 +1173,11 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 
 		CHECK_PROP(GF_PROP_PID_CODECID, ds->codec_id, GF_NOT_SUPPORTED)
 		CHECK_PROP(GF_PROP_PID_TIMESCALE, ds->timescale, GF_NOT_SUPPORTED)
+
+		if (!ds->timescale) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[Dasher] Input PID %s has no timescale, cannot dash\n", gf_filter_pid_get_name(pid) ));
+			return GF_NON_COMPLIANT_BITSTREAM;
+		}
 
 		if (ds->stream_type==GF_STREAM_VISUAL) {
 			CHECK_PROP(GF_PROP_PID_WIDTH, ds->width, GF_EOS)
@@ -2335,7 +2341,10 @@ static void dasher_update_rep(GF_DasherCtx *ctx, GF_DashStream *ds)
 			desc = gf_mpd_descriptor_new(NULL, "tag:dolby.com,2018:dash:EC3_ExtensionComplexityIndex:2018", value);
 			gf_list_add(ds->rep->supplemental_properties, desc);
 		}
-	} else {
+	}
+	else if (ds->stream_type==GF_STREAM_TEXT) {
+		const GF_PropertyValue *p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_FORCED_SUB);
+		if (p && p->value.uint) ds->rep->sub_forced = GF_TRUE;
 	}
 
 	if (ctx->from_index <= IDXMODE_MANIFEST) {
@@ -2739,6 +2748,7 @@ static void dasher_setup_set_defaults(GF_DasherCtx *ctx, GF_MPD_AdaptationSet *s
 			gf_list_add(set->essential_properties, desc);
 		}
 		/*set role*/
+		Bool has_sub_forced=GF_FALSE;
 		if (ds->p_role) {
 			u32 j, role_count;
 			role_count = ds->p_role->value.string_list.nb_items;
@@ -2756,6 +2766,7 @@ static void dasher_setup_set_defaults(GF_DasherCtx *ctx, GF_MPD_AdaptationSet *s
 				) {
 					uri = "urn:mpeg:dash:role:2011";
 					if (!strcmp(role, "main")) main_role_set = GF_TRUE;
+					if (!strcmp(role, "forced-subtitle")) has_sub_forced = GF_TRUE;
 				} else {
 					char *sep = strrchr(role, ':');
 					if (sep) {
@@ -2772,6 +2783,10 @@ static void dasher_setup_set_defaults(GF_DasherCtx *ctx, GF_MPD_AdaptationSet *s
 
 				gf_list_add(set->role, desc);
 			}
+		}
+		if (!has_sub_forced && ds->rep->sub_forced) {
+			GF_MPD_Descriptor *desc = gf_mpd_descriptor_new(NULL, "urn:mpeg:dash:role:2011", "forced-subtitle");
+			gf_list_add(set->role, desc);
 		}
 		//set SRD
 		if (!i && ds->srd.z && ds->srd.w) {
@@ -5089,6 +5104,7 @@ static GF_Err dasher_write_and_send_manifest(GF_DasherCtx *ctx, u64 last_period_
 		ctx->mpd->llhls_rendition_reports = ctx->ll_rend_rep;
 		ctx->mpd->llhls_part_holdback = ctx->ll_part_hb;
 		ctx->mpd->hls_abs_url = ctx->hls_absu;
+		ctx->mpd->hls_audio_primary = ctx->hls_ap;
 
 		if (ctx->llhls==3)
 			ctx->mpd->force_llhls_mode = m3u8_second_pass ? 2 : 1;
@@ -8387,6 +8403,9 @@ static GF_Err dasher_process(GF_Filter *filter)
 		u32 num_ready=0, num_blocked=0;
 		for (i=0; i<count; i++) {
 			GF_DashStream *ds = gf_list_get(ctx->current_period->streams, i);
+			if (ctx->force_period_switch) {
+				break;
+			}
 			GF_FilterPacket *pck = gf_filter_pid_get_packet(ds->ipid);
 			if (!pck) continue;
 			u64 ts = gf_filter_pck_get_cts(pck);
@@ -8406,6 +8425,9 @@ static GF_Err dasher_process(GF_Filter *filter)
 		}
 		ctx->min_cts_period.num = min_ts;
 		ctx->min_cts_period.den = min_timescale;
+
+		if (ctx->force_period_switch)
+			count = gf_list_count(ctx->current_period->streams);
 	}
 
 	nb_init = has_init = nb_reg_done = 0;
@@ -10367,6 +10389,7 @@ static const GF_FilterArgs DasherArgs[] =
 	"- mas: use absolute URL only in master playlist\n"
 	"- both: use absolute URL everywhere"
 		, GF_PROP_UINT, "no", "no|var|mas|both", GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(hls_ap), "use audio as primary media instead of video when generating playlists", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(seg_sync), "control how waiting on last packet P of fragment/segment to be written impacts segment injection in manifest\n"
 	"- no: do not wait for P\n"
 	"- yes: wait for P\n"

@@ -2300,7 +2300,7 @@ This will assign property MyProp to HD for PIDs with property Width greater than
 .br
 
 .br
-The property value can be templated using the following keywords:
+The property value can use templates with the following keywords:
 .br
 * $GINC(init[,inc]) or @GINC(...): replaced by integer for each new output PID of the filter (see specific filter options for details on syntax)
 .br
@@ -3893,6 +3893,17 @@ PID has potentially empty times between packets
 .B CharSet (PCHS,str,D )
 .br
 Character set for input text PID
+.br
+.TP
+.B ForcedSub (PFCS,uint,D )
+.br
+PID or Packet is forced sub
+.br
+0: not forced
+.br
+1: forced frame
+.br
+2: all frames are forced (PID only)
 .br
 .TP
 .B ChapTimes (CHPT,uintl,D )

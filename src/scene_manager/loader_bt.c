@@ -134,7 +134,8 @@ static GF_Err gf_bt_report(GF_BTParser *parser, GF_Err e, char *format, ...)
 
 void gf_bt_check_line(GF_BTParser *parser)
 {
-	while (1) {
+reload_line:
+	while (parser->line_pos < parser->line_size) {
 		switch (parser->line_buffer[parser->line_pos]) {
 		case ' ':
 		case '\t':
@@ -142,16 +143,22 @@ void gf_bt_check_line(GF_BTParser *parser)
 		case '\r':
 			parser->line_pos++;
 			continue;
+		case '\0':
+			parser->line_pos = parser->line_size;
 		default:
 			break;
 		}
 		break;
 	}
 
-	if (parser->line_buffer[parser->line_pos]=='#') {
-		parser->line_size = parser->line_pos;
+	if (parser->line_pos < parser->line_size) {
+		if (parser->line_buffer[parser->line_pos]=='#') {
+			parser->line_size = parser->line_pos;
+		}
+		else if ((parser->line_buffer[parser->line_pos]=='/') && (parser->line_buffer[parser->line_pos+1]=='/') ) {
+			parser->line_size = parser->line_pos;
+		}
 	}
-	else if ((parser->line_buffer[parser->line_pos]=='/') && (parser->line_buffer[parser->line_pos+1]=='/') ) parser->line_size = parser->line_pos;
 
 	if (parser->line_size == parser->line_pos) {
 		/*string based input - done*/
@@ -405,10 +412,15 @@ next_line:
 		}
 	}
 	if (!parser->line_size) {
-		if (!gf_gzeof(parser->gz_in)) gf_bt_check_line(parser);
-		else parser->done = 1;
+		if (!gf_gzeof(parser->gz_in))
+			//avoid recursion
+			goto reload_line;
+		else
+			parser->done = 1;
 	}
-	else if (!parser->done && (parser->line_size == parser->line_pos)) gf_bt_check_line(parser);
+	else if (!parser->done && (parser->line_size == parser->line_pos))
+		//avoid recursion
+		goto reload_line;
 }
 
 void gf_bt_force_line(GF_BTParser *parser)
@@ -435,12 +447,12 @@ char *gf_bt_get_next(GF_BTParser *parser, Bool point_break)
 	i=0;
 	has_quote = 0;
 	while (go) {
+		if (parser->line_pos+i>=parser->line_size) break;
+
 		if (parser->line_buffer[parser->line_pos + i] == '\"') {
 			if (!has_quote) has_quote = 1;
 			else has_quote = 0;
 			parser->line_pos += 1;
-
-			if (parser->line_pos+i==parser->line_size) break;
 			continue;
 		}
 		if (!has_quote) {
@@ -2926,7 +2938,7 @@ GF_Descriptor *gf_bt_parse_descriptor(GF_BTParser *parser, char *name)
 {
 	char *str, field[500];
 	GF_Descriptor *desc, *subdesc;
-	u32 type;
+	GF_ODF_FieldType type;
 	u8 tag;
 	if (name) {
 		str = name;
@@ -3291,8 +3303,12 @@ GF_Err gf_bt_loader_run_intern(GF_BTParser *parser, GF_Command *init_com, Bool i
 		str = gf_bt_get_next(parser, 0);
 		if (parser->done) break;
 
+		if (!strcmp(str, "")) {
+			//empty string, force moving to next char
+			if (parser->line_pos<parser->line_size) parser->line_pos++;
+		}
 		/*X3D specific things (ignored for now)*/
-		if (!strcmp(str, "PROFILE")) gf_bt_force_line(parser);
+		else if (!strcmp(str, "PROFILE")) gf_bt_force_line(parser);
 		else if (!strcmp(str, "COMPONENT")) gf_bt_force_line(parser);
 		else if (!strcmp(str, "META")) gf_bt_force_line(parser);
 		else if (!strcmp(str, "IMPORT") || !strcmp(str, "EXPORT")) {

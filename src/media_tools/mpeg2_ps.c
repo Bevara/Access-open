@@ -266,6 +266,8 @@ int MPEG12_ParseSeqHdr(unsigned char *pbuffer, u32 buflen, s32 *have_mpeg2, u32 
 	u32 scode, ix;
 	s32 found = -1;
 	*have_mpeg2 = 0;
+	if (buflen<6) return found;
+
 	buflen -= 6;
 	bitrate_int = 0;
 	for (ix = 0; ix < buflen; ix++, pbuffer++) {
@@ -996,6 +998,7 @@ static void get_info_from_frame (mpeg2ps_stream_t *sptr,
 		                       &sptr->par) < 0) {
 			sptr->m_stream_id = 0;
 			sptr->m_fd = FDNULL;
+			return;
 		}
 		sptr->ticks_per_frame = (u64)(90000.0 / sptr->frame_rate);
 		return;
@@ -1202,7 +1205,7 @@ static void get_info_for_all_streams (mpeg2ps_t *ps)
 			}
 			get_info_from_frame(sptr, buffer, buflen);
 			// here - if (sptr->first_pes_has_dts == 0) should be processed
-			if (sptr->first_pes_has_dts == 0) {
+			if ((sptr->first_pes_has_dts == 0) && sptr->m_fd) {
 				u32 frames_from_beg = 0;
 				Bool have_frame;
 				do {

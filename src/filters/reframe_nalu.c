@@ -244,6 +244,8 @@ typedef struct
 
 	Bool check_prev_sap2;
 	s32 prev_sap2_poc;
+	Bool sap2_as_sap1;
+
 	GF_FilterPacket *prev_sap;
 } GF_NALUDmxCtx;
 
@@ -1160,7 +1162,7 @@ static Bool naludmx_create_hevc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32
 			/*disable frame rate scan, most bitstreams have wrong values there*/
 			if (ctx->notime && first && (!ctx->fps.num || !ctx->fps.den) && sps->has_timing_info
 				/*if detected FPS is greater than 1000, assume wrong timing info*/
-				&& (sps->time_scale <= 1000*sps->num_units_in_tick)
+				&& (sps->time_scale / 1000 <= sps->num_units_in_tick)
 			) {
 				ctx->cur_fps.num = sps->time_scale;
 				ctx->cur_fps.den = sps->num_units_in_tick;
@@ -1337,7 +1339,7 @@ static Bool naludmx_create_vvc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 
 			/*disable frame rate scan, most bitstreams have wrong values there*/
 			if (ctx->notime && first && (!ctx->fps.num || !ctx->fps.den) && sps->has_timing_info
 				/*if detected FPS is greater than 1000, assume wrong timing info*/
-				&& (sps->time_scale <= 1000*sps->num_units_in_tick)
+				&& (sps->time_scale / 1000 <= sps->num_units_in_tick)
 			) {
 				ctx->cur_fps.num = sps->time_scale;
 				ctx->cur_fps.den = sps->num_units_in_tick;
@@ -1486,7 +1488,7 @@ Bool naludmx_create_avc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 *dsi_si
 			/*disable frame rate scan, most bitstreams have wrong values there*/
 			if (first && (!ctx->fps.num || !ctx->fps.den) && sps->vui.timing_info_present_flag
 				/*if detected FPS is greater than 1000, assume wrong timing info*/
-				&& (sps->vui.time_scale <= 1000*sps->vui.num_units_in_tick)
+				&& (sps->vui.time_scale / 1000 <= sps->vui.num_units_in_tick)
 			) {
 				/*ISO/IEC 14496-10 n11084 Table E-6*/
 				/* not used :				u8 DeltaTfiDivisorTable[] = {1,1,1,2,2,2,2,3,3,4,6}; */
@@ -1502,8 +1504,14 @@ Bool naludmx_create_avc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 *dsi_si
 						DeltaTfiDivisorIdx = (ctx->avc_state->sei.pic_timing.pic_struct+1) / 2;
 				}
 				if (ctx->notime) {
-					u32 fps_num = 2 * sps->vui.time_scale;
-					u32 fps_den = 2 * sps->vui.num_units_in_tick * DeltaTfiDivisorIdx;
+					u32 fps_num, fps_den;
+					if ( (s32) (2*sps->vui.time_scale) < 0) {
+						fps_num = sps->vui.time_scale;
+						fps_den = sps->vui.num_units_in_tick * DeltaTfiDivisorIdx;
+					} else {
+						fps_num = 2 * sps->vui.time_scale;
+						fps_den = 2 * sps->vui.num_units_in_tick * DeltaTfiDivisorIdx;
+					}
 					if (fps_num && fps_den) {
 						ctx->cur_fps.num = fps_num;
 						ctx->cur_fps.den = fps_den;
@@ -1590,6 +1598,7 @@ static void naludmx_end_access_unit(GF_NALUDmxCtx *ctx)
 	ctx->sei_recovery_frame_count = -1;
 	ctx->au_sap = GF_FILTER_SAP_NONE;
 	ctx->au_sap2_poc_reset = GF_FALSE;
+	ctx->sap2_as_sap1 = GF_FALSE;
 	ctx->field_type = 0;
 }
 
@@ -2197,7 +2206,7 @@ static void naludmx_finalize_au_flags(GF_NALUDmxCtx *ctx)
 	if (!ctx->first_pck_in_au)
 		return;
 	if (ctx->au_sap) {
-		gf_filter_pck_set_sap(ctx->first_pck_in_au, ctx->au_sap);
+		gf_filter_pck_set_sap(ctx->first_pck_in_au, ctx->sap2_as_sap1 ? GF_FILTER_SAP_1 : ctx->au_sap);
 		if ((ctx->au_sap == GF_FILTER_SAP_1) || ctx->au_sap2_poc_reset) {
 			ctx->dts_last_IDR = gf_filter_pck_get_dts(ctx->first_pck_in_au);
 		}
@@ -3666,7 +3675,7 @@ naldmx_flush:
 				//we do this because many encoders use IDR+Decodable leading pic NAL types (eg SAP2)
 				//when encoding for IDR without DLP (eg SAP1)...
 				if (au_sap_type==GF_FILTER_SAP_2) {
-					au_sap_type = GF_FILTER_SAP_1;
+					ctx->sap2_as_sap1 = GF_TRUE;
 					ctx->check_prev_sap2 = GF_TRUE;
 					ctx->prev_sap2_poc = slice_poc;
 				}
