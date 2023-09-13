@@ -1453,10 +1453,7 @@ exit:
 			}
 			gpac_print_report(session, GF_FALSE, GF_TRUE);
 		}
-		if (exit_nocleanup) {
-			gf_fs_stop(session);
-			gpac_exit(e ? 1 : 0);
-		}
+		
 
 		if (!dump_graph) {
 			//don't print when generating doc, JS filters are loaded and not connected
@@ -1482,6 +1479,11 @@ exit:
 	if (compositor_mode)
 		unload_compositor();
 #endif
+
+	if (exit_nocleanup) {
+			gf_fs_stop(session);
+			gpac_exit(e ? 1 : 0);
+	}
 
 	GF_FilterSession *tmp_sess = session;
 	session = NULL;
