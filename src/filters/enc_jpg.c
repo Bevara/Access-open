@@ -40,7 +40,7 @@ typedef struct
 	// opts
 	u32 dctmode;
 	u32 quality;
-
+	u32 num_components;
 	GF_FilterPid *ipid, *opid;
 	u32 width, height, pixel_format, stride, stride_uv, nb_planes, uv_height;
 
@@ -130,12 +130,15 @@ static GF_Err jpgenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 	{
 	case GF_PIXEL_GREYSCALE:
 		ctx->jpeg_type = JCS_GRAYSCALE;
+		ctx->num_components =1;
 		break;
 	case GF_PIXEL_RGB:
 		ctx->jpeg_type = JCS_RGB;
+		ctx->num_components =3;
 		break;
 	case GF_PIXEL_YUV:
 		ctx->jpeg_type = JCS_YCbCr;
+		ctx->num_components =3;
 		break;
 	default:
 		gf_filter_pid_negociate_property(pid, GF_PROP_PID_PIXFMT, &PROP_UINT(GF_PIXEL_RGB));
@@ -312,7 +315,7 @@ static GF_Err jpgenc_process(GF_Filter *filter)
 	jpeg_create_compress(&cinfo);
 	cinfo.image_width = ctx->width;
 	cinfo.image_height = ctx->height;
-	cinfo.input_components = 3;
+	cinfo.input_components = ctx->num_components;
 	cinfo.in_color_space = ctx->jpeg_type;
 	if (ctx->dctmode == 0)
 		cinfo.dct_method = JDCT_ISLOW;
@@ -382,7 +385,7 @@ static GF_Err jpgenc_process(GF_Filter *filter)
 	if (ctx->jpeg_type == JCS_RGB){
 		JSAMPROW *row_pointer = NULL;
 		row_pointer = (JSAMPROW *)gf_malloc(sizeof(JSAMPROW) * ctx->height);
-		u32 pitch = ctx->width * 3;
+		u32 pitch = ctx->width * ctx->num_components;
 		for (i = 0; i < ctx->height; i++) {
 			row_pointer[i] = (JSAMPROW)&in_data[i * (size_t)pitch];
 		}
