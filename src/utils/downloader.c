@@ -628,7 +628,7 @@ static int h2_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, 
 	if (sess->h2_buf.size + len > sess->h2_buf.alloc) {
 		sess->h2_buf.alloc = sess->h2_buf.size + (u32) len;
 		sess->h2_buf.data = gf_realloc(sess->h2_buf.data, sizeof(u8) * sess->h2_buf.alloc);
-		if (!sess->h2_buf.data) return NGHTTP2_ERR_NOMEM;
+		if (!sess->h2_buf.data)	return NGHTTP2_ERR_NOMEM;
 	}
 	memcpy(sess->h2_buf.data + sess->h2_buf.size, data, len);
 	sess->h2_buf.size += (u32) len;
@@ -1245,8 +1245,11 @@ GF_UserCredentials * gf_user_credentials_register(GF_DownloadManager * dm, Bool 
 	if (username) {
 		strncpy(creds->username, username, 49);
 		creds->username[49] = 0;
+	} else {
+		creds->username[0] = 0;
 	}
-	strcpy(creds->site, server_name);
+	strncpy(creds->site, server_name, 1023);
+	creds->site[1023] = 0;
 	if (username && password && valid)
 		gf_user_credentials_save_digest(dm, creds, password, GF_FALSE);
 	else {
@@ -2787,6 +2790,7 @@ Bool gf_dm_session_do_task(GF_DownloadSession *sess)
 	if (sess->destroy) {
 		do_run = GF_FALSE;
 	} else {
+		Bool unlock = sess->mx ? GF_TRUE : GF_FALSE;
 		gf_mx_p(sess->mx);
 		if (sess->status >= GF_NETIO_DATA_TRANSFERED) {
 			do_run = GF_FALSE;
@@ -2797,7 +2801,8 @@ Bool gf_dm_session_do_task(GF_DownloadSession *sess)
 				sess->do_requests(sess);
 			}
 		}
-		gf_mx_v(sess->mx);
+		if (unlock)
+			gf_mx_v(sess->mx);
 	}
 	if (do_run) return GF_TRUE;
 
@@ -3290,7 +3295,7 @@ static void gf_dm_connect(GF_DownloadSession *sess)
 		if (sess->num_retry) {
 			SET_LAST_ERR(GF_OK)
 			sess->num_retry--;
-			GF_LOG(GF_LOG_WARNING, GF_LOG_HTTP, ("[HTTP/2] stream_id %d (%s) refused by server, retrying and marking session as no longer available\n", sess->h2_stream_id, sess->remote_path ? sess->remote_path : sess->orig_url));
+			GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTP/2] stream_id %d (%s) refused by server, retrying and marking session as no longer available\n", sess->h2_stream_id, sess->remote_path ? sess->remote_path : sess->orig_url));
 
 			sess->h2_stream_id = 0;
 		} else {
@@ -3337,9 +3342,16 @@ static void gf_dm_connect(GF_DownloadSession *sess)
 
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_HTTP, ("[HTTP/2] associating session %s to existing http2 session\n", sess->remote_path ? sess->remote_path : sess->orig_url));
 
-			if (sess->mx) gf_mx_del(sess->mx);
+			u32 nb_locks=0;
+			if (sess->mx) {
+				nb_locks = gf_mx_get_num_locks(sess->mx);
+				gf_mx_del(sess->mx);
+			}
 			sess->h2_sess = a_sess->h2_sess;
 			sess->mx = a_sess->h2_sess->mx;
+			if (nb_locks)
+				gf_mx_p(sess->mx);
+
 			sess->sock = a_sess->sock;
 #ifdef GPAC_HAS_SSL
 			sess->ssl = a_sess->ssl;
@@ -4631,7 +4643,7 @@ GF_Err gf_dm_sess_fetch_data(GF_DownloadSession *sess, char *buffer, u32 buffer_
 			h2_session_send(sess);
 
 			//stream is over and all data flushed, move to GF_NETIO_DATA_TRANSFERED in client mode
-			if (sess->h2_data_done && !sess->h2_buf.size && !sess->server_mode) {
+			if (!sess->h2_stream_id && sess->h2_data_done && !sess->h2_buf.size && !sess->server_mode) {
 				sess->status = GF_NETIO_DATA_TRANSFERED;
 				SET_LAST_ERR(GF_OK)
 			}
@@ -4654,7 +4666,10 @@ GF_Err gf_dm_sess_fetch_data(GF_DownloadSession *sess, char *buffer, u32 buffer_
 
 		if (! (*read_size) && (e==GF_IP_NETWORK_EMPTY)) {
 #ifdef GPAC_HAS_HTTP2
-			if (sess->h2_sess && (!sess->h2_stream_id || sess->h2_data_done) && sess->bytes_done && !sess->total_size) {
+			if (sess->h2_sess && sess->bytes_done && !sess->total_size
+				//for client, wait for close - for server move to data_transfered as soon as we're done pushing data
+				&& (!sess->h2_stream_id || (sess->h2_data_done && sess->server_mode))
+			) {
 				sess->status = GF_NETIO_DATA_TRANSFERED;
 				SET_LAST_ERR(GF_OK)
 				return GF_EOS;
@@ -5250,7 +5265,7 @@ static GF_Err http_parse_remaining_body(GF_DownloadSession * sess, char * sHTTP)
 #ifdef GPAC_HAS_HTTP2
 		if (sess->h2_sess) {
 			h2_flush_data(sess, GF_FALSE);
-			if (sess->h2_data_done) {
+			if (!sess->h2_stream_id) {
 				sess->status = GF_NETIO_DATA_TRANSFERED;
 				SET_LAST_ERR(GF_OK)
 			}
@@ -5558,7 +5573,7 @@ static GF_Err wait_for_header_and_parse(GF_DownloadSession *sess, char * sHTTP)
 
 	if (sess->flags & GF_NETIO_SESSION_NO_BLOCK) {
 		sHTTP = sess->async_req_reply;
-		bytesRead = sess->async_req_reply_size;
+		buf_size = bytesRead = sess->async_req_reply_size;
 		sess->async_req_reply_size = 0;
 	}
 

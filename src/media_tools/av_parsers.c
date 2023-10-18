@@ -2503,8 +2503,13 @@ static void av1_add_obu_internal(GF_BitStream *bs, u64 pos, u64 obu_length, ObuT
 	GF_AV1_OBUArrayEntry *a = NULL;
 
 	if (state && state->mem_mode) {
-		if (!state->bs) state->bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-		else gf_bs_reassign_buffer(state->bs, state->frame_obus, state->frame_obus_alloc);
+		if (!state->bs) {
+			state->bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
+		} else {
+			gf_bs_reassign_buffer(state->bs, state->frame_obus, state->frame_obus_alloc);
+			//make sure we don't attempt at freeing this buffer while assigned to the bitstream - cf gf_av1_reset_state
+			state->frame_obus = NULL;
+		}
 	}
 	else {
 		GF_SAFEALLOC(a, GF_AV1_OBUArrayEntry);
@@ -4026,22 +4031,19 @@ void gf_av1_reset_state(AV1State *state, Bool is_destroy)
 		gf_list_del(l1);
 		gf_list_del(l2);
 		if (state->bs) {
-			u32 size, asize=0;
-			u8 *ptr=NULL;
-			//detach BS internal buffer
-			gf_bs_get_content_no_truncate(state->bs, &ptr, &size, &asize);
-			//avoid double free, cf issue 1893
-			if (ptr != state->frame_obus) {
-				gf_free(ptr);
-			}
+			//cf issues #1893 and #2604:
+			//state->frame_obus is either:
+			//- NULL, in which case there is a valid buffer in bs, freed by bs_del
+			//- not NULL, in which case the internal buffer of bs is NULL and we must free the buffer
+
 			if (state->frame_obus) {
 				gf_free(state->frame_obus);
 				state->frame_obus = NULL;
 				state->frame_obus_alloc = 0;
 			}
 			gf_bs_del(state->bs);
+			state->bs = NULL;
 		}
-		state->bs = NULL;
 	}
 	else {
 		state->frame_state.frame_obus = l1;
@@ -6369,7 +6371,7 @@ u32 gf_avc_reformat_sei(u8 *buffer, u32 nal_size, Bool isobmf_rewrite, AVCState 
 			//if result fits into source buffer, reformat
 			//otherwise ignore and return source (happens in some fuzzing cases, cf issue 1903)
 			if (dst_no_epb_size + nb_bytes_add <= nal_size)
-				nal_size = gf_media_nalu_add_emulation_bytes(buffer, dst_no_epb, dst_no_epb_size);
+				nal_size = gf_media_nalu_add_emulation_bytes(dst_no_epb, buffer, dst_no_epb_size);
 
 			gf_free(dst_no_epb);
 		}
@@ -7724,13 +7726,19 @@ static Bool hevc_parse_vps_extension(HEVC_VPS *vps, GF_BitStream *bs)
 		}
 
 		if (splitting_flag) {
-			for (i = 0; i < num_scalability_types; i++) {
+			u32 num_bits=0;
+			for (i = 0; i < num_scalability_types-1; i++) {
 				dim_bit_offset[i] = 0;
+				num_bits+=dimension_id_len[i];
 				for (j = 0; j < i; j++)
 					dim_bit_offset[i] += dimension_id_len[j];
 			}
-			dimension_id_len[num_scalability_types - 1] = 1 + (5 - dim_bit_offset[num_scalability_types - 1]);
-			dim_bit_offset[num_scalability_types] = 6;
+			if (num_bits>=6) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("[HEVC] Too many its defined for dimension IDs (%d vs 5 max)\n", num_bits));
+				return -1;
+			}
+			dimension_id_len[num_scalability_types - 1] = 6 - num_bits; //1 + (5 - dim_bit_offset[num_scalability_types - 1]);
+			dim_bit_offset[num_scalability_types - 1] = 6;
 		}
 	}
 
@@ -12422,4 +12430,3 @@ void gf_vvc_parse_ps(GF_VVCConfig* vvccfg, VVCState* vvc, u32 nal_type)
 }
 
 #endif /*GPAC_DISABLE_AV_PARSERS*/
-

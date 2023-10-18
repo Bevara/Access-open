@@ -785,7 +785,7 @@ Documents the property object used for PID and packets.
 typedef enum
 {
 	/*! not allowed*/
-	GF_PROP_FORBIDEN	=	0,
+	GF_PROP_FORBIDDEN	=	0,
 	/*! signed 32 bit integer*/
 	GF_PROP_SINT		=	1,
 	/*! unsigned 32 bit integer*/
@@ -1395,9 +1395,9 @@ const char *gf_props_get_type_name(GF_PropType type);
 */
 const char *gf_props_get_type_desc(GF_PropType type);
 
-/*! Gets the description type for a given  property type name
+/*! Gets the description type for a given property type name
 \param name property type name
-\return property type or GF_PROP_FORBIDEN
+\return property type or GF_PROP_FORBIDDEN
 */
 GF_PropType gf_props_parse_type(const char *name);
 
@@ -3950,7 +3950,7 @@ Supported KEYWORD (case insensitive):
 \param file_suffix if not null, will be appended after the value of the §File$ keyword if present
 \return error if any
 */
-GF_Err gf_filter_pid_resolve_file_template(GF_FilterPid *PID, char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_number, const char *file_suffix);
+GF_Err gf_filter_pid_resolve_file_template(GF_FilterPid *PID, const char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_number, const char *file_suffix);
 
 
 /*! Same as \ref  gf_filter_pid_resolve_file_template but overrides file name with given name
@@ -3962,7 +3962,7 @@ GF_Err gf_filter_pid_resolve_file_template(GF_FilterPid *PID, char szTemplate[GF
 \param file_name if not null, will be used instead of PID URL or local path
 \return error if any
 */
-GF_Err gf_filter_pid_resolve_file_template_ex(GF_FilterPid *PID, char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_number, const char *file_suffix, const char *file_name);
+GF_Err gf_filter_pid_resolve_file_template_ex(GF_FilterPid *PID, const char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_number, const char *file_suffix, const char *file_name);
 
 
 /*! Sets discard mode on or off on an input PID. When discard is on, all input packets for this PID are no longer dispatched.
@@ -4768,7 +4768,7 @@ Bool gf_filter_pck_is_blocking_ref(GF_FilterPacket *pck);
 
 Custom filters are filters created by the app with no associated registry.
 The app is responsible for assigning capabilities to the filter, and setting callback functions.
-Each callback is optionnal, but a custom filter should at least have a process callback, and a configure_pid callback if not a source filter.
+Each callback is optional, but a custom filter should at least have a process callback, and a configure_pid callback if not a source filter.
 
 Custom filters do not have any arguments exposed, and cannot be selected for sink or source filters.
 If your app requires custom I/Os for source or sinks, use \ref GF_FileIO.

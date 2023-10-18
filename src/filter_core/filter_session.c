@@ -1130,7 +1130,7 @@ Bool gf_fs_check_filter_register_cap(const GF_FilterRegister *f_reg, u32 incode,
 	return gf_fs_check_filter_register_cap_ex(f_reg, incode, cap_input, outcode, cap_output, exact_match_only, GF_FALSE);
 }
 
-GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args, GF_List *filter_blacklist)
+GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args, GF_List *filter_blacklist, GF_Err *out_err)
 {
 	GF_Err e;
 	char szCodec[3];
@@ -1146,9 +1146,11 @@ GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args, GF_List
 	szCodec[1] = fsess->sep_name;
 	szCodec[2] = 0;
 
+	if (out_err) *out_err = GF_OK;
 	cid = args ? strstr(args, szCodec) : NULL;
 	if (!cid) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Missing codec identifier in \"enc\" definition: %s\n", args ? args : "no arguments"));
+		if (out_err) *out_err = GF_BAD_PARAM;
 		return NULL;
 	}
 	sep = strchr(cid, fsess->sep_args);
@@ -1159,6 +1161,7 @@ GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args, GF_List
 	if (codecid==GF_CODECID_NONE) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Unrecognized codec identifier in \"enc\" definition: %s\n", cid));
 		if (sep) sep[0] = fsess->sep_args;
+		if (out_err) *out_err = GF_BAD_PARAM;
 		return NULL;
 	}
 #endif
@@ -1192,6 +1195,7 @@ retry:
 	if (!candidate) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Cannot find any filter providing encoding for %s\n", cid));
 		if (blacklist) gf_list_del(blacklist);
+		if (out_err) *out_err = GF_FILTER_NOT_FOUND;
 		return NULL;
 	}
 	filter = gf_filter_new(fsess, candidate, args, NULL, GF_FILTER_ARG_EXPLICIT, &e, NULL, GF_FALSE);
@@ -1201,6 +1205,7 @@ retry:
 			gf_list_add(blacklist, (void *) candidate);
 			goto retry;
 		}
+		if (out_err) *out_err = e;
 		GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Failed to load filter %s: %s\n", candidate->name, gf_error_to_string(e) ));
 	} else {
 		filter->encoder_codec_id = codecid;
@@ -1329,14 +1334,15 @@ static GF_Filter *gf_fs_load_filter_internal(GF_FilterSession *fsess, const char
 		if (!quiet) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Missing filter name in %s\n", name));
 		}
+		if (err_code) *err_code = GF_FILTER_NOT_FOUND;
 		return NULL;
 	}
 
 	if (!strncmp(name, "enc", len)) {
-		return gf_fs_load_encoder(fsess, args, NULL);
+		return gf_fs_load_encoder(fsess, args, NULL, err_code);
 	}
 	if ((strlen(name)>2) && (name[0]=='c') && (name[1]==fsess->sep_name)) {
-		return gf_fs_load_encoder(fsess, name, NULL);
+		return gf_fs_load_encoder(fsess, name, NULL, err_code);
 	}
 
 	/*regular filter loading*/
@@ -1477,6 +1483,22 @@ static void print_task_list_filter(void *udta, void *item)
 	print_task(udta, item, GF_TRUE);
 }
 
+struct __pck_size_info
+{
+	u32 nb_packets;
+	u64 all_size;
+	u64 all_alloc_size;
+};
+
+static void gather_pck_size(void *udta, void *item)
+{
+	struct __pck_size_info *sinfo = (struct __pck_size_info*)udta;
+	GF_FilterPacketInstance *pcki = item;
+	sinfo->nb_packets++;
+	sinfo->all_size += pcki->pck->data_length;
+	sinfo->all_alloc_size += pcki->pck->alloc_size;
+}
+
 GF_EXPORT
 void gf_fs_print_debug_info(GF_FilterSession *fsess, GF_SessionDebugFlag dbg_flags)
 {
@@ -1525,6 +1547,19 @@ void gf_fs_print_debug_info(GF_FilterSession *fsess, GF_SessionDebugFlag dbg_fla
 			} else {
 				fprintf(stderr, " no tasks\n");
 			}
+
+			struct __pck_size_info pcki;
+			memset(&pcki, 0, sizeof(struct __pck_size_info));
+			pcki.nb_packets = gf_list_count(f->postponed_packets);
+			for (j=0; j<f->num_input_pids; j++) {
+				u32 k=0;
+				GF_FilterPidInst *pidi = gf_list_get(f->input_pids, k);
+				gf_fq_enum(pidi->packets, gather_pck_size, &pcki);
+			}
+			if (pcki.nb_packets)
+				fprintf(stderr, " %d packets to process on %d input PIDs "LLU" KBytes\n", pcki.nb_packets, f->num_input_pids, pcki.all_size/1000);
+			if (f->ref_bytes)
+				fprintf(stderr, " "LLU" KBytes of detached packets in destinations\n", f->ref_bytes/1000);
 		}
 		gf_mx_v(fsess->filters_mx);
 	}

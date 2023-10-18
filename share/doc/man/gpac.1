@@ -42,16 +42,6 @@ The possible options for gpac are:
 
 .br
 .TP
-.B \-mem-track
-.br
-enable memory tracker
-.br
-.TP
-.B \-mem-track-stack
-.br
-enable memory tracker with stack dumping
-.br
-.TP
 .B \-ltf
 .br
 load test-unit filters (used for for unit tests only)
@@ -532,7 +522,7 @@ The .I creds option allows inspecting or modifying the users and groups informat
 .br
 * `+NAME`: adds user NAME
 .br
-* `+NAME:I1=V1[,I2=V2]`: sets info I1 with value V1 to user NAME. the info name password resets password without prompt.
+* `+NAME:I1=V1[,I2=V2]`: sets info I1 with value V1 to user NAME. The info name password resets password without prompt.
 .br
 * `-NAME`: removes user NAME
 .br
@@ -878,6 +868,59 @@ use buffered IO instead of file descriptor for read/write - this can speed up op
 .B \-no-mx
 .br
 disable all mutexes, threads and semaphores (do not use if unsure about threading used)
+.br
+.TP
+.B \-netcap-dst (string)
+.br
+output packets to indicated file
+.br
+.TP
+.B \-netcap-src (string)
+.br
+read packets from indicated file, as produced by -netcap-dst or a pcap or pcapng file
+.br
+.TP
+.B \-netcap-nrt
+.br
+ignore real-time regulation when reading packet from capture file
+.br
+.TP
+.B \-netcap-loop (int)
+.br
+set number of loops of capture file, -1 means forever
+.br
+.TP
+.B \-net-filter (string)
+.br
+set packet filtering rules (live or from file). Value is a list of {OPT,OPT2...} with OPT in:
+.br
+* m=N: set rule mode - N can be r for reception only (default), w for send only or rw for both
+.br
+* s=N: set packet start range to N
+.br
+* e=N: set packet end range to N (only used for r and f rules)
+.br
+* n=N: set number of packets to drop to N, 0 or 1 means single packet
+.br
+* r=N: random drop one packet every N
+.br
+* f=N: drop first packet every N
+.br
+* p=P: local port number to filter, if not set the rule applies to all packets
+.br
+* o=N: patch packet instead of droping (always true for TCP), replacing byte at offset N (0 is first byte, <0 for random)
+.br
+* v=N: set patch byte value to N (hexa) or negative value for random (default)
+.br
+
+.br
+Example
+.br
+{p=1234,s=100,n=20}{r=200,s=500,o=10,v=FE}
+.br
+
+.br
+This will drop packets 100 to 119 on port 1234 and patch one random packet every 200 starting from packet 500, setting byte 10 to FE
 .br
 .TP
 .B \-cache (string)
@@ -2119,7 +2162,7 @@ Templating can be useful when encoding several qualities in one pass.
 .br
 Example
 .br
-gpac -i dump.yuv:size=640x360 vcrop:wnd=0x0x320x180 c=avc:b=1M @2 c=avc:b=750k -o dump_$CropOrigin$x$Width$x$Height$.264:clone
+gpac -i dump.yuv:size=640x360 vcrop:wnd=0x0x320x180 c=avc:b=1M @2 c=avc:b=750k -o dump_$CropOrigin$x$Width$x$Height$.264
 .br
 
 .br
@@ -2140,11 +2183,9 @@ In this case, only one item (likely the first declared in the file) will connect
 .br
 Other items will not be connected since the destination only accepts one input PID.
 .br
-There is a special option clone allowing filters to be cloned with the same arguments. The cloned filters have the same ID as the original one.
-.br
 Example
 .br
-gpac -i img.heif -o dump_$ItemID$.jpg:clone
+gpac -i img.heif -o dump_$ItemID$.jpg
 .br
 
 .br
@@ -2152,7 +2193,7 @@ In this case, the destination will be cloned for each item, and all will be expo
 .br
 Example
 .br
-gpac -i vid.mpd c=avc:FID=1:clone -o transcode.mpd:SID=1
+gpac -i vid.mpd c=avc:FID=1 -o transcode.mpd:SID=1
 .br
 
 .br
@@ -2449,7 +2490,7 @@ As seen previously, the following options may be set on any filter, but are not 
 .br
 * FBD: decode buffer time in microseconds (unsigned int value)
 .br
-* clone: filter cloning flag (no value)
+* clone: explicitly enable/disable filter cloning flag (no value)
 .br
 * nomux: enable/disable direct file copy (no value)
 .br

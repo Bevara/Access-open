@@ -105,6 +105,9 @@ static void swf_init_decompress(SWFReader *read)
 		return;
 	}
 	dst_size = read->length;
+	if (dst_size < 8) {
+		return;
+	}
 	src = gf_malloc(sizeof(char)*size);
 	dst = gf_malloc(sizeof(char)*dst_size);
 	memset(dst, 0, sizeof(char)*8);
@@ -2079,7 +2082,7 @@ static GF_Err swf_def_bits_jpeg(SWFReader *read, u32 version)
 	if (version!=3)
 		file = gf_fopen(szName, "wb");
 
-	if (version==1 && read->jpeg_hdr_size) {
+	if (version==1 && read->jpeg_hdr_size >= 2) {
 		/*remove JPEG EOI*/
 		if (gf_fwrite(read->jpeg_hdr, read->jpeg_hdr_size-2, file)!=read->jpeg_hdr_size-2)
 			return GF_IO_ERR;

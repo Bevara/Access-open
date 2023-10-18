@@ -594,7 +594,7 @@ static GF_Err gf_dash_get_date(GF_DashClient *dash, char *scheme_id, char *url, 
 		}
 	}
     gf_blob_release(cache_name);
-    
+
 	dash->dash_io->del(dash->dash_io, dash->pending_utc_session);
 	dash->pending_utc_session = NULL;
 	return res;
@@ -2166,10 +2166,10 @@ static GF_Err gf_dash_solve_representation_xlink(GF_DashClient *dash, GF_MPD_Rep
 		GF_XMLNode *root = gf_xml_dom_get_root_idx(parser, i);
 		if (!strcmp(root->name, "SegmentList")) {
 			GF_MPD_SegmentList *new_seg_list = gf_mpd_solve_segment_list_xlink(dash->mpd, root);
-			//forbiden
+			//forbidden
 			if (new_seg_list && new_seg_list->xlink_href) {
 				if (new_seg_list->xlink_actuate_on_load) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] XLINK %s references to remote element entities that contain another @xlink:href attribute with xlink:actuate set to onLoad - forbiden\n", rep->segment_list->xlink_href));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] XLINK %s references to remote element entities that contain another @xlink:href attribute with xlink:actuate set to onLoad - forbidden\n", rep->segment_list->xlink_href));
 					gf_mpd_delete_segment_list(new_seg_list);
 					new_seg_list = NULL;
 				} else {
@@ -2236,7 +2236,7 @@ static GF_Err gf_dash_solve_m3u8_representation_xlink(GF_DASH_Group *group, GF_M
 		gf_free(xlink_copy);
 		return e;
 	}
-	
+
 	if (gf_url_is_local(xlink_copy)) {
 		local_url = xlink_copy;
 	} else {
@@ -3903,7 +3903,7 @@ static void dash_store_stats(GF_DashClient *dash, GF_DASH_Group *group, u32 byte
 	}
 #endif
 
-	
+
 	if (!bytes_per_sec && group->local_files) {
 		bytes_per_sec = (u32) -1;
 		bytes_per_sec /= 8;
@@ -4972,7 +4972,7 @@ static GF_Err gf_dash_download_init_segment(GF_DashClient *dash, GF_DASH_Group *
 		}
 	}
 	if (key_url) gf_free(key_url);
-	
+
 	group->nb_cached_segments = 1;
 	group->download_segment_index += nb_segment_read;
 
@@ -5159,7 +5159,7 @@ s32 gf_dash_group_get_dependency_group(GF_DashClient *dash, u32 idx)
 		rep = gf_dash_find_rep(dash, rep->dependency_id, &group);
 		if (sep) sep[0] = ' ';
 	}
-	return group->groups_idx;
+	return group ? group->groups_idx : idx;
 }
 
 GF_EXPORT
@@ -5379,7 +5379,7 @@ GF_Err gf_dash_setup_groups(GF_DashClient *dash)
 						tmp = tmp + 1;
 					else
 						tmp = a_rep->dependency_id;
-					if (!strcmp(tmp, rep->id))
+					if (rep->id && !strcmp(tmp, rep->id))
 						rep->playback.enhancement_rep_index_plus_one = k + 1;
 				}
 			}
@@ -6055,7 +6055,7 @@ static void gf_dash_solve_period_xlink(GF_DashClient *dash, GF_List *period_list
 	while (gf_list_count(new_mpd->periods)) {
 		GF_MPD_Period *inserted_period = gf_list_get(new_mpd->periods, 0);
 		gf_list_rem(new_mpd->periods, 0);
-		//forbiden
+		//forbidden
 		if (inserted_period->xlink_href && inserted_period->xlink_actuate_on_load) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Invalid remote period with xlink:actuate=\"onLoad\" and xlink:href set, removing parent period.\n"));
 			gf_mpd_period_free(inserted_period);
@@ -6330,6 +6330,11 @@ static GF_Err gf_dash_setup_period(GF_DashClient *dash)
 
 		for (j=0; j<gf_list_count(group->adaptation_set->essential_properties); j++) {
 			GF_MPD_Descriptor *mpd_desc = gf_list_get(group->adaptation_set->essential_properties, j);
+			if (!mpd_desc->scheme_id_uri) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[DASH] AdaptationSet with unrecognized EssentialProperty (no uri) - ignoring because not supported\n"));
+				disabled = 1;
+				break;
+			}
 			if (!strcmp(mpd_desc->scheme_id_uri, "urn:mpeg:dash:srd:2014")) {
 				u32 id, w, h, res;
 				w = h = 0;
@@ -6381,7 +6386,7 @@ static GF_Err gf_dash_setup_period(GF_DashClient *dash)
 
 		for (j=0; j<gf_list_count(group->adaptation_set->supplemental_properties); j++) {
 			GF_MPD_Descriptor *mpd_desc = gf_list_get(group->adaptation_set->supplemental_properties, j);
-			if (!strcmp(mpd_desc->scheme_id_uri, "urn:mpeg:dash:srd:2014")) {
+			if (mpd_desc && mpd_desc->scheme_id_uri && !strcmp(mpd_desc->scheme_id_uri, "urn:mpeg:dash:srd:2014") && mpd_desc->value) {
 				u32 id, w, h, res;
 				w = h = 0;
 				res = sscanf(mpd_desc->value, "%d,%d,%d,%d,%d,%d,%d", &id, &group->srd_x, &group->srd_y, &group->srd_w, &group->srd_h, &w, &h);
@@ -6550,7 +6555,7 @@ retry_pending_rep:
 			dash->dash_state = GF_DASH_STATE_SETUP;
 			return GF_OK;
 		}
-		
+
 		// active representation is marked as disabled, we need to redo the selection
 		if (rep_sel->playback.disabled)
 			goto select_active_rep;
@@ -7040,8 +7045,11 @@ llhls_rety:
 					}
 
 					if (dash->is_m3u8 && (dyn_type==GF_MPD_TYPE_DYNAMIC)) {
-						if (!group->time_at_first_reload_required)
+						if (!group->time_at_first_reload_required) {
+							//first time we start timeout, force MPD update
+							dash->force_mpd_update = GF_TRUE;
 							group->time_at_first_reload_required = now;
+						}
 
 						//use group last modification time
 						timer = now - group->last_mpd_change_time;
@@ -7057,6 +7065,8 @@ llhls_rety:
 
 					if (!group->time_at_first_reload_required) {
 						group->time_at_first_reload_required = now;
+						//first time we start timeout, force MPD update
+						dash->force_mpd_update = GF_TRUE;
 						return GF_DASH_DownloadCancel;
 					}
 					if (now - group->time_at_first_reload_required < group->cache_duration)
@@ -8034,7 +8044,7 @@ retry:
 		dash->dash_state = GF_DASH_STATE_CONNECTING;
 
 		//fallthrough
-		
+
 	case GF_DASH_STATE_CONNECTING:
 		/*ask the user to connect to desired groups*/
 		e = dash->dash_io->on_dash_event(dash->dash_io, GF_DASH_EVENT_CREATE_PLAYBACK, -1, GF_OK);
@@ -8155,7 +8165,7 @@ static GF_Err gf_dash_check_periods(GF_DashClient *dash)
 	if (dash->xlink_sess) return GF_OK;
 
 	period = gf_list_get(dash->mpd->periods, dash->active_period_index);
-	if (period->xlink_href) {
+	if (period && period->xlink_href) {
 		gf_dash_solve_period_xlink(dash, dash->mpd->periods, dash->active_period_index);
 		period = gf_list_get(dash->mpd->periods, dash->active_period_index);
 	}
@@ -8230,7 +8240,7 @@ static void gf_dash_seek_group(GF_DashClient *dash, GF_DASH_Group *group, Double
 	u32 first_downloaded, last_downloaded, segment_idx, orig_idx;
 
 	if (group->selection==GF_DASH_GROUP_NOT_SELECTABLE) return;
-	
+
 	group->force_segment_switch = 0;
 	if (!is_dynamic) {
 		/*figure out where to seek*/
@@ -9360,7 +9370,7 @@ Bool gf_dash_in_last_period(GF_DashClient *dash, Bool check_eos)
 	default:
 		break;
 	}
-	
+
 	if (dash->active_period_index+1 < gf_list_count(dash->mpd->periods))
 		return GF_FALSE;
 
@@ -10874,4 +10884,3 @@ void gf_dash_group_get_sar(GF_DashClient *dash, u32 group_idx, GF_Fraction *sar)
 	return;
 }
 #endif //GPAC_DISABLE_DASHIN
-

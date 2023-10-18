@@ -75,7 +75,7 @@ typedef struct
 	u32 pad, mq;
 
 
-	//only one output pid declared
+	//only one input pid declared
 	GF_FilterPid *ipid;
 
 	GF_List *streams;
@@ -447,7 +447,7 @@ static GF_Err gsfdmx_parse_pid_info(GF_Filter *filter, GSF_DemuxCtx *ctx, GSF_St
 
 		memset(&p, 0, sizeof(GF_PropertyValue));
 		p.type = gf_props_4cc_get_type(p4cc);
-		if (p.type==GF_PROP_FORBIDEN) {
+		if (p.type==GF_PROP_FORBIDDEN) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFDemux] Wrong GPAC property type for property 4CC %s\n", gf_4cc_to_str(p4cc) ));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
@@ -822,7 +822,7 @@ GF_Err gsfdmx_read_data_pck(GSF_DemuxCtx *ctx, GSF_Stream *gst, GSF_Packet *gpck
 			memset(&p, 0, sizeof(GF_PropertyValue));
 			u32 p4cc = gf_bs_read_u32(bs);
 			p.type = gf_props_4cc_get_type(p4cc);
-			if (p.type==GF_PROP_FORBIDEN) {
+			if (p.type==GF_PROP_FORBIDDEN) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFDemux] Wrong GPAC property type for property 4CC %s\n", gf_4cc_to_str(p4cc) ));
 				gf_filter_pck_discard(gpck->pck);
 				gpck->pck = NULL;
@@ -851,7 +851,7 @@ GF_Err gsfdmx_read_data_pck(GSF_DemuxCtx *ctx, GSF_Stream *gst, GSF_Packet *gpck
 			gf_bs_read_data(bs, pname, len);
 			pname[len] = 0;
 			p.type = gf_bs_read_u8(bs);
-			if (p.type==GF_PROP_FORBIDEN) {
+			if (p.type==GF_PROP_FORBIDDEN) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFDemux] Wrong GPAC property type for property %s\n", pname ));
 				gf_free(pname);
 				gf_filter_pck_discard(gpck->pck);
@@ -1106,7 +1106,7 @@ static GF_Err gsfdmx_demux(GF_Filter *filter, GSF_DemuxCtx *ctx, char *data, u32
 			break;
 		}
 
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[GSFDemux] found %s on stream %d type %s cryped %d sn %d size %d block_offset %d, hdr size %d at position %d\n",
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[GSFDemux] found %s on stream %d type %s crypted %d sn %d size %d block_offset %d, hdr size %d at position %d\n",
 					(pck_len==block_size) ? "full packet" : (pck_frag ? "packet fragment" : "packet start"),
 					st_idx,
 					gsfdmx_pck_name(pck_type),
@@ -1117,7 +1117,7 @@ static GF_Err gsfdmx_demux(GF_Filter *filter, GSF_DemuxCtx *ctx, char *data, u32
 		if ((pck_type != GFS_PCKTYPE_PCK) && (pck_frag || (pck_len < block_size)))
 			needs_agg = GF_TRUE;
 
-		//tunein, we don't care about the seq num (for now, might chenge if we want key roll or other order-dependent features)
+		//tunein, we don't care about the seq num (for now, might change if we want key roll or other order-dependent features)
 		if (!st_idx) {
 			if (ctx->tuned) {
 			} else if (needs_agg) {
@@ -1232,7 +1232,7 @@ GF_Err gsfdmx_process(GF_Filter *filter)
 	}
 
 	//check if all the streams are in block state, if so return.
-	//we need to check for all output since one pid could still be buffering
+	//we need to check for all outputs since one pid could still be buffering
 	while ((st = gf_list_enum(ctx->streams, &i))) {
 		if (st->opid) {
 			if (is_eos) {
@@ -1375,7 +1375,6 @@ GF_FilterRegister GSFDemuxRegister = {
 #endif
 	
 	.private_size = sizeof(GSF_DemuxCtx),
-	.max_extra_pids = (u32) -1,
 	.args = GSFDemuxArgs,
 	.flags = GF_FS_REG_DYNAMIC_PIDS,
 	SETCAPS(GSFDemuxCaps),

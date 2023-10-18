@@ -1410,6 +1410,24 @@ GF_GPACArg GPAC_Args[] = {
  GF_DEF_ARG("no-tls-rcfg", NULL, "disable automatic TCP to TLS reconfiguration", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-fd", NULL, "use buffered IO instead of file descriptor for read/write - this can speed up operations on small files", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
  GF_DEF_ARG("no-mx", NULL, "disable all mutexes, threads and semaphores (do not use if unsure about threading used)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+#ifndef GPAC_DISABLE_NETCAP
+ GF_DEF_ARG("netcap-dst", NULL, "output packets to indicated file", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("netcap-src", NULL, "read packets from indicated file, as produced by -netcap-dst or a pcap or pcapng file", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("netcap-nrt", NULL, "ignore real-time regulation when reading packet from capture file", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("netcap-loop", NULL, "set number of loops of capture file, -1 means forever", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+ GF_DEF_ARG("net-filter", NULL, "set packet filtering rules (live or from file). Value is a list of `{OPT,OPT2...}` with OPT in:\n"
+ "- m=N: set rule mode - `N` can be `r` for reception only (default), `w` for send only or `rw` for both\n"
+ "- s=N: set packet start range to `N`\n"
+ "- e=N: set packet end range to `N` (only used for `r` and `f` rules)\n"
+ "- n=N: set number of packets to drop to `N`, 0 or 1 means single packet\n"
+ "- r=N: random drop one packet every `N`\n"
+ "- f=N: drop first packet every `N`\n"
+ "- p=P: local port number to filter, if not set the rule applies to all packets\n"
+ "- o=N: patch packet instead of droping (always true for TCP), replacing byte at offset `N` (0 is first byte, <0 for random)\n"
+ "- v=N: set patch byte value to `N` (hexa) or negative value for random (default)\n"
+ "\nEX {p=1234,s=100,n=20}{r=200,s=500,o=10,v=FE}\n"
+ "This will drop packets 100 to 119 on port 1234 and patch one random packet every 200 starting from packet 500, setting byte 10 to FE", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT|GF_ARG_SUBSYS_CORE),
+#endif
 
  GF_DEF_ARG("cache", NULL, "cache directory location", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),
  GF_DEF_ARG("proxy-on", NULL, "enable HTTP proxy", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED|GF_ARG_SUBSYS_HTTP),

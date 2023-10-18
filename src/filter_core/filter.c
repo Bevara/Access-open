@@ -1207,7 +1207,7 @@ Bool gf_filter_update_arg_apply(GF_Filter *filter, const char *arg_name, const c
 
 		argv = gf_filter_parse_prop_solve_env_var(filter->session, filter, a->arg_type, a->arg_name, arg_value, a->min_max_enum);
 
-		if (argv.type != GF_PROP_FORBIDEN) {
+		if (argv.type != GF_PROP_FORBIDDEN) {
 			GF_Err e = GF_OK;
 			if (!is_sync_call) {
 				FSESS_CHECK_THREAD(filter)
@@ -1894,7 +1894,7 @@ skip_date:
 				if (reverse_bool && (argv.type==GF_PROP_BOOL))
 					argv.value.boolean = !argv.value.boolean;
 
-				if (argv.type != GF_PROP_FORBIDEN) {
+				if (argv.type != GF_PROP_FORBIDDEN) {
 					if (!for_script && (a->offset_in_private>=0)) {
 						gf_filter_set_arg(filter, a, &argv);
 					} else if (filter->freg->update_arg) {
@@ -2187,7 +2187,7 @@ static void gf_filter_parse_args(GF_Filter *filter, const char *args, GF_FilterA
 
 		argv = gf_filter_parse_prop_solve_env_var(filter->session, filter, a->arg_type, a->arg_name, def_val, a->min_max_enum);
 
-		if (argv.type != GF_PROP_FORBIDEN) {
+		if (argv.type != GF_PROP_FORBIDDEN) {
 			if (!for_script && (a->offset_in_private>=0)) {
 				gf_filter_set_arg(filter, a, &argv);
 			} else if (filter->freg->update_arg) {
@@ -2233,7 +2233,7 @@ static void reset_filter_args(GF_Filter *filter)
 		i++;
 		if (!a || !a->arg_name) break;
 
-		if (a->arg_type != GF_PROP_FORBIDEN) {
+		if (a->arg_type != GF_PROP_FORBIDDEN) {
 			memset(&argv, 0, sizeof(GF_PropertyValue));
 			argv.type = a->arg_type;
 			gf_filter_set_arg(filter, a, &argv);
@@ -2407,7 +2407,7 @@ void gf_filter_relink_dst(GF_FilterPidInst *from_pidinst, GF_Err reason)
 	gf_filter_renegociate_output_dst(link_from_pid, link_from_pid->filter, filter_dst, dst_pidinst, src_pidinst);
 }
 
-GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args, GF_List *filter_blacklist);
+GF_Filter *gf_fs_load_encoder(GF_FilterSession *fsess, const char *args, GF_List *filter_blacklist, GF_Err *err_code);
 
 void gf_filter_renegociate_output_dst(GF_FilterPid *pid, GF_Filter *filter, GF_Filter *filter_dst, GF_FilterPidInst *dst_pidi, GF_FilterPidInst *src_pidi)
 {
@@ -2425,7 +2425,7 @@ void gf_filter_renegociate_output_dst(GF_FilterPid *pid, GF_Filter *filter, GF_F
 	src_f = src_pidi ? src_pidi->pid->filter : pid->pid->filter;
 
 	if (src_pidi && src_pidi->filter->encoder_codec_id) {
-		new_f = gf_fs_load_encoder(filter->session, src_pidi->filter->orig_args, filter->blacklisted);
+		new_f = gf_fs_load_encoder(filter->session, src_pidi->filter->orig_args, filter->blacklisted, NULL);
 
 		//store destination
 		if (new_f) {

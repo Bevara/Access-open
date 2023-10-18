@@ -544,12 +544,12 @@ static void gf_filter_pid_inst_swap(GF_Filter *filter, GF_FilterPidInst *dst)
 	u32 nb_pck_transfer=0;
 	GF_FilterPidInst *src = filter->swap_pidinst_src;
 	if (!src) src = filter->swap_pidinst_dst;
-	
+
 	if (src) {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("Filter %s swaping PID %s to PID %s\n", filter->name, src->pid->name, dst->pid->name));
 	}
 
-	
+
 	if (filter->swap_needs_init) {
 		//we are in detach state, the packet queue of the old PID is never read
 		assert(filter->swap_pidinst_dst && filter->swap_pidinst_dst->detach_pending);
@@ -671,7 +671,7 @@ static void gf_filter_pid_inst_swap(GF_Filter *filter, GF_FilterPidInst *dst)
 			gf_filter_post_remove(src_filter);
 		}
 	}
-	
+
 	if (filter->swap_pidinst_src) {
 		src = filter->swap_pidinst_src;
 		assert(!src->filter->swap_pidinst_dst);
@@ -894,7 +894,7 @@ static GF_Err gf_filter_pid_configure(GF_Filter *filter, GF_FilterPid *pid, GF_P
 		e = filter->in_connect_err;
 
 	filter->in_connect_err = GF_OK;
-	
+
 	if (e==GF_OK) {
 		//if new, register the new pid instance, and the source pid as input to this filter
 		if (new_pid_inst) {
@@ -1234,7 +1234,7 @@ static void gf_filter_pid_connect_task(GF_FSTask *task)
 			task->pid->pid->pid_info_changed = GF_FALSE;
 		}
 	}
-	
+
 	//filter may now be the clone, decrement on original filter
 	assert(task->filter->in_pid_connection_pending);
 	safe_int_dec(&task->filter->in_pid_connection_pending);
@@ -3144,7 +3144,7 @@ static void gf_filter_pid_resolve_link_dijkstra(GF_FilterPid *pid, GF_Filter *ds
 		}
 	}
 
-	//1: select all elligible filters for the graph resolution: exclude sources, sinks, explicits, blacklisted and not reconfigurable if we reconfigure
+	//1: select all eligible filters for the graph resolution: exclude sources, sinks, explicits, blacklisted and not reconfigurable if we reconfigure
 	count = gf_list_count(fsess->links);
 	for (i=0; i<count; i++) {
 		u32 j;
@@ -3268,7 +3268,7 @@ static void gf_filter_pid_resolve_link_dijkstra(GF_FilterPid *pid, GF_Filter *ds
 			gf_list_add(dijkstra_nodes, reg_desc);
 		}
 	}
-	//create a new node for the destination based on elligible filters in the graph
+	//create a new node for the destination based on eligible filters in the graph
 	memset(&capstore, 0, sizeof(GF_CapsBundleStore));
 	reg_dst = gf_filter_reg_build_graph(dijkstra_nodes, dst->freg, &capstore, pid, dst, orig_nb_bundles);
 	reg_dst->dist = 0;
@@ -3723,7 +3723,7 @@ static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filt
 			if (!af) goto exit;
 			af->subsession_id = dst->subsession_id;
 			if (dst->itag) af->itag = gf_strdup(dst->itag);
-			
+
 			//destination is sink, check if af is a mux (output cap type STREAM=FILE present)
 			//if not, copy subsource_id from pid
 			Bool af_is_mux = GF_FALSE;
@@ -3754,7 +3754,7 @@ static GF_Filter *gf_filter_pid_resolve_link_internal(GF_FilterPid *pid, GF_Filt
 			}
 			if (pid->require_source_id)
 				af->require_source_id = GF_TRUE;
-			
+
 			//copy source IDs for all filters in the chain
 			//we cannot figure out the destination sourceID when initializing PID connection tasks
 			//by walking up the filter chain because PIDs connection might be pending
@@ -3901,7 +3901,7 @@ static void gf_filter_pid_set_args_internal(GF_Filter *filter, GF_FilterPid *pid
 	while (args) {
 		char ref_prop_dump[GF_PROP_DUMP_ARG_SIZE];
 		u32 p4cc=0;
-		u32 prop_type=GF_PROP_FORBIDEN;
+		u32 prop_type=GF_PROP_FORBIDDEN;
 		Bool parse_prop = GF_TRUE;
 		char *value_next_list = NULL;
 		char *value_sep = NULL;
@@ -3988,7 +3988,7 @@ static void gf_filter_pid_set_args_internal(GF_Filter *filter, GF_FilterPid *pid
 			p4cc = GF_4CC(name[0], name[1], name[2], name[3]);
 			if (p4cc) prop_type = gf_props_4cc_get_type(p4cc);
 		}
-		if (prop_type==GF_PROP_FORBIDEN) {
+		if (prop_type==GF_PROP_FORBIDDEN) {
 			p4cc = gf_props_get_id(name);
 			if (p4cc) prop_type = gf_props_4cc_get_type(p4cc);
 		}
@@ -4056,9 +4056,9 @@ static void gf_filter_pid_set_args_internal(GF_Filter *filter, GF_FilterPid *pid
 				goto skip_arg;
 		}
 
-		if (prop_type != GF_PROP_FORBIDEN) {
+		if (prop_type != GF_PROP_FORBIDDEN) {
 			GF_PropertyValue p;
-			p.type = GF_PROP_FORBIDEN;
+			p.type = GF_PROP_FORBIDDEN;
 
 			//specific parsing for clli: it's a data prop but we allow textual specifiers
 			if ((p4cc == GF_PROP_PID_CONTENT_LIGHT_LEVEL) && strchr(value, sep_list) ){
@@ -4116,11 +4116,11 @@ static void gf_filter_pid_set_args_internal(GF_Filter *filter, GF_FilterPid *pid
 			}
 			//pix formats and others are parsed as specific prop types
 
-			if (p.type == GF_PROP_FORBIDEN) {
+			if (p.type == GF_PROP_FORBIDDEN) {
 				p = gf_props_parse_value(prop_type, name, value, NULL, sep_list);
 			}
 
-			if (p.type != GF_PROP_FORBIDEN) {
+			if (p.type != GF_PROP_FORBIDDEN) {
 				if (prop_type==GF_PROP_NAME) {
 					p.type = GF_PROP_STRING;
 					gf_filter_pid_set_property(pid, p4cc, &p);
@@ -4153,12 +4153,12 @@ static void gf_filter_pid_set_args_internal(GF_Filter *filter, GF_FilterPid *pid
 				p = gf_props_parse_value(GF_PROP_STRING, name, value, NULL, sep_list);
 				p.type = GF_PROP_STRING_NO_COPY;
 			} else {
-				u32 ptype = GF_PROP_FORBIDEN;
+				u32 ptype = GF_PROP_FORBIDDEN;
 				char *type_sep = strchr(value, '@');
 				if (type_sep) {
 					type_sep[0] = 0;
 					ptype = gf_props_parse_type(value);
-					if (ptype==GF_PROP_FORBIDEN) {
+					if (ptype==GF_PROP_FORBIDDEN) {
 						GF_LOG(GF_LOG_WARNING, GF_LOG_FILTER, ("Unrecognized property type %s, defaulting to string\n", value));
 					} else {
 						value = type_sep+1;
@@ -4166,7 +4166,7 @@ static void gf_filter_pid_set_args_internal(GF_Filter *filter, GF_FilterPid *pid
 					type_sep[0] = '@';
 				}
 				memset(&p, 0, sizeof(GF_PropertyValue));
-				if (ptype == GF_PROP_FORBIDEN) {
+				if (ptype == GF_PROP_FORBIDDEN) {
 					p.type = GF_PROP_STRING;
 					p.value.string = value;
 				} else {
@@ -4518,7 +4518,7 @@ restart:
 		//the third pid init (demux.video) will
 		//- match cdcrypt and link to it, but will not remove vout from demux destinations, resulting in further linking (this pass)
 		//- create a new cdcrypt to solve demux.video -> vout
-		
+
 //		loaded_filters = gf_list_new();
 		loaded_filters = gf_list_clone(linked_dest_filters);
 	}
@@ -5152,7 +5152,7 @@ single_retry:
 							gf_filter_post_remove(f);
 						}
 					}
-					
+
 					pid->filter->dst_filter = NULL;
 					new_f = gf_filter_pid_resolve_link(pid, new_dst, &reassigned);
 					if (!new_f) {
@@ -5903,7 +5903,7 @@ static const GF_PropertyValue *gf_filter_pid_get_info_internal(GF_FilterPid *pid
 	const GF_PropertyEntry *prop_ent = NULL;
 	GF_PropertyMap *map;
 	*propentry = NULL;
-	
+
 	if (first_call) {
 		gf_mx_p(pid->filter->session->info_mx);
 	}
@@ -6368,7 +6368,7 @@ restart:
 			//FSESS_CHECK_THREAD(pidinst->filter)
 			res = pidinst->filter->freg->process_event(pidinst->filter, &evt);
 		}
-		
+
 		if (!res) {
 			pidinst->filter->pid_info_changed = GF_TRUE;
 		}
@@ -6511,7 +6511,7 @@ static void gf_filter_pidinst_update_stats(GF_FilterPidInst *pidi, GF_FilterPack
 		} else {
 			has_ts = GF_FALSE;
 		}
-		
+
 		if (!pidi->cur_bit_size) {
 			pidi->stats_start_ts = ts;
 			pidi->stats_start_us = now;
@@ -7505,7 +7505,7 @@ void gf_filter_pid_send_event_downstream(GF_FSTask *task)
 		pid->nb_reaggregation_pending = 0;
 		gf_mx_v(pid->filter->tasks_mx);
 	}
-	
+
 	gf_mx_p(f->tasks_mx);
 
 	//after  play or seek, request a process task for source filters or filters having pending packets
@@ -7594,7 +7594,7 @@ void gf_filter_pid_send_event_downstream(GF_FSTask *task)
 		an_evt->base.on_pid = task->pid ? pid : NULL;
 
 		safe_int_inc(&pid->filter->num_events_queued);
-		
+
 		gf_fs_post_task_class(pid->filter->session, gf_filter_pid_send_event_downstream, pid->filter, task->pid ? (GF_FilterPid *) pid_inst : NULL, "downstream_event", an_evt, TASK_TYPE_EVENT);
 	}
 	gf_mx_v(f->tasks_mx);
@@ -7711,12 +7711,14 @@ void gf_filter_pid_send_event_internal(GF_FilterPid *pid, GF_FilterEvent *evt, B
 			if (PID_IS_INPUT(pid)) {
 				((GF_FilterPidInst*)evt->base.on_pid)->stop_queued = 1;
 			}
+			pid->filter->nb_pids_playing--;
 		} else {
 			if (nb_playing)
 				do_reset = GF_FALSE;
 			if (PID_IS_INPUT(pid)) {
 				((GF_FilterPidInst*)evt->base.on_pid)->play_queued = 1;
 			}
+			pid->filter->nb_pids_playing++;
 		}
 
 		for (i=0; i<pid->pid->num_destinations; i++) {
@@ -8309,18 +8311,18 @@ const GF_PropertyValue *gf_filter_pid_caps_query_str(GF_FilterPid *pid, const ch
 
 
 GF_EXPORT
-GF_Err gf_filter_pid_resolve_file_template_ex(GF_FilterPid *pid, char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_idx, const char *file_suffix, const char *filename)
+GF_Err gf_filter_pid_resolve_file_template_ex(GF_FilterPid *pid, const char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_idx, const char *file_suffix, const char *filename)
 {
 	u32 k;
 	GF_FilterPacket *pck;
 	char szFormat[30], szTemplateVal[GF_MAX_PATH], szPropVal[GF_PROP_DUMP_ARG_SIZE];
-	char *name = szTemplate;
+	const char *name = szTemplate;
 	if (!strchr(szTemplate, '$')) {
 		strcpy(szFinalName, szTemplate);
 		return GF_OK;
 	}
 	pck = gf_filter_pid_get_packet(pid);
-	
+
 	k = 0;
 	while (name[0]) {
 		char *sep=NULL;
@@ -8626,7 +8628,7 @@ GF_Err gf_filter_pid_resolve_file_template_ex(GF_FilterPid *pid, char szTemplate
 }
 
 GF_EXPORT
-GF_Err gf_filter_pid_resolve_file_template(GF_FilterPid *pid, char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_idx, const char *file_suffix)
+GF_Err gf_filter_pid_resolve_file_template(GF_FilterPid *pid, const char szTemplate[GF_MAX_PATH], char szFinalName[GF_MAX_PATH], u32 file_idx, const char *file_suffix)
 {
 	return gf_filter_pid_resolve_file_template_ex(pid, szTemplate, szFinalName, file_idx, file_suffix, NULL);
 }
@@ -9252,7 +9254,12 @@ GF_Err gf_filter_pid_get_rfc_6381_codec_string(GF_FilterPid *pid, char *szCodec,
 
 	case GF_CODECID_RAW_UNCV:
 		if (!subtype) subtype = subtype_src;
-		return rfc_6381_get_codec_uncv(szCodec, subtype, dcd->value.data.ptr, dcd->value.data.size);
+		if (dcd) {
+			return rfc_6381_get_codec_uncv(szCodec, subtype, dcd->value.data.ptr, dcd->value.data.size);
+		}
+		snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[RFC6381] Cannot find RAW UNCV config, using default %s\n", szCodec));
+		return GF_OK;
 	default:
 		subtype = gf_codecid_4cc_type(codec_id);
 		if (!subtype) {

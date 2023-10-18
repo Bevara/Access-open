@@ -2512,6 +2512,10 @@ GF_Err gf_isom_set_audio_layout(GF_ISOFile *movie, u32 trackNumber, u32 sampleDe
 	e = CanAccessMovie(movie, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
 
+	if (!layout) return GF_BAD_PARAM;
+	if ((layout->stream_structure & 1) && (layout->definedLayout==0) && (layout->channels_count>=64))
+		return GF_BAD_PARAM;
+
 	trak = gf_isom_get_track_from_file(movie, trackNumber);
 	if (!trak) return GF_BAD_PARAM;
 
@@ -6410,7 +6414,6 @@ GF_Err gf_isom_set_qt_key(GF_ISOFile *movie, GF_QT_UDTAKey *key)
 
 	nb_keys = gf_list_count(keys->keys);
 	if (!key) {
-		u32 nb_keys = gf_list_count(keys->keys);
 		gf_isom_box_del_parent(&meta->child_boxes, (GF_Box *) keys);
 		for (i=0; i<gf_list_count(ilst->child_boxes); i++) {
 			GF_ListItemBox *info = gf_list_get(ilst->child_boxes, i);
@@ -8674,7 +8677,8 @@ GF_Err gf_isom_set_track_index(GF_ISOFile *movie, u32 trackNumber, u32 index, vo
 	movie->moov->trackList = tracks;
 	for (j=0; j<gf_list_count(tracks); j++) {
 		GF_TrackBox *tki = gf_list_get(tracks, j);
-		tki->index = j+1;
+		if (tki->index != 0xFFFE) // special value meaning always last
+			tki->index = j + 1;
 	}
 	return GF_OK;
 }

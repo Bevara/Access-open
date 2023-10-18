@@ -147,7 +147,7 @@ static Bool nhmldmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		//post a seek
 		ctx->in_seek = GF_TRUE;
 
-		//lcoate previous RAP sample
+		//locate previous RAP sample
 		while ((node = (GF_XMLNode *) gf_list_enum(ctx->root->content, &i))) {
 			u32 j=0;
 			u64 dts=0;
@@ -1087,7 +1087,8 @@ static GF_Err nhmldmx_init_parsing(GF_Filter *filter, GF_NHMLDmxCtx *ctx)
 		return GF_NON_COMPLIANT_BITSTREAM;
 	}
 
-	nhmldmx_config_output(filter, ctx, ctx->root);
+	e = nhmldmx_config_output(filter, ctx, ctx->root);
+	if (e) return e;
 
 	ctx->media_done = 0;
 	ctx->current_child_idx = 0;

@@ -888,7 +888,15 @@ xps_check (enum, default: auto): parameter sets extraction mode from AVC/HEVC/VV
 .br
 
 .br
-nodata (bool, default: false): do not load sample data
+nodata (enum, default: no):    control sample data loading
+.br
+* no: regular load
+.br
+* yes: skip data loading
+.br
+* fake: allocate sample but no data copy
+.br
+
 .br
 lightp (bool, default: false): load minimal set of properties
 .br
@@ -1601,7 +1609,7 @@ gpac -i MANIFEST_URL:algo=none:start_with=max_bw -o dest.mp4
 .br
 Example
 .br
-gpac -i MANIFEST_URL:split_as -o dst=$File$.mp4:clone
+gpac -i MANIFEST_URL:split_as -o dst=$File$.mp4
 .br
 
 .br
@@ -5457,7 +5465,7 @@ This allows dashing to multiple outputs with different formats, dash durations, 
 .br
 
 .br
-It can be usefull to redirect all the filter outputs to several sinks, for example to push through ROUTE and through HTTP the same segments.
+It can be useful to redirect all the filter outputs to several sinks, for example to push through ROUTE and through HTTP the same segments.
 .br
 In order to do this, the filter MUST be explicitly loaded and all options related to dash and MP4 must be set either globally or on the dasher filter.
 .br
@@ -6164,7 +6172,7 @@ In order to demultiplex such a file, the gsfdmxfilter will likely need to be exp
 .br
 Example
 .br
-gpac -i mux.gsf gsfdmx -o dump/$File$:dynext:clone
+gpac -i mux.gsf gsfdmx -o dump/$File$:dynext
 .br
 
 .br
@@ -9524,44 +9532,6 @@ clip (bool, default: false):   clip YUV data to valid SDI range, slower
 port (uint, default: 1):       set sdi output port of card
 .br
 start (dbl, default: 0.0):     set playback start offset, [-1, 0] means percent of media dur, e.g. -1 == dur
-.br
-
-.br
-.SH ohevcdec
-.LP
-.br
-Description: OpenHEVC decoder
-.br
-
-.br
-This filter decodes HEVC and LHVC (HEVC scalable extensions) from one or more PIDs through the OpenHEVC library
-.br
-
-.br
-.SH Options (expert):
-.LP
-.br
-threading (enum, default: frame): set threading mode
-.br
-* frameslice: parallel decoding of both frames and slices
-.br
-* frame: parallel decoding of frames
-.br
-* slice: parallel decoding of slices
-.br
-
-.br
-nb_threads (uint, default: 0): set number of threads (if 0, uses number of cores minus one)
-.br
-no_copy (bool, default: false): directly dispatch internal decoded frame without copy
-.br
-pack_hfr (bool, default: false): pack 4 consecutive frames in a single output
-.br
-seek_reset (bool, default: false): reset decoder when seeking
-.br
-force_stereo (bool, default: true): use stereo output for multiview (top-bottom only)
-.br
-reset_switch (bool, default: false): reset decoder at config change
 .br
 
 .br

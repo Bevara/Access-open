@@ -704,7 +704,7 @@ static void naludmx_check_dur(GF_Filter *filter, GF_NALUDmxCtx *ctx)
 
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
-		if (duration && (!gf_sys_is_test_mode() || gf_opts_get_bool("temp", "force_indexing"))) {
+		if (duration && ctx->duration.num && (!gf_sys_is_test_mode() || gf_opts_get_bool("temp", "force_indexing"))) {
 			filesize *= 8 * ctx->duration.den;
 			filesize /= ctx->duration.num;
 			ctx->bitrate = (u32) filesize;
@@ -3266,7 +3266,7 @@ naldmx_flush:
 					u8 layer_id = nal_data[0] & 1;
 					layer_id<<=5;
 					layer_id |= (nal_data[1] & 0xF8) >> 3;
-					u8 temporal_id = nal_data[2] & 0x7;
+					u8 temporal_id = nal_data[1] & 0x7;
 					if (ctx->last_layer_id < layer_id)
 						force_au_flush = GF_FALSE;
 					else if (ctx->last_layer_id == layer_id) {
@@ -4296,4 +4296,3 @@ const GF_FilterRegister *dynCall_naludmx_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif //#if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_RFNALU)
-
