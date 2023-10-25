@@ -407,8 +407,14 @@ GF_Err ctts_box_read(GF_Box *s, GF_BitStream *bs)
 		ptr->entries[i].sampleCount = gf_bs_read_u32(bs);
 		if (ptr->version)
 			ptr->entries[i].decodingOffset = gf_bs_read_int(bs, 32);
-		else
+		else {
 			ptr->entries[i].decodingOffset = (s32) gf_bs_read_u32(bs);
+
+			if (ptr->entries[i].decodingOffset <= INT_MIN) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Invalid decodingOffset (%d) in entry #%i - defaulting to 0.\n", ptr->entries[i].decodingOffset, i));
+				ptr->entries[i].decodingOffset = 0;
+			}
+		}
 
 		if (ptr->max_cts_delta <= ABS(ptr->entries[i].decodingOffset)) {
 			ptr->max_cts_delta = ABS(ptr->entries[i].decodingOffset);
@@ -13237,6 +13243,9 @@ GF_Err xtra_box_read(GF_Box *s, GF_BitStream *bs)
 			tag_size-=2;
 			prop_type = gf_bs_read_u16(bs);
 			prop_size -= 6;
+			if (ptr->size < prop_size && data) {
+				gf_free(data);
+			}
 			ISOM_DECREASE_SIZE_NO_ERR(ptr, prop_size)
 			//add 3 extra bytes for UTF16 case string dump (3 because we need 0-aligned short value)
 			data2 = gf_malloc(sizeof(char) * (prop_size+3));
