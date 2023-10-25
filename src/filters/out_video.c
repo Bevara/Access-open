@@ -491,7 +491,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 		ctx->pid = pid;
 	}
-	vout_set_caption(ctx);
+	//vout_set_caption(ctx);
 
 	if (ctx->first_cts_plus_one && ctx->timescale && (ctx->timescale != timescale) ) {
 		ctx->first_cts_plus_one-=1;
@@ -1044,7 +1044,7 @@ static GF_Err vout_initialize(GF_Filter *filter)
 	}
 	nb_vout_inst++;
 
-	vout_set_caption(ctx);
+	//vout_set_caption(ctx);
 	return GF_OK;
 }
 
@@ -2178,11 +2178,11 @@ static GF_Err vout_draw_frame(GF_VideoOutCtx *ctx)
 
 static Bool vout_process_event(GF_Filter *filter, const GF_FilterEvent *fevt)
 {
-	if (fevt->base.type==GF_FEVT_INFO_UPDATE) {
+	/*if (fevt->base.type==GF_FEVT_INFO_UPDATE) {
 		GF_VideoOutCtx *ctx = (GF_VideoOutCtx *) gf_filter_get_udta(filter);
 		vout_set_caption(ctx);
 		return GF_TRUE;
-	}
+	}*/
 	if (!fevt->base.on_pid && (fevt->base.type==GF_FEVT_USER)) {
 		GF_VideoOutCtx *ctx = (GF_VideoOutCtx *) gf_filter_get_udta(filter);
 		GF_Err e;
