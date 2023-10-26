@@ -1392,7 +1392,7 @@ restart:
 			if (!emscripten_is_main_browser_thread()) run_steps = 10000;
 #endif
 		}
-
+		emscripten_cancel_main_loop();
 		emscripten_set_main_loop_arg(em_main_loop, session, em_raf_fps, 1);
 		//we are done (rest of function is NOT called)
 	} else {
