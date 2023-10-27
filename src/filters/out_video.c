@@ -1014,8 +1014,25 @@ static GF_Err vout_initialize(GF_Filter *filter)
 		GF_Event evt;
 		memset(&evt, 0, sizeof(GF_Event));
 		evt.type = GF_EVENT_VIDEO_SETUP;
-		evt.setup.width = 320;
-		evt.setup.height = 240;
+
+		if (ctx->wsize.x > 0)
+		{
+			evt.setup.width = ctx->wsize.x;
+		}
+		else
+		{
+			evt.setup.width = 320;
+		}
+
+		if (ctx->wsize.y > 0)
+		{
+			evt.setup.height = ctx->wsize.y;
+		}
+		else
+		{
+			evt.setup.height = 240;
+		}
+
 		evt.setup.use_opengl = GF_TRUE;
 		evt.setup.back_buffer = 1;
 		evt.setup.disable_vsync = !ctx->vsync;
@@ -1028,8 +1045,24 @@ static GF_Err vout_initialize(GF_Filter *filter)
 	}
 #endif
 
-	ctx->width = ctx->display_width = 320;
-	ctx->height = ctx->display_height = 240;
+	if (ctx->wsize.x > 0)
+	{
+		ctx->width = ctx->display_width = ctx->wsize.x;
+	}
+	else
+	{
+		ctx->width = ctx->display_width = 320;
+	}
+
+	if (ctx->wsize.y > 0)
+	{
+		ctx->height = ctx->display_height = ctx->wsize.y;
+	}
+	else
+	{
+		ctx->height = ctx->display_height = 240;
+	}
+
 	ctx->owsize.x = ctx->display_width;
 	ctx->owsize.y = ctx->display_height;
 	ctx->display_changed = GF_TRUE;
