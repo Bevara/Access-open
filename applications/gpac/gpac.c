@@ -1480,7 +1480,7 @@ exit:
 		unload_compositor();
 #endif
 
-	if (exit_nocleanup) {
+	if (exit_nocleanup && nb_loops == 0) {
 			gf_fs_stop(session);
 			gpac_exit(e ? 1 : 0);
 	}
