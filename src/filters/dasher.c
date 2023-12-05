@@ -1947,7 +1947,8 @@ static GF_Err dasher_setup_mpd(GF_DasherCtx *ctx)
 		}
 		if (ctx->cprt) info->copyright = gf_strdup(ctx->cprt);
 		if (ctx->info) info->more_info_url = gf_strdup(ctx->info);
-		else info->more_info_url = gf_strdup("http://gpac.io");
+		else if (gf_sys_is_test_mode()) info->more_info_url = gf_strdup("http://gpac.io");
+		else info->more_info_url = gf_strdup("https://gpac.io");
 		if (ctx->source) info->source = gf_strdup(ctx->source);
 		if (ctx->lang) info->lang = gf_strdup(ctx->lang);
 	}
@@ -3634,7 +3635,7 @@ static void dasher_setup_sources(GF_Filter *filter, GF_DasherCtx *ctx, GF_MPD_Ad
 	}
 	if (!template) template = ctx->template;
 	ds->tpl_use_time = GF_FALSE;
-	if (!strstr(template, "$Number") && strstr(template, "$Time"))
+	if (template && !strstr(template, "$Number") && strstr(template, "$Time"))
 		ds->tpl_use_time = GF_TRUE;
 
 	if (as_id) {
@@ -6840,6 +6841,8 @@ static GF_Err dasher_setup_period(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashS
 				ds->nb_rep++;
 				//add non-conditional adaptation set descriptors
 				dasher_add_descriptors(&ds->set->x_children, a_ds->p_as_any_desc);
+			} else if (ds->as_id && (ds->as_id==a_ds->as_id)){
+				GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[DASH] Streams not switchable (codec %s vs %s) but same ASID requested, ignoring ASID\n", gf_codecid_file_ext(ds->codec_id), gf_codecid_file_ext(a_ds->codec_id) ));
 			}
 		}
 	}
@@ -7748,6 +7751,9 @@ static void dasher_mark_segment_start(GF_DasherCtx *ctx, GF_DashStream *ds, GF_F
 			p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_HLS_GROUPID);
 			if (p)
 				ds->rep->groupID = p->value.string;
+			p = gf_filter_pid_get_property(ds->ipid, GF_PROP_PID_HLS_FORCE_INF);
+			if (p)
+				ds->rep->hls_forced = p->value.string;
 
 			ds->rep->dash_dur = ds->dash_dur;
 			ds->rep->hls_max_seg_dur = ds->dash_dur;

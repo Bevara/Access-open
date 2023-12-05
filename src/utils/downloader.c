@@ -2193,8 +2193,10 @@ static void gf_dm_disconnect(GF_DownloadSession *sess, HTTPCloseType close_type)
 		if (sess->h2_sess) {
 			do_close = (close_type==HTTP_RESET_CONN) ? GF_TRUE : GF_FALSE;
 		}
+		//if H2 stream is still valid, issue a reset stream
+		if (sess->h2_sess && sess->h2_stream_id)
+			nghttp2_submit_rst_stream(sess->h2_sess->ng_sess, NGHTTP2_FLAG_NONE, sess->h2_stream_id, NGHTTP2_NO_ERROR);
 #endif
-
 
 		if (do_close) {
 #ifdef GPAC_HAS_HTTP2
@@ -2218,6 +2220,7 @@ static void gf_dm_disconnect(GF_DownloadSession *sess, HTTPCloseType close_type)
 			gf_cache_close_write_cache(sess->cache_entry, sess, GF_FALSE);
 		}
 	}
+
 
 	sess->status = GF_NETIO_DISCONNECTED;
 	if (sess->num_retry) sess->num_retry--;
@@ -4666,9 +4669,9 @@ GF_Err gf_dm_sess_fetch_data(GF_DownloadSession *sess, char *buffer, u32 buffer_
 
 		if (! (*read_size) && (e==GF_IP_NETWORK_EMPTY)) {
 #ifdef GPAC_HAS_HTTP2
-			if (sess->h2_sess && sess->bytes_done && !sess->total_size
+			if (sess->h2_sess && !sess->total_size
 				//for client, wait for close - for server move to data_transfered as soon as we're done pushing data
-				&& (!sess->h2_stream_id || (sess->h2_data_done && sess->server_mode))
+				&& ((!sess->h2_stream_id && sess->bytes_done) || (sess->h2_data_done && sess->server_mode))
 			) {
 				sess->status = GF_NETIO_DATA_TRANSFERED;
 				SET_LAST_ERR(GF_OK)

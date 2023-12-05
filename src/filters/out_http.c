@@ -143,7 +143,7 @@ typedef struct __httpout_input
 	Bool dash_mode;
 	char *mime;
 	u32 nb_dest;
-	Bool hold;
+	Bool hold, write_not_ready;
 
 	Bool is_open, done, is_delete;
 	Bool patch_blocks;
@@ -410,7 +410,7 @@ static void httpout_close_session(GF_HTTPOutSession *sess)
 {
 	Bool last_connection = GF_TRUE;
 	if (!sess->http_sess) return;
-	assert(!sess->flush_close);
+
 	if (sess->is_h2) {
 		u32 nb_sub_sess = gf_dm_sess_subsession_count(sess->http_sess);
 		if (nb_sub_sess > 1) {
@@ -432,6 +432,7 @@ static void httpout_close_session(GF_HTTPOutSession *sess)
 	sess->http_sess = NULL;
 	sess->socket = NULL;
 	sess->done = 1;
+	sess->flush_close = 0;
 
 	if (sess->in_source) sess->in_source->nb_dest--;
 }
@@ -3062,8 +3063,6 @@ session_done:
 			GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTPOut] Done sending %s to %s ("LLU"/"LLU" bytes)\n", sess->path, sess->peer_address, sess->nb_bytes, sess->bytes_in_req));
 		}
 
-		log_request_done(sess);
-
 		//keep resource active
 		sess->canceled = GF_FALSE;
 
@@ -3102,6 +3101,7 @@ static Bool httpout_close_upload(GF_HTTPOutCtx *ctx, GF_HTTPOutInput *in, Bool f
 		in->done = GF_TRUE;
 		in->is_open = GF_FALSE;
 		in->is_delete = GF_FALSE;
+		in->write_not_ready = GF_FALSE;
 	}
 	return res;
 }
@@ -3831,6 +3831,9 @@ next_pck:
 		if (in->flush_llhls_open) {
 			skip_start = GF_TRUE;
 		}
+		//last retry, we couldn't write but we could open the upload, skip start
+		if (in->is_open && in->write_not_ready)
+			skip_start = GF_TRUE;
 
 		if (start && !skip_start) {
 			Bool is_static = in->is_manifest;
@@ -3987,7 +3990,9 @@ next_pck:
 			continue;
 		}
 
+		in->write_not_ready=GF_FALSE;
 		if (!httpout_input_write_ready(ctx, in)) {
+			in->write_not_ready=GF_TRUE;
 			ctx->next_wake_us = 1;
 			continue;
 		}
@@ -4168,8 +4173,8 @@ static GF_Err httpout_process(GF_Filter *filter)
 				gf_filter_post_process_task(filter);
 				continue;
 			}
-			//push
-			if (sess->in_source) continue;
+			//if true push, don't process
+			if (sess->in_source && !sess->file_in_progress) continue;
 
 			//regular download
 			if (sess->http_sess)
@@ -4468,7 +4473,7 @@ GF_FilterRegister HTTPOutRegister = {
 		"- the first loaded HTTP output filter with same URL/port will be reused\n"
 		"- all httpout options of subsequent httpout filters, except [-dst]() will be ignored, other options will be inherited as usual\n"
 		"\n"
-		"EX gpac -i dash.mpd dashin:forward=file:SID=D1 dashin:forward=segb:SID=D2 -o http://localhost:80/live.mpd:SID=D1:rdirs=dash -o http://localhost:80/live_rw.mpd:SID=D2:sigfrag\n"
+		"EX gpac -i dash.mpd dashin:forward=file:FID=D1 dashin:forward=segb:FID=D2 -o http://localhost:80/live.mpd:SID=D1:rdirs=dash -o http://localhost:80/live_rw.mpd:SID=D2:sigfrag\n"
 		"This will:\n"
 		"- load the HTTP server and forward (through `D1`) the dash session to this server using `live.mpd` as manifest name\n"
 		"- reuse the HTTP server and regenerate the manifest (through `D2` and `sigfrag` option), using `live_rw.mpd` as manifest name\n"

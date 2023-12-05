@@ -116,7 +116,7 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 		if (src)
 			gf_fprintf(sdp_out, "i=%s\n", src);
 	}
-	gf_fprintf(sdp_out, "u=%s\n", url ? url : "http://gpac.io");
+	gf_fprintf(sdp_out, "u=%s\n", url ? url : (gf_sys_is_test_mode() ? "http://gpac.io" : "https://gpac.io") );
 	if (email) {
 		gf_fprintf(sdp_out, "e=%s\n", email);
 	}

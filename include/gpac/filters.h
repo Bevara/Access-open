@@ -1219,6 +1219,7 @@ enum
 	GF_PROP_PID_CLAMP_DUR = GF_4CC('D','C','M','D'),
 	GF_PROP_PID_HLS_PLAYLIST = GF_4CC('H','L','V','P'),
 	GF_PROP_PID_HLS_GROUPID = GF_4CC('H','L','G','I'),
+	GF_PROP_PID_HLS_FORCE_INF = GF_4CC('H','L','F','I'),
 	GF_PROP_PID_HLS_EXT_MASTER = GF_4CC('H','L','M','X'),
 	GF_PROP_PID_HLS_EXT_VARIANT = GF_4CC('H','L','V','X'),
 	GF_PROP_PID_DASH_CUE = GF_4CC('D','C','U','E'),
@@ -4308,7 +4309,7 @@ GF_Err gf_filter_pck_forward(GF_FilterPacket *reference, GF_FilterPid *PID);
 /*! Gets data associated with the packet.
 \param pck the target packet
 \param size set to the packet data size
-\return packet data if any, NULL if empty or if the packet uses a frame interface object. see \ref gf_filter_pck_get_frame_interface
+\return packet data if any, NULL if empty or if the packet uses a frame interface object. See \ref gf_filter_pck_get_frame_interface
 */
 const u8 *gf_filter_pck_get_data(GF_FilterPacket *pck, u32 *size);
 

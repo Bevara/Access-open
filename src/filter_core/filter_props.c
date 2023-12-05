@@ -101,7 +101,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 	unit_sep = NULL;
 	if (value) {
 		u32 len = (u32) strlen(value);
-		unit_sep = len ? strrchr("kKgGmMsS", value[len-1]) : NULL;
+		unit_sep = len ? strchr("SsMmGgKk", value[len-1]) : NULL;
 		if (unit_sep) {
 			u8 unit_char = unit_sep[0];
 			if ((unit_char=='k') || (unit_char=='K')) unit = 1000;
@@ -800,7 +800,7 @@ GF_PropertyMap * gf_props_new(GF_Filter *filter)
 	if (!map) {
 		GF_SAFEALLOC(map, GF_PropertyMap);
 		if (!map) return NULL;
-		
+
 		map->session = filter->session;
 #if GF_PROPS_HASHTABLE_SIZE
 #else
@@ -1240,7 +1240,7 @@ const GF_PropertyValue *gf_props_enum_property(GF_PropertyMap *props, u32 *io_id
 	u32 i, nb_items = 0;
 #endif
 	u32 idx, count;
-	
+
 	const GF_PropertyEntry *pe;
 	if (!io_idx) return NULL;
 
@@ -1564,6 +1564,7 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	DEC_PROP_F( GF_PROP_PID_CLAMP_DUR, "ClampDur", "Max media duration to process from PID in DASH mode", GF_PROP_FRACTION64, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_HLS_PLAYLIST, "HLSPL", "Name of the HLS variant playlist for this media", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_HLS_GROUPID, "HLSGroup", "Name of HLS Group of a stream", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PID_HLS_FORCE_INF, "HLSForce", "Force writing EXT-X-STREAM-INF if stream is in a rendition group, value is the name of associated groups (can be empty)", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_HLS_EXT_MASTER, "HLSMExt", "List of extensions to add to the master playlist for this PID", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_HLS_EXT_VARIANT, "HLSVExt", "List of extensions to add to the variant playlist for this PID", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_DASH_CUE, "DCue", "Name of a cue list file for this PID - see dasher help", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
@@ -2024,4 +2025,3 @@ GF_Err gf_prop_matrix_decompose(const GF_PropertyValue *p, u32 *flip_mode, u32 *
 	}
 	return GF_OK;
 }
-

@@ -41,7 +41,7 @@ void gf_bs_log_idx(GF_BitStream *bs, u32 nBits, const char *fname, s64 val, s32 
 
 #define gf_bs_log(_bs, _nBits, _fname, _val) gf_bs_log_idx(_bs, _nBits, _fname, _val, -1, -1, -1)
 
-u32 gf_bs_read_int_log_idx3(GF_BitStream *bs, u32 nBits, const char *fname, s32 idx1, s32 idx2, s32 idx3)
+static u32 gf_bs_read_int_log_idx3(GF_BitStream *bs, u32 nBits, const char *fname, s32 idx1, s32 idx2, s32 idx3)
 {
 	u32 val = gf_bs_read_int(bs, nBits);
 	gf_bs_log_idx(bs, nBits, fname, val, idx1, idx2, idx3);
@@ -1640,9 +1640,10 @@ static u32 av1_uvlc(GF_BitStream *bs, const char *fname)
 		if (done)
 			break;
 		leadingZeros++;
-	}
-	if (leadingZeros >= 32) {
-		return 0xFFFFFFFF;
+		//avoid calls to bs_available or bs_is_overflow - see #2698 for poc
+		if (leadingZeros >= 32) {
+			return 0xFFFFFFFF;
+		}
 	}
 	res = gf_bs_read_int(bs, leadingZeros) + (1 << leadingZeros) - 1;
 	gf_bs_log(bs, 2*leadingZeros, fname, res);
@@ -2620,9 +2621,10 @@ static void av1_populate_state_from_obu(GF_BitStream *bs, u64 pos, u64 obu_lengt
 GF_Err aom_av1_parse_temporal_unit_from_section5(GF_BitStream *bs, AV1State *state)
 {
 	if (!state) return GF_BAD_PARAM;
-	state->obu_type = -1;
+	state->has_temporal_delim = 0;
+	Bool first_obu = GF_TRUE;
 
-	while (state->obu_type != OBU_TEMPORAL_DELIMITER) {
+	while (1) {
 		GF_Err e;
 		if (!gf_bs_available(bs))
 			return state->unframed ? GF_BUFFER_TOO_SMALL : GF_OK;
@@ -2637,6 +2639,16 @@ GF_Err aom_av1_parse_temporal_unit_from_section5(GF_BitStream *bs, AV1State *sta
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CODING, ("[AV1] OBU (Section 5) frame size "LLU" different from consumed bytes "LLU".\n", obu_size, gf_bs_get_position(bs) - pos));
 			return GF_NON_COMPLIANT_BITSTREAM;
 		}
+
+		if (state->obu_type == OBU_TEMPORAL_DELIMITER) {
+			if (!first_obu) {
+				// seek back
+				gf_bs_seek(bs, pos);
+				break;
+			}
+			state->has_temporal_delim = 1;
+		}
+		first_obu = GF_FALSE;
 
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CODING, ("[AV1] Section5 OBU detected (size "LLU")\n", obu_size));
 		av1_populate_state_from_obu(bs, pos, obu_size, state->obu_type, state);
@@ -6864,6 +6876,9 @@ GF_Err gf_avc_change_vui(GF_AVCConfig *avcc, GF_VUIInfo *vui_info)
 	s32 idx;
 	GF_AVCConfigSlot *slc;
 	orig = NULL;
+
+	if (!avcc)
+		return GF_NON_COMPLIANT_BITSTREAM;
 
 	memset(&avc, 0, sizeof(AVCState));
 	avc.sps_active_idx = -1;
