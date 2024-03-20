@@ -1,22 +1,23 @@
 ../modules/dektec_out/dektec_video_decl.o: \
   ../modules/dektec_out/dektec_video_decl.c \
   ../modules/dektec_out/dektec_video.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/filters.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/tools.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/setup.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/config.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/version.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/Remotery.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/list.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/events.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/maths.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/events_constants.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/constants.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/download.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/config_file.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/cache.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/main.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/utf.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/color.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/thread.h \
-  /Users/gorinje/project/editor-vscode/player/third_parties/gpac/include/gpac/module.h
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/filters.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/tools.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/setup.h \
+  /Users/gorinje/project/player/third_parties/gpac/config.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/version.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/Remotery.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/list.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/events.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/maths.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/events_constants.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/user.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/module.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/config_file.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/constants.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/download.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/cache.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/main.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/utf.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/color.h \
+  /Users/gorinje/project/player/third_parties/gpac/include/gpac/thread.h
