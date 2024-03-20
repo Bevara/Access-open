@@ -1002,7 +1002,7 @@ GF_FilterRegister FileOutRegister = {
 };
 
 
-const GF_FilterRegister * fout_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_fileout_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 		gf_opts_set_key("temp_out_proto", FileOutRegister.name, "file,gfio");
