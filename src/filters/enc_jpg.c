@@ -315,7 +315,7 @@ static GF_Err jpgenc_process(GF_Filter *filter)
 	jpeg_create_compress(&cinfo);
 	cinfo.image_width = ctx->width;
 	cinfo.image_height = ctx->height;
-	cinfo.input_components = 3;
+	cinfo.input_components = ctx->num_components;
 	cinfo.in_color_space = ctx->jpeg_type;
 	if (ctx->dctmode == 0)
 		cinfo.dct_method = JDCT_ISLOW;
@@ -385,7 +385,7 @@ static GF_Err jpgenc_process(GF_Filter *filter)
 	if (ctx->jpeg_type == JCS_RGB){
 		JSAMPROW *row_pointer = NULL;
 		row_pointer = (JSAMPROW *)gf_malloc(sizeof(JSAMPROW) * ctx->height);
-		u32 pitch = ctx->width * 3;
+		u32 pitch = ctx->width * ctx->num_components;
 		for (i = 0; i < ctx->height; i++) {
 			row_pointer[i] = (JSAMPROW)&in_data[i * (size_t)pitch];
 		}
