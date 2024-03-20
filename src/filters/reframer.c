@@ -2893,7 +2893,7 @@ GF_FilterRegister ReframerRegister = {
 };
 
 
-const GF_FilterRegister *reframer_register(GF_FilterSession *session)
+const GF_FilterRegister *dynCall_reframer_register(GF_FilterSession *session)
 {
 	return &ReframerRegister;
 }
