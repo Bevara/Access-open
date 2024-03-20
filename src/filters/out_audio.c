@@ -809,7 +809,7 @@ GF_FilterRegister AudioOutRegister = {
 	.update_arg = aout_update_arg
 };
 
-const GF_FilterRegister *dynCall_aout_register(GF_FilterSession *session)
+const GF_FilterRegister *aout_register(GF_FilterSession *session)
 {
 	return &AudioOutRegister;
 }

@@ -40,7 +40,7 @@ typedef struct
 	// opts
 	u32 dctmode;
 	u32 quality;
-	u32 num_components;
+
 	GF_FilterPid *ipid, *opid;
 	u32 width, height, pixel_format, stride, stride_uv, nb_planes, uv_height;
 
@@ -55,7 +55,6 @@ typedef struct
 	jmp_buf jmpbuf;
 
 	Bool in_fmt_negotiate;
-	J_COLOR_SPACE jpeg_type;
 } GF_JPGEncCtx;
 
 static GF_Err jpgenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
@@ -126,26 +125,13 @@ static GF_Err jpgenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 
 	gf_pixel_get_size_info(ctx->pixel_format, ctx->width, ctx->height, NULL, &ctx->stride, &ctx->stride_uv, &ctx->nb_planes, &ctx->uv_height);
 
-	switch (ctx->pixel_format)
+	// TODO: for now we only allow YUV420p input, we should refine this to allow any YUV
+	if (ctx->pixel_format != GF_PIXEL_YUV)
 	{
-	case GF_PIXEL_GREYSCALE:
-		ctx->jpeg_type = JCS_GRAYSCALE;
-		ctx->num_components =1;
-		break;
-	case GF_PIXEL_RGB:
-		ctx->jpeg_type = JCS_RGB;
-		ctx->num_components =3;
-		break;
-	case GF_PIXEL_YUV:
-		ctx->jpeg_type = JCS_YCbCr;
-		ctx->num_components =3;
-		break;
-	default:
-		gf_filter_pid_negociate_property(pid, GF_PROP_PID_PIXFMT, &PROP_UINT(GF_PIXEL_RGB));
+		gf_filter_pid_negotiate_property(pid, GF_PROP_PID_PIXFMT, &PROP_UINT(GF_PIXEL_YUV));
 		ctx->in_fmt_negotiate = GF_TRUE;
 		return GF_OK;
 	}
-
 	ctx->in_fmt_negotiate = GF_FALSE;
 	return GF_OK;
 }
@@ -315,8 +301,8 @@ static GF_Err jpgenc_process(GF_Filter *filter)
 	jpeg_create_compress(&cinfo);
 	cinfo.image_width = ctx->width;
 	cinfo.image_height = ctx->height;
-	cinfo.input_components = ctx->num_components;
-	cinfo.in_color_space = ctx->jpeg_type;
+	cinfo.input_components = 3;
+	cinfo.in_color_space = JCS_YCbCr;
 	if (ctx->dctmode == 0)
 		cinfo.dct_method = JDCT_ISLOW;
 	else if (ctx->dctmode == 2)
@@ -325,17 +311,14 @@ static GF_Err jpgenc_process(GF_Filter *filter)
 		cinfo.dct_method = JDCT_IFAST;
 	cinfo.optimize_coding = TRUE;
 	jpeg_set_defaults(&cinfo);
-	if (ctx->jpeg_type != JCS_RGB){
-		cinfo.raw_data_in = TRUE;
-		cinfo.comp_info[0].h_samp_factor = 2;
-		cinfo.comp_info[0].v_samp_factor = 2;
-		cinfo.comp_info[1].h_samp_factor = 1;
-		cinfo.comp_info[1].v_samp_factor = 1;
-		cinfo.comp_info[2].h_samp_factor = 1;
-		cinfo.comp_info[2].v_samp_factor = 1;
-	}
 
-
+	cinfo.raw_data_in = TRUE;
+	cinfo.comp_info[0].h_samp_factor = 2;
+	cinfo.comp_info[0].v_samp_factor = 2;
+	cinfo.comp_info[1].h_samp_factor = 1;
+	cinfo.comp_info[1].v_samp_factor = 1;
+	cinfo.comp_info[2].h_samp_factor = 1;
+	cinfo.comp_info[2].v_samp_factor = 1;
 #ifdef JPEG_LIB_VERSION_MAJOR
 	cinfo.do_fancy_downsampling = FALSE;
 #endif
@@ -382,33 +365,20 @@ static GF_Err jpgenc_process(GF_Filter *filter)
 			}
 		}
 	}
-	if (ctx->jpeg_type == JCS_RGB){
-		JSAMPROW *row_pointer = NULL;
-		row_pointer = (JSAMPROW *)gf_malloc(sizeof(JSAMPROW) * ctx->height);
-		u32 pitch = ctx->width * ctx->num_components;
-		for (i = 0; i < ctx->height; i++) {
-			row_pointer[i] = (JSAMPROW)&in_data[i * (size_t)pitch];
-		}
-		while (cinfo.next_scanline < cinfo.image_height)
-			jpeg_write_scanlines(&cinfo, &row_pointer[cinfo.next_scanline],
-								cinfo.image_height - cinfo.next_scanline);
-		gf_free(row_pointer);
-	}else{
-		for (j = 0; j < ctx->height; j += 16)
-		{
-			for (i = 0; i < 16; i++)
-			{
-				y[i] = pY + stride * (i + j);
-				if (i % 2 == 0)
-				{
-					cb[i / 2] = pU + stride_uv * ((i + j) / 2);
-					cr[i / 2] = pV + stride_uv * ((i + j) / 2);
-				}
-			}
-			jpeg_write_raw_data(&cinfo, block, 16);
-		}
-	}
 
+	for (j = 0; j < ctx->height; j += 16)
+	{
+		for (i = 0; i < 16; i++)
+		{
+			y[i] = pY + stride * (i + j);
+			if (i % 2 == 0)
+			{
+				cb[i / 2] = pU + stride_uv * ((i + j) / 2);
+				cr[i / 2] = pV + stride_uv * ((i + j) / 2);
+			}
+		}
+		jpeg_write_raw_data(&cinfo, block, 16);
+	}
 	jpeg_finish_compress(&cinfo);
 
 exit:
