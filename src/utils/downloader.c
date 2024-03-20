@@ -5668,10 +5668,13 @@ static GF_Err wait_for_header_and_parse(GF_DownloadSession *sess, char * sHTTP)
 				/*be prepared not to receive any mime type from ShoutCast servers*/
 				if (!gf_cache_get_mime_type(sess->cache_entry))
 					gf_cache_set_mime_type(sess->cache_entry, "audio/mpeg");
-			} else if ((strncmp("HTTP", comp, 4) != 0)) {
+			} 
+			#if !__EMSCRIPTEN__
+			else if ((strncmp("HTTP", comp, 4) != 0)) {
 				e = GF_REMOTE_SERVICE_ERROR;
 				goto exit;
 			}
+			#endif
 			Pos = gf_token_get(buf, Pos, " ", comp, 400);
 			if (Pos <= 0) {
 				e = GF_REMOTE_SERVICE_ERROR;

@@ -420,6 +420,11 @@ struct __tag_socket
 #else
 	struct sockaddr_in dest_addr;
 #endif
+
+#if __EMSCRIPTEN__
+	emscripten_fetch_attr_t attr;
+	emscripten_fetch_t * fetch;
+#endif
 	u32 dest_addr_len;
 
 	u32 usec_wait;
@@ -1892,6 +1897,16 @@ GF_EXPORT
 GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, const char *ifce_ip_or_name)
 {
 	s32 ret;
+
+	#if __EMSCRIPTEN__
+	emscripten_fetch_attr_init(&sock->attr);
+	strcpy(sock->attr.requestMethod, "GET");
+	sock->attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+	sock->attr.onsuccess = downloadSucceeded;
+	sock->attr.onprogress = downloadProgress;
+	sock->attr.onerror = downloadFailed;
+	return GF_OK;
+	#endif
 #ifdef GPAC_HAS_IPV6
 	u32 type;
 	struct addrinfo *res, *aip, *lip;
@@ -3665,10 +3680,26 @@ GF_Err gf_sk_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *By
 	return GF_OK;
 }
 
+#if __EMSCRIPTEN__
+GF_Err gf_emscripten_receive_internal(GF_Socket *sock, char *buffer, u32 length, u32 *BytesRead, Bool do_select)
+{
+	if (BytesRead) *BytesRead = emscripten_fetch_get_response_headers_length(sock->fetch);
+	if (!buffer) return GF_OK;
+	if (*BytesRead == 0) return GF_OK;
+	emscripten_fetch_get_response_headers(sock->fetch, buffer, length);
+	return GF_OK;
+}
+#endif
+
+
 GF_EXPORT
 GF_Err gf_sk_receive(GF_Socket *sock, u8 *buffer, u32 length, u32 *BytesRead)
 {
+	#if __EMSCRIPTEN__
+	return gf_emscripten_receive_internal(sock, buffer, length, BytesRead, GF_TRUE);
+	#else
 	return gf_sk_receive_internal(sock, buffer, length, BytesRead, GF_TRUE);
+	#endif
 }
 
 GF_EXPORT
