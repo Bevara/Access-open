@@ -1048,6 +1048,26 @@ EOF
 			GPAC_SH_FLAGS=""
 		fi
 		;;
+    emscripten)
+        LDFLAGS="$LDFLAGS -Wl,-z,defs -s USE_PTHREADS=1"
+        linux="yes"
+        case "$cpu" in
+            sh4)
+                CFLAGS="$CFLAGS -isystem \"$prefix/include\""
+                ;;
+        esac
+		cat > $TMPC << EOF
+#include <sys/cdefs.h>
+#if !defined (__BIONIC__)
+#error
+#endif
+EOF
+		if $cc -c $CFLAGS $TMPC 0>/dev/null 2>$TMPL ; then
+			#bionic libc (android)
+			CFLAGS="$CFLAGS -DPTHREAD_HAS_NO_CANCEL"
+			GPAC_SH_FLAGS=""
+		fi
+		;;
 
     *) ;;
 esac
