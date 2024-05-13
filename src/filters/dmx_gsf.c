@@ -338,6 +338,7 @@ static GF_Err gsfdmx_read_prop(GF_BitStream *bs, GF_PropertyValue *p)
 	case GF_PROP_CONST_DATA:
 		p->type = GF_PROP_DATA_NO_COPY;
 		p->value.data.size = gsfdmx_read_vlen(bs);
+		if (!p->value.data.size) return GF_NON_COMPLIANT_BITSTREAM;
 		p->value.data.ptr = gf_malloc(sizeof(char) * p->value.data.size);
 		gf_bs_read_data(bs, p->value.data.ptr, p->value.data.size);
 		break;
@@ -348,6 +349,16 @@ static GF_Err gsfdmx_read_prop(GF_BitStream *bs, GF_PropertyValue *p)
 		p->value.string_list.vals = gf_malloc(sizeof(char*) * len2);
 		for (i=0; i<len2; i++) {
 			len = gsfdmx_read_vlen(bs);
+			if (len >= GF_UINT_MAX-1) {
+				for (u32 j=0; j<i; j++) {
+					gf_free(p->value.string_list.vals[j]);
+					p->value.string_list.vals[j] = NULL;
+				}
+				p->value.string_list.nb_items = 0;
+				gf_free(p->value.string_list.vals);
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFDemux] invalid string length in string list property\n"));
+				return GF_NON_COMPLIANT_BITSTREAM;
+			}
 			char *str = gf_malloc(sizeof(char)*(len+1));
 			gf_bs_read_data(bs, str, len);
 			str[len] = 0;
@@ -497,6 +508,9 @@ static GF_Err gsfdmx_parse_pid_info(GF_Filter *filter, GSF_DemuxCtx *ctx, GSF_St
 		GF_PropertyValue p;
 
 		u32 len = gsfdmx_read_vlen(bs);
+		if (len >= GF_UINT_MAX-1)
+			return GF_BAD_PARAM;
+
 		char *pname = gf_malloc(sizeof(char)*(len+1));
 		gf_bs_read_data(bs, pname, len);
 		pname[len]=0;
@@ -879,9 +893,9 @@ GF_Err gsfdmx_read_data_pck(GSF_DemuxCtx *ctx, GSF_Stream *gst, GSF_Packet *gpck
 	consumed = (u32) gf_bs_get_position(bs) - spos;
 	pck_len -= consumed;
 	if (full_pck) {
-		gf_fatal_assert(gpck->full_block_size > consumed);
+		if (gpck->full_block_size < consumed) return GF_NON_COMPLIANT_BITSTREAM;
 		gpck->full_block_size -= consumed;
-		gf_assert(gpck->full_block_size == pck_len);
+		if (gpck->full_block_size != pck_len) return GF_NON_COMPLIANT_BITSTREAM;
 		gf_filter_pck_truncate(gpck->pck, gpck->full_block_size);
 	}
 	copy_size = gpck->full_block_size;
@@ -997,7 +1011,10 @@ static GF_Err gsfdmx_process_packets(GF_Filter *filter, GSF_DemuxCtx *ctx, GSF_S
 				e = gsfdmx_parse_pid_info(filter, ctx, gst, gpck, (gpck->pck_type==GFS_PCKTYPE_PID_INFO_UPDATE) ? GF_TRUE : GF_FALSE);
 			else
 				e = GF_CORRUPTED_DATA;
-			if (gpck->pck) gf_filter_pck_discard(gpck->pck);
+			if (gpck->pck) {
+				gf_filter_pck_discard(gpck->pck);
+				gpck->pck=NULL;
+			}
 			break;
 		case GFS_PCKTYPE_PID_REMOVE:
 			if (gpck->pck) {
@@ -1095,7 +1112,7 @@ static GF_Err gsfdmx_demux(GF_Filter *filter, GSF_DemuxCtx *ctx, char *data, u32
 		//buffer was not big enough to contain all the vlen fields, we need more data
 		if (ctx->buffer_too_small)
 			break;
-			
+
 		if (full_pck) {
 			block_size = pck_len;
 			block_offset = 0;
@@ -1177,6 +1194,12 @@ static GF_Err gsfdmx_demux(GF_Filter *filter, GSF_DemuxCtx *ctx, char *data, u32
 					}
 					if (!e)
 						e = gsfdmx_process_packets(filter, ctx, gst);
+					else if (gpck) {
+						gf_list_del_item(gst->packets, gpck);
+						if (gpck->pck) gf_filter_pck_discard(gpck->pck);
+						gsfdmx_pck_reset(gpck);
+						gf_list_add(ctx->pck_res, gpck);
+					}
 				}
 			}
 		}
@@ -1376,7 +1399,7 @@ GF_FilterRegister GSFDemuxRegister = {
 #endif
 		,
 #endif
-	
+
 	.private_size = sizeof(GSF_DemuxCtx),
 	.args = GSFDemuxArgs,
 	.flags = GF_FS_REG_DYNAMIC_PIDS,
@@ -1400,4 +1423,3 @@ const GF_FilterRegister *gsfdmx_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif // GPAC_DISABLE_GSFDMX
-

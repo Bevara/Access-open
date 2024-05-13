@@ -1068,6 +1068,9 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 				gf_filter_pid_set_name(opid, "manifest_mpd" );
 				manifest_type = 1;
 			}
+			if (!gf_sys_is_test_mode() && (ctx->dmode>=GF_DASH_DYNAMIC))
+				manifest_type |= 0x80000000;
+
 			gf_filter_pid_set_property(opid, GF_PROP_PID_IS_MANIFEST, &PROP_UINT(manifest_type));
 		}
 
@@ -1320,6 +1323,11 @@ static GF_Err dasher_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 			case GF_CODECID_LHVC:
 				if (!ctx->bs_switch)
 					period_switch = GF_TRUE;
+				break;
+			//ignore reconfig for these subtitle formats
+			case GF_CODECID_SIMPLE_TEXT:
+			case GF_CODECID_WEBVTT:
+			case GF_CODECID_SUBS_XML:
 				break;
 			default:
 				period_switch = GF_TRUE;
@@ -2324,7 +2332,7 @@ static void dasher_get_mime_and_ext(GF_DasherCtx *ctx, GF_DashStream *ds, const 
 	if (!mux_ext) mux_ext = "mp4";
 	if (out_ext) *out_ext = mux_ext;
 	//if not muxing in isom, force raw subs
-	if ((ctx->muxtype != DASHER_MUX_ISOM) && (ds->stream_type==GF_STREAM_TEXT))
+	if (strcmp(subtype, "mp4") && (ds->stream_type==GF_STREAM_TEXT))
 		ctx->rawsub = GF_TRUE;
 
 }
@@ -6895,7 +6903,7 @@ static GF_Err dasher_setup_period(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashS
 		//not setup, create new AS
 		ds->set = gf_mpd_adaptation_set_new();
 		ds->owns_set = GF_TRUE;
-		//only set hls intra for visual stream if we have know for sure
+		//only set hls intra for visual stream if we know for sure
 		if ((ds->stream_type==GF_STREAM_VISUAL) && (ds->sync_points_type==DASHER_SYNC_NONE)) {
 			ds->set->intra_only = GF_TRUE;
 		}
@@ -7149,6 +7157,8 @@ static GF_Err dasher_setup_period(GF_Filter *filter, GF_DasherCtx *ctx, GF_DashS
 	//good to go !
 	for (i=0; i<count; i++) {
 		GF_DashStream *ds = gf_list_get(ctx->current_period->streams, i);
+		if (ctx->force_period_switch) return GF_OK;
+
 		if (inject_ds && (ds != inject_ds))
 			continue;
 		//setup segmentation
@@ -7892,6 +7902,9 @@ static void dasher_mark_segment_start(GF_DasherCtx *ctx, GF_DashStream *ds, GF_F
 				case DASHER_MUX_RAW:
 					break;
 				default:
+					//rawmux, don't inject init segment URI
+					if (ds->rawmux)
+						break;
 					if (ds->set->bitstream_switching && ds->set->segment_template)
 						ds->rep->hls_single_file_name = ds->set->segment_template->hls_init_name;
 					else
@@ -8934,7 +8947,7 @@ static GF_Err dasher_process(GF_Filter *filter)
 
 			if (!sap_type && (ds->sync_points_type != DASHER_SYNC_PRESENT)) {
 				ds->sync_points_type = DASHER_SYNC_PRESENT;
-				//cf setup_period: in sbound=0 mode, if stream has sync and non-sync and uses skip samples, allow spliting
+				//cf setup_period: in sbound=0 mode, if stream has sync and non-sync and uses skip samples, allow splitting
 				//slightly before - typically needed for audio with sync points (usac, mpegh) where the segment duration is set
 				//to the intra interval, we need to take into account the skip samples
 				if (!ctx->sbound && !ds->cues

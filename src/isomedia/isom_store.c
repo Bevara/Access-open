@@ -2144,7 +2144,7 @@ static GF_Err inplace_shift_moov_meta_offsets(GF_ISOFile *movie, u32 shift_offse
 	}
 
 	if (movie->moov) {
-		if (movie->moov->meta) 
+		if (movie->moov->meta)
 			ShiftMetaOffset(movie->moov->meta, shift_offset);
 
 		count = gf_list_count(movie->moov->trackList);
@@ -2664,7 +2664,7 @@ GF_Err WriteToFile(GF_ISOFile *movie, Bool for_fragments)
 				gf_bs_del(moov_bs);
 				if (!e)
 					e = gf_bs_insert_data(movie->editFileMap->bs, moov_data, moov_size, movie->mdat->bsOffset);
-					
+
 				gf_free(moov_data);
 			}
 		}
@@ -2732,7 +2732,7 @@ GF_Err WriteToFile(GF_ISOFile *movie, Bool for_fragments)
 			if (mdat->is_imda != 2) continue;
 
 			u64 offset = mdat->bsOffset-12;
-			u32 size = mdat->dataSize+12;
+			u32 size = (u32) mdat->dataSize+12;
 			u64 orig_pos = gf_bs_get_position(movie->movieFileMap->bs);
 			gf_bs_seek(movie->movieFileMap->bs, offset);
 			while (size) {

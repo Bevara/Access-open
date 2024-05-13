@@ -22,7 +22,7 @@ endif
 
 ## libgpac objects gathering: src/utils
 LIBGPAC_UTILS=utils/os_divers.o utils/os_file.o utils/list.o utils/bitstream.o utils/constants.o utils/error.o utils/alloc.o utils/url.o utils/configfile.o utils/gltools.o utils/gzio.o utils/xml_parser.o
-LIBGPAC_UTILS+=utils/sha1.o utils/sha256.o utils/base_encoding.o utils/math.o utils/os_net.o utils/os_thread.o utils/os_config_init.o utils/cache.o utils/downloader.o utils/utf.o utils/token.o utils/color.o utils/Remotery.o
+LIBGPAC_UTILS+=utils/sha1.o utils/sha256.o utils/md5.o utils/base_encoding.o utils/math.o utils/os_net.o utils/os_thread.o utils/os_config_init.o utils/cache.o utils/downloader.o utils/utf.o utils/token.o utils/color.o utils/Remotery.o
 
 # ifeq ($(DISABLE_PLAYER),no)
 LIBGPAC_UTILS+=utils/uni_bidi.o utils/unicode.o
@@ -396,6 +396,17 @@ endif
 ifeq ($(shell fgrep "Libs.private:" ../gpac.pc 1>&2 2> /dev/null ; echo $$?),1)
 	@echo "Libs.private: -lgpac_static $(ALL_LIBS)" >> ../gpac.pc
 endif
+
+
+unit_tests:
+ifeq ($(UNIT_TESTS),yes)
+	$(CC) -I.. -I$(SRC_PATH)/include -DGPAC_HAVE_CONFIG_H  \
+		-o ../bin/gcc/unittests \
+		../bin/gcc/unittests.c \
+		$(shell find $(SRC_PATH) -path "*/unittests/*.c" | grep -v bin | sort) \
+		-Wl,-rpath=$(realpath ../bin/gcc) -L../bin/gcc -lgpac
+endif
+
 
 dep:
 

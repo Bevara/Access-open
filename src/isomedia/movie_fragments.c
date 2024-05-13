@@ -98,7 +98,7 @@ GF_Err gf_isom_finalize_for_fragment(GF_ISOFile *movie, u32 media_segment_type, 
 		movie->NextMoofNumber = 1;
 	}
 	movie->moov->mvex_after_traks = mvex_after_tracks;
-	
+
 	//this is only allowed in write mode
 	if (movie->openMode != GF_ISOM_OPEN_WRITE) return GF_ISOM_INVALID_MODE;
 
@@ -1381,7 +1381,7 @@ GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy
 			movie->root_ssix->subsegments[i].ranges[1].range_size = 0;
 		}
 	}
-	
+
 	/*remember start of sidx*/
 	movie->root_sidx_offset = gf_bs_get_position(movie->editFileMap->bs);
 
@@ -1686,7 +1686,7 @@ static u64 estimate_next_moof_earliest_presentation_time(u64 ref_track_decode_ti
 			/*
 
  			if (movie->sidx_pts_next_store[i] == movie->sidx_pts_store[j]) {
- 			
+
 			take care of misaligned timescale eg 24fps but 10000 timescale), we may not find exactly
 			the same sample - if diff below N ms consider it a match
 			not doing so would accumulate PTSs in the list, slowing down the muxing
@@ -2212,7 +2212,7 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, GF_ISO
 					sidx_idx++;
 
 					if (defer_moofs && gf_list_count(movie->moof_list)) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isobmf] Hierarchical or chain sidx cannot be used with defered sample storage\n"));
+						GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isobmf] Hierarchical or chain sidx cannot be used with deferred sample storage\n"));
 						e = GF_NOT_SUPPORTED;
 						goto exit;
 					}
@@ -2292,7 +2292,7 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, GF_ISO
 			//subsegment (commented below) - cf #2733
 			//entry->sidx->refs[entry->sidx->nb_refs-1].reference_size = (u32) (last_entry_end_offset - next_entry->start_offset);
 			gf_isom_box_size((GF_Box *)next_entry->sidx);
-			entry->sidx->refs[entry->sidx->nb_refs-1].reference_size = next_entry->sidx->size;
+			entry->sidx->refs[entry->sidx->nb_refs-1].reference_size = (u32) next_entry->sidx->size;
 			sidx_rewrite(entry->sidx, movie->editFileMap->bs, entry->start_offset, NULL);
 		}
 		while (gf_list_count(daisy_sidx)) {
@@ -2341,7 +2341,7 @@ exit:
 		gf_bs_del(movie->editFileMap->bs);
 		movie->editFileMap->bs = orig_bs;
 	}
-	//flush all defered
+	//flush all deferred
 	if (!e && defer_moofs) {
 		while (gf_list_count(defer_moofs)) {
 			movie->moof = gf_list_pop_front(defer_moofs);
@@ -2392,12 +2392,12 @@ GF_Err gf_isom_flush_sidx(GF_ISOFile *movie, u32 sidx_max_size, Bool force_v1)
 	if (!movie->block_buffer_size) movie->block_buffer_size = movie->on_block_out_block_size;
 	bs = gf_bs_new_cbk_buffer(isom_on_block_out, movie, movie->block_buffer, movie->block_buffer_size);
 	gf_bs_prevent_dispatch(bs, GF_TRUE);
-	
+
 	gf_assert(movie->root_sidx_index == movie->root_sidx->nb_refs);
 
 	if (force_v1)
 		movie->root_sidx->version = 1;
-		
+
 	e = gf_isom_box_size((GF_Box*)movie->root_sidx);
 	size = (u32) movie->root_sidx->size;
 	if (movie->root_ssix) {

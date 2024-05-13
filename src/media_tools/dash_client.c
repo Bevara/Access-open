@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre, Cyril Concolato
- *			Copyright (c) Telecom ParisTech 2010-2023
+ *			Copyright (c) Telecom ParisTech 2010-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / Adaptive HTTP Streaming
@@ -751,6 +751,13 @@ setup_route:
 			GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASH] Waiting for ROUTE clock ...\n"));
 			return;
 		}
+		const char *root_url = strstr(group->dash->base_url+7, "groute/");
+		if (root_url) {
+			root_url = strchr(root_url+7, '/');
+			if (root_url) root_url++;
+		}
+		else root_url = group->dash->base_url;
+		if (!strstr(root_url, "://")) root_url = "./";
 
 		for (i=0; i<gf_list_count(dyn_period->adaptation_sets); i++) {
 			u64 sr, seg_dur_ms;
@@ -781,7 +788,7 @@ setup_route:
 					continue;
 				}
 				u32 tpl_use_time=0;
-				gf_mpd_resolve_url(group->dash->mpd, rep, set, dyn_period, "./", 0, GF_MPD_RESOLVE_URL_MEDIA_NOSTART, 9876, 0, &seg_url, &sr, &sr, &seg_dur_ms, NULL, NULL, NULL, &tpl_use_time);
+				gf_mpd_resolve_url(group->dash->mpd, rep, set, dyn_period, root_url, 0, GF_MPD_RESOLVE_URL_MEDIA_NOSTART, 9876, 0, &seg_url, &sr, &sr, &seg_dur_ms, NULL, NULL, NULL, &tpl_use_time);
 
 				dyn_period->duration = dur;
 
@@ -800,7 +807,7 @@ setup_route:
 					u64 number=0;
 					char szTemplate[100];
 
-					GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASH] Resolve ROUTE clock on bootstrap segment URL %s template %s\n", val, seg_url+2));
+					GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASH] Resolve ROUTE clock on bootstrap segment URL %s template %s\n", val, seg_url));
 
 					strcpy(szTemplate, seg_url);
 					strcat(szTemplate, "%");
@@ -3722,7 +3729,7 @@ retry_pending:
 				rep->playback.init_start_range = r_start;
 				rep->playback.init_end_range = r_end;
 				rep->playback.init_seg_name_start = dash_strip_base_url(r_base_init_url, group->dash->base_url);
-			} else if (e) {
+			} else if (e && (e!=GF_IP_NETWORK_EMPTY)) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Cannot solve initialization segment for representation: %s - discarding representation\n", gf_error_to_string(e) ));
 				rep->playback.disabled = 1;
 			}
@@ -6563,6 +6570,7 @@ select_active_rep:
 				break;
 			}
 		}
+		nb_rep_ok=0;
 		for (rep_i = 0; rep_i < nb_rep; rep_i++) {
 			GF_MPD_Representation *rep = gf_list_get(group->adaptation_set->representations, rep_i);
 			if (!rep->playback.disabled)
@@ -8529,10 +8537,6 @@ GF_Err gf_dash_open(GF_DashClient *dash, const char *manifest_url)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[DASH] Error - cannot connect service: MPD creation problem %s\n", gf_error_to_string(e)));
 		goto exit;
 	}
-	if (dash->dash_io->manifest_updated) {
-		const char *szName = gf_file_basename(manifest_url);
-		dash->dash_io->manifest_updated(dash->dash_io, szName, local_url, -1);
-	}
 
 	//peek payload, check if m3u8 - MPD and SmoothStreaming are checked after
 	char szLine[100];
@@ -8544,6 +8548,11 @@ GF_Err gf_dash_open(GF_DashClient *dash, const char *manifest_url)
 	szLine[99] = 0;
 	if (strstr(szLine, "#EXTM3U"))
 		dash->is_m3u8 = 1;
+
+	if (dash->dash_io->manifest_updated) {
+		const char *szName = gf_file_basename(manifest_url);
+		dash->dash_io->manifest_updated(dash->dash_io, szName, local_url, -1);
+	}
 
 	if (dash->is_m3u8) {
 		if (is_local) {
@@ -10150,10 +10159,18 @@ u32 gf_dash_group_get_audio_channels(GF_DashClient *dash, u32 idx)
 	u32 i=0;
 	GF_DASH_Group *group = gf_list_get(dash->groups, idx);
 	if (!group) return 0;
+	GF_List *l = group->adaptation_set->audio_channels;
+	if (!gf_list_count(l)) {
+		GF_MPD_Representation *rep = gf_list_get(group->adaptation_set->representations, 0);
+		if (rep && rep->audio_channels) l = rep->audio_channels;
+	}
 
-	while ((mpd_desc=gf_list_enum(group->adaptation_set->audio_channels, &i))) {
+	while ((mpd_desc=gf_list_enum(l, &i))) {
 		if (!strcmp(mpd_desc->scheme_id_uri, "urn:mpeg:dash:23003:3:audio_channel_configuration:2011")) {
 			return atoi(mpd_desc->value);
+		}
+		if (!strcmp(mpd_desc->scheme_id_uri, "urn:mpeg:mpegB:cicp:ChannelConfiguration")) {
+			return gf_audio_fmt_get_num_channels_from_layout( gf_audio_fmt_get_layout_from_cicp(atoi(mpd_desc->value)));
 		}
 	}
 	return 0;

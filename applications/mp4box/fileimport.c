@@ -653,7 +653,7 @@ GF_Err apply_edits(GF_ISOFile *dest, u32 track, char *edits)
 					frac /= media_rate.den;
 					rate = (rate<<16) | (u16) frac;
 					//adjust media dur if rate > 1
-					if (media_rate.num>media_rate.den) {
+					if (media_rate.num > (s64) media_rate.den) {
 						media_dur = media_dur*media_rate.den / media_rate.num;
 					}
 				}
@@ -1332,7 +1332,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 		}
 		else if (!strnicmp(ext+1, "tc=", 3)) {
 			char *tc_str = ext+4;
-			
+
 			if (tc_str[0] == 'd') {
 				tc_drop_frame=GF_TRUE;
 				tc_str+=1;
@@ -1622,7 +1622,7 @@ GF_Err import_file(GF_ISOFile *dest, char *inName, u32 import_flags, GF_Fraction
 
 			if ((tk_source_magic & 0xFFFFFFFFUL) != source_magic)
 				continue;
-			tk_source_magic>>=32;		
+			tk_source_magic>>=32;
 			keep_handler = (tk_source_magic & 1) ? GF_TRUE : GF_FALSE;
 		} else {
 			keep_handler = GF_TRUE;
@@ -2442,7 +2442,7 @@ GF_Err split_isomedia_file(GF_ISOFile *mp4, Double split_dur, u64 split_size_kb,
 	if (fs_dump_flags & 2) gf_fs_print_connections(fs);
 
 	gf_fs_del(fs);
-	
+
 	if (e<GF_OK)
 		M4_LOG(GF_LOG_ERROR, ("Split failed: %s\n", gf_error_to_string(e) ));
 	return e;
@@ -2879,6 +2879,8 @@ GF_Err cat_isomedia_file(GF_ISOFile *dest, char *fileName, u32 import_flags, GF_
 			if (gf_isom_get_sample_description_count(orig, i+1) != gf_isom_get_sample_description_count(dest, dst_tk)) dst_tk = 0;
 			/*if not forcing cat, check the media codec config is the same*/
 			if (!gf_isom_is_same_sample_description(orig, i+1, 0, dest, dst_tk, 0)) {
+				//we will need to merge the same descriptions
+				if (!force_cat && !dst_tk_sample_entry) dst_tk_sample_entry = dst_tk;
 				dst_tk = 0;
 			}
 			/*we force the same visual resolution*/
@@ -3371,7 +3373,7 @@ GF_Err EncodeFile(char *in, GF_ISOFile *mp4, GF_SMEncodeOptions *opts, FILE *log
 	load.swf_flatten_limit = swf_flatten_angle;
 	/*since we're encoding we must get MPEG4 nodes only*/
 	load.flags = GF_SM_LOAD_MPEG4_STRICT;
-	
+
 	e = gf_sm_load_init(&load);
 	if (e<0) {
 		gf_sm_load_done(&load);
