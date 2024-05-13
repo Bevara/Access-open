@@ -1815,7 +1815,6 @@ static GF_Err gf_netcap_send_pcap(GF_NetcapFilter *nf, GF_Socket *sock, const u8
 
 static GF_Err gf_netcap_send_gpac(GF_NetcapFilter *nf, GF_Socket *sock, const u8 *buffer, u32 length, u32 *written)
 {
-	GF_NetcapFilter *nf = sock->cap_info->nf;
 	u64 now = gf_sys_clock_high_res();
 	if (!sock->cap_info->host_port) return GF_BAD_PARAM;
 	if (!nf->init_time) nf->init_time = now;
