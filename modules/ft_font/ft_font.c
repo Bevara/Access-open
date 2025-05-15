@@ -176,6 +176,21 @@ static Bool ft_enum_fonts(void *cbck, char *file_name, char *file_path, GF_FileE
 
 			/*try to assign default fixed fonts*/
 			if (!bold && !italic) {
+
+				/* if a bold or italic default has been set, prefer a regular one */
+				if (ftpriv->font_default && (strstr(ftpriv->font_default, " Bold") || strstr(ftpriv->font_default, " Italic"))) {
+					u32 gidx;
+					FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+					gidx = FT_Get_Char_Index(face, (u32) 'a');
+					if (gidx) gidx = FT_Get_Char_Index(face, (u32) 'z');
+					if (gidx) gidx = FT_Get_Char_Index(face, (u32) '1');
+					if (gidx) gidx = FT_Get_Char_Index(face, (u32) '@');
+					if (gidx) {
+						gf_free(ftpriv->font_default);
+						ftpriv->font_default = gf_strdup(szfont);
+					}
+				}
+
 				strcpy(szfont, face->family_name);
 				strlwr(szfont);
 
@@ -501,6 +516,7 @@ static GF_Err ft_set_font(GF_FontReader *dr, const char *OrigFontName, u32 style
 	char *fontName;
 	const char *opt;
 	Bool is_def_font = GF_FALSE;
+	Bool no_style_check = GF_FALSE;
 	FTBuilder *ftpriv = (FTBuilder *)dr->udta;
 
 	fontName = (char *) OrigFontName;
@@ -523,6 +539,11 @@ static GF_Err ft_set_font(GF_FontReader *dr, const char *OrigFontName, u32 style
 		fontName = ftpriv->font_fixed;
 		is_def_font = GF_TRUE;
 		OrigFontName = "TYPEWRITER";
+	}
+	if (!styles) {
+		if (ftpriv->font_fixed && !strcmp(fontName, ftpriv->font_fixed)) no_style_check = GF_TRUE;
+		else if (ftpriv->font_sans && !strcmp(fontName, ftpriv->font_sans)) no_style_check = GF_TRUE;
+		else if (ftpriv->font_serif && !strcmp(fontName, ftpriv->font_serif)) no_style_check = GF_TRUE;
 	}
 
 	/*first look in loaded fonts*/
@@ -569,7 +590,7 @@ checkFont:
 		//handle collections, figure out which face matches our styles
 		num_faces = face->num_faces;
 		for (i=0; i<num_faces; i++) {
-			if ( ft_check_face(face, NULL, checkStyles)) {
+			if (no_style_check || ft_check_face(face, NULL, checkStyles)) {
 				gf_free(fname);
 				gf_list_add(ftpriv->loaded_fonts, face);
 				ftpriv->active_face = face;

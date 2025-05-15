@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / libjpeg and libpng decoder filter
@@ -66,6 +66,7 @@ static GF_Err imgdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, & PROP_UINT( GF_CODECID_RAW ));
 	//declare a default pixel format - this avoids bad reconfigurations of ffavf
 	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_PIXFMT, & PROP_UINT( GF_PIXEL_RGB ));
+	ctx->pixel_format = GF_PIXEL_RGB;
 
 	if (ctx->codecid==GF_CODECID_JPEG) {
 		gf_filter_set_name(filter, "imgdec:libjpeg");
@@ -172,6 +173,7 @@ GF_FilterRegister ImgDecRegister = {
 	SETCAPS(ImgDecCaps),
 	.configure_pid = imgdec_configure_pid,
 	.process = imgdec_process,
+	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
 const GF_FilterRegister *dynCall_imgdec_register(GF_FilterSession *session)

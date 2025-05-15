@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2023
+ *			Copyright (c) Telecom ParisTech 2017-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / NVidia Hardware decoder filter
@@ -51,25 +51,29 @@ GLDECL_EXTERN(glBufferData);
 
 typedef struct _nv_dec_inst NVDecInstance;
 
-typedef enum
-{
+GF_OPT_ENUM (NVDecUnloadMode,
+	DEC_UNLOAD_NO = 0,
+	DEC_UNLOAD_DESTROY,
+	DEC_UNLOAD_REUSE,
+);
+
+GF_OPT_ENUM (NVDecFrameMode,
 	NVDEC_COPY = 0,
 	NVDEC_SINGLE,
-	NVDEC_GL
-} NVDecFrameMode ;
+	NVDEC_GL,
+);
 
-typedef enum
-{
+GF_OPT_ENUM (NVDecVideoMode,
 	NVDEC_CUVID = 0,
 	NVDEC_CUDA,
-	NVDEC_DXVA
-} NVDecVideoMode;
+	NVDEC_DXVA,
+);
 
 typedef struct _nv_dec_ctx
 {
-	u32 unload;
-	NVDecFrameMode fmode;
+	NVDecUnloadMode unload;
 	NVDecVideoMode vmode;
+	NVDecFrameMode fmode;
 	u32 num_surfaces;
 
 	GF_FilterPid *ipid, *opid;
@@ -600,7 +604,7 @@ static GF_Err nvdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		}
 		ctx->ipid = NULL;
 
-		if (ctx->unload == 2) {
+		if (ctx->unload == DEC_UNLOAD_REUSE) {
 			global_nb_loaded_nvdec--;
 			if (ctx->dec_inst) {
 				gf_assert(global_unactive_decoders);
@@ -742,7 +746,7 @@ static GF_Err nvdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	else
 		ctx->prefer_dec_mode = cudaVideoCreate_PreferCUVID;
 
-	if (ctx->unload == 2) {
+	if (ctx->unload == DEC_UNLOAD_REUSE) {
 		global_nb_loaded_nvdec++;
 		if (!global_inst_mutex ) global_inst_mutex  = gf_mx_new("NVDecGlobal");
 		gf_mx_p(global_inst_mutex);
@@ -770,7 +774,7 @@ static Bool nvdec_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			NVDecFrame *f = gf_list_pop_back(ctx->frames);
 			gf_list_add(ctx->frames_res, f);
 		}
-		if (ctx->unload == 2) {
+		if (ctx->unload == DEC_UNLOAD_REUSE) {
 			if (ctx->dec_inst) {
 				gf_assert(global_unactive_decoders);
 				gf_mx_p(global_inst_mutex);
@@ -790,7 +794,9 @@ static Bool nvdec_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		} else {
 			if (ctx->dec_inst) {
 				nvdec_destroy_decoder(ctx->dec_inst);
-				ctx->dec_inst=0;
+				if (ctx->dec_inst->cu_parser) cuvidDestroyVideoParser(ctx->dec_inst->cu_parser);
+				gf_free(ctx->dec_inst);
+				ctx->dec_inst = NULL;
 			}
 			ctx->needs_resetup = 1;
 			ctx->dec_create_error = CUDA_SUCCESS;
@@ -807,7 +813,7 @@ static Bool nvdec_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			memset(f, 0, sizeof(NVDecFrame));
 			gf_list_add(ctx->frames_res, f);
 		}
-		if (ctx->unload == 2) {
+		if (ctx->unload == DEC_UNLOAD_REUSE) {
 			if (ctx->dec_inst) {
 				gf_assert(global_unactive_decoders);
 				gf_mx_p(global_inst_mutex);
@@ -824,7 +830,7 @@ static Bool nvdec_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			}
 			ctx->needs_resetup = 1;
 			ctx->dec_create_error = CUDA_SUCCESS;
-		} else if (ctx->unload == 1) {
+		} else if (ctx->unload == DEC_UNLOAD_DESTROY) {
 			if (ctx->dec_inst) {
 				nvdec_destroy_decoder(ctx->dec_inst);
 			}
@@ -937,6 +943,7 @@ static GF_Err nvdec_process(GF_Filter *filter)
 	}
 
 	if (data && ctx->nal_size_length) {
+		u32 nb_nalsize_zero=0;
 		GF_BitStream *bs = gf_bs_new(ctx->nal_buffer, ctx->nal_buffer_alloc, GF_BITSTREAM_WRITE_DYN);
 		if (!bs) return GF_OUT_OF_MEM;
 
@@ -953,6 +960,12 @@ static GF_Err nvdec_process(GF_Filter *filter)
 				nal_size = (nal_size << 8) + ((u8)data[i]);
 			}
 			data += ctx->nal_size_length;
+			if (!nal_size) {
+				if (nb_nalsize_zero) break;
+				nb_nalsize_zero++;
+			} else {
+				nb_nalsize_zero=0;
+			}
 
 			if (pck_size < nal_size + ctx->nal_size_length) break;
 
@@ -1531,6 +1544,7 @@ static void nvdec_finalize(GF_Filter *filter)
 		nvdec_destroy_decoder(ctx->dec_inst);
 		if (ctx->dec_inst->cu_parser) cuvidDestroyVideoParser(ctx->dec_inst->cu_parser);
 		gf_free(ctx->dec_inst);
+		ctx->dec_inst = NULL;
 	}
 
 	while (gf_list_count(ctx->frames)) {
@@ -1607,7 +1621,8 @@ GF_FilterRegister NVDecRegister = {
 	.args = NVDecArgs,
 	.configure_pid = nvdec_configure_pid,
 	.process = nvdec_process,
-	.process_event = nvdec_process_event
+	.process_event = nvdec_process_event,
+	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
 static void nvdec_register_free(GF_FilterSession *session, GF_FilterRegister *freg)

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2023
+ *			Copyright (c) Telecom ParisTech 2018-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / AV1 OBU rewrite filter
@@ -145,7 +145,7 @@ GF_Err obumx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 
 		while ((obu = gf_list_enum(ctx->av1c->obu_array, &i))) {
 			//we don't output sequence header since it shall be present in sync sample
-			//this avoids creating duplicate of the seqeunce header in the output stream
+			//this avoids creating duplicate of the sequence header in the output stream
 			if (obu->obu_type==OBU_SEQUENCE_HEADER) {
 				i--;
 				gf_list_rem(ctx->av1c->obu_array, i);
@@ -598,6 +598,7 @@ GF_Err obumx_process(GF_Filter *filter)
 
 	return GF_OK;
 }
+
 static void obumx_finalize(GF_Filter *filter)
 {
 	GF_OBUMxCtx *ctx = gf_filter_get_udta(filter);
@@ -626,12 +627,12 @@ static const GF_FilterArgs OBUMxArgs[] =
 	{0}
 };
 
-
 GF_FilterRegister OBUMxRegister = {
 	.name = "ufobu",
-	GF_FS_SET_DESCRIPTION("IVF/OBU/annexB writer")
+	GF_FS_SET_DESCRIPTION("IVF/OBU/annexB rewriter")
 	GF_FS_SET_HELP("This filter rewrites VPx or AV1 bitstreams into a IVF, annexB or OBU sequence.\n"
 	"The temporal delimiter OBU is re-inserted in annexB (`.av1` and `.av1b`files, with obu_size set) and OBU sequences (`.obu`files, without obu_size)\n"
+	"Timecode metadata optionally inserted\n"
 	"Note: VP8/9 codecs will only use IVF output (equivalent to file extension `.ivf` or `:ext=ivf` set on output).\n"
 	)
 	.private_size = sizeof(GF_OBUMxCtx),
@@ -639,7 +640,8 @@ GF_FilterRegister OBUMxRegister = {
 	SETCAPS(OBUMxCaps),
 	.finalize = obumx_finalize,
 	.configure_pid = obumx_configure_pid,
-	.process = obumx_process
+	.process = obumx_process,
+	.hint_class_type = GF_FS_CLASS_FRAMING
 };
 
 

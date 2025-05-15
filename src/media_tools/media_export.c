@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / Media Tools sub-project
@@ -390,7 +390,6 @@ GF_Err gf_media_export_isom(GF_MediaExporter *dumper)
 	GF_ISOFile *outfile;
 	GF_Err e;
 	Bool add_to_iod, is_stdout;
-	char szName[1000];
 	u32 track;
 	GF_ISOOpenMode mode;
 
@@ -406,25 +405,27 @@ GF_Err gf_media_export_isom(GF_MediaExporter *dumper)
 		dumper->flags |= GF_EXPORT_MERGE;
 		return GF_OK;
 	}
+	char *in_name = NULL;
 	if (dumper->out_name && gf_file_ext_start(dumper->out_name)) {
-		strcpy(szName, dumper->out_name);
+		gf_dynstrcat(&in_name, dumper->out_name, NULL);
 	} else {
 		char *ext = (char *) gf_isom_get_filename(dumper->file);
 		if (ext) ext = gf_file_ext_start(ext);
-		sprintf(szName, "%s%s", dumper->out_name, ext ? ext : ".mp4");
+		gf_dynstrcat(&in_name, dumper->out_name, NULL);
+		gf_dynstrcat(&in_name, ext ? ext : ".mp4", NULL);
 	}
 	is_stdout = (dumper->out_name && !strcmp(dumper->out_name, "std")) ? 1 : 0;
 	add_to_iod = 1;
 	mode = GF_ISOM_WRITE_EDIT;
 	if (!is_stdout && (dumper->flags & GF_EXPORT_MERGE)) {
-		FILE *t = gf_fopen(szName, "rb");
+		FILE *t = gf_fopen(in_name, "rb");
 		if (t) {
 			add_to_iod = 0;
 			mode = GF_ISOM_OPEN_EDIT;
 			gf_fclose(t);
 		}
 	}
-	outfile = gf_isom_open(is_stdout ? "std" : szName, mode, NULL);
+	outfile = gf_isom_open(is_stdout ? "std" : in_name, mode, NULL);
 
 	if (mode == GF_ISOM_WRITE_EDIT) {
 		gf_isom_set_pl_indication(outfile, GF_ISOM_PL_AUDIO, 0xFF);
@@ -452,8 +453,9 @@ GF_Err gf_media_export_isom(GF_MediaExporter *dumper)
 		gf_isom_keep_utc_times(outfile, GF_TRUE);
 
 	if (e) gf_isom_delete(outfile);
-	else gf_isom_close(outfile);
+	else e = gf_isom_close(outfile);
 
+	gf_free(in_name);
 	return e;
 }
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
@@ -830,14 +832,18 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 	u32 size;
 	Bool is_stdout = 0;
 	FILE *saf_f;
-	SAFInfo safs[1024];
 	GF_Err e=GF_OK;
 	if (dumper->flags & GF_EXPORT_PROBE_ONLY) return GF_OK;
 
 	s_count = tot_samp = 0;
-
 	mux = gf_saf_mux_new();
 	count = gf_isom_get_track_count(dumper->file);
+
+	SAFInfo *safs;
+	safs = gf_malloc(sizeof(SAFInfo) * count);
+	if (!safs) return GF_OUT_OF_MEM;
+	memset(safs, 0, sizeof(SAFInfo) * count);
+
 	for (i=0; i<count; i++) {
 		u32 time_scale, mtype, stream_id = 0;
 		GF_ESD *esd;
@@ -901,6 +907,7 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 	if (!s_count) {
 		gf_export_message(dumper, GF_OK, "No tracks available for SAF muxing");
 		gf_saf_mux_del(mux);
+		gf_free(safs);
 		return GF_OK;
 	}
 	gf_export_message(dumper, GF_OK, "SAF: Multiplexing %d tracks", s_count);
@@ -910,6 +917,11 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 	strcpy(out_file, dumper->out_name ? dumper->out_name : "");
 	strcat(out_file, ".saf");
 	saf_f = is_stdout ? stdout : gf_fopen(out_file, "wb");
+	if (!saf_f) {
+		gf_saf_mux_del(mux);
+		gf_free(safs);
+		return GF_BAD_PARAM;
+	}
 
 	samp_done = 0;
 	while (samp_done<tot_samp) {
@@ -919,6 +931,7 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 			samp = gf_isom_get_sample(dumper->file, safs[i].track_num, safs[i].last_sample + 1, &di);
 			if (!samp) {
 				gf_saf_mux_del(mux);
+				gf_free(safs);
 				return gf_isom_last_error(dumper->file);
 			}
 
@@ -946,6 +959,7 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 		gf_fclose(saf_f);
 
 	gf_saf_mux_del(mux);
+	gf_free(safs);
 	return e;
 #else
 	return GF_NOT_SUPPORTED;
@@ -1092,16 +1106,20 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 #ifdef GPAC_DISABLE_MEDIA_IMPORT
 				return GF_NOT_SUPPORTED;
 #else
-				GF_MediaImporter import;
-				memset(&import, 0, sizeof(GF_MediaImporter));
-				import.flags = GF_IMPORT_PROBE_ONLY;
-				import.in_name = dumper->in_name;
-				e = gf_media_import(&import);
-				if (e) return e;
+				GF_MediaImporter *import;
+				GF_SAFEALLOC(import, GF_MediaImporter);
+				if (!import) return GF_OUT_OF_MEM;
+				import->flags = GF_IMPORT_PROBE_ONLY;
+				import->in_name = dumper->in_name;
+				e = gf_media_import(import);
+				if (e) {
+					gf_free(import);
+					return e;
+				}
 				Bool found = GF_FALSE;
 				u32 i;
-				for (i=0; i<import.nb_tracks; i++) {
-					struct __track_import_info *tki = &import.tk_info[i];
+				for (i=0; i<import->nb_tracks; i++) {
+					struct __track_import_info *tki = &import->tk_info[i];
 					if (!tki->codecid) continue;
 					if (dumper->trackID) {
 						if (dumper->trackID != tki->track_num) continue;
@@ -1129,6 +1147,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 					dumper->track_type = 0;
 					break;
 				}
+				gf_free(import);
 				if (!found) return GF_NOT_FOUND;
 #endif
 			}
@@ -1215,7 +1234,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 		}
 
 		if (load_dest) {
-			//skip fout:dst= whenever we have an extension specified, to allow using meta filters (ffmx) 
+			//skip fout:dst= whenever we have an extension specified, to allow using meta filters (ffmx)
 			file_out = gf_fs_load_destination(fsess, args+9, NULL, NULL, &e);
 		} else {
 			file_out = gf_fs_load_filter(fsess, args, &e);
@@ -1259,7 +1278,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 		if (dumper->flags & GF_EXPORT_NHML_FULL)
 			e |= gf_dynstrcat(&args, ":pckp", NULL);
 		if (dumper->dump_file) {
-			sprintf(szSubArgs, ":nhmlonly:filep=%p", dumper->dump_file);
+			sprintf(szSubArgs, ":nhmlonly:payload:filep=%p", dumper->dump_file);
 			e |= gf_dynstrcat(&args, szSubArgs, NULL);
 		}
 		remux = e ? NULL : gf_fs_load_filter(fsess, args, &e);
@@ -1318,7 +1337,7 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 			sprintf(szSubArgs, ":mov=%p", dumper->file);
 			e = gf_dynstrcat(&args, szSubArgs, NULL);
 		}
-		
+
 		//we want to expose every track
 		src_filter = gf_fs_load_filter(fsess, args, &e);
 

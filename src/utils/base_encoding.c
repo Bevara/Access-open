@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -288,7 +288,10 @@ GF_Err gf_gz_decompress_payload_ex(u8 *data, u32 data_len, u8 **uncompressed_dat
 			}
 			if (err==Z_STREAM_END) break;
 
-			size *= 2;
+			if (size >= GF_UINT_MAX/2 - 1)
+				size = GF_UINT_MAX - 1;
+			else
+				size *= 2;
 			*uncompressed_data = (char*)gf_realloc(*uncompressed_data, sizeof(char)*(size+1));
 			if (!*uncompressed_data) return GF_OUT_OF_MEM;
 			d_stream.avail_out = (u32) (size - d_stream.total_out);
@@ -407,7 +410,8 @@ GF_Err gf_lz_decompress_payload(u8 *data, u32 data_len, u8 **uncompressed_data, 
 	u32 block_size = 4096;
 	u32 done = 0;
 	u32 alloc_size = 0;
-	u8 block[4096];
+	u8 *block = gf_malloc(4096);
+	if (!block) return GF_OUT_OF_MEM;
 	u8 *dst_buffer = NULL;
 
 	if (*uncompressed_data) {
@@ -444,12 +448,14 @@ GF_Err gf_lz_decompress_payload(u8 *data, u32 data_len, u8 **uncompressed_data, 
 		if (ret != LZMA_OK) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[LZMA] error decompressing data: %d\n", ret ));
 			if (owns_buffer) gf_free(dst_buffer);
+			gf_free(block);
 			return GF_IO_ERR;
 		}
 	}
 
 	*uncompressed_data = dst_buffer;
 	*out_size = done;
+	gf_free(block);
 	return GF_OK;
 }
 #else

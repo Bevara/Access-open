@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2020
+ *			Copyright (c) Telecom ParisTech 2020-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / AVGenerator filter
@@ -24,11 +24,14 @@
  */
 
 import * as evg from 'evg'
+import { Bitstream as BS } from 'gpaccore'
 import { Sys as sys } from 'gpaccore'
+import { File as File } from 'gpaccore'
 
 filter.pids = [];
 
 filter.set_name("avgen");
+filter.set_class_hint(GF_FS_CLASS_MM_IO);
 filter.set_desc("AV Counter Generator");
 filter.set_version("1.0");
 filter.set_author("GPAC Team");
@@ -38,7 +41,7 @@ filter.set_help(
 +"\n"
 +"When [-adjust]() is set, the first video frame is adjusted such that a full circle happens at each exact second according to the system UTC clock.\n"
 +"By default, video UTC and date are computed at each frame generation from current clock and not from frame number.\n"
-+"This will result in broken timing when playing at speeds other than 1.0.\n"
++"This will result in broken UTC timing text when playing at speeds other than 1.0.\n"
 +"This can be changed using [-lock]().\n"
 +"\n"
 +"Audio beep is generated every second, with octave (2xfreq) of even beep used every 10 seconds.\n"
@@ -66,6 +69,7 @@ filter.set_help(
 );
 
 filter.set_arg({ name: "type", desc: "output selection\n- a: audio only\n- v: video only\n- av: audio and video", type: GF_PROP_UINT, def: "av", minmax_enum: "a|v|av"} );
+filter.set_arg({ name: "evte", desc: "output event stream\n- 0: disable\n- 1+: period (sec) of dummy events", type: GF_PROP_UINT, def: "0"} );
 filter.set_arg({ name: "freq", desc: "frequency of beep", type: GF_PROP_UINT, def: "440"} );
 filter.set_arg({ name: "freq2", desc: "frequency of odd beep", type: GF_PROP_UINT, def: "659"} );
 filter.set_arg({ name: "sr", desc: "output samplerate", type: GF_PROP_UINT, def: "44100"} );
@@ -82,11 +86,16 @@ filter.set_arg({ name: "ntp", desc: "send NTP along with packets", type: GF_PROP
 filter.set_arg({ name: "copy", desc: "copy the framebuffer into each video packet instead of using packet references", type: GF_PROP_BOOL, def: "false"} );
 filter.set_arg({ name: "dur", desc: "run for the given time in second", type: GF_PROP_FRACTION, def: "0/0"} );
 filter.set_arg({ name: "adjust", desc: "adjust start time to synchronize counter and UTC", type: GF_PROP_BOOL, def: "true"} );
-filter.set_arg({ name: "pack", desc: "packing mode for stereo views\n - no: no packing\n - ss: side by side packing, forces [-views]() to 2\n - tb: top-bottom packing, forces [-views]() to 2", type: GF_PROP_UINT, def: "no", minmax_enum: "no|ss|tb"} );
+filter.set_arg({ name: "pack", desc: "packing mode for stereo views\n- no: no packing\n- ss: side by side packing, forces [-views]() to 2\n- tb: top-bottom packing, forces [-views]() to 2", type: GF_PROP_UINT, def: "no", minmax_enum: "no|ss|tb"} );
 filter.set_arg({ name: "disparity", desc: "disparity in pixels between left-most and right-most views", type: GF_PROP_UINT, def: "20"} );
 filter.set_arg({ name: "views", desc: "number of views", type: GF_PROP_UINT, def: "1"} );
 filter.set_arg({ name: "rates", desc: "number of target bitrates to assign, one per size", type: GF_PROP_STRING_LIST} );
 filter.set_arg({ name: "logt", desc: "log frame time to console", type: GF_PROP_BOOL} );
+filter.set_arg({ name: "banner", desc: "banner text to display", type: GF_PROP_STRING, def: "many thanks to QuickJS, FreeType, OpenSSL, SDL, FFmpeg, OpenHEVC, libjpeg, libpng, faad2, libmad, a52dec, xvid, OGG ..."} );
+
+let evte_cts = 0;
+let evte_pid = null;
+let evte_playing = false;
 
 let audio_osize=0;
 let audio_cts=0;
@@ -107,19 +116,13 @@ let video_frame=0;
 let brush = new evg.SolidBrush();
 let video_playing=false;
 let start_date = 0;
-let banner = 'many thanks to QuickJS, FreeType, OpenSSL, SDL, FFmpeg, OpenHEVC, libjpeg, libpng, faad2, libmad, a52dec, xvid, OGG ...';
 let frame_offset = 0;
 let nb_frame_init = 0;
 let utc_init = 0;
 let ntp_init = 0;
 
 /*create a text*/
-let text = new evg.Text();
-text.font = 'SANS';
-text.fontsize = 20;
-text.baseline = GF_TEXT_BASELINE_HANGING;
-text.align=GF_TEXT_ALIGN_CENTER;
-text.lineSpacing=0;
+let text = null;
 
 filter.frame_pending = 0;
 
@@ -131,7 +134,38 @@ filter.initialize = function() {
 	if (filter.type != 0) {
 		this.set_cap({id: "StreamType", value: "Video", output: true} );
 	}
+	if (filter.evte) {
+		this.set_cap({id: "StreamType", value: "Metadata", output: true} );
+	}
 	this.set_cap({id: "CodecID", value: "raw", output: true} );
+
+	let gpac_help = sys.get_opt("temp", "gpac-help");
+	let gpac_doc = (sys.get_opt("temp", "gendoc") == "yes") ? true : false;
+	if (gpac_help || gpac_doc) return;
+
+	text = new evg.Text();
+	text.font = 'SANS';
+	text.fontsize = 20;
+	text.baseline = GF_TEXT_BASELINE_HANGING;
+	text.align=GF_TEXT_ALIGN_CENTER;
+	text.lineSpacing=0;
+
+	let pid_id_offset = 1;
+
+	//setup event
+	if (filter.evte) {
+		evte_pid = this.new_pid();
+		evte_pid.set_prop('StreamType', 'Metadata');
+		evte_pid.set_prop('CodecID', 'evte');
+		evte_pid.set_prop('Cached', true);
+		evte_pid.set_prop('Timescale', filter.fps.n);
+		evte_pid.name = "event";
+		evte_pid.set_prop('ID', pid_id_offset++);
+
+		//we send 1 byte dummy events
+		let bitrate = Math.max(Math.floor(8 / filter.evte), 1);
+		evte_pid.set_prop('Bitrate', bitrate);
+	}
 
 	//setup audio
 	if (filter.type != 1) {
@@ -144,7 +178,7 @@ filter.initialize = function() {
 		audio_pid.set_prop('AudioFormat', 'flt');
 		audio_pid.set_prop('Cached', true);
 		audio_pid.name = "audio";
-		audio_pid.set_prop('ID', 1);
+		audio_pid.set_prop('ID', pid_id_offset);
 		if (!filter.freq)
 			filter.freq = 440;
 
@@ -221,7 +255,7 @@ filter.initialize = function() {
 				} else {
 					vpid.name = name;
 				}
-				vpid.set_prop('ID', 1 + (vid+1)*filter.views + view);
+				vpid.set_prop('ID', pid_id_offset + (vid+1)*filter.views + view);
 				vsrc.video_pids.push(vpid);
 			}
 
@@ -355,7 +389,11 @@ function put_image(vsrc, tx, is_testcard, is_first)
 	else fps = Math.floor(100*fps) / 100;
 
 	vprop += '' + fps + ' FPS';
-	text.set_text(['GPAC AV Generator', 'v'+sys.version_full, ' ',  'UTC Locked: ' + (filter.lock ? 'yes' : 'no'), ' ', vprop]);
+	try {
+		text.set_text(['GPAC AV Generator', 'v'+sys.version_full, ' ',  'UTC Locked: ' + (filter.lock ? 'yes' : 'no'), ' ', vprop]);
+	} catch (e) {
+		print(GF_LOG_WARNING, "Fonts disabled");
+	}
 
 	mmx.identity = true;
 	mmx.translate(t_x+10, oy-rh/5);
@@ -375,10 +413,12 @@ filter.process_event = function(pid, evt)
 {
 	if (evt.type == GF_FEVT_STOP) {
 		if (pid === audio_pid) audio_playing = false;
+		else if (pid === evte_pid) evte_playing = false;
 		else video_playing = false;
 	} 
 	else if (evt.type == GF_FEVT_PLAY) {
 		if (pid === audio_pid) audio_playing = true;
+		else if (pid === evte_pid) evte_playing = true;
 		else video_playing = true;
 		filter.reschedule();
 	} 
@@ -394,7 +434,51 @@ filter.process = function()
 
 	if (audio_playing)
 		process_audio();
+
+	if (evte_playing)
+		process_event();
 	return GF_OK;
+}
+
+function get_empty_emsg()
+{
+	let pck = evte_pid.new_packet(8);
+	pck.cts = evte_cts;
+	pck.dur = filter.fps.n;
+	pck.sap = GF_FILTER_SAP_1;
+
+	//create an empty emsg
+	let bs = new BS(pck.data, true);
+	bs.put_u32(8); //size
+	bs.put_4cc("emeb"); //type
+
+	return pck;
+}
+
+function process_event()
+{
+	if (!evte_pid || evte_pid.would_block)
+		return;
+
+	let nb_sec;
+	if (filter.type == 0) {
+		nb_sec = audio_cts * filter.dur.d / filter.sr;
+	} else {
+		nb_sec = video_cts * filter.fps.d / filter.fps.n;
+	}
+
+	//send event for the period
+	if (nb_sec % filter.evte) return;
+
+	let pck = get_empty_emsg();
+	pck.send();
+
+	if ((!audio_playing || !video_playing) && evte_cts > 0) {
+		evte_playing = false
+		evte_pid.eos = true;
+	}
+
+	evte_cts += filter.evte * filter.fps.n;
 }
 
 function process_audio()
@@ -756,10 +840,10 @@ function draw_view(vsrc, view_idx, col, col_idx, cycle_time, h, m, s, nbf, video
 		mx.scale(1, 0.5);
 
 	if (!filter.dyn) {
-		text.set_text([sys.copyright, banner]);
-		mx.translate(0, text.fontsize/2);
+		text.set_text([sys.copyright, filter.banner]);
+		mx.translate(sys.copyright.length*text.fontsize/2.5, text.fontsize/2);
 	} else {
-		text.set_text([sys.copyright + ' - ' + banner]);
+		text.set_text([sys.copyright + ' - ' + filter.banner]);
 	}
 	mx.translate(t_x + pos_x, t_y -disp_h/2 + text.fontsize);
 

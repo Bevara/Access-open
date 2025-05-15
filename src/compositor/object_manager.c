@@ -554,7 +554,7 @@ void gf_odm_setup_object(GF_ObjectManager *odm, GF_SceneNamespace *parent_ns, GF
 
 			if (!role_set) {
 				const GF_PropertyValue *prop = gf_filter_pid_get_property(for_pid ? for_pid : odm->pid, GF_PROP_PID_ROLE);
-				if (prop && prop->value.string && !strcmp(prop->value.string, "main")) {
+				if (prop && prop->value.string_list.nb_items && !strcmp(prop->value.string_list.vals[0], "main")) {
 					odm->addon->addon_type = GF_ADDON_TYPE_MAIN;
 				}
 			}
@@ -573,8 +573,8 @@ void gf_odm_setup_object(GF_ObjectManager *odm, GF_SceneNamespace *parent_ns, GF
 		}
 	} else if (odm->parentscene) {
 		const GF_PropertyValue *prop = gf_filter_pid_get_property(for_pid ? for_pid : odm->pid, GF_PROP_PID_ROLE);
-		if (prop && prop->value.string && !strncmp(prop->value.string, "ambi", 4)) {
-			odm->ambi_ch_id = atoi(prop->value.string + 4);
+		if (prop && prop->value.string_list.nb_items && !strncmp(prop->value.string_list.vals[0], "ambi", 4)) {
+			odm->ambi_ch_id = atoi(prop->value.string_list.vals[0] + 4);
 			if (odm->ambi_ch_id > odm->parentscene->ambisonic_type)
 				odm->parentscene->ambisonic_type = odm->ambi_ch_id;
 		}
@@ -2058,7 +2058,7 @@ GF_Err gf_odm_get_object_info(GF_ObjectManager *odm, GF_MediaInfo *info)
 			prop = gf_filter_pid_get_property(pid, GF_PROP_PID_HEIGHT);
 			if (prop) info->height = prop->value.uint;
 			prop = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
-			if (prop) info->par = (prop->value.frac.num) << 16 | (prop->value.frac.den);
+			if (prop && (prop->value.frac.num>0)) info->par = (prop->value.frac.num) << 16 | (prop->value.frac.den);
 			break;
 		case GF_STREAM_AUDIO:
 			prop = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLE_RATE);

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2023
+ *			Copyright (c) Telecom ParisTech 2005-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / AVI demuxer filter
@@ -634,7 +634,7 @@ restart:
 	if (gf_filter_reporting_enabled(filter)) {
 		char szStatus[1024];
 		u32 v_pc=0;
-		if (ctx->v_in_use) {
+		if (ctx->v_in_use && ctx->nb_frames) {
 			v_pc = ctx->cur_frame * 100;
 			v_pc /= ctx->nb_frames;
 		}
@@ -733,6 +733,7 @@ GF_FilterRegister AVIDmxRegister = {
 	.process = avidmx_process,
 	.process_event = avidmx_process_event,
 	.probe_data = avidmx_probe_data,
+	.hint_class_type = GF_FS_CLASS_DEMULTIPLEXER
 };
 
 #endif // GPAC_DISABLE_AVILIB

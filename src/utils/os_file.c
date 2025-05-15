@@ -359,6 +359,10 @@ GF_Err gf_file_move(const char *fileName, const char *newFileName)
 	if (!fileName || !newFileName) {
 		e = GF_IO_ERR;
 	} else {
+		//try direct rename - will fail if moving across file systems but faster for most use cases
+		int res = rename(fileName, newFileName);
+		if (!res) return GF_OK;
+		//use mv command
 		arg1 = gf_sanetize_single_quoted_string(fileName);
 		arg2 = gf_sanetize_single_quoted_string(newFileName);
 		if (snprintf(cmd, sizeof cmd, "mv %s %s", arg1, arg2) >= sizeof cmd) goto error;
@@ -683,7 +687,7 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 	struct stat st;
 #endif
 
-	if (!dir || !enum_dir_fct) return GF_BAD_PARAM;
+	if (!dir || !strlen(dir) || !enum_dir_fct) return GF_BAD_PARAM;
 
 	if (filter && (!strcmp(filter, "*") || !filter[0])) filter=NULL;
 
@@ -768,8 +772,16 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 	}
 
 #else
-	strcpy(path, dir);
-	if (path[strlen(path)-1] != '/') strcat(path, "/");
+	size_t dir_len = strlen(dir);
+	if (dir_len < GF_ARRAY_LENGTH(path)) {
+		strcpy(path, dir);
+	}
+	else {
+		memcpy(path, dir, GF_ARRAY_LENGTH(path));
+		path[ GF_ARRAY_LENGTH(path) - 1] = 0;
+	}
+	size_t path_len = strlen(path);
+	if (path_len && path[path_len-1] != '/') strcat(path, "/");
 #endif
 
 #ifdef WIN32
@@ -777,9 +789,10 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 	if (SearchH == INVALID_HANDLE_VALUE) return GF_IO_ERR;
 
 #if defined (_WIN32_WCE)
-	_path[strlen(_path)-1] = 0;
+	_path[strlen(_path) ? strlen(_path)-1:0] = 0;
 #else
-	path[wcslen(path)-1] = 0;
+	size_t path_len = wcslen(path);
+	path[ path_len ? path_len-1 : 0] = 0;
 #endif
 
 	while (SearchH != INVALID_HANDLE_VALUE) {
@@ -1451,6 +1464,7 @@ static GF_FileIO *gf_fileio_from_blob(const char *file_name)
 	return res;
 }
 
+GF_EXPORT
 GF_FileIO *gf_fileio_from_mem(const char *URL, const u8 *data, u32 size)
 {
 	GF_FileIOBlob *gfio_blob;
@@ -1615,6 +1629,28 @@ FILE *gf_fopen_ex(const char *file_name, const char *parent_name, const char *mo
 		}
 	}
 	return res;
+}
+
+
+GF_EXPORT
+s32 gf_fd_open(const char *file_name, u32 oflags, u32 uflags)
+{
+	if (!file_name) return -1;
+
+#if defined(WIN32)
+	wchar_t *wname = gf_utf8_to_wcs(file_name);
+	if (!wname) return -1;
+	int res = _wopen(wname, oflags, uflags);
+	gf_free(wname);
+	return res;
+#elif defined(GPAC_CONFIG_LINUX) && !defined(GPAC_CONFIG_ANDROID)
+	return open(file_name, oflags, uflags);
+#elif (defined(GPAC_CONFIG_FREEBSD) || defined(GPAC_CONFIG_DARWIN))
+	return open(file_name, oflags, uflags);
+#else
+	return open(file_name, oflags, uflags);
+#endif
+	return -1;
 }
 
 GF_EXPORT
@@ -1834,6 +1870,31 @@ u64 gf_fsize(FILE *fp)
 	return size;
 }
 
+
+GF_EXPORT
+u64 gf_fd_fsize(int fd)
+{
+	u64 size=0;
+#ifdef GPAC_HAS_FD
+
+	if (fd >= 0) {
+
+#if defined(WIN32)
+		struct _stat64  sb;
+		_fstat64(fd, &sb);
+#else
+		struct stat sb;
+		fstat(fd, &sb);
+#endif
+		size = (u64) sb.st_size;
+	}
+
+#endif
+	return size;
+}
+
+
+
 /**
   * Returns a pointer to the start of a filepath basename
  **/
@@ -1877,11 +1938,18 @@ char* gf_file_ext_start(const char* filename)
 
 	if (basename) {
 		char *ext = strrchr(basename, '.');
-		if (ext && !strcmp(ext, ".gz")) {
+		if (!ext) return NULL;
+		if (!strcmp(ext, ".gz")) {
 			ext[0] = 0;
 			char *ext2 = strrchr(basename, '.');
 			ext[0] = '.';
 			if (ext2) return ext2;
+		}
+		//consider that if we have a space after a dot and before any common separator, we have no file extension
+		u32 i;
+		for (i=1; ext[i] ; i++) {
+			if ((ext[i]==':') || (ext[i]=='@') || (ext[i]=='#') || (ext[i]=='?')) break;
+			if (ext[i]==' ') return NULL;
 		}
 		return ext;
 	}

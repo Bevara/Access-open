@@ -91,7 +91,7 @@ GF_SceneGraph *gf_sg_new()
 		gf_node_parent_of(NULL, NULL);
 		gf_sg_get_parent(tmp);
 		gf_node_get_attribute_count(NULL);
-		gf_xml_node_clone(NULL, NULL, NULL, NULL, 0);
+		gf_sg_xml_node_clone(NULL, NULL, NULL, NULL, 0);
 		gf_dom_flatten_textContent(NULL);
 		gf_smil_timing_pause(NULL);
 		gf_smil_timing_resume(NULL);
@@ -1783,6 +1783,8 @@ void gf_node_init(GF_Node *node)
 	gf_assert(pSG);
 	/*no user-defined init, consider the scenegraph is only used for parsing/encoding/decoding*/
 	if (!pSG->NodeCallback) return;
+	//some broken content may trigger twice an update
+	if (node->sgprivate->UserPrivate) return;
 
 	/*internal nodes*/
 #ifndef GPAC_DISABLE_VRML
@@ -1944,7 +1946,7 @@ const char *gf_node_get_class_name(GF_Node *node)
 		if (ns == full->ns) return full->name;
 		xmlns = (char *) gf_sg_get_namespace_qname(node->sgprivate->scenegraph, full->ns);
 		if (!xmlns) return full->name;
-		sprintf(node->sgprivate->scenegraph->szNameBuffer, "%s:%s", xmlns, full->name);
+		snprintf(node->sgprivate->scenegraph->szNameBuffer, 99, "%s:%s", xmlns, full->name);
 		return node->sgprivate->scenegraph->szNameBuffer;
 	}
 #ifndef GPAC_DISABLE_SVG
@@ -2220,7 +2222,7 @@ GF_Node *gf_node_clone(GF_SceneGraph *inScene, GF_Node *orig, GF_Node *cloned_pa
 		return NULL;
 	} else {
 #ifndef GPAC_DISABLE_SVG
-		return gf_xml_node_clone(inScene, orig, cloned_parent, id, deep);
+		return gf_sg_xml_node_clone(inScene, orig, cloned_parent, id, deep);
 #endif
 	}
 	return NULL;

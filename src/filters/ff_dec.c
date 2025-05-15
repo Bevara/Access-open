@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2023
+ *			Copyright (c) Telecom ParisTech 2017-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / ffmpeg decode filter
@@ -1345,7 +1345,7 @@ reuse_codec_context:
 		}
 		//if SAR is given ignore sar detection
 		prop = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
-		if (prop) {
+		if (prop && (prop->value.frac.num>0)) {
 			ctx->sar.num = 0;
 			ctx->sar.den = 0;
 		} else if (ctx->sar.num) {
@@ -1508,6 +1508,7 @@ GF_FilterRegister FFDecodeRegister = {
 	"To list all supported decoders for your GPAC build, use `gpac -h ffdec:*`.\n"
 	"\n"
 	"Options can be passed from prompt using `--OPT=VAL`\n"
+	"Decoder flags can be passed directly as `:FLAGNAME`.\n"
 	"The default threading mode is to let libavcodec decide how many threads to use. To enforce single thread, use `--threads=1`\n"
 	"\n"
 	"# Codec Map\n"
@@ -1531,8 +1532,8 @@ GF_FilterRegister FFDecodeRegister = {
 	.flags = GF_FS_REG_META|GF_FS_REG_BLOCK_MAIN,
 	//use middle priorty, so that hardware decs/other native impl in gpac can take over if needed
 	//don't use lowest one since we use this for scalable codecs
-	.priority = 128
-
+	.priority = 128,
+	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
 

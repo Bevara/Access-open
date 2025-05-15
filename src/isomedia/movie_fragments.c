@@ -1257,6 +1257,9 @@ static GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_off
 	}
 
 	if (trun_ref_size) {
+		//this may happen when starting a new fragments without explicitly flushing previous one
+		if (!movie->moof->mdat_size)
+			movie->moof->mdat_size = 8 + (u32) trun_ref_size;
 		gf_bs_write_u32(bs, movie->moof->mdat_size);
 		gf_bs_write_u32(bs, GF_ISOM_BOX_TYPE_MDAT);
 	}
@@ -1410,13 +1413,15 @@ GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy
 static GF_Err gf_isom_write_styp(GF_ISOFile *movie, Bool last_segment)
 {
 	/*write STYP if we write to a different file or if we write the last segment*/
-	if (movie->use_segments && !movie->append_segment && !movie->segment_start && movie->write_styp) {
+	if (!movie->append_segment && !movie->segment_start && movie->write_styp) {
 		GF_Err e;
 
 		/*modify brands STYP*/
 		if (movie->write_styp==1) {
-			/*"msix" brand: this is a DASH Initialization Segment*/
-			gf_isom_modify_alternate_brand(movie, GF_ISOM_BRAND_MSIX, GF_TRUE);
+			if (movie->use_segments) {
+				/*"msix" brand: this is a DASH Initialization Segment*/
+				gf_isom_modify_alternate_brand(movie, GF_ISOM_BRAND_MSIX, GF_TRUE);
+			}
 			if (last_segment) {
 				/*"lmsg" brand: this is the last DASH Segment*/
 				gf_isom_modify_alternate_brand(movie, GF_ISOM_BRAND_LMSG, GF_TRUE);
@@ -3148,6 +3153,24 @@ GF_Err gf_isom_fragment_add_subsample(GF_ISOFile *movie, GF_ISOTrackID TrackID, 
 	return gf_isom_add_subsample_info(subs, last_sample, subSampleSize, priority, reserved, discardable);
 }
 
+
+GF_Err gf_isom_set_fragment_original_duration(GF_ISOFile *movie, GF_ISOTrackID TrackID, u32 orig_dur, u32 elapsed_dur)
+{
+	GF_TrackFragmentBox *traf;
+	if (!movie->moof || !(movie->FragmentsFlags & GF_ISOM_FRAG_WRITE_READY) ) return GF_BAD_PARAM;
+
+	traf = gf_isom_get_traf(movie, TrackID);
+	if (!traf) return GF_BAD_PARAM;
+
+	if (!traf->rsot) {
+		traf->rsot = (GF_TFOriginalDurationBox *) gf_isom_box_new_parent(&traf->child_boxes, GF_ISOM_BOX_TYPE_RSOT);
+		if (!traf->rsot) return GF_OUT_OF_MEM;
+	}
+	if (orig_dur) traf->rsot->original_duration = orig_dur;
+	if (elapsed_dur) traf->rsot->elapsed_duration = elapsed_dur;
+	return GF_OK;
+}
+
 #if 0 //unused
 static GF_Err gf_isom_copy_sample_group_entry_to_traf(GF_TrackFragmentBox *traf, GF_SampleTableBox *stbl, u32 grouping_type, u32 grouping_type_parameter, u32 sampleGroupDescriptionIndex, Bool sgpd_in_traf)
 {
@@ -3490,6 +3513,27 @@ Bool gf_isom_is_fragmented(GF_ISOFile *movie)
 	if (movie->moov->mvex) return GF_TRUE;
 #endif
 	return GF_FALSE;
+}
+
+
+GF_Err isom_sample_refs_push(GF_SampleReferences *sref, s32 refID, u32 nb_refs, s32 *refs);
+
+GF_EXPORT
+GF_Err gf_isom_fragment_add_sample_references(GF_ISOFile *movie, GF_ISOTrackID TrackID, s32 refID, u32 nb_refs, s32 *refs)
+{
+	GF_TrackFragmentBox *traf;
+	if (!movie->moof || !(movie->FragmentsFlags & GF_ISOM_FRAG_WRITE_READY))
+		return GF_BAD_PARAM;
+
+	traf = gf_isom_get_traf(movie, TrackID);
+	if (!traf)
+		return GF_BAD_PARAM;
+
+	if (!traf->SampleRefs) {
+		traf->SampleRefs =  (GF_SampleReferences *)gf_isom_box_new_parent(&traf->child_boxes, GF_GPAC_BOX_TYPE_SREF);
+		if (!traf->SampleRefs) return GF_OUT_OF_MEM;
+	}
+	return isom_sample_refs_push(traf->SampleRefs, refID, nb_refs, refs);
 }
 
 #endif /*GPAC_DISABLE_ISOM*/

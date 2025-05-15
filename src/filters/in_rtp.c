@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / RTP/RTSP input filter
@@ -494,7 +494,7 @@ static GF_Err rtpin_process(GF_Filter *filter)
 				if (gf_rtsp_session_reset(ctx->session->session, 1)<10) {
 #ifdef GPAC_HAS_SSL
 					if (gf_rtsp_session_needs_ssl(ctx->session->session) ) {
-						gf_rtsp_set_ssl_ctx(ctx->session->session, gf_dm_ssl_init(ctx->dm, 0) );
+						gf_rtsp_set_ssl_ctx(ctx->session->session, gf_dm_ssl_init(ctx->dm, GF_TRUE) );
 					}
 #endif
 					e = GF_OK;
@@ -863,7 +863,7 @@ static GF_Err rtpin_initialize(GF_Filter *filter)
 			gf_rtsp_session_needs_ssl(ctx->session->session);
 #endif
 
-		GF_Err e = gf_rtsp_set_ssl_ctx(ctx->session->session, gf_dm_ssl_init(ctx->dm, 0) );
+		GF_Err e = gf_rtsp_set_ssl_ctx(ctx->session->session, gf_dm_ssl_init(ctx->dm, GF_TRUE) );
 		if (e) return e;
 #else
 		return GF_NOT_SUPPORTED;
@@ -922,9 +922,9 @@ static const char *rtpin_probe_data(const u8 *data, u32 size, GF_FilterProbeScor
 
 static const GF_FilterCapability RTPInCaps[] =
 {
-	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_FILE_EXT, "sdp"),
-	CAP_STRING(GF_CAPS_INPUT, GF_PROP_PID_MIME, "application/sdp"),
+	CAP_UINT(GF_CAPS_INPUT_STATIC, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_STRING(GF_CAPS_INPUT_STATIC, GF_PROP_PID_FILE_EXT, "sdp"),
+	CAP_STRING(GF_CAPS_INPUT_STATIC, GF_PROP_PID_MIME, "application/sdp"),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_SCENE),
@@ -1004,7 +1004,8 @@ GF_FilterRegister RTPInRegister = {
 	.process = rtpin_process,
 	.process_event = rtpin_process_event,
 	.probe_url = rtpin_probe_url,
-	.probe_data = rtpin_probe_data
+	.probe_data = rtpin_probe_data,
+	.hint_class_type = GF_FS_CLASS_NETWORK_IO
 };
 
 #endif

@@ -377,17 +377,19 @@ Bool Track_IsMPEG4Stream(u32 HandlerType)
 
 GF_Err SetTrackDurationEx(GF_TrackBox *trak, Bool keep_utc)
 {
-	u64 trackDuration;
+	u64 trackDuration=0xFFFFFFFF;
 	u32 i;
-	GF_Err e;
+	GF_Err e = GF_OK;
 
 	//the total duration is the media duration: adjust it in case...
-	e = Media_SetDuration(trak);
-	if (e) return e;
+	if (!trak->extl) {
+		e = Media_SetDuration(trak);
+		if (e) return e;
 
-	//assert the timeScales are non-NULL
-	if (!trak->moov->mvhd || !trak->moov->mvhd->timeScale || !trak->Media->mediaHeader->timeScale) return GF_ISOM_INVALID_FILE;
-	trackDuration = (trak->Media->mediaHeader->duration * trak->moov->mvhd->timeScale) / trak->Media->mediaHeader->timeScale;
+		//assert the timeScales are non-NULL
+		if (!trak->moov->mvhd || !trak->moov->mvhd->timeScale || !trak->Media->mediaHeader->timeScale) return GF_ISOM_INVALID_FILE;
+		trackDuration = (trak->Media->mediaHeader->duration * trak->moov->mvhd->timeScale) / trak->Media->mediaHeader->timeScale;
+	}
 
 	//if we have an edit list, the duration is the sum of all the editList
 	//entries' duration (always expressed in MovieTimeScale)
@@ -400,10 +402,10 @@ GF_Err SetTrackDurationEx(GF_TrackBox *trak, Bool keep_utc)
 			trackDuration += ent->segmentDuration;
 		}
 	}
-	if (!trackDuration) {
+	if (!trackDuration && trak->Media) {
 		trackDuration = (trak->Media->mediaHeader->duration * trak->moov->mvhd->timeScale) / trak->Media->mediaHeader->timeScale;
 	}
-	if (!trak->Header) {
+	if (!trak->Header || (trak->extl && (trackDuration==0xFFFFFFFF))) {
 		return GF_OK;
 	}
 	trak->Header->duration = trackDuration;
@@ -587,6 +589,16 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 		gf_list_del_item(traf->child_boxes, traf->tfrf);
 		gf_list_add(trak->child_boxes, trak->tfrf);
 	}
+	if (traf->SampleRefs) {
+		if (!trak->Media->information->sampleTable->SampleRefs) {
+			trak->Media->information->sampleTable->SampleRefs = traf->SampleRefs;
+			gf_list_add(trak->Media->information->sampleTable->child_boxes, traf->SampleRefs);
+			gf_list_del_item(traf->child_boxes, traf->SampleRefs);
+			traf->SampleRefs = NULL;
+		} else {
+			gf_list_transfer(trak->Media->information->sampleTable->SampleRefs->entries, traf->SampleRefs->entries);
+		}
+	}
 
 	if (trak->moov->mov->signal_frag_bounds) {
 		store_traf_map = GF_TRUE;
@@ -613,6 +625,10 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 					if (traf_clone->sdtp) {
 						gf_isom_box_del_parent(&traf_clone->child_boxes, (GF_Box *) traf_clone->sdtp);
 						traf_clone->sdtp = NULL;
+					}
+					if (traf_clone->SampleRefs) {
+						gf_isom_box_del_parent(&traf_clone->child_boxes, (GF_Box *) traf_clone->SampleRefs);
+						traf_clone->SampleRefs = NULL;
 					}
 				}
 				gf_isom_box_size((GF_Box *)moof_clone);
@@ -655,11 +671,19 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 		store_traf_map = GF_TRUE;
 	}
 
+	u64 max_end = 0;
 #ifdef GF_ENABLE_CTRN
 	sample_index = 0;
 #endif
 	i=0;
 	while ((trun = (GF_TrackFragmentRunBox *)gf_list_enum(traf->TrackRuns, &i))) {
+		if (! (trun->flags & (GF_ISOM_TRUN_DURATION | GF_ISOM_TRUN_SIZE | GF_ISOM_TRUN_FLAGS | GF_ISOM_TRUN_CTS_OFFSET) ) ) {
+			if (!def_size || (trun->sample_count>0x10000)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Invalid track run for track %d - default size %d num samples %d\n", traf->trex->trackID, def_size, trun->sample_count));
+				return GF_ISOM_INVALID_FILE;
+			}
+		}
+
 		//merge the run
 		for (j=0; j<trun->sample_count; j++) {
 			GF_Err e;
@@ -853,6 +877,10 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 			e = stbl_AppendDependencyType(trak->Media->information->sampleTable, GF_ISOM_GET_FRAG_LEAD(flags), GF_ISOM_GET_FRAG_DEPENDS(flags), GF_ISOM_GET_FRAG_DEPENDED(flags), GF_ISOM_GET_FRAG_REDUNDANT(flags));
 			if (e) return e;
 		}
+
+		u64 data_offset_end = data_offset + chunk_size;
+		if (!max_end || (max_end<data_offset_end))
+			max_end = data_offset_end;
 	}
 
 	//remember target next dts - last_dts is the duration in media timescale, dos not include tfdt
@@ -1159,6 +1187,9 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 					e = gf_isom_cenc_merge_saiz_saio(senc, trak->Media->information->sampleTable, samp_num, offset, size);
 					if (e) return e;
 
+					if (offset + size > max_end)
+						max_end = offset + size;
+
 					//we no longer load sai, this will be loaded through saio/saiz when fecthing it
 					//this avoids too high mem usage
 					//we do keep it if edit mode to rewrite senc
@@ -1244,12 +1275,16 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 			if (nb_saio != 1) {
 				u32 saio_idx = saio_get_index(traf, i);
 				if (saio_idx>=saio->entry_count) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isobmf] Number of offset less than number of fragments, cannot merge SAI %s aux info type %d\n", gf_4cc_to_str(saiz->aux_info_type), saiz->aux_info_type_parameter));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isobmf] Number of offset less than number of fragments, cannot merge SAI %s aux info type %d\n", gf_4cc_to_str(saiz->aux_info_type), saiz->aux_info_type_parameter));
 					break;
 				}
 				offset = saio->offsets[j] + moof_offset;
 			}
 			size = saiz->default_sample_info_size ? saiz->default_sample_info_size : saiz->sample_info_size[j];
+			if (!size) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[isobmf] SAI of size 0 cannot be merged\n"));
+				continue;
+			}
 
 			u64 cur_position = gf_bs_get_position(trak->moov->mov->movieFileMap->bs);
 			gf_bs_seek(trak->moov->mov->movieFileMap->bs, offset);
@@ -1270,8 +1305,17 @@ GF_Err MergeTrack(GF_TrackBox *trak, GF_TrackFragmentBox *traf, GF_MovieFragment
 
 			//always increment size even for saio.nb_entries>1
 			offset += size;
+
+		if (offset > max_end)
+			max_end = offset;
+
 		}
 		if (sai) gf_free(sai);
+	}
+	//signal max offset from what we could gather - this is just an estimation, as there could be hidden data at the end of
+	//the containing mdat
+	if (trak->moov->mov->signal_frag_bounds && !(trak->moov->mov->FragmentsFlags & GF_ISOM_FRAG_READ_DEBUG) ) {
+		gf_isom_push_mdat_end(trak->moov->mov, max_end, GF_TRUE);
 	}
 
 	return GF_OK;

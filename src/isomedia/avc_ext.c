@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -634,7 +634,8 @@ GF_Err gf_isom_nalu_sample_rewrite(GF_MediaBox *mdia, GF_ISOSample *sample, u32 
 		mdia->in_sample_buffer_alloc = sample->dataLength;
 		mdia->in_sample_buffer = gf_realloc(mdia->in_sample_buffer, sample->dataLength);
 	}
-	memcpy(mdia->in_sample_buffer, sample->data, sample->dataLength);
+	if (sample->data && sample->dataLength)
+		memcpy(mdia->in_sample_buffer, sample->data, sample->dataLength);
 
 	if (!mdia->nalu_parser) {
 		mdia->nalu_parser = gf_bs_new(mdia->in_sample_buffer, sample->dataLength, GF_BITSTREAM_READ);
@@ -657,7 +658,8 @@ GF_Err gf_isom_nalu_sample_rewrite(GF_MediaBox *mdia, GF_ISOSample *sample, u32 
 		gf_bs_get_content(mdia->nalu_out_bs, &output, &outSize);
 	}
 
-	gf_bs_reassign_buffer(mdia->nalu_out_bs, sample->data, sample->alloc_size ? sample->alloc_size : sample->dataLength);
+	if (sample->data && sample->dataLength)
+		gf_bs_reassign_buffer(mdia->nalu_out_bs, sample->data, sample->alloc_size ? sample->alloc_size : sample->dataLength);
 
 	/*rewrite start code with NALU delim*/
 	if (rewrite_start_codes) {
@@ -1417,6 +1419,31 @@ static GF_AV1Config* AV1_DuplicateConfig(GF_AV1Config const * const cfg)
 	return out;
 }
 
+static GF_IAConfig* IAMF_DuplicateConfig(GF_IAConfig const * const cfg)
+{
+	u32 i = 0;
+	GF_IAConfig *out = gf_odf_ia_cfg_new();
+	if (!out) return NULL;
+
+	out->configurationVersion = cfg->configurationVersion;
+	out->configOBUs_size = cfg->configOBUs_size;
+
+	for (i = 0; i<gf_list_count(cfg->configOBUs); ++i) {
+		GF_IamfObu *dst = gf_malloc(sizeof(GF_IamfObu)), *src = gf_list_get(cfg->configOBUs, i);
+		if (!dst) {
+			gf_odf_ia_cfg_del(out);
+			return NULL;
+		}
+
+		dst->obu_length = src->obu_length;
+		dst->obu_type = src->obu_type;
+		dst->raw_obu_bytes = gf_malloc((size_t)dst->obu_length);
+		memcpy(dst->raw_obu_bytes, src->raw_obu_bytes, (size_t)src->obu_length);
+		gf_list_add(out->configOBUs, dst);
+	}
+	return out;
+}
+
 void AV1_RewriteESDescriptorEx(GF_MPEGVisualSampleEntryBox *av1, GF_MediaBox *mdia)
 {
 	GF_BitRateBox *btrt = gf_isom_sample_entry_get_bitrate((GF_SampleEntryBox *)av1, GF_FALSE);
@@ -1976,6 +2003,48 @@ GF_Err gf_isom_av1_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_AV1Confi
 	entry->av1_config->config = AV1_DuplicateConfig(cfg);
 	if (!entry->av1_config->config) return GF_OUT_OF_MEM;
 	entry->dataReferenceIndex = dataRefIndex;
+	*outDescriptionIndex = gf_list_count(stsd->child_boxes);
+	return e;
+}
+
+GF_EXPORT
+GF_Err gf_isom_ia_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_IAConfig *cfg, const char *URLname, const char *URNname, u32 *outDescriptionIndex)
+{
+	GF_TrackBox *trak;
+	GF_Err e;
+	u32 dataRefIndex;
+	GF_MPEGAudioSampleEntryBox *entry;
+	GF_SampleDescriptionBox *stsd;
+
+	e = CanAccessMovie(the_file, GF_ISOM_OPEN_WRITE);
+	if (e) return e;
+
+	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	if (!trak || !trak->Media || !cfg) return GF_BAD_PARAM;
+
+	//get or create the data ref
+	e = Media_FindDataRef(trak->Media->information->dataInformation->dref, (char *)URLname, (char *)URNname, &dataRefIndex);
+	if (e) return e;
+	if (!dataRefIndex) {
+		e = Media_CreateDataRef(the_file, trak->Media->information->dataInformation->dref, (char *)URLname, (char *)URNname, &dataRefIndex);
+		if (e) return e;
+	}
+	if (!the_file->keep_utc)
+		trak->Media->mediaHeader->modificationTime = gf_isom_get_mp4time();
+
+	stsd = trak->Media->information->sampleTable->SampleDescription;
+	//create a new entry
+	entry = (GF_MPEGAudioSampleEntryBox *)gf_isom_box_new_parent(&stsd->child_boxes, GF_ISOM_BOX_TYPE_IAMF);
+	if (!entry) return GF_OUT_OF_MEM;
+	entry->cfg_iamf = (GF_IAConfigurationBox*)gf_isom_box_new_parent(&entry->child_boxes, GF_ISOM_BOX_TYPE_IACB);
+	if (!entry->cfg_iamf) return GF_OUT_OF_MEM;
+	entry->cfg_iamf->cfg = IAMF_DuplicateConfig(cfg);
+	if (!entry->cfg_iamf->cfg) return GF_OUT_OF_MEM;
+	entry->dataReferenceIndex = dataRefIndex;
+	entry->channel_count = 0;
+	entry->bitspersample = 0;
+	entry->samplerate_hi = 0;
+	entry->samplerate_lo = 0;
 	*outDescriptionIndex = gf_list_count(stsd->child_boxes);
 	return e;
 }
@@ -2833,16 +2902,19 @@ GF_Err avcc_box_read(GF_Box *s, GF_BitStream *bs)
 #ifndef GPAC_DISABLE_AV_PARSERS
 		GF_NALUFFParam *sl = (GF_NALUFFParam*)gf_list_get(ptr->config->sequenceParameterSets, 0);
 		if (sl) {
-			AVCState avc;
+			AVCState *avc_state;
 			s32 idx;
-			memset(&avc, 0, sizeof(AVCState));
-			idx = gf_avc_read_sps(sl->data, sl->size, &avc, 0, NULL);
-			if (idx>=0) {
-				ptr->config->chroma_format = avc.sps[idx].chroma_format;
-				ptr->config->luma_bit_depth = 8 + avc.sps[idx].luma_bit_depth_m8;
-				ptr->config->chroma_bit_depth = 8 + avc.sps[idx].chroma_bit_depth_m8;
+			GF_SAFEALLOC(avc_state, AVCState);
+			if (avc_state) {
+				idx = gf_avc_read_sps(sl->data, sl->size, avc_state, 0, NULL);
+				if (idx>=0) {
+					ptr->config->chroma_format = avc_state->sps[idx].chroma_format;
+					ptr->config->luma_bit_depth = 8 + avc_state->sps[idx].luma_bit_depth_m8;
+					ptr->config->chroma_bit_depth = 8 + avc_state->sps[idx].chroma_bit_depth_m8;
+				}
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_CODING, ("[isom/avcc] Missing REXT profile signaling, patching using SPS.\n"));
+				gf_free(avc_state);
 			}
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODING, ("[isom/avcc] Missing REXT profile signaling, patching using SPS.\n"));
 		} else
 #endif
 		{
@@ -3235,7 +3307,10 @@ GF_Err av1c_box_read(GF_Box *s, GF_BitStream *bs)
 	pos = gf_bs_get_position(bs);
 
 	ptr->config = gf_odf_av1_cfg_read_bs_size(bs, (u32) ptr->size);
-
+	if (!ptr->config) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[ISOBMFF] AV1ConfigurationBox invalid config\n"));
+		return GF_NON_COMPLIANT_BITSTREAM;
+	}
 	read = gf_bs_get_position(bs) - pos;
 
 	if (read < ptr->size)

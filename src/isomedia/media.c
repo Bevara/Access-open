@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -495,6 +495,7 @@ GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp,
 	if (out_offset) *out_offset = offset;
 	if (!samp ) return GF_OK;
 
+	(*samp)->corrupted = 0;
 	if (mdia->information->sampleTable->TimeToSample) {
 		//get the DTS
 		e = stbl_GetSampleDTS_and_Duration(mdia->information->sampleTable->TimeToSample, sampleNumber, &(*samp)->DTS, &(*samp)->duration);
@@ -606,6 +607,7 @@ GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp,
 	}
 
 	if (data_size != 0) {
+		GF_BlobRangeStatus range_status;
 		if (mdia->mediaTrack->pack_num_samples) {
 			u32 idx_in_chunk = sampleNumber - mdia->information->sampleTable->SampleToChunk->firstSampleInCurrentChunk;
 			u32 left_in_chunk = stsc_entry->samplesPerChunk - idx_in_chunk;
@@ -618,21 +620,16 @@ GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp,
 			(*samp)->alloc_size = 0;
 
 		/*and finally get the data, include padding if needed*/
-		if ((*samp)->alloc_size) {
-			if ((*samp)->alloc_size < data_size + mdia->mediaTrack->padding_bytes) {
-				(*samp)->data = (char *) gf_realloc((*samp)->data, sizeof(char) * ( data_size + mdia->mediaTrack->padding_bytes) );
-				if (! (*samp)->data) return GF_OUT_OF_MEM;
-
-				(*samp)->alloc_size = data_size + mdia->mediaTrack->padding_bytes;
-			}
+		if (ext_realloc) {
+			(*samp)->data = mdia->mediaTrack->sample_alloc_cbk(data_size + mdia->mediaTrack->padding_bytes, mdia->mediaTrack->sample_alloc_udta);
+		} else if ((*samp)->alloc_size) {
+			(*samp)->data = (char *) gf_realloc((*samp)->data, sizeof(char) * ( data_size + mdia->mediaTrack->padding_bytes) );
+			if ((*samp)->data) (*samp)->alloc_size = data_size + mdia->mediaTrack->padding_bytes;
 		} else {
-			if (ext_realloc) {
-				(*samp)->data = mdia->mediaTrack->sample_alloc_cbk(data_size + mdia->mediaTrack->padding_bytes, mdia->mediaTrack->sample_alloc_udta);
-			} else {
-				(*samp)->data = (u8 *) gf_malloc(data_size + mdia->mediaTrack->padding_bytes);
-			}
-			if (! (*samp)->data) return GF_OUT_OF_MEM;
+			(*samp)->data = (u8 *) gf_malloc(data_size + mdia->mediaTrack->padding_bytes);
 		}
+		if (! (*samp)->data) return GF_OUT_OF_MEM;
+
 		(*samp)->dataLength = data_size;
 		if (mdia->mediaTrack->padding_bytes)
 			memset((*samp)->data + data_size, 0, sizeof(char) * mdia->mediaTrack->padding_bytes);
@@ -647,10 +644,17 @@ GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp,
 				return GF_ISOM_INCOMPLETE_FILE;
 			}
 		}
-		bytesRead = gf_isom_datamap_get_data(mdia->information->dataHandler, (*samp)->data, (*samp)->dataLength, offset);
+		bytesRead = gf_isom_datamap_get_data(mdia->information->dataHandler, (*samp)->data, (*samp)->dataLength, offset, &range_status);
 		//if bytesRead != sampleSize, we have an IO err
 		if (bytesRead < data_size) {
+			if (range_status == GF_BLOB_RANGE_IN_TRANSFER) {
+				mdia->BytesMissing = (*samp)->dataLength;
+				return GF_ISOM_INCOMPLETE_FILE;
+			}
 			return GF_IO_ERR;
+		}
+		if (range_status == GF_BLOB_RANGE_CORRUPTED) {
+			(*samp)->corrupted = 1;
 		}
 		mdia->BytesMissing = 0;
 	} else {

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2023
+ *			Copyright (c) Telecom ParisTech 2018-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / video output filter
@@ -69,23 +69,21 @@ static char *default_glsl_vertex = "\
 
 #endif
 
-typedef enum
-{
+GF_OPT_ENUM (GF_VideoOutMode,
 	MODE_GL,
 	MODE_GL_PBO,
 	MODE_2D,
 	MODE_2D_SOFT,
-} GF_VideoOutMode;
+);
 
 
-enum
-{
+GF_OPT_ENUM (GF_VideoFlipMode,
 	FLIP_NO,
 	FLIP_VERT,
 	FLIP_HORIZ,
 	FLIP_BOTH,
 	FLIP_BOTH2,
-};
+);
 
 static u32 nb_vout_inst=0;
 
@@ -97,7 +95,8 @@ typedef struct
 	Bool vsync, linear, fullscreen, drop, hide, step, vjs, async;
 	GF_Fraction64 dur;
 	Double speed, hold;
-	u32 back, vflip, vrot;
+	u32 back, vrot;
+	GF_VideoFlipMode vflip; 
 	GF_PropVec2i wsize, owsize;
 	GF_PropVec2i wpos;
 	Double start;
@@ -181,7 +180,8 @@ typedef struct
 	u64 rebuffer;
 
 	Bool force_reconfig_pid;
-	u32 pid_vflip, pid_vrot;
+	GF_VideoFlipMode pid_vflip;
+	u32 pid_vrot;
 	Bool too_slow;
 } GF_VideoOutCtx;
 
@@ -411,7 +411,7 @@ static GF_Err vout_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_r
 
 	ctx->sar.num = ctx->sar.den = 1;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
-	if (p && p->value.frac.den && p->value.frac.num) {
+	if (p && p->value.frac.den && (p->value.frac.num>0)) {
 		if (ctx->sar.num * p->value.frac.den != p->value.frac.num * ctx->sar.den)
 			sar_changed = GF_TRUE;
 		ctx->sar = p->value.frac;
@@ -1787,7 +1787,7 @@ static GF_Err vout_process(GF_Filter *filter)
 		if (ctx->oldata.ptr && ctx->update_oldata)
 			return vout_draw_frame(ctx);
 
-		if (gf_filter_has_connect_errors(filter) || gf_filter_all_sinks_done(filter))
+		if (gf_filter_has_connect_errors(filter) || (gf_filter_all_sinks_done(filter) && !gf_filter_connections_pending(filter)))
 			return GF_EOS;
 		//when we use vout+aout on audio only, we want the filter to still be active to process events
 		gf_filter_post_process_task(filter);
@@ -2400,7 +2400,8 @@ GF_FilterRegister VideoOutRegister = {
 	.configure_pid = vout_configure_pid,
 	.process = vout_process,
 	.process_event = vout_process_event,
-	.update_arg = vout_update_arg
+	.update_arg = vout_update_arg,
+	.hint_class_type = GF_FS_CLASS_MM_IO
 };
 
 const GF_FilterRegister *vout_register(GF_FilterSession *session)

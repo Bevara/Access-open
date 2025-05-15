@@ -201,6 +201,9 @@
     <ClInclude Include="..\..\src\compositor\visual_manager_3d.h">
       <Filter>compositor</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\src\media_tools\id3.h">
+      <Filter>media_tools</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\src\media_tools\mpeg2_ps.h">
       <Filter>media_tools</Filter>
     </ClInclude>
@@ -223,9 +226,6 @@
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\gpac\bitstream.h">
-      <Filter>include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\gpac\cache.h">
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\gpac\color.h">
@@ -815,6 +815,9 @@
     <ClCompile Include="..\..\src\media_tools\gpac_ogg.c">
       <Filter>media_tools</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\media_tools\id3.c">
+      <Filter>media_tools</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\media_tools\img.c">
       <Filter>media_tools</Filter>
     </ClCompile>
@@ -1001,9 +1004,6 @@
     <ClCompile Include="..\..\src\utils\bitstream.c">
       <Filter>utils</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\src\utils\cache.c">
-      <Filter>utils</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\src\utils\color.c">
       <Filter>utils</Filter>
     </ClCompile>
@@ -1014,6 +1014,24 @@
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\utils\downloader.c">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\utils\downloader_cache.c">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\utils\downloader_curl.c">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\utils\downloader_hmux.c">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\utils\downloader_nghttp2.c">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\utils\downloader_ngtcp2.c">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\utils\downloader_ssl.c">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\utils\error.c">
@@ -1071,6 +1089,9 @@
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\utils\utf.c">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\utils\xml_bin_custom.c">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\utils\xml_parser.c">
@@ -1185,6 +1206,9 @@
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\dec_opensvc.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\dec_scte35.c">
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\dec_theora.c">
@@ -1388,6 +1412,9 @@
     <ClCompile Include="..\..\src\filters\resample_audio.c">
       <Filter>filters</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filters\sei_load.c">
+      <Filter>filters</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\filters\restamp.c">
       <Filter>filters</Filter>
     </ClCompile>
@@ -1490,6 +1517,12 @@
     <ClCompile Include="..\..\src\filters\in_route.c">
       <Filter>filters</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\filters\in_route_repair.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\in_route.h">
+      <Filter>filters</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\evg\ftgrays.c">
       <Filter>evg</Filter>
     </ClCompile>
@@ -1497,6 +1530,15 @@
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\filters\out_rtp.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\dec_webcodec.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\enc_webcodec.c">
+      <Filter>filters</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\filters\avin_web.c">
       <Filter>filters</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\evg\raster_565.c">

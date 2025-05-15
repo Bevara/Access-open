@@ -74,6 +74,7 @@ readelf="readelf"
 install="${INSTALL:=install}"
 instflags="${INSTFLAGS:=-p}"
 cpu=`uname -m`
+check_stack_size="32768"
 debuginfo="no"
 sdl_path=""
 sdl_local="no"
@@ -309,6 +310,7 @@ push_feature "unframer" "*Unframer"
 push_feature "vcrop" "*Video croping"
 push_feature "vflip" "*Video flip"
 push_feature "writegen" "*Generic rewriter"
+push_feature "webcodec" "*WebCodecs support"
 push_feature "nhmlw" "*NHML writer"
 push_feature "nhntw" "*NHNT writer"
 push_feature "writeqcp" "*QCP writer"
@@ -340,8 +342,8 @@ get_size()
 }
 
 #zlib MUST be first
-all_packages="zlib opensvc openhevc platinum freetype ssl jpeg openjpeg png mad a52 xvid faad ffmpeg freenect vorbis theora nghttp2"
-all_packages="$all_packages oss dvb4linux alsa pulseaudio jack directfb hid lzma tinygl vtb ogg sdl caption mpeghdec libcaca"
+all_packages="zlib opensvc openhevc platinum freetype ssl jpeg openjpeg png mad a52 xvid faad ffmpeg freenect vorbis theora nghttp2 ngtcp2 nghttp3"
+all_packages="$all_packages oss dvb4linux alsa pulseaudio jack directfb hid lzma tinygl vtb ogg sdl caption mpeghdec libcaca curl"
 disabled_packages=""
 
 #init all has_FOO=no and set FOO_cflags=
@@ -378,6 +380,7 @@ GPAC build options:
   --extra-ldflags=ELDFLAGS add ELDFLAGS to LDFLAGS [$LDFLAGS]
   --extra-libs=ELIBS       add ELIBS [$ELIBS]
   --cpu=CPU                force cpu to CPU  [$cpu]
+  --check-stack-size=SIZE  maximum stack size [$check_stack_size bytes]
   --enable-debug           produce debug version
   --enable-gprof           enable profiling
   --enable-gcov            enable coverage
@@ -412,7 +415,7 @@ GPAC core configuration:
   --disable-x11-xv         disable X11 Xvideo support
   --enable-depth           enables depth handling in the compositor (experimental for stereoscopic rendering)
   --disable-all            disables all features in libgpac (see below)
-  --isomedia-only          disables all features except "parsers import export isom-dump isoff isoff-write isoff-hint isoff-frag isoff-hds ttxt ttml vtt mpd dash hevc"
+  --isomedia-only          disables all features except "parsers import export isom-dump isoff isoff-write isoff-hint isoff-frag isoff-hds ttxt ttml vtt txtin"
 
 
 Extra libraries configuration:
@@ -627,6 +630,8 @@ for opt do
             ;;
         --cpu=*) cpu=`echo $opt | cut -d '=' -f 2`
             ;;
+        --check-stack-size=*) check_stack_size=`echo $opt | cut -d '=' -f 2`
+            ;;
         --enable-debug) debuginfo="yes"; no_gcc_opt="yes"
             ;;
         --disable-opt) no_gcc_opt="yes"
@@ -664,11 +669,15 @@ for opt do
             ;;
         --dxsdk-path=*) dxsdk_path=`echo $opt | cut -d '=' -f 2`
             ;;
-        --disable-pulseaudio) has_pulseaudio="no"
+        --disable-pulseaudio) append disabled_packages "pulseaudio"
             ;;
-        --disable-jack) has_jack="no"
+        --disable-jack) append disabled_packages "jack"
             ;;
-        --disable-alsa) has_alsa="no"
+        --disable-alsa) append disabled_packages "alsa"
+            ;;
+        --disable-oss) append disabled_packages "oss"
+            ;;
+        --disable-dvb4linux) append disabled_packages "dvb4linux"
             ;;
         --enable-gprof) gprof_build="yes";
             ;;
@@ -698,8 +707,8 @@ for opt do
             #disable all packages except first one "zlib"
             disabled_packages=`echo $opt | cut -c6-`
             append disabled_packages "x11 sdl directx "
-            #enable all parsers, dash and isobmff related
-            enable_features "parsers import export isom-dump isoff isoff-write isoff-hint isoff-frag isoff-hds ttxt ttml vtt mpd dash hevc"
+            #enable all parsers and isobmff related
+            enable_features "parsers import export isom-dump isoff isoff-write isoff-hint isoff-frag isoff-hds ttxt ttml vtt txtin"
             ;;
         --use-*) v=`echo $opt | cut -c7-`
         	set_package "$v"
@@ -972,8 +981,8 @@ EOF
                 alt_macosx_dir="/opt/local"
             fi
             if test "$alt_macosx_dir" != "" ; then
-                CFLAGS_DIR="-I$alt_macosx_dir $CFLAGS_DIR"
-                LDFLAGS="-L$alt_macosx_dir $LDFLAGS"
+                CFLAGS_DIR="$CFLAGS_DIR -I$alt_macosx_dir -I$alt_macosx_dir/include"
+                LDFLAGS="$LDFLAGS -L$alt_macosx_dir -L$alt_macosx_dir/lib"
             fi
         fi
 
@@ -1390,13 +1399,13 @@ config_package_test ()
 
                 if test "$pck_cxx" = "yes" ; then
                     echo "$package_src" > $TMPCXX
-                    if docxx $pck_cflags $pck_ldflags ; then
+                    if docxx $pck_cflags $pck_ldflags $LDFLAGS ; then
                         has_pck="$sysname (pkgconfig)"
                         return
                     fi
                 else
                     echo "$package_src" > $TMPC
-                    if docc $pck_cflags $pck_ldflags ; then
+                    if docc $pck_cflags $pck_ldflags $LDFLAGS ; then
                         has_pck="$sysname (pkgconfig)"
                         return
                     fi
@@ -1498,7 +1507,7 @@ config_package ()
     pck_ldflags=""
 
     pname="$1"
-    case "$disabled_packages" in
+    case "$disabled_packages " in
     *"$pname "*) shift
         eval "has_$pname=\"no\""
         return
@@ -1508,7 +1517,11 @@ config_package ()
     config_package_test "$1" "$2" "$3" "$4" "$5" "$6"
     if test "$has_pck" != "no" ; then
         eval "cflags_$pname=\"$pck_cflags\""
-        eval "ldflags_$pname=\"$pck_ldflags\""
+        if test "$pname" = "ngtcp2" ; then
+            eval "ldflags_$pname=\"$pck_ldflags -lngtcp2_crypto_quictls\""
+        else
+            eval "ldflags_$pname=\"$pck_ldflags\""
+        fi
     fi
 
     eval "has_$pname=\"$has_pck\""
@@ -1556,6 +1569,8 @@ if test "$static_bin" = "yes"; then
 
     #we cannot use openssl vanilla since it is usually built with DSO and requires dlopen
     append disabled_packages "ssl"
+    # these need ssl
+    append disabled_packages "nghttp3 ngtcp2"
     #we cannot use ipv6 due to getaddrinfo not being present
     append disabled_packages "ipv6"
 
@@ -1728,6 +1743,15 @@ config_package nghttp2 "libnghttp2" "" "-lnghttp2" "" '#include <stdio.h>
 #include <nghttp2/nghttp2.h>
 int main( void ) {  nghttp2_session *ng_sess; nghttp2_session_del(ng_sess); return 0; }'
 
+config_package ngtcp2 "libngtcp2" "" "-lngtcp2" "" '#include <stdio.h>
+#include <ngtcp2/ngtcp2.h>
+int main( void ) {  ngtcp2_conn *ng_sess=NULL; ngtcp2_conn_del(ng_sess); return 0; }'
+
+config_package nghttp3 "libnghttp3" "" "-lnghttp3" "" '#include <stdio.h>
+#include <nghttp3/nghttp3.h>
+int main( void ) {  nghttp3_conn *ng_sess=NULL; nghttp3_conn_del(ng_sess); return 0; }'
+
+
 config_package caption "libcaption" "" "-lcaption" "" '#include <caption/cea708.h>
 int main( void ) { caption_frame_t ccframe; caption_frame_init(&ccframe); return 0; }'
 
@@ -1741,6 +1765,11 @@ typedef int bool;
 #endif
 #include <mpeghdecoder.h>
 int main( void ) { HANDLE_MPEGH_DECODER_CONTEXT codec = mpeghdecoder_init(2); return 0; }'
+
+
+config_package curl "curl" "" "-lcurl" "" '#include <curl/curl.h>
+int main( void ) { CURLM *curl_multi = curl_multi_init(); int fn_opt = CURLOPT_PREREQFUNCTION; const struct curl_easyoption *opt = curl_easy_option_next(NULL); return 0; }'
+
 
 
 #look for VideoToolBox support
@@ -1766,14 +1795,14 @@ EOF
 
 else
 
-check_has_lib oss "" '#include <sys/ioctl.h>
+config_package oss "" "" "" "" '#include <sys/ioctl.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/soundcard.h>
 int main( void ) { return 0; }'
 
 if test "$has_oss" = "no" ; then
-check_has_lib oss "" '#include <sys/ioctl.h>
+config_package oss "" "" "" "" '#include <sys/ioctl.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <soundcard.h>
@@ -1808,19 +1837,17 @@ return 0;
 }'
 
 
-
-check_has_lib dvb4linux "" '#include <linux/dvb/dmx.h>
+config_package dvb4linux "" "" "" "" '#include <linux/dvb/dmx.h>
 #include <linux/dvb/frontend.h>
 int main( void ) {return 0;}'
 
-check_has_lib alsa "" '#include <alsa/asoundlib.h>
+config_package alsa "libasound" "" "" "" '#include <alsa/asoundlib.h>
 int main( void ) {return 0;}'
 
-
-check_has_lib pulseaudio "" '#include <pulse/pulseaudio.h>
+config_package pulseaudio "libpulse" "" "" "" '#include <pulse/pulseaudio.h>
 int main( void ) {return 0;}'
 
-check_has_lib jack "" '#include <jack/jack.h>
+config_package jack "libjack" "" "" "" '#include <jack/jack.h>
 int main( void ) {return 0;}'
 
 
@@ -1851,7 +1878,7 @@ int main( void ) { return 0; }'
     check_has_lib x11_glx "-I$X11_PATH/include -L$X11_PATH/lib" '#include <X11/Xlib.h>
 #include <GL/gl.h>
 #include <GL/glx.h>
-int main( void ) { return 0; }'
+int main( void ) { glXSwapBuffers(NULL, 0); return 0; }'
 
 fi
 #end x11 test
@@ -1979,7 +2006,7 @@ fi
 
 
 #look for SDL support - we don't use check_has_lib for the time being
-case "$disabled_packages" in
+case "$disabled_packages " in
 *"sdl "*) has_sdl=no
     ;;
 *) sdl_too_old=no
@@ -2092,6 +2119,10 @@ else
 
 fi
 
+if test "$check_stack_size" != "no" ; then
+    CFLAGS="$CFLAGS -Wframe-larger-than=$check_stack_size"
+fi
+
 if test "$debuginfo" = "no"; then
     CFLAGS="$CFLAGS -DNDEBUG"
 fi
@@ -2197,6 +2228,7 @@ echo ""
 echo "** GPAC $version rev$revision Core Configuration **"
 echo "Unit Tests: $unit_tests ('make unit_tests')"
 echo "#define GF_STATIC static" >> $TMPH
+echo "#define GF_NOT_EXPORTED" >> $TMPH
 if test "$static_bin" = "yes" ; then
     echo "Static binaries enabled"
     echo "#define GPAC_STATIC_BIN" >> $TMPH
@@ -2207,6 +2239,7 @@ elif test "$static_build" = "yes" ; then
 else
     echo "Static Modules: $static_modules"
 fi
+echo "max stack size: $check_stack_size"
 echo "debug version: $debuginfo"
 echo "GProf enabled: $gprof_build"
 echo "Memory tracking enabled: $use_memory_tracking"
@@ -2497,6 +2530,8 @@ echo "TinyGL support: $has_tinygl"
 fi
 echo "OpenSSL support: $has_ssl"
 echo "nghttp2: $has_nghttp2"
+echo "ngtcp2: $has_ngtcp2"
+echo "nghttp3: $has_nghttp3"
 
 if test "$win32" != "yes" ; then
     echo "OSS Audio: $has_oss"
@@ -2538,6 +2573,7 @@ echo "XVID: $has_xvid"
 echo "libcaption: $has_caption"
 echo "MpeghDecoder: $has_mpeghdec"
 echo "libcaca: $has_libcaca"
+echo "libcurl: $has_curl"
 
 ffopts=""
 if test "$has_ffmpeg" != "no" ; then
@@ -2916,10 +2952,13 @@ if test "$has_nghttp2" != "no" ; then
     echo "#define GPAC_HAS_HTTP2" >> $TMPH
 fi
 
+if test "$has_ngtcp2" != "no" ; then
+    echo "#define GPAC_HAS_NGTCP2" >> $TMPH
+fi
+
 if test "$has_caption" != "no" ; then
     echo "#define GPAC_HAS_LIBCAPTION" >> $TMPH
 fi
-
 
 if test "$has_libcaca" != "no" ; then
     echo "#define GPAC_HAS_LIBCACA" >> $TMPH
@@ -2930,6 +2969,10 @@ fi
 
 if test "$has_mpeghdec" != "no" ; then
     echo "#define GPAC_HAS_MPEGHDECODER" >> $TMPH
+fi
+
+if test "$has_curl" != "no" ; then
+    echo "#define GPAC_HAS_CURL" >> $TMPH
 fi
 
 #dump all cflags

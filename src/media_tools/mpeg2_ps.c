@@ -523,8 +523,8 @@ static void copy_bytes_to_pes_buffer (mpeg2ps_stream_t *sptr,
 			sptr->pes_buffer_size_max = to_move + pes_len + 2048;
 		}
 	}
-	file_read_bytes(sptr->m_fd, sptr->pes_buffer + sptr->pes_buffer_size, pes_len);
-	sptr->pes_buffer_size += pes_len;
+	u32 size_read = (u32) gf_fread(sptr->pes_buffer + sptr->pes_buffer_size, pes_len, sptr->m_fd);
+	sptr->pes_buffer_size += size_read;
 }
 
 /*
@@ -1074,7 +1074,7 @@ static u64 convert_ts (mpeg2ps_stream_t *sptr,
 
 /*
  * find_stream_from_id - given the stream, get the sptr.
- * only used in inital set up, really.  APIs use index into
+ * only used in initial set up, really.  APIs use index into
  * video_streams and audio_streams arrays.
  */
 static mpeg2ps_stream_t *find_stream_from_id (mpeg2ps_t *ps,

@@ -384,6 +384,36 @@ char * my_str_lwr(char *str);
 #define NULL 0
 #endif
 
+
+#ifdef GPAC_HAS_FD
+#ifndef WIN32
+#include <unistd.h>
+#define lseek_64 lseek
+#define O_BINARY 0
+#else
+#include <io.h>
+#define lseek_64 _lseeki64
+#endif
+#include <fcntl.h>
+#include <sys/stat.h>
+
+#if defined(WIN32) && !defined(open)
+#  define open _open
+#  define close _close
+#  define read _read
+#  define write _write
+#endif
+
+#if defined(WIN32) && !defined(S_IWUSR)
+#  define S_IWUSR _S_IWRITE
+#  define S_IRUSR _S_IREAD
+#  define S_IRGRP 0
+#  define S_IWGRP 0
+#  define S_IROTH 0
+# endif
+
+#endif
+
 //! @endcond
 
 
@@ -413,6 +443,12 @@ typedef u8 bin128[16];
 #define GF_INT_MAX			INT_MAX
 /*! min possible value for s32*/
 #define GF_INT_MIN			INT_MIN
+/*! max possible value for u64*/
+#define GF_UINT64_MAX		ULLONG_MAX
+/*! max possible value for s64*/
+#define GF_INT64_MAX		LLONG_MAX
+/*! min possible value for s64*/
+#define GF_INT64_MIN		LLONG_MIN
 
 #ifndef MIN
 /*! get the smallest of two numbers*/
@@ -423,7 +459,7 @@ typedef u8 bin128[16];
 #define MAX(X, Y) ((X)>(Y)?(X):(Y))
 #endif
 
-/*! get the absolute difference betwee two numbers*/
+/*! get the absolute difference between two numbers*/
 #define ABSDIFF(a, b)	( ( (a) > (b) ) ? ((a) - (b)) : ((b) - (a)) )
 
 #ifndef ABS
@@ -438,6 +474,10 @@ typedef enum {
 	GF_TRUE
 } Bool;
 #endif
+
+#define GF_OPT_ENUM(name, ...)						\
+        typedef enum { __VA_ARGS__ } name##_t;		\
+        typedef u32 name
 
 /*! 32 bit fraction*/
 typedef struct {
@@ -862,6 +902,9 @@ size_t gf_strlcpy(char *dst, const char *src, size_t dsize);
 /*needed for unittests (disabled)*/
 #ifndef GF_STATIC
 #define GF_STATIC static
+#endif
+#ifndef GF_NOT_EXPORTED
+#define GF_NOT_EXPORTED
 #endif
 //! @endcond
 

@@ -356,10 +356,11 @@ static GF_Err gf_isom_extract_meta_item_intern(GF_ISOFile *file, Bool root_meta,
 		item_bs = gf_bs_from_file(resource, GF_BITSTREAM_WRITE);
 	}
 
-	if ((item_type == GF_ISOM_SUBTYPE_HVC1) || (item_type == GF_ISOM_SUBTYPE_AVC_H264) ) {
+	if ((item_type == GF_ISOM_SUBTYPE_HVC1) || (item_type == GF_ISOM_SUBTYPE_AVC_H264)  || (item_type == GF_ISOM_SUBTYPE_VVC1) ) {
 		u32 j, nb_assoc;
 		GF_HEVCConfigurationBox *hvcc = NULL;
 		GF_AVCConfigurationBox *avcc = NULL;
+		GF_VVCConfigurationBox *vvcc = NULL;
 		if (!meta->item_props || !meta->item_props->property_container || !meta->item_props->property_association) {
 			if (item_bs) gf_bs_del(item_bs);
 			return GF_NON_COMPLIANT_BITSTREAM;
@@ -377,14 +378,21 @@ static GF_Err gf_isom_extract_meta_item_intern(GF_ISOFile *file, Bool root_meta,
 					if (item_bs) gf_bs_del(item_bs);
 					return GF_NON_COMPLIANT_BITSTREAM;
 				}
-				if (hvcc->type == GF_ISOM_BOX_TYPE_HVCC) break;
+				if (hvcc->type == GF_ISOM_BOX_TYPE_HVCC)
+					break;
 				if (hvcc->type == GF_ISOM_BOX_TYPE_AVCC) {
 					avcc = (GF_AVCConfigurationBox *) hvcc;
 					hvcc = NULL;
 					break;
 				}
+				if (hvcc->type == GF_ISOM_BOX_TYPE_VVCC) {
+					vvcc = (GF_VVCConfigurationBox *) hvcc;
+					hvcc = NULL;
+					break;
+				}
+				hvcc = NULL;
 			}
-			if (avcc || hvcc) break;
+			if (avcc || hvcc || vvcc) break;
 		}
 		if (hvcc) {
 			if (! hvcc->config) {
@@ -407,6 +415,17 @@ static GF_Err gf_isom_extract_meta_item_intern(GF_ISOFile *file, Bool root_meta,
 					avcc->config->write_annex_b = GF_FALSE;
 				}
 				nalu_size_length = avcc->config->nal_unit_size;
+			}
+		} else if (vvcc) {
+			if (! vvcc->config) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Missing VVC config in vvcC\n"));
+			} else {
+				if (use_annex_b) {
+					vvcc->config->write_annex_b = GF_TRUE;
+					gf_odf_vvc_cfg_write_bs(vvcc->config, item_bs);
+					vvcc->config->write_annex_b = GF_FALSE;
+				}
+				nalu_size_length = vvcc->config->nal_unit_size;
 			}
 		}
 	}
@@ -450,6 +469,10 @@ static GF_Err gf_isom_extract_meta_item_intern(GF_ISOFile *file, Bool root_meta,
 				gf_bs_read_data(file->movieFileMap->bs, buf_cache, cache_size);
 				gf_bs_write_data(item_bs, buf_cache, cache_size);
 				remain -= cache_size;
+			}
+			if (gf_bs_is_overflow(file->movieFileMap->bs)) {
+				e = GF_ISOM_INVALID_FILE;
+				break;
 			}
 		}
 	}
@@ -820,7 +843,9 @@ GF_Err gf_isom_get_meta_image_props(GF_ISOFile *file, Bool root_meta, u32 track_
 			case GF_ISOM_BOX_TYPE_AVCC:
 			case GF_ISOM_BOX_TYPE_AV1C:
 			case GF_ISOM_BOX_TYPE_VVCC:
-				prop->config = b;
+			case GF_ISOM_BOX_TYPE_J2KH:
+				if (!prop->config)
+					prop->config = b;
 				break;
 
 			default:
@@ -964,19 +989,22 @@ static s32 meta_find_prop(GF_ItemPropertyContainerBox *boxes, GF_ImageItemProper
 }
 
 static GF_Err meta_add_item_property_association(GF_ItemPropertyAssociationBox *ipma, u32 item_ID, u32 prop_index, Bool essential) {
-	u32 i, count;
+	u32 i, count, insert_pos;
 	GF_ItemPropertyAssociationEntry *found_entry = NULL;
 
 	count = gf_list_count(ipma->entries);
+	insert_pos = 0;
 	for (i = 0; i < count; i++) {
 		found_entry = (GF_ItemPropertyAssociationEntry *)gf_list_get(ipma->entries, i);
 		if (found_entry->item_id == item_ID) break;
+		// item ids must appear in increasing order
+		if (item_ID > found_entry->item_id) ++insert_pos;
 		found_entry = NULL;
 	}
 	if (!found_entry) {
 		GF_SAFEALLOC(found_entry, GF_ItemPropertyAssociationEntry);
 		if (!found_entry) return GF_OUT_OF_MEM;
-		gf_list_add(ipma->entries, found_entry);
+		gf_list_insert(ipma->entries, found_entry, insert_pos);
 		found_entry->item_id = item_ID;
 	}
 	found_entry->associations = gf_realloc(found_entry->associations, sizeof(GF_ItemPropertyAssociationSlot) * (found_entry->nb_associations+1));
@@ -1418,7 +1446,11 @@ GF_Err gf_isom_add_meta_item_extended(GF_ISOFile *file, Bool root_meta, u32 trac
 	if (e) return e;
 	meta = gf_isom_get_meta(file, root_meta, track_num);
 	if (!meta) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Trying to add item, but missing meta box"));
+		if (track_num) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Trying to add item, but missing meta box in track %u\n", track_num));
+		} else {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Trying to add item, but missing meta box in %s\n", root_meta ? "file" : "movie box"));
+		}
 		return GF_BAD_PARAM;
 	}
 

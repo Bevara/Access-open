@@ -249,7 +249,7 @@ static void FixSDTPInTRAF(GF_MovieFragmentBox *moof)
 }
 #endif //GPAC_DISABLE_ISOM_FRAGMENTS
 
-void gf_isom_push_mdat_end(GF_ISOFile *mov, u64 mdat_end)
+void gf_isom_push_mdat_end(GF_ISOFile *mov, u64 mdat_end, Bool is_pred)
 {
 	u32 i, count;
 	if (!mov || !mov->moov) return;
@@ -263,8 +263,16 @@ void gf_isom_push_mdat_end(GF_ISOFile *mov, u64 mdat_end)
 
 		traf_map = trak->Media->information->sampleTable->traf_map;
 		for (j=traf_map->nb_entries; j>0; j--) {
-			if (!traf_map->frag_starts[j-1].mdat_end) {
-				traf_map->frag_starts[j-1].mdat_end = mdat_end;
+			GF_TrafMapEntry *finfo = &traf_map->frag_starts[j-1];
+			if (finfo->is_predicted_offset) {
+				finfo->is_predicted_offset = is_pred ? 1 : 0;
+				if (mdat_end > finfo->mdat_end)
+					finfo->mdat_end = 0;
+			}
+
+			if (!finfo->mdat_end) {
+				finfo->mdat_end = mdat_end;
+				finfo->is_predicted_offset = is_pred ? 1 : 0;
 				break;
 			}
 		}
@@ -352,12 +360,12 @@ static void convert_compact_sample_groups(GF_List *child_boxes, GF_List *sampleG
 	}
 }
 
-
 static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, u64 *bytesMissing, Bool progressive_mode)
 {
 	GF_Box *a;
 	u64 top_start, mdat_end=0;
 	GF_Err e = GF_OK;
+	u32 btype;
 
 #ifndef	GPAC_DISABLE_ISOM_FRAGMENTS
 	if (mov->single_moof_mode && mov->single_moof_state == 2) {
@@ -371,18 +379,23 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 		top_start -= mov->bytes_removed;
 	}
 	gf_bs_seek(mov->movieFileMap->bs, top_start);
+
+	if (gf_opts_get_bool("core", "no-mabr-patch")) {
+		gf_bs_set_cookie(mov->movieFileMap->bs, gf_bs_get_cookie(mov->movieFileMap->bs) | GF_ISOM_BS_COOKIE_NO_MABR_PATCH);
+	}
 #endif
 
 
 	/*while we have some data, parse our boxes*/
-	while (gf_bs_available(mov->movieFileMap->bs)) {
+	while (gf_isom_datamap_top_level_box_avail(mov->movieFileMap)) {
 		*bytesMissing = 0;
 #ifndef	GPAC_DISABLE_ISOM_FRAGMENTS
 		mov->current_top_box_start = gf_bs_get_position(mov->movieFileMap->bs) + mov->bytes_removed;
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Parsing a top-level box at position %d\n", mov->current_top_box_start));
 #endif
 
-		e = gf_isom_parse_root_box(&a, mov->movieFileMap->bs, boxType, bytesMissing, progressive_mode);
+		e = gf_isom_parse_root_box(&a, mov->movieFileMap->bs, &btype, bytesMissing, progressive_mode);
+		if (boxType) *boxType = btype;
 
 		if (e >= 0) {
 			//safety check, should never happen
@@ -393,6 +406,18 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Incomplete MDAT while file is not read-only\n"));
 				return GF_ISOM_INVALID_FILE;
 			}
+
+			if ((btype == GF_ISOM_BOX_TYPE_MDAT)
+				&& mov->signal_frag_bounds
+				&& !(mov->FragmentsFlags & GF_ISOM_FRAG_READ_DEBUG)
+			) {
+				//signal mdat end - note that if multiple mdats are used per fragment and hidden data is present at the end of
+				//N(>1) mdats, the prediction may not be true and we will expose offsets that could be incomplete when
+				//processing non-local files (http, pipes...)
+				u64 mdat_end = gf_bs_get_size(mov->movieFileMap->bs) + *bytesMissing;
+				gf_isom_push_mdat_end(mov, mdat_end, GF_TRUE);
+			}
+
 			if ((mov->openMode == GF_ISOM_OPEN_READ) && !progressive_mode) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Incomplete file while reading for dump - aborting parsing\n"));
 				break;
@@ -411,7 +436,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				return GF_ISOM_INVALID_FILE;
 			}
 			mov->moov = (GF_MovieBox *)a;
-			if (mov->moov->has_cmvd) {
+			if (mov->moov->has_cmvd==1) {
 				GF_Box *cmvd = gf_isom_box_find_child(a->child_boxes, GF_QT_BOX_TYPE_CMVD);
 				mov->moov = (GF_MovieBox *) (cmvd ? gf_isom_box_find_child(cmvd->child_boxes, GF_ISOM_BOX_TYPE_MOOV) : NULL);
 				if (!mov->moov) {
@@ -440,9 +465,11 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 			if (e) return e;
 
             if (!mov->moov->mvhd) {
-                GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Missing MovieHeaderBox\n"));
-                return GF_ISOM_INVALID_FILE;
-            }
+				if (mov->moov->has_cmvd!=2) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Missing MovieHeaderBox\n"));
+					return GF_ISOM_INVALID_FILE;
+				}
+			}
 
             if (mov->meta) {
 				gf_isom_meta_restore_items_ref(mov, mov->meta);
@@ -463,6 +490,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				u32 k;
 				for (k=0; k<gf_list_count(mov->moov->trackList); k++) {
 					GF_TrackBox *trak = (GF_TrackBox *)gf_list_get(mov->moov->trackList, k);
+					if (trak->extl) continue;
 					if (trak->Media->information->sampleTable->sampleGroups) {
 						convert_compact_sample_groups(trak->Media->information->sampleTable->child_boxes, trak->Media->information->sampleTable->sampleGroups);
 					}
@@ -470,7 +498,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 			}
 
             if (mdat_end && mov->signal_frag_bounds && !(mov->FragmentsFlags & GF_ISOM_FRAG_READ_DEBUG) ) {
-                gf_isom_push_mdat_end(mov, mdat_end);
+                gf_isom_push_mdat_end(mov, mdat_end, GF_FALSE);
                 mdat_end=0;
             }
 			break;
@@ -522,7 +550,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				if (mov->signal_frag_bounds && !(mov->FragmentsFlags & GF_ISOM_FRAG_READ_DEBUG) ) {
                     mdat_end = gf_bs_get_position(mov->movieFileMap->bs);
                     if (mov->moov) {
-                        gf_isom_push_mdat_end(mov, mdat_end);
+                        gf_isom_push_mdat_end(mov, mdat_end, GF_FALSE);
                         mdat_end=0;
                     }
 				}
@@ -649,7 +677,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 				} else {
 					gf_isom_box_del(a);
 				}
-				gf_isom_push_mdat_end(mov, mov->current_top_box_start);
+				gf_isom_push_mdat_end(mov, mov->current_top_box_start, GF_FALSE);
 			} else if (!mov->NextMoofNumber && (a->type==GF_ISOM_BOX_TYPE_SIDX)) {
 				if (mov->main_sidx) gf_isom_box_del( (GF_Box *) mov->main_sidx);
 				mov->main_sidx = (GF_SegmentIndexBox *) a;
@@ -732,7 +760,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 					}
 
 				}
-			} else if (mov->openMode==GF_ISOM_OPEN_KEEP_FRAGMENTS) {
+			} else if (mov->openMode==GF_ISOM_OPEN_KEEP_FRAGMENTS && mov->moof->mfhd) {
 				mov->NextMoofNumber = mov->moof->mfhd->sequence_number+1;
 				mov->moof = NULL;
 				gf_isom_box_del(a);
@@ -831,6 +859,8 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 		mov->current_top_box_start = gf_bs_get_position(mov->movieFileMap->bs) + mov->bytes_removed;
 #endif
 	}
+	if (!mov->first_data_toplevel_offset)
+		mov->first_data_toplevel_offset = mov->current_top_box_start;
 
 	/*we need at least moov or meta*/
 	if (!mov->moov && !mov->meta
@@ -842,7 +872,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 	}
 	/*we MUST have movie header*/
 	if (!gf_opts_get_bool("core", "no-check")) {
-		if (mov->moov && !mov->moov->mvhd) {
+		if (mov->moov && !mov->moov->mvhd && (mov->moov->has_cmvd!=2)) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Missing MVHD in MOOV!\n"));
 			return GF_ISOM_INVALID_FILE;
 		}
@@ -858,7 +888,7 @@ static GF_Err gf_isom_parse_movie_boxes_internal(GF_ISOFile *mov, u32 *boxType, 
 
 	if (mov->moov) {
 		/*set the default interleaving time*/
-		mov->interleavingTime = mov->moov->mvhd->timeScale;
+		mov->interleavingTime = mov->moov->mvhd ? mov->moov->mvhd->timeScale : 0;
 
 #ifndef	GPAC_DISABLE_ISOM_FRAGMENTS
 		/*in edit mode with successfully loaded fragments, delete all fragment signaling since
@@ -948,7 +978,11 @@ GF_ISOFile *gf_isom_open_file(const char *fileName, GF_ISOOpenMode OpenMode, con
 		mov->store_traf_map = GF_TRUE;
 #endif
 
-	if ( (OpenMode == GF_ISOM_OPEN_READ) || (OpenMode == GF_ISOM_OPEN_READ_DUMP) || (OpenMode == GF_ISOM_OPEN_READ_EDIT) ) {
+	if ( (OpenMode == GF_ISOM_OPEN_READ)
+		|| (OpenMode == GF_ISOM_OPEN_READ_DUMP)
+		|| (OpenMode == GF_ISOM_OPEN_READ_DUMP_NO_COMP)
+		|| (OpenMode == GF_ISOM_OPEN_READ_EDIT)
+	) {
 		if (OpenMode == GF_ISOM_OPEN_READ_EDIT) {
 			mov->openMode = GF_ISOM_OPEN_READ_EDIT;
 
@@ -978,6 +1012,10 @@ GF_ISOFile *gf_isom_open_file(const char *fileName, GF_ISOOpenMode OpenMode, con
 			gf_isom_set_last_error(NULL, e);
 			gf_isom_delete_movie(mov);
 			return NULL;
+		}
+		if (OpenMode == GF_ISOM_OPEN_READ_DUMP_NO_COMP) {
+			OpenMode = GF_ISOM_OPEN_READ_DUMP;
+			gf_bs_set_cookie(mov->movieFileMap->bs, GF_ISOM_BS_COOKIE_NO_DECOMP);
 		}
 
 		if (OpenMode == GF_ISOM_OPEN_READ_DUMP) {

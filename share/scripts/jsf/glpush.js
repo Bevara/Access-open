@@ -1,3 +1,28 @@
+/*
+ *			GPAC - Multimedia Framework C SDK
+ *
+ *			Authors: Jean Le Feuvre
+ *			Copyright (c) Telecom ParisTech 2020-2024
+ *					All rights reserved
+ *
+ *  This file is part of GPAC / AVGenerator filter
+ *
+ *  GPAC is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation; either version 2, or (at your option)
+ *  any later version.
+ *
+ *  GPAC is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public
+ *  License along with this library; see the file COPYING.  If not, write to
+ *  the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
+ */
+
 import {WebGLContext} from 'webgl'
 import {Texture, Matrix} from 'evg'
 import { Sys as sys } from 'gpaccore'
@@ -5,6 +30,7 @@ import { Sys as sys } from 'gpaccore'
 
 //metadata
 filter.set_name("glpush");
+filter.set_class_hint(GF_FS_CLASS_AV);
 filter.set_desc("GPU texture uploader");
 filter.set_version("1.0");
 filter.set_author("GPAC team");
@@ -20,7 +46,6 @@ filter.initialize = function() {
   let gpac_doc = (sys.get_opt("temp", "gendoc") == "yes") ? true : false;
   //don't initialize gl if doc gen or help
   if (gpac_help || gpac_doc) return;
-  gl = new WebGLContext(16, 16);
 }
 
 let pids=[];
@@ -28,13 +53,19 @@ let pids=[];
 function cleanup_texture(pid)
 {
   pid.o_textures.forEach( t => {
-    gl.deleteTexture(t.id);
+    if (t.id) gl.deleteTexture(t.id);
 
   });
   pid.o_textures = [];  
 }
 filter.configure_pid = function(pid)
 {
+  //init gl only when configuring input - doing it at init may result in uninitialized GL
+  if (!gl) {
+    gl = new WebGLContext(16, 16);
+    if (!gl) return GF_SERVICE_ERROR;
+  }
+
   if (typeof pid.o_pid == 'undefined') {
       pid.o_pid = this.new_pid();
       pid.o_pid.i_pid = pid;
@@ -64,7 +95,7 @@ filter.configure_pid = function(pid)
   pid.o_h = i_h;
   pid.o_pf = i_pf;
   cleanup_texture(pid);
-  print('Configure pid ' + pid.o_w + 'x' + pid.o_h + '@' + pid.o_pf);
+  print(GF_LOG_DEBUG, 'Configure pid ' + pid.o_w + 'x' + pid.o_h + '@' + pid.o_pf);
 
     if (!i_stride) i_stride = i_w;
 

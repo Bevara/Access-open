@@ -41,7 +41,6 @@ GF_List *args_used = NULL;
 GF_List *args_alloc = NULL;
 u32 gen_doc = 0;
 u32 help_flags = 0;
-FILE *sidebar_md=NULL;
 FILE *helpout = NULL;
 const char *auto_gen_md_warning = "<!-- automatically generated - do not edit, patch gpac/applications/gpac/gpac.c -->\n";
 
@@ -68,6 +67,7 @@ static Bool dump_graph = GF_FALSE;
 static Bool print_meta_filters = GF_FALSE;
 static Bool load_test_filters = GF_FALSE;
 static s32 nb_loops = 0;
+static Bool loop_if_error = GF_FALSE;
 static s32 runfor = 0;
 static Bool runfor_exit = GF_FALSE;
 static Bool runfor_fast = GF_FALSE;
@@ -83,6 +83,7 @@ static GF_Err evt_ret_val = GF_OK;
 static Bool in_sig_handler = GF_FALSE;
 static Bool custom_event_proc=GF_FALSE;
 static u64 run_start_time = 0;
+static Bool return_gferr = GF_FALSE;
 
 //Bevara
 GF_Filter *dst;
@@ -121,7 +122,15 @@ static const char *make_fileio(const char *inargs, const char **out_arg, u32 mod
 static void cleanup_file_io(void);
 static GF_Filter *load_custom_filter(GF_FilterSession *sess, char *opts, GF_Err *e);
 static u32 gpac_unit_tests(GF_MemTrackerType mem_track);
-static Bool revert_cache_file(void *cbck, char *item_name, char *item_path, GF_FileEnumInfo *file_info);
+enum {
+	CACHE_OP_DELETE,
+	CACHE_OP_SHOW,
+	CACHE_OP_INFO,
+	CACHE_OP_UNFLATTEN,
+};
+
+static void do_cache_check(u32 op_type, char *argval);
+
 #ifdef GPAC_DEFER_MODE
 static GF_Err print_pid_props(char *arg);
 static GF_Err probe_pid_link(char *arg);
@@ -213,10 +222,10 @@ static Bool gpac_fsess_task(GF_FilterSession *fsess, void *callback, u32 *resche
 static void reset_em_thread();
 #endif
 
-static int gpac_exit_fun(int code)
+static int gpac_exit_fun(GF_Err code)
 {
 	u32 i;
-	if (code>=0) {
+	if (code!=GF_BAD_PARAM) {
 		for (i=1; i<gf_sys_get_argc(); i++) {
 			if (!gf_sys_is_arg_used(i)) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Warning: argument %s set but not used\n", gf_sys_get_arg(i) ));
@@ -252,20 +261,19 @@ static int gpac_exit_fun(int code)
 		gf_fclose(helpout);
 	}
 
-	if (sidebar_md) {
-		gf_fclose(sidebar_md);
-		sidebar_md = NULL;
-	}
-
 	cleanup_logs();
 
 	gf_sys_close();
+	if (code<0) {
+		if (return_gferr) code = -code;
+		else code = 1;
+	}
 
 #ifdef GPAC_MEMORY_TRACKING
-	if (!code && (gf_memory_size() || gf_file_handles_count() )) {
+	if (gf_memory_size() || gf_file_handles_count() ) {
 		gf_log_set_tool_level(GF_LOG_MEMORY, GF_LOG_INFO);
 		gf_memory_print();
-		code = 2;
+		if (!code) code = 2;
 	}
 #endif
 
@@ -490,6 +498,64 @@ static void run_sess(void)
 }
 #endif
 
+static GF_Err process_link_directive(char *link, GF_Filter *filter, GF_List *loaded_filters, char *ext_link)
+{
+	char *link_prev_filter_ext = NULL;
+	GF_Filter *link_from;
+	Bool reverse_order = GF_FALSE;
+	s32 link_filter_idx = -1;
+
+	if (!filter) {
+		u32 idx=0, count = gf_list_count(loaded_filters);
+		if (!ext_link || !count) return GF_BAD_PARAM;
+		ext_link[0] = 0;
+		if (link[1] == separator_set[SEP_LINK]) {
+			idx = atoi(link+2);
+		} else {
+			idx = atoi(link+1);
+			if (count - 1 < idx) return GF_BAD_PARAM;
+			idx = count-1-idx;
+		}
+		ext_link[0] = separator_set[SEP_LINK];
+		filter = gf_list_get(loaded_filters, idx);
+		link = ext_link;
+	}
+
+	char *ext = strchr(link, separator_set[SEP_FRAG]);
+	if (ext) {
+		ext[0] = 0;
+		link_prev_filter_ext = ext+1;
+	}
+	if (strlen(link)>1) {
+		if (link[1] == separator_set[SEP_LINK] ) {
+			reverse_order = GF_TRUE;
+			link++;
+		}
+		link_filter_idx = 0;
+		if (strlen(link)>1) {
+			link_filter_idx = get_u32(link+1, "Link filter index");
+			if (link_filter_idx < 0) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Wrong filter index %d, must be positive\n", link_filter_idx));
+				return GF_BAD_PARAM;
+			}
+		}
+	} else {
+		link_filter_idx = 0;
+	}
+	if (ext) ext[0] = separator_set[SEP_FRAG];
+
+	if (reverse_order)
+		link_from = gf_list_get(loaded_filters, link_filter_idx);
+	else
+		link_from = gf_list_get(loaded_filters, gf_list_count(loaded_filters)-1-link_filter_idx);
+
+	if (!link_from) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Wrong filter index @%d\n", link_filter_idx));
+		return GF_BAD_PARAM;
+	}
+	gf_filter_set_source(filter, link_from, link_prev_filter_ext);
+	return GF_OK;
+}
 
 #ifndef GPAC_CONFIG_ANDROID
 static
@@ -513,6 +579,7 @@ int gpac_main(int _argc, char **_argv)
 	//bools
 	dump_stats = dump_graph = print_meta_filters = load_test_filters = GF_FALSE;
 	runfor_exit = runfor_fast = enable_prompt = use_step_mode = in_sig_handler = custom_event_proc = GF_FALSE;
+	loop_if_error = GF_FALSE;
 	//s32
 	nb_loops = runfor = 0;
 	//u32
@@ -709,6 +776,9 @@ int gpac_main(int _argc, char **_argv)
 					dump_all_props(NULL);
 				}
 				gpac_exit(0);
+			} else if (!strncmp(argv[i+1], "props.", 6)) {
+				check_prop_def(argv[i+1] + 6);
+				gpac_exit(0);
 			} else if (!strcmp(argv[i+1], "colors")) {
 				dump_all_colors();
 				gpac_exit(0);
@@ -830,9 +900,11 @@ int gpac_main(int _argc, char **_argv)
 			}
 			gpac_alias_help(GF_ARGMODE_EXPERT);
 
-
 			gpac_credentials_help(GF_ARGMODE_EXPERT);
 
+#ifdef GPAC_DEFER_MODE
+			gpac_defer_help();
+#endif
 			if (gen_doc==1) {
 				gf_fclose(helpout);
 				helpout = gf_fopen("core_config.md", "w");
@@ -919,8 +991,9 @@ int gpac_main(int _argc, char **_argv)
 		} else if (!strcmp(arg, "-wfx")) {
 			write_profile = GF_TRUE;
 			sflags |= GF_FS_FLAG_LOAD_META;
-		} else if (!strcmp(arg, "-sloop")) {
+		} else if (!strcmp(arg, "-sloop") || !strcmp(arg, "-eloop")) {
 			nb_loops = -1;
+			if (!strcmp(arg, "-eloop")) loop_if_error = GF_TRUE;
 			if (arg_val) nb_loops = get_s32(arg_val, "sloop");
 		} else if (!strcmp(arg, "-runfor")) {
 			if (arg_val) runfor = 1000*get_u32(arg_val, "runfor");
@@ -936,13 +1009,22 @@ int gpac_main(int _argc, char **_argv)
 		} else if (!strcmp(arg, "-runforl")) {
 			if (arg_val) runfor = 1000*get_u32(arg_val, "runforl");
 			exit_mode = 2;
-		} else if (!strcmp(arg, "-uncache")) {
-			const char *cache_dir = gf_opts_get_key("core", "cache");
-			gf_enum_directory(cache_dir, GF_FALSE, revert_cache_file, NULL, ".txt");
-			fprintf(stderr, "GPAC Cache dir %s flattened\n", cache_dir);
+		} else if (!strcmp(arg, "-cache-unflat")) {
+			do_cache_check(CACHE_OP_UNFLATTEN, arg_val);
+			gpac_exit(0);
+		} else if (!strcmp(arg, "-cache-list")) {
+			do_cache_check(CACHE_OP_SHOW, arg_val);
+			gpac_exit(0);
+		} else if (!strcmp(arg, "-cache-info")) {
+			do_cache_check(CACHE_OP_INFO, arg_val);
+			gpac_exit(0);
+		} else if (!strcmp(arg, "-cache-clean")) {
+			do_cache_check(CACHE_OP_DELETE, arg_val);
 			gpac_exit(0);
 		} else if (!strcmp(arg, "-cfg")) {
 			nothing_to_do = GF_FALSE;
+		} else if (!strcmp(arg, "-rv")) {
+			return_gferr = GF_TRUE;
 		}
 
 		else if (!strcmp(arg, "-alias") || !strcmp(arg, "-aliasdoc")) {
@@ -1001,8 +1083,8 @@ int gpac_main(int _argc, char **_argv)
 			defer_mode=GF_TRUE;
 		} else if (!strcmp(arg, "-np")) {
 			sflags |= GF_FS_FLAG_PREVENT_PLAY;
-		} else if (!strncmp(arg, "-rl", 2)
-			|| !strncmp(arg, "-wl", 2)
+		} else if (!strncmp(arg, "-rl", 3)
+			|| !strncmp(arg, "-wl", 3)
 			|| !strcmp(arg, "-f")
 			|| !strcmp(arg, "-s")
 			|| !strcmp(arg, "-g")
@@ -1010,6 +1092,7 @@ int gpac_main(int _argc, char **_argv)
 			|| !strcmp(arg, "-pl")
 			|| !strcmp(arg, "-pd")
 			|| !strcmp(arg, "-se")
+			|| !strcmp(arg, "-m")
 		) {
 #endif
 		} else if (!strcmp(arg, "-step")) {
@@ -1032,6 +1115,7 @@ int gpac_main(int _argc, char **_argv)
 				}
 			}
 #endif
+
 		} else if (!strcmp(arg, "-xopt")) {
 			has_xopt = GF_TRUE;
 #ifdef GPAC_CONFIG_IOS
@@ -1060,7 +1144,7 @@ int gpac_main(int _argc, char **_argv)
 			else {
 				if (!has_xopt) {
 					gpac_suggest_arg(arg);
-					gpac_exit(-1);
+					gpac_exit(GF_BAD_PARAM);
 				} else {
 					gf_sys_mark_arg_used(i, GF_FALSE);
 				}
@@ -1084,8 +1168,11 @@ int gpac_main(int _argc, char **_argv)
 	}
 	if ((list_filters>=2) || print_meta_filters || dump_codecs || dump_formats || print_filter_info) sflags |= GF_FS_FLAG_LOAD_META;
 
-	if (list_filters || print_filter_info)
+	if (list_filters || print_filter_info) {
 		gf_opts_set_key("temp", "helponly", "yes");
+		if (print_filter_info && (argmode>=GF_ARGMODE_EXPERT))
+			gf_opts_set_key("temp", "helpexpert", "yes");
+	}
 
 	if (dump_proto_schemes || (gen_doc==1))
 		gf_opts_set_key("temp", "get_proto_schemes", "yes");
@@ -1286,6 +1373,8 @@ restart:
 			} else if (!strncmp(arg, "-se", 3)) {
 				GF_LOG(GF_LOG_INFO, GF_LOG_APP, ("Sending PLAY event\n"));
 				gf_fs_send_deferred_play(session);
+			} else if (!strncmp(arg, "-m=", 3)) {
+				GF_LOG(GF_LOG_INFO, GF_LOG_APP, ( "%s\n", arg+3));
 			}
 		}
 #endif
@@ -1327,7 +1416,20 @@ restart:
 			continue;
 		}
 		if (!f_loaded && !has_xopt) {
-			if (arg[0]== separator_set[SEP_LINK] ) {
+			if (arg[0] == separator_set[SEP_LINK] ) {
+				char *next_sep = NULL;
+				if (arg[1]==separator_set[SEP_LINK]) {
+					next_sep = strchr(arg+2, separator_set[SEP_LINK]);
+				} else {
+					next_sep = strchr(arg+1, separator_set[SEP_LINK]);
+				}
+				if (next_sep) {
+					e = process_link_directive(arg, NULL, loaded_filters, next_sep);
+					if (e) {
+						ERR_EXIT
+					}
+					continue;
+				}
 				gf_list_add(links_directive, arg);
 				continue;
 			}
@@ -1393,46 +1495,11 @@ restart:
 			gf_filter_tag_subsession(filter, current_subsession_id, current_source_id);
 
 		while (gf_list_count(links_directive)) {
-			char *link_prev_filter_ext = NULL;
-			GF_Filter *link_from;
-			Bool reverse_order = GF_FALSE;
-			s32 link_filter_idx = -1;
 			char *link = gf_list_pop_front(links_directive);
-			char *ext = strchr(link, separator_set[SEP_FRAG]);
-			if (ext) {
-				ext[0] = 0;
-				link_prev_filter_ext = ext+1;
-			}
-			if (strlen(link)>1) {
-				if (link[1] == separator_set[SEP_LINK] ) {
-					reverse_order = GF_TRUE;
-					link++;
-				}
-				link_filter_idx = 0;
-				if (strlen(link)>1) {
-					link_filter_idx = get_u32(link+1, "Link filter index");
-					if (link_filter_idx < 0) {
-						GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Wrong filter index %d, must be positive\n", link_filter_idx));
-						e = GF_BAD_PARAM;
-						ERR_EXIT
-					}
-				}
-			} else {
-				link_filter_idx = 0;
-			}
-			if (ext) ext[0] = separator_set[SEP_FRAG];
-
-			if (reverse_order)
-				link_from = gf_list_get(loaded_filters, link_filter_idx);
-			else
-				link_from = gf_list_get(loaded_filters, gf_list_count(loaded_filters)-1-link_filter_idx);
-
-			if (!link_from) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Wrong filter index @%d\n", link_filter_idx));
-				e = GF_BAD_PARAM;
+			e = process_link_directive(link, filter, loaded_filters, NULL);
+			if (e) {
 				ERR_EXIT
 			}
-			gf_filter_set_source(filter, link_from, link_prev_filter_ext);
 		}
 
 #ifdef GPAC_DEFER_MODE
@@ -1641,11 +1708,15 @@ exit:
 	loaded_filters=NULL;
 
 	cleanup_file_io();
+	if (loop_if_error && nb_loops && e)
+		e = GF_OK;
 
 	if (!e && nb_loops) {
 		if (nb_loops>0) nb_loops--;
 		loops_done++;
 		fprintf(stderr, "session done, restarting (loop %d)\n", loops_done);
+		gf_net_reload_netcap();
+
 
 #ifndef GPAC_CONFIG_ANDROID
 		fflush(stderr);
@@ -1660,7 +1731,7 @@ exit:
 #endif
 	}
 
-	gpac_exit(e<0 ? 1 : 0);
+	gpac_exit(e);
 }
 
 #if defined(GPAC_CONFIG_DARWIN) && !defined(GPAC_CONFIG_IOS)
@@ -2407,14 +2478,192 @@ static void gpac_print_report(GF_FilterSession *fsess, Bool is_init, Bool is_fin
 	fflush(stderr);
 }
 
-static Bool revert_cache_file(void *cbck, char *item_name, char *item_path, GF_FileEnumInfo *file_info)
+
+typedef struct
+{
+	u32 op_type, nb_entries;
+	u32 total_size, min_size, max_size;
+	u64 min_created, max_created;
+	u64 min_expire, max_expire;
+	u64 min_hit, max_hit;
+	u32 min_nb_hit, max_nb_hit;
+	u64 date_min, date_max;
+} CacheInfo;
+
+
+#define TIMEFMT "%Y/%m/%dT%H:%M:%SZ"
+static GFINLINE const char *format_date(u64 time, char *szDate)
+{
+	time_t date = time;
+	strftime(szDate, 99, TIMEFMT, gmtime(&date)  );
+	return szDate;
+}
+
+static Bool cache_file_op(void *cbck, char *item_name, char *item_path, GF_FileEnumInfo *file_info)
 {
 #ifndef GPAC_DISABLE_NETWORK
-	const char *url;
-	GF_Config *cached;
+	const char *url, *opt;
+	CacheInfo *ci = (CacheInfo *)cbck;
 	if (strncmp(item_name, "gpac_cache_", 11)) return GF_FALSE;
-	cached = gf_cfg_new(NULL, item_path);
+	GF_Config *cached = gf_cfg_new(NULL, item_path);
+	if (!cached) return GF_FALSE;
 	url = gf_cfg_get_key(cached, "cache", "url");
+	if (!url) {
+		gf_cfg_del(cached);
+		gf_file_delete(item_path);
+		char *sep = strstr(item_path, ".txt");
+		if (sep) {
+			sep[0] = 0;
+			gf_file_delete(item_path);
+			sep[0] = '.';
+		}
+		return GF_FALSE;
+	}
+	Bool in_range = GF_TRUE;
+
+	if (ci->date_min || ci->date_max) {
+		opt = gf_cfg_get_key(cached, "cache", "Created");
+		if (opt) {
+			u64 created;
+			sscanf(opt, LLU, &created);
+			//range
+			if (ci->date_max) {
+				if ((created >= ci->date_max) || (created <= ci->date_min)) in_range = GF_FALSE;
+			}
+			//exclude everything sooner than min time
+			else if (created <= ci->date_min) in_range = GF_FALSE;
+		}
+	}
+
+	if (ci->op_type==CACHE_OP_DELETE) {
+		u32 it_size=0;
+		opt = gf_cfg_get_key(cached, "cache", "Content-Length");
+		if (opt) it_size = atoi(opt);
+
+		if (!in_range) {
+			ci->max_size += it_size;
+			ci->total_size ++;
+			gf_cfg_del(cached);
+			return GF_FALSE;
+		}
+		ci->min_size += it_size;
+		ci->nb_entries++;
+		gf_file_delete(item_path);
+		char *sep = strstr(item_path, ".txt");
+		if (sep) {
+			sep[0] = 0;
+			gf_file_delete(item_path);
+			sep[0] = '.';
+		}
+		gf_cfg_del(cached);
+		return GF_FALSE;
+	}
+
+	if (ci->op_type==CACHE_OP_INFO) {
+		if (!in_range) {
+			gf_cfg_del(cached);
+			return GF_FALSE;
+		}
+		ci->nb_entries++;
+		u64 created=0, age;
+		opt = gf_cfg_get_key(cached, "cache", "Content-Length");
+		if (opt) {
+			u32 size = atoi(opt);
+			ci->total_size += size;
+			if (!ci->min_size) ci->min_size = ci->max_size = size;
+			if (ci->min_size>size) ci->min_size = size;
+			if (ci->max_size<size) ci->max_size = size;
+		}
+		opt = gf_cfg_get_key(cached, "cache", "Created");
+		if (opt) {
+			sscanf(opt, LLU, &created);
+			if (!ci->min_created) ci->min_created = ci->max_created = created;
+			if (ci->min_created>created) ci->min_created = created;
+			if (ci->max_created<created) ci->max_created = created;
+		}
+		opt = gf_cfg_get_key(cached, "cache", "MaxAge");
+		if (opt) {
+			sscanf(opt, LLU, &age);
+			if (!ci->min_expire) ci->min_expire = ci->max_expire = age;
+			if (ci->min_expire>age) ci->min_expire = age;
+			if (ci->max_expire<age) ci->max_expire = age;
+		}
+		opt = gf_cfg_get_key(cached, "cache", "NumHit");
+		if (opt) {
+			u32 nb_hits;
+			sscanf(opt, "%u", &nb_hits);
+			nb_hits--;
+			if (nb_hits) {
+				if (!ci->min_nb_hit) ci->min_nb_hit = ci->max_nb_hit = nb_hits;
+				if (ci->min_nb_hit>nb_hits) ci->min_nb_hit = nb_hits;
+				if (ci->max_nb_hit<nb_hits) ci->max_nb_hit = nb_hits;
+
+				//only get hit times if hit
+				opt = gf_cfg_get_key(cached, "cache", "LastHit");
+				if (opt) {
+					sscanf(opt, LLU, &age);
+					if (!ci->min_hit) ci->min_hit = ci->max_hit = age;
+					if (ci->min_hit>age) ci->min_hit = age;
+					if (ci->max_hit<age) ci->max_hit = age;
+				}
+			}
+		}
+		gf_cfg_del(cached);
+		return GF_FALSE;
+	}
+	if (!in_range) {
+		gf_cfg_del(cached);
+		return GF_FALSE;
+	}
+
+	//cache print
+	if (ci->op_type==CACHE_OP_SHOW) {
+		gf_fprintf(stdout, "URL %s:\n", url);
+		char *sep = strstr(item_path, ".txt");
+		sep[0] = 0;
+		gf_fprintf(stdout, "\tDisk path: %s\n", item_path);
+		sep[0] = '.';
+
+		u32 i, count = gf_cfg_get_key_count(cached, "cache");
+		for (i=0; i<count; i++) {
+			char szDate[100];
+			const char *name = gf_cfg_get_key_name(cached, "cache", i);
+			if (!name || !strcmp(name, "url")) continue;
+			const char *opt = gf_cfg_get_key(cached, "cache", name);
+			if (!opt) continue;
+			if (!strcmp(name, "MaxAge")) {
+				u64 expires;
+				char szDur[100];
+				sscanf(opt, LLU, &expires);
+				s64 now = expires;
+				now-=gf_net_get_utc()/1000;
+				if (now>0)
+					gf_fprintf(stdout, "\tExpires: %s (in %s)\n", format_date(expires, szDate), gf_format_duration(now, 1, szDur) );
+				continue;
+			}
+			if (!strcmp(name, "Created")) {
+				u64 created;
+				sscanf(opt, LLU, &created);
+				gf_fprintf(stdout, "\tCreated: %s\n", format_date(created, szDate));
+				continue;
+			}
+			if (!strcmp(name, "LastHit")) {
+				u64 hit;
+				sscanf(opt, LLU, &hit);
+				gf_fprintf(stdout, "\tLastHit: %s\n", format_date(hit, szDate) );
+				continue;
+			}
+
+			gf_fprintf(stdout, "\t%s: %s\n", name, opt);
+		}
+		gf_fprintf(stdout, "\n");
+		gf_cfg_del(cached);
+		return GF_FALSE;
+	}
+
+	if (ci->op_type!=CACHE_OP_UNFLATTEN) return GF_FALSE;
+
+	//cache unflatten
 	if (url) url = strstr(url, "://");
 	if (url) {
 		u32 i, len, dir_len=0, k=0;
@@ -2457,6 +2706,63 @@ static Bool revert_cache_file(void *cbck, char *item_name, char *item_path, GF_F
 	gf_file_delete(item_path);
 #endif // GPAC_DISABLE_NETWORK
 	return GF_FALSE;
+}
+
+static void do_cache_check(u32 op_type, char *arg_val)
+{
+	const char *cache_dir = gf_opts_get_key("core", "cache");
+	CacheInfo ci = {0};
+	ci.op_type = op_type;
+
+	if (arg_val) {
+		u32 d_idx=0;
+		u64 now = gf_net_get_utc()/1000;
+		while (1) {
+			u64 date=0;
+			char *asep = strchr(arg_val, ';');
+			if (asep) asep[0] = 0;
+			if (strstr(arg_val, ":"))
+				date = gf_net_parse_date(arg_val)/1000;
+			else if (strcmp(arg_val, "0"))
+				date = now - atoi(arg_val);
+
+			if (!d_idx) ci.date_min = date ? date : 1;
+			else ci.date_max = date ? date : now;
+			d_idx++;
+
+			if (!asep) break;
+			asep[0] = ';';
+			arg_val=asep+1;
+		}
+	}
+
+	gf_enum_directory(cache_dir, GF_FALSE, cache_file_op, &ci, ".txt");
+
+	if (op_type==CACHE_OP_UNFLATTEN) {
+		fprintf(stderr, "GPAC Cache dir %s flattened\n", cache_dir);
+	} else if (op_type==CACHE_OP_INFO) {
+		char szDate[100];
+		u32 csize = gf_opts_get_int("core", "cache-size");
+		if (!csize) csize = 1;
+
+		gf_fprintf(stdout, "Cache info:\n\tMax size: "LLU" bytes\n\tNumber of items: %u\n\tTotal Size: %u (used %u %%)\n\tMin Size: %u\n\tMax Size: %u\n", csize, ci.nb_entries, ci.total_size, (u32) (ci.total_size*100/csize), ci.min_size, ci.max_size);
+		if (!ci.nb_entries) return;
+		gf_fprintf(stdout, "\tOldest entry: %s\n", format_date(ci.min_created, szDate) );
+		gf_fprintf(stdout, "\tMost recent entry: %s\n", format_date(ci.max_created, szDate) );
+		if (ci.min_expire)
+			gf_fprintf(stdout, "\tShortest expiration time: %s\n", format_date(ci.min_expire, szDate) );
+		if (ci.max_expire)
+			gf_fprintf(stdout, "\tLongest expiration time: %s\n", format_date(ci.max_expire, szDate) );
+		gf_fprintf(stdout, "\tHits: min %u max %u\n", ci.min_nb_hit, ci.max_nb_hit);
+		if (ci.min_nb_hit) {
+			gf_fprintf(stdout, "\tOldest hit time: %s\n", format_date(ci.min_hit, szDate) );
+			gf_fprintf(stdout, "\tMost recent hit time: %s\n", format_date(ci.max_hit, szDate) );
+		}
+	} else if (op_type==CACHE_OP_DELETE) {
+		if (ci.date_min || ci.date_max) {
+			gf_fprintf(stdout, "Removed %u items freed %d bytes %u - items remaining %u bytes\n", ci.nb_entries, ci.min_size, ci.total_size, ci.max_size);
+		}
+	}
 }
 
 
@@ -2790,11 +3096,12 @@ static void gpac_sig_handler(int sig)
 				char input;
 				GF_SessionDebugFlag flags=0;
 				in_sig_handler = GF_TRUE;
-				fprintf(stderr, "\nToggle reports (r), print state (s for short, e for extended [+ shift: sticky])\n"
+				fprintf(stderr, "\nToggle reports (r), change logs (l), print state (s for short, e for extended [+ shift: sticky])\n"
 					"\tor exit with fast (Y), full (f) or no (n) session flush ? \n");
 rescan:
 				input = gf_getch();
-				if (!input || input == 0x0A || input == 0x0D) input = 'Y'; // user pressed "return"
+				if (!prev_was_cmd)
+					if (!input || input == 0x0A || input == 0x0D) input = 'Y'; // user pressed "return"
 				switch (input) {
 				case 'Y':
 				case 'y':
@@ -2852,6 +3159,21 @@ rescan:
 					signal_catched = GF_FALSE;
 					signal_processed = GF_FALSE;
 					gf_fs_print_debug_info(session, flags|GF_FS_DEBUG_ALL);
+					break;
+				case 'L':
+				case 'l':
+				{
+					char szLogs[100];
+					prev_was_cmd = GF_TRUE;
+					signal_catched = GF_FALSE;
+					signal_processed = GF_FALSE;
+					fprintf(stdout, "Enter new logs settings:\n");
+					if (1 > scanf("%99s", szLogs)) {
+						fprintf(stderr, "Cannot read the logs !\n");
+						break;
+					}
+					gf_log_set_tools_levels(szLogs, GF_TRUE);
+				}
 					break;
 				default:
 					signal_processed = GF_TRUE;
@@ -3385,6 +3707,7 @@ static u64 creds_set_pass(GF_Config *creds, const char *user, const char *passwd
 	u64 now = gf_sys_clock_high_res();
 	sprintf(szVAL, LLU, now);
 	gf_cfg_set_key(creds, user, "pass_date", szVAL);
+	gf_free(pass);
 	return now;
 }
 

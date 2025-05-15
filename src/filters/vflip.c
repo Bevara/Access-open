@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Samir Mustapha - Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019-2023
+ *			Copyright (c) Telecom ParisTech 2019-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / video flip filter
@@ -29,10 +29,18 @@
 #include <gpac/network.h>
 
 #ifndef GPAC_DISABLE_VFLIP
+
+GF_OPT_ENUM (GF_FlipMode,
+	VFLIP_OFF = 0,
+	VFLIP_VERT,
+	VFLIP_HORIZ,
+	VFLIP_BOTH,
+);
+
 typedef struct
 {
 	//options
-	u32 mode;
+	GF_FlipMode mode;
 
 	//internal data
 	Bool initialized;
@@ -57,13 +65,6 @@ typedef struct
 
 } GF_VFlipCtx;
 
-enum
-{
-	VFLIP_OFF = 0,
-	VFLIP_VERT,
-	VFLIP_HORIZ,
-	VFLIP_BOTH,
-};
 
 
 
@@ -379,7 +380,7 @@ static GF_Err vflip_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_PIXFMT);
 	if (p) pfmt = p->value.uint;
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
-	if (p) sar = p->value.frac;
+	if (p && (p->value.frac.num>0)) sar = p->value.frac;
 	else sar.den = sar.num = 1;
 
 	if (!w || !h || !pfmt) {
@@ -490,7 +491,7 @@ static const GF_FilterCapability VFlipCaps[] =
 
 GF_FilterRegister VFlipRegister = {
 		.name = "vflip",
-		GF_FS_SET_DESCRIPTION("Video flip")
+		GF_FS_SET_DESCRIPTION("Video flipper")
 		GF_FS_SET_HELP("This filter flips uncompressed video frames vertically, horizontally, in both directions or no flip")
 		.private_size = sizeof(GF_VFlipCtx),
 		.flags = GF_FS_REG_EXPLICIT_ONLY|GF_FS_REG_ALLOW_CYCLIC,
@@ -499,6 +500,7 @@ GF_FilterRegister VFlipRegister = {
 		SETCAPS(VFlipCaps),
 		.process = vflip_process,
 		.finalize = vflip_finalize,
+		.hint_class_type = GF_FS_CLASS_AV
 };
 
 

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2023
+ *			Copyright (c) Telecom ParisTech 2017-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / ffmpeg demux filter
@@ -38,13 +38,12 @@
 #define FFMPEG_NO_DOVI
 #endif
 
-enum
-{
+GF_OPT_ENUM(GF_FFDemuxRawFrameCopyMode,
 	COPY_NO,
 	COPY_A,
 	COPY_V,
-	COPY_AV
-};
+	COPY_AV,
+);
 
 typedef struct
 {
@@ -60,12 +59,13 @@ typedef struct
 typedef struct
 {
 	//options
-	const char *src;
+	const char *src, *ext, *mime;
 	u32 block_size;
-	u32 copy, probes;
+	GF_FFDemuxRawFrameCopyMode copy;
+	u32 probes;
 	Bool sclock;
 	const char *fmt, *dev;
-	Bool reparse;
+	Bool reparse, proto;
 
 	//internal data
 	const char *fname;
@@ -115,6 +115,12 @@ typedef struct
 	Bool in_eos, first_block;
 	s64 seek_offset;
 	u64 seek_ms;
+
+	//for ffdmx in proto mode
+	GF_FilterPid *opid;
+	GF_PropVec2i mwait;
+	u64 rcv_time_diff, last_pck_time;
+
 } GF_FFDemuxCtx;
 
 static void ffdmx_finalize(GF_Filter *filter)
@@ -452,6 +458,81 @@ static GF_Err ffdmx_process(GF_Filter *filter)
 	int res;
 	GF_FFDemuxCtx *ctx = (GF_FFDemuxCtx *) gf_filter_get_udta(filter);
 
+	if (ctx->proto) {
+		u64 rcv_time = gf_sys_clock_high_res();
+		u32 nb_pck = 100;
+		while (nb_pck) {
+			u8 const_data[1880];
+			u8 *data = const_data;
+			u32 data_size = 1880;
+			GF_FilterPacket *pck = NULL;
+			if (ctx->opid) {
+				pck = gf_filter_pck_new_alloc(ctx->opid, ctx->block_size, &data);
+				if (!pck) return GF_OUT_OF_MEM;
+				data_size = ctx->block_size;
+			}
+
+			int size = avio_read_partial(ctx->avio_ctx, data, data_size);
+			if (!size)
+				size = ctx->avio_ctx->error;
+
+			if (size<0) {
+				if (ctx->avio_ctx->error == AVERROR(EAGAIN)) {
+					if (pck) gf_filter_pck_discard(pck);
+					//looks like some proto handlers set EOF when no packets and avio_read* will not attempt to read when flag is set
+					ctx->avio_ctx->eof_reached = 0;
+
+					u64 sleep_for = 2*ctx->rcv_time_diff/3000;
+					if (sleep_for > ctx->mwait.y) sleep_for = ctx->mwait.y;
+					if (sleep_for < ctx->mwait.x) sleep_for = ctx->mwait.x;
+					GF_LOG(GF_LOG_DEBUG, GF_LOG_NETWORK, ("[FFDMX] empty (got %u pck) - sleeping for "LLU" ms\n", nb_pck, sleep_for ));
+					gf_filter_ask_rt_reschedule(filter, sleep_for*1000);
+					return GF_OK;
+				}
+				if (ctx->avio_ctx->eof_reached) {
+					if (pck) gf_filter_pck_discard(pck);
+					if (ctx->opid)
+						gf_filter_pid_set_eos(ctx->opid);
+					return GF_EOS;
+				}
+				if (ctx->avio_ctx->error) {
+					if (pck) gf_filter_pck_discard(pck);
+					GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[FFDMX] Read error %s - aborting\n", av_err2str(ctx->avio_ctx->error)));
+					return GF_IO_ERR;
+				}
+			}
+			if (rcv_time) {
+				if (ctx->last_pck_time) {
+					ctx->rcv_time_diff = rcv_time - ctx->last_pck_time;
+				}
+				ctx->last_pck_time = rcv_time;
+				rcv_time = 0;
+			}
+
+			if (!ctx->opid) {
+				GF_Err e = gf_filter_pid_raw_new(filter, ctx->src, NULL, ctx->mime, ctx->ext, data, size, GF_FALSE, &ctx->opid);
+				if (e) {
+					if (pck) gf_filter_pck_discard(pck);
+					gf_filter_setup_failure(filter, e);
+					return e;
+				}
+			}
+			if (pck) {
+				gf_filter_pck_set_framing(pck, GF_FALSE, GF_FALSE);
+				gf_filter_pck_truncate(pck, size);
+			} else {
+				u8 *output;
+				pck = gf_filter_pck_new_alloc(ctx->opid, size, &output);
+				if (!pck) return GF_OUT_OF_MEM;
+				memcpy(output, data, size);
+				gf_filter_pck_set_framing(pck, GF_TRUE, GF_FALSE);
+			}
+			gf_filter_pck_send(pck);
+			nb_pck--;
+		}
+		return GF_OK;
+	}
+
 restart:
 	if (ctx->ipid) {
 		e = ffdmx_flush_input(filter, ctx);
@@ -507,7 +588,18 @@ restart:
 		FF_FREE_PCK(pkt);
 		if (!ctx->raw_data) {
 			for (i=0; i<ctx->nb_streams; i++) {
-				if (ctx->pids_ctx[i].pid) gf_filter_pid_set_eos(ctx->pids_ctx[i].pid);
+				PidCtx *pctx = &ctx->pids_ctx[i];
+				if (!pctx->pid) continue;
+
+				if (pctx->pck_queue) {
+					while (gf_list_count(pctx->pck_queue)) {
+						GF_FilterPacket *pck_q = gf_list_pop_front(pctx->pck_queue);
+						gf_filter_pck_send(pck_q);
+					}
+					gf_list_del(pctx->pck_queue);
+					pctx->pck_queue = NULL;
+				}
+				gf_filter_pid_set_eos(ctx->pids_ctx[i].pid);
 			}
 			return GF_EOS;
 		}
@@ -707,12 +799,15 @@ restart:
 			ts = (pctx->fake_dts_plus_one-1 - pctx->fake_dts_orig + pkt->dts + pctx->ts_offset-1) * stream->time_base.num;
 			gf_filter_pck_set_dts(pck_dst, ts);
 			if (!pctx->fake_dts_set) {
+				//this is NOT a PID delay, CTS=0 means 0, we simply dispatch in negctts mode
+#if 0
 				if (pctx->fake_dts_plus_one) {
 					s64 offset = pctx->fake_dts_plus_one-1;
 					offset -= pctx->fake_dts_orig;
 					if (offset)
 						gf_filter_pid_set_property(pctx->pid, GF_PROP_PID_DELAY, &PROP_LONGSINT( -offset) );
 				}
+#endif
 				pctx->fake_dts_set = GF_TRUE;
 				if (pctx->pck_queue) {
 					while (gf_list_count(pctx->pck_queue)) {
@@ -1282,7 +1377,7 @@ GF_Err ffdmx_init_common(GF_Filter *filter, GF_FFDemuxCtx *ctx, u32 grab_type)
 						names.vals[j] = gf_strdup(ent->value);
 					}
 				}
-				if (!names.vals[j]) names.vals[j] = gf_strdup("Unknwon");
+				if (!names.vals[j]) names.vals[j] = gf_strdup("Unknown");
 			}
 			p.type = GF_PROP_UINT_LIST;
 			p.value.uint_list = times;
@@ -1359,6 +1454,19 @@ static GF_Err ffdmx_initialize(GF_Filter *filter)
 	}
 
 	GF_LOG(GF_LOG_DEBUG, ctx->log_class, ("[%s] opening file %s - av_in %08x\n", ctx->fname, ctx->src, av_in));
+
+	if (ctx->proto) {
+		//special mode: open protocol and bypass demuxer
+		AVDictionary *opts = NULL;
+		int ret = avio_open2(&ctx->avio_ctx, ctx->src, AVIO_FLAG_READ|AVIO_FLAG_NONBLOCK|AVIO_FLAG_DIRECT, NULL, &opts);
+		av_dict_free(&opts);
+		if (ret < 0) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[FFMux] Failed to open protocol URL %s, cannot run\n", ctx->src));
+			return GF_SERVICE_ERROR;
+		}
+		return GF_OK;
+	}
+
 
 	ctx->demuxer = avformat_alloc_context();
 	ffmpeg_set_mx_dmx_flags(ctx->options, ctx->demuxer);
@@ -1739,6 +1847,9 @@ static const GF_FilterCapability FFDmxCaps[] =
 	CAP_UINT(GF_CAPS_OUTPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_BOOL(GF_CAPS_OUTPUT,GF_PROP_PID_FORCE_UNFRAME, GF_TRUE),
 	CAP_BOOL(GF_CAPS_OUTPUT,GF_PROP_PID_UNFRAMED, GF_TRUE),
+	{0},
+	//for raw protocol access
+	CAP_UINT(GF_CAPS_OUTPUT,GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 };
 
 
@@ -1752,6 +1863,13 @@ GF_FilterRegister FFDemuxRegister = {
 	"This will list both supported input formats and protocols.\n"
 	"Input protocols are listed with `Description: Input protocol`, and the subclass name identifies the protocol scheme.\n"
 	"For example, if `ffdmx:rtmp` is listed as input protocol, this means `rtmp://` source URLs are supported.\n"
+	"\n"
+	"# Raw protocol mode\n"
+	"The [-proto]() flag will disable FFmpeg demuxer and use GPAC instead. Default format is probed from initial data but can be set using [-ext]() or [-mime]() if probing is disabled.\n"
+	"EX gpac -i srt://127.0.0.1:1234:gpac:proto inspect"
+	"This will use the SRT protocol handler but GPAC demultiplexer\n"
+	"\n"
+	"In this mode, the filter uses the time between the last two received packets to estimates how often it should check for inputs. The maximum and minimum times to wait between two calls is given by the [-mwait]() option. The maximum time may need to be reduced for very high bitrates sources.\n"
 	)
 	.private_size = sizeof(GF_FFDemuxCtx),
 	SETCAPS(FFDmxCaps),
@@ -1763,8 +1881,8 @@ GF_FilterRegister FFDemuxRegister = {
 	.probe_data = ffdmx_probe_data,
 	.process_event = ffdmx_process_event,
 	.flags = GF_FS_REG_META | GF_FS_REG_USE_SYNC_READ,
-	.priority = 128
-
+	.priority = 128,
+	.hint_class_type = GF_FS_CLASS_DEMULTIPLEXER
 };
 
 
@@ -1774,6 +1892,11 @@ static const GF_FilterArgs FFDemuxArgs[] =
 	{ OFFS(reparse), "force reparsing of stream content (AVC,HEVC,VVC,AV1 only for now)", GF_PROP_BOOL, "false", NULL, 0},
 	{ OFFS(block_size), "block size used to read file when using GFIO context", GF_PROP_UINT, "4096", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(strbuf_min), "internal buffer size when demuxing from GPAC's input stream", GF_PROP_UINT, "1MB", NULL, GF_ARG_HINT_EXPERT},
+	{ OFFS(proto), "use protocol handler only and bypass FFmpeg demuxer", GF_PROP_BOOL, "false", NULL, GF_ARG_HINT_ADVANCED},
+	{ OFFS(mwait), "set min and max wait times in ms to avoid too frequent polling in proto mode", GF_PROP_VEC2I, "1x30", NULL, GF_FS_ARG_HINT_ADVANCED},
+	{ OFFS(ext), "indicate file extension of data in raw protocol mode", GF_PROP_STRING, NULL, NULL, 0},
+	{ OFFS(mime), "indicate mime type of data in raw protocol mode", GF_PROP_STRING, NULL, NULL, 0},
+
 	{ "*", -1, "any possible options defined for AVFormatContext and sub-classes. See `gpac -hx ffdmx` and `gpac -hx ffdmx:*`", GF_PROP_STRING, NULL, NULL, GF_FS_ARG_META},
 	{0}
 };
@@ -1842,6 +1965,7 @@ const GF_FilterRegister FFDemuxPidRegister = {
 	.process_event = ffdmx_process_event,
 	.flags = GF_FS_REG_META,
 	.args = FFDemuxPidArgs,
+	.hint_class_type = GF_FS_CLASS_DEMULTIPLEXER,
 	//also set lower priority
 	.priority = 128
 };
@@ -2133,7 +2257,7 @@ static const GF_FilterCapability FFAVInCaps[] =
 GF_FilterRegister FFAVInRegister = {
 	.name = "ffavin",
 	.version = LIBAVDEVICE_IDENT,
-	GF_FS_SET_DESCRIPTION("FFmpeg AV Capture")
+	GF_FS_SET_DESCRIPTION("FFmpeg AV capture")
 	GF_FS_SET_HELP("Reads from audio/video capture devices using FFmpeg.\n"
 	"See FFmpeg documentation (https://ffmpeg.org/documentation.html) for more details.\n"
 	"To list all supported grabbers for your GPAC build, use `gpac -h ffavin:*`.\n"
@@ -2166,6 +2290,7 @@ GF_FilterRegister FFAVInRegister = {
 	.probe_url = ffavin_probe_url,
 	.process_event = ffdmx_process_event,
 	.flags = GF_FS_REG_META,
+	.hint_class_type = GF_FS_CLASS_MM_IO
 };
 
 
@@ -2201,51 +2326,43 @@ char *dev_desc = NULL;
 static void ffavin_enum_devices(const char *dev_name, Bool is_audio)
 {
 	const AVInputFormat *fmt;
-	AVFormatContext *ctx;
 
-    if (!dev_name) return;
-    fmt = av_find_input_format(dev_name);
+	if (!dev_name) return;
+    fmt = (const AVInputFormat *) av_find_input_format(dev_name);
     if (!fmt) return;
 
     if (!fmt || !fmt->priv_class || !AV_IS_INPUT_DEVICE(fmt->priv_class->category)) {
 		return;
 	}
-    ctx = avformat_alloc_context();
-    if (!ctx) return;
-    ctx->iformat = (AVInputFormat *)fmt;
-    if (ctx->iformat->priv_data_size > 0) {
-        ctx->priv_data = av_mallocz(ctx->iformat->priv_data_size);
-        if (!ctx->priv_data) {
-			avformat_free_context(ctx);
-            return;
-        }
-        if (ctx->iformat->priv_class) {
-            *(const AVClass**)ctx->priv_data = ctx->iformat->priv_class;
-            av_opt_set_defaults(ctx->priv_data);
-        }
-    } else {
-        ctx->priv_data = NULL;
-	}
 
 	AVDeviceInfoList *dev_list = NULL;
-
-    AVDictionary *tmp = NULL;
-	av_dict_set(&tmp, "list_devices", "1", 0);
-    av_opt_set_dict2(ctx, &tmp, AV_OPT_SEARCH_CHILDREN);
-	if (tmp)
-		av_dict_free(&tmp);
-
-	int res = avdevice_list_devices(ctx, &dev_list);
+#if LIBAVDEVICE_VERSION_MAJOR<59
+	int res = avdevice_list_input_sources((AVInputFormat *)fmt, dev_name, NULL, &dev_list);
+#else
+	int res = avdevice_list_input_sources(fmt, dev_name, NULL, &dev_list);
+#endif
 	if (res<0) {
 		//device doesn't implement avdevice_list_devices, try loading the context using "list_devices=1" option
 		if (-res == ENOSYS) {
+			AVFormatContext *ctx = avformat_alloc_context();
+			if (!ctx) return;
+
 			AVDictionary *opts = NULL;
 			av_dict_set(&opts, "list_devices", "1", 0);
 			res = avformat_open_input(&ctx, "dummy", FF_IFMT_CAST fmt, &opts);
 			if (opts)
 				av_dict_free(&opts);
+
+#if !defined(__DARWIN__) && !defined(__APPLE__)
+			// FIXME: no-op, permission issues on macOS Sonoma+
+			if (res>=0) avdevice_list_devices(ctx, &dev_list);
+#endif
+
+			if (res>=0) avformat_close_input(&ctx);
+			avformat_free_context(ctx);
 		}
-	} else if (!res && dev_list->nb_devices) {
+	}
+	if (!res && dev_list && dev_list->nb_devices) {
 		if (!dev_desc) {
 			gf_dynstrcat(&dev_desc, "# Detected devices\n", NULL);
 		}
@@ -2262,7 +2379,6 @@ static void ffavin_enum_devices(const char *dev_name, Bool is_audio)
 	}
 
 	if (dev_list) avdevice_free_list_devices(&dev_list);
-	avformat_free_context(ctx);
 }
 
 static void ffavin_log_none(void *avcl, int level, const char *fmt, va_list vl)

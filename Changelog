@@ -2,12 +2,20 @@
 
 ## gpac
 - Added mode for testing defered graph linking apps
+- Introduce unit tests in complement to the testsuite and various buildbot continuous checks
+- main can now return filter session error code using -rv
 
-##Emscripten
+## Emscripten
 - Fixes in UI
 
 ## Filters
 - DVB-I MABR flute aux and demux
+- avmix playlists now accept ipid:// urls to locate input pics, allowing to specify playlists independently from source URLs
+- SCTE-35, id3, and other markers improved support
+
+## Misc
+- Added packet reordering rule for netcap replay from file
+- Added libcurl as backend for GPAC downloader - http(s) downloads require -curl option to activate 
 
 #04/2024: GPAC 2.4
 

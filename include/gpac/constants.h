@@ -50,7 +50,7 @@ This section documents some constants used in the GPAC framework which are not r
 
 Supported media stream types for media objects.
 */
-enum
+typedef enum
 {
 	/*!Unknown stream type*/
 	GF_STREAM_UNKNOWN = 0,
@@ -104,7 +104,7 @@ enum
 	GF_STREAM_FILE		= 0xE1,
 
 	//other stream types may be declared using their handler 4CC as defined in ISOBMFF
-};
+} GF_StreamType;
 
 /*! Gets the stream type name based on stream type
 \param streamType stream type GF_STREAM_XXX as defined in constants.h
@@ -183,7 +183,7 @@ typedef enum
 	/*!RGB24 + depth plane (7 lower bits) + shape mask. Component ordering in bytes is R-G-B-(S+D).*/
 	GF_PIXEL_RGBDS		=	GF_4CC('3', 'C', 'D', 'S'),
 
-	/*internal format for OpenGL using pachek RGB 24 bit plus planar depth plane at the end of the image*/
+	/*internal format for OpenGL using packed RGB 24 bit plus planar depth plane at the end of the image*/
 	GF_PIXEL_RGB_DEPTH = GF_4CC('R', 'G', 'B', 'd'),
 
 	/*generic pixel format uncv from ISO/IEC 23001-17*/
@@ -327,6 +327,13 @@ u32 gf_pixel_is_wide_depth(GF_PixelFormat pixfmt);
 \return number of bytes per pixel
 */
 u32 gf_pixel_get_nb_comp(GF_PixelFormat pixfmt);
+
+/*! Gets the downsampling factor for this format
+\param pixfmt  pixel format code
+\param downsample_w set to horizontal downsampling, 1 if none
+\param downsample_h set to vertical downsampling, 1 if none
+*/
+void gf_pixel_get_downsampling(GF_PixelFormat pixfmt, u32 *downsample_w, u32 *downsample_h);
 
 /*! Checks if  pixel format is transparent
 \param pixfmt  pixel format code
@@ -528,10 +535,13 @@ typedef enum
 
 	GF_CODECID_DVB_SUBS = GF_4CC( 'd', 'v', 'b', 's' ),
 	GF_CODECID_DVB_TELETEXT = GF_4CC( 'd', 'v', 'b', 't' ),
+
+	GF_CODECID_SCTE35 = GF_4CC( 's', 'c', '3', '5' ),
+
 	/*!
 		\brief OGG DecoderConfig
 
-	 The DecoderConfig for theora, vorbis and speek contains all intitialization ogg packets for the codec
+	 The DecoderConfig for theora, vorbis and speek contains all initialization ogg packets for the codec
 	  and is formatted as follows:\n
 	 \code
 	  while (dsi_size) {
@@ -612,6 +622,9 @@ typedef enum
 
 	GF_CODECID_TMCD = GF_4CC('t','m','c','d'),
 
+	/*Event Message Track*/
+	GF_CODECID_EVTE = GF_4CC('e','v','t','e'),
+
 	/*! codecid for FFV1*/
 	GF_CODECID_FFV1 = GF_4CC('f','f','v','1'),
 
@@ -630,9 +643,13 @@ typedef enum
 	GF_CODECID_MSPEG4_V3 = GF_4CC('D','I','V','3'),
 
 	GF_CODECID_ALAC = GF_4CC('A','L','A','C'),
+	GF_CODECID_DNXHD = GF_4CC('D','N','x','H'),
 
 	//fake codec IDs for RTP
-	GF_CODECID_FAKE_MP2T = GF_4CC('M','P','2','T')
+	GF_CODECID_FAKE_MP2T = GF_4CC('M','P','2','T'),
+
+	/*! codecid for IAMF*/
+	GF_CODECID_IAMF = GF_4CC('i','a','m','f')
 } GF_CodecID;
 
 /*! Gets a textual description for the given codecID
@@ -993,6 +1010,12 @@ u32 gf_audio_fmt_get_num_channels_from_layout(u64 chan_layout);
 \return dolby chanmap
 */
 u16 gf_audio_fmt_get_dolby_chanmap(u32 cicp_layout);
+
+/*! get dloby chanmap value from channel layout
+\param channel_layout channel layout mask
+\return dolby chanmap
+*/
+u16 gf_audio_fmt_get_dolby_chanmap_from_layout(u64 channel_layout);
 
 /*! enumerates CICP channel layout
 \param idx index of cicp layout value to query
@@ -1713,6 +1736,20 @@ enum
 	/*! Mesh projection (not supported yet)*/
 	GF_PROJ360_MESH
 };
+
+/*! Low latency HTTP adaptive streaming mode, set by dasher filter and used by other filter */
+enum
+{
+	/*! no low-latency profile*/
+	GF_LLHAS_NONE = 0,
+	/*! LL-HLS using byte ranges */
+	GF_LLHAS_BYTERANGES = 1,
+	/*! LL-HLS using separate parts  */
+	GF_LLHAS_PARTS = 2,
+	/*! DASH SSR mode (only sub-parts are generated  */
+	GF_LLHAS_SUBSEG = 3
+};
+
 
 /*! user data used by GPAC to store SRD info*/
 #define GF_ISOM_UDTA_GPAC_SRD	GF_4CC('G','S','R','D')

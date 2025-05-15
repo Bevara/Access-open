@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / AAC ADTS reframer filter
@@ -29,12 +29,11 @@
 
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_RFADTS)
 
-enum
-{
+GF_OPT_ENUM (GF_PS_SBRSignalingMode,
 	AAC_SIGNAL_NONE=0,
 	AAC_SIGNAL_IMPLICIT,
-	AAC_SIGNAL_EXPLICIT
-};
+	AAC_SIGNAL_EXPLICIT,
+);
 
 typedef struct
 {
@@ -53,8 +52,8 @@ typedef struct
 	//filter args
 	u32 frame_size;
 	Double index;
-	u32 sbr;
-	u32 ps;
+	GF_PS_SBRSignalingMode sbr;
+	GF_PS_SBRSignalingMode ps;
 //	Bool mpeg4;
 	Bool ovsbr;
 	Bool expart;
@@ -896,6 +895,10 @@ drop_byte:
 		if (remain) {
 			memmove(ctx->adts_buffer, start, remain);
 		}
+		if (!ctx->src_pck) {
+			ctx->src_pck = pck;
+			gf_filter_pck_ref_props(&ctx->src_pck);
+		}
 		ctx->adts_buffer_size = remain;
 		gf_filter_pid_drop_packet(ctx->ipid);
 	}
@@ -1040,7 +1043,9 @@ GF_FilterRegister ADTSDmxRegister = {
 	.configure_pid = adts_dmx_configure_pid,
 	.process = adts_dmx_process,
 	.probe_data = adts_dmx_probe_data,
-	.process_event = adts_dmx_process_event
+	.process_event = adts_dmx_process_event,
+	.hint_class_type = GF_FS_CLASS_FRAMING
+
 };
 
 

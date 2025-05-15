@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2023
+ *			Copyright (c) Telecom ParisTech 2023-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / uncv pixel format translator filter
@@ -159,11 +159,9 @@ static u8 uncv_get_val(GF_BitStream *bs, UNCVComponentInfo *comp, UNCVDecCtx *ct
 
 static void read_pixel_interleave_comp_yuv_420(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
 static void read_pixel_interleave_comp_yuv(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
-static void read_pixel_interleave_comp(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
 static void read_pixel_interleave_pixel(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
 static void read_pixel_interleave_mixed(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
 static void read_pixel_interleave_multiy(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
-static void read_pixel_interleave_comp(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
 static void read_pixel_interleave_comp(UNCVDecCtx *ctx, UNCVConfig *config, u32 x, u32 y, u8 *output, u32 offset);
 
 static void uncv_del(UNCVConfig *cfg)
@@ -739,6 +737,7 @@ static u32 uncv_get_line_size(UNCVDecCtx *ctx, u32 *comp_bits, u32 clen)
 	}
 	//block size, figure out how many blocks
 	u32 nb_bits = 0;
+	u32 nb_blocks_in_pattern = 0;
 	for (u32 i=0; i<ctx->tile_width; i++) {
 		for (u32 c=0; c<clen; c+=2) {
 			u32 cbits = comp_bits[c];
@@ -750,17 +749,20 @@ static u32 uncv_get_line_size(UNCVDecCtx *ctx, u32 *comp_bits, u32 clen)
 
 			if (nb_bits + cbits > ctx->blocksize_bits) {
 				nb_bits=0;
+				nb_blocks_in_pattern++;
 				size += config->block_size;
 				//if first comp in block is first comp, pattern is done
+				//compute number of remaining patterns and skip whole patterns
 				if (c==0) {
-					u32 nb_pix = i+1;
-					u32 nb_blocks = 1;
-					while ((nb_blocks+1) * nb_pix < ctx->tile_width)
-						nb_blocks++;
+					u32 nb_pix_in_pattern = i;
+					u32 nb_patterns = 1;
+					while ((nb_patterns+1) * nb_pix_in_pattern < ctx->tile_width)
+						nb_patterns++;
 
-					size *= nb_blocks;
+					size = config->block_size * nb_blocks_in_pattern * nb_patterns;
 					//jump to last non-full pattern
-					i += nb_pix * (nb_blocks-1);
+					i = nb_pix_in_pattern * nb_patterns;
+					nb_blocks_in_pattern = 0;
 				}
 			}
 			nb_bits += cbits;
@@ -1322,7 +1324,7 @@ static u8 uncv_get_val(GF_BitStream *bs, UNCVComponentInfo *comp, UNCVDecCtx *ct
 	return (u8) c;
 }
 
-static void uncv_pull_block(UNCVDecCtx *ctx, UNCVConfig *config, BSRead *bsr, u32 comp_idx)
+static void uncv_pull_block(UNCVDecCtx *ctx, UNCVConfig *config, BSRead *bsr, u32 comp_idx, u32 x)
 {
 	u32 i, bits=0, nb_vals=0, bk_idx=0;
 
@@ -1347,8 +1349,14 @@ static void uncv_pull_block(UNCVDecCtx *ctx, UNCVConfig *config, BSRead *bsr, u3
 			if (i==config->nb_comps) {
 				//interleave mode with pixel size, do not loop over components
 				if (config->pixel_size) break;
+				//end of line
+				if ((x+1) % ctx->tile_width == 0) break;
 				i=0;
+				x++;
 			}
+		} else {
+			//end of line
+			if ((x+bk_idx) % ctx->tile_width == 0) break;
 		}
 	}
 
@@ -1426,7 +1434,7 @@ static void uncv_pull_val(UNCVDecCtx *ctx, UNCVConfig *config, BSRead *bsr, UNCV
 			bsr->loaded_comps = 0;
 
 		if (!bsr->loaded_comps)
-			uncv_pull_block(ctx, config, bsr, comp->comp_idx);
+			uncv_pull_block(ctx, config, bsr, comp->comp_idx, x);
 
 		BlockComp *bcomp = &bsr->block_comps[ bsr->first_comp_idx ];
 
@@ -1680,6 +1688,7 @@ GF_FilterRegister UNCVDecRegister = {
 	.finalize = uncvdec_finalize,
 	.configure_pid = uncvdec_configure_pid,
 	.process = uncvdec_process,
+	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
 const GF_FilterRegister *uncvdec_register(GF_FilterSession *session)

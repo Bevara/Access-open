@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *			Authors: Jean Le Feuvre
@@ -324,6 +324,7 @@ static RTPChannel *set_broadcast_params(LiveSession *livesess, u16 esid, u32 per
 	return rtpch;
 }
 
+char szBuf[8192];
 int live_session(int argc, char **argv)
 {
 	GF_Err e;
@@ -504,16 +505,15 @@ int live_session(int argc, char **argv)
 				case 'U':
 				case 'u':
 				{
-					char szCom[8192];
 					fprintf(stderr, "Enter command to send:\n");
-					szCom[0] = 0;
-					if (1 > scanf("%8191[^\t\n]", szCom)) {
+					szBuf[0] = 0;
+					if (1 > scanf("%8191[^\t\n]", szBuf)) {
 						fprintf(stderr, "No command entered properly, aborting.\n");
 						break;
 					}
 					/*stdin flush bug*/
 					while (getchar()!='\n') {}
-					e = gf_seng_encode_from_string(livesess.seng, 0, 0, szCom, live_session_callback);
+					e = gf_seng_encode_from_string(livesess.seng, 0, 0, szBuf, live_session_callback);
 					if (e) fprintf(stderr, "Processing command failed: %s\n", gf_error_to_string(e));
 					e = gf_seng_aggregate_context(livesess.seng, 0);
 					if (e) fprintf(stderr, "Aggregating context failed: %s\n", gf_error_to_string(e));
@@ -524,16 +524,15 @@ int live_session(int argc, char **argv)
 				case 'E':
 				case 'e':
 				{
-					char szCom[8192];
 					fprintf(stderr, "Enter command to send:\n");
-					szCom[0] = 0;
-					if (1 > scanf("%8191[^\t\n]", szCom)) {
+					szBuf[0] = 0;
+					if (1 > scanf("%8191[^\t\n]", szBuf)) {
 						printf("No command entered properly, aborting.\n");
 						break;
 					}
 					/*stdin flush bug*/
 					while (getchar()!='\n') {}
-					e = gf_seng_encode_from_string(livesess.seng, 0, 1, szCom, live_session_callback);
+					e = gf_seng_encode_from_string(livesess.seng, 0, 1, szBuf, live_session_callback);
 					if (e) fprintf(stderr, "Processing command failed: %s\n", gf_error_to_string(e));
 					livesess.critical = (c=='E') ? 1 : 0;
 					e = gf_seng_aggregate_context(livesess.seng, 0);
@@ -544,13 +543,13 @@ int live_session(int argc, char **argv)
 
 				case 'p':
 				{
-					char rad[GF_MAX_PATH];
+					szBuf[0] = 0;
 					fprintf(stderr, "Enter output file name - \"std\" for stderr: ");
-					if (1 > scanf("%1023s", rad)) {
+					if (1 > scanf("%8191s", szBuf)) {
 						fprintf(stderr, "No output file name entered, aborting.\n");
 						break;
 					}
-					e = gf_seng_save_context(livesess.seng, !strcmp(rad, "std") ? NULL : rad);
+					e = gf_seng_save_context(livesess.seng, !strcmp(szBuf, "std") ? NULL : szBuf);
 					fprintf(stderr, "Dump done (%s)\n", gf_error_to_string(e));
 				}
 				break;
@@ -664,6 +663,10 @@ int live_session(int argc, char **argv)
 					update_length = gf_bs_read_u32(bs);
 					hdr_length = 12;
 					gf_bs_del(bs);
+					if ((update_length >= (u32)(SIZE_MAX-1)) || (update_length >= (u32)(GF_UINT_MAX-1))) {
+						M4_LOG(GF_LOG_ERROR, ("Processing command failed: update_length too long.\n"));
+						update_length = 0;
+					}
 				}
 
 				set_broadcast_params(&livesess, es_id, period, ts_delta, aggregate_on_stream, adjust_carousel_time, force_rap, aggregate_au, discard_pending, signal_rap, signal_critical, version_inc);
@@ -673,29 +676,33 @@ int live_session(int argc, char **argv)
 					break;
 				}
 
-				if (update_buffer_size <= update_length) {
+				if (update_length && update_buffer_size <= update_length) {
 					update_buffer = gf_realloc(update_buffer, update_length+1);
 					update_buffer_size = update_length+1;
 				}
 				if (update_length && (bytes_read>hdr_length) ) {
-					memcpy(update_buffer, buffer+hdr_length, bytes_read-hdr_length);
-					bytes_received = bytes_read-hdr_length;
+					u32 to_copy = MIN(bytes_read-hdr_length, update_buffer_size);
+					memcpy(update_buffer, buffer+hdr_length, to_copy);
+					bytes_received = to_copy;
 				}
 				while (bytes_received<update_length) {
 					e = gf_sk_receive(sk, buffer, 2048, &bytes_read);
 					switch (e) {
 					case GF_IP_NETWORK_EMPTY:
+						gf_sleep(10);
 						break;
-					case GF_OK:
-						memcpy(update_buffer+bytes_received, buffer, bytes_read);
-						bytes_received += bytes_read;
+					case GF_OK:;
+						u32 to_copy = MIN(bytes_read, update_buffer_size-bytes_received);
+						memcpy(update_buffer+bytes_received, buffer, to_copy);
+						bytes_received += to_copy;
 						break;
 					default:
 						fprintf(stderr, "Error with UDP socket : %s\n", gf_error_to_string(e));
 						break;
 					}
 				}
-				update_buffer[update_length] = 0;
+				if (update_buffer)
+					update_buffer[update_length] = 0;
 
 				if (update_length) {
 					e = gf_seng_encode_from_string(livesess.seng, es_id, aggregate_au ? 0 : 1, update_buffer, live_session_callback);

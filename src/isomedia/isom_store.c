@@ -159,6 +159,7 @@ GF_Err SetupWriters(MovieWriter *mw, GF_List *writers, u8 interleaving)
 	for (i = 0; i < trackCount; i++) {
 		GF_SampleTableBox *stbl;
 		trak = gf_isom_get_track(movie->moov, i+1);
+		if (trak->extl) continue;
 
 		stbl = (trak->Media && trak->Media->information) ? trak->Media->information->sampleTable : NULL;
 		if (!stbl || !stbl->SampleSize || !stbl->ChunkOffset || !stbl->SampleToChunk || !stbl->SampleSize) {
@@ -631,7 +632,7 @@ GF_Err WriteSample(MovieWriter *mw, u32 size, u64 offset, u8 isEdited, GF_BitStr
 		map = mw->movie->movieFileMap;
 	}
 	//get the payload...
-	bytes = gf_isom_datamap_get_data(map, mw->buffer, size, offset);
+	bytes = gf_isom_datamap_get_data(map, mw->buffer, size, offset, NULL);
 	if (bytes != size)
 		return GF_IO_ERR;
 	//write it to our stream...
@@ -848,6 +849,7 @@ static GF_Err store_meta_item_references(GF_ISOFile *movie, GF_List *writers, GF
 
 GF_Err DoWriteMeta(GF_ISOFile *file, GF_MetaBox *meta, GF_BitStream *bs, Bool Emulation, u64 baseOffset, u64 *mdatSize)
 {
+	char cache_data[4096];
 	GF_ItemExtentEntry *entry;
 	u64 maxExtendOffset, maxExtendSize;
 	u32 i, j, count;
@@ -926,7 +928,6 @@ GF_Err DoWriteMeta(GF_ISOFile *file, GF_MetaBox *meta, GF_BitStream *bs, Bool Em
 					if (iinf->tk_id && iinf->sample_num) {
 					}
 					else if (src) {
-						char cache_data[4096];
 						u64 remain = entry->extent_length;
 						while (remain) {
 							u32 size_cache = (remain>4096) ? 4096 : (u32) remain;
@@ -956,7 +957,6 @@ GF_Err DoWriteMeta(GF_ISOFile *file, GF_MetaBox *meta, GF_BitStream *bs, Bool Em
 
 					/*Reading from the input file*/
 					if (!Emulation) {
-						char cache_data[4096];
 						u64 remain = entry->extent_length;
 						gf_bs_seek(file->movieFileMap->bs, entry->original_extent_offset + iloc->original_base_offset);
 						while (remain) {
@@ -1116,7 +1116,8 @@ GF_Err DoWrite(MovieWriter *mw, GF_List *writers, GF_BitStream *bs, u8 Emulation
 		}
 	}
 	//set the mdatSize...
-	movie->mdat->dataSize = mdatSize;
+	if (movie && movie->mdat)
+		movie->mdat->dataSize = mdatSize;
 	return GF_OK;
 }
 
@@ -1428,7 +1429,8 @@ static GF_Err WriteFlat(MovieWriter *mw, u8 moovFirst, GF_BitStream *bs, Bool no
 			gf_bs_write_u32(bs, GF_ISOM_BOX_TYPE_MDAT);
 			if (totSize > 0xFFFFFFFF) gf_bs_write_u64(bs, totSize);
 			e = gf_bs_seek(bs, offset);
-			movie->mdat->size = totSize;
+			if (movie->mdat)
+				movie->mdat->size = totSize;
 		}
 
 		//then the rest
@@ -2159,6 +2161,8 @@ static GF_Err inplace_shift_moov_meta_offsets(GF_ISOFile *movie, u32 shift_offse
 		if (trak->meta)
 			ShiftMetaOffset(trak->meta, shift_offset);
 
+		if (trak->extl) continue;
+
 		stbl = trak->Media->information->sampleTable;
 		e = shift_chunk_offsets(stbl->SampleToChunk, trak->Media, stbl->ChunkOffset, shift_offset, movie->force_co64, &new_stco);
 		if (e) return e;
@@ -2555,6 +2559,7 @@ GF_Err WriteToFile(GF_ISOFile *movie, Bool for_fragments)
 			if (gf_sys_is_test_mode()) {
 				trak->Header->creationTime = 0;
 				trak->Header->modificationTime = 0;
+				if (trak->extl) continue;
 				if (trak->Media->handler && trak->Media->handler->nameUTF8 && strstr(trak->Media->handler->nameUTF8, "@GPAC")) {
 					gf_free(trak->Media->handler->nameUTF8);
 					trak->Media->handler->nameUTF8 = gf_strdup("MediaHandler");

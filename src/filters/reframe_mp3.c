@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / MP3 reframer filter
@@ -750,6 +750,10 @@ drop_byte:
 		if (remain) {
 			memmove(ctx->mp3_buffer, start, remain);
 		}
+		if (!ctx->src_pck) {
+			ctx->src_pck = pck;
+			gf_filter_pck_ref_props(&ctx->src_pck);
+		}
 		ctx->mp3_buffer_size = remain;
 		gf_filter_pid_drop_packet(ctx->ipid);
 	}
@@ -917,7 +921,8 @@ GF_FilterRegister MP3DmxRegister = {
 	.configure_pid = mp3_dmx_configure_pid,
 	.process = mp3_dmx_process,
 	.probe_data = mp3_dmx_probe_data,
-	.process_event = mp3_dmx_process_event
+	.process_event = mp3_dmx_process_event,
+	.hint_class_type = GF_FS_CLASS_FRAMING
 };
 
 

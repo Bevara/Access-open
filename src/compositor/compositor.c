@@ -332,7 +332,7 @@ Bool gf_sc_draw_frame(GF_Compositor *compositor, Bool no_flush, s32 *ms_till_nex
 
 	gf_sc_ar_send_or_reconfig(compositor->audio_renderer);
 	if (!compositor->vout) return GF_FALSE;
-	
+
 	//frame still pending
 	if (compositor->frame_ifce.user_data)
 		return GF_TRUE;
@@ -443,7 +443,7 @@ static GF_Err gl_vout_evt(struct _video_out *vout, GF_Event *evt)
 		}
 	}
 
-	
+
 #ifndef GPAC_DISABLE_3D
 	return compositor_3d_setup_fbo(evt->setup.width, evt->setup.height, &compositor->fbo_id, &compositor->fbo_tx_id, &compositor->fbo_depth_id);
 #else
@@ -512,7 +512,10 @@ static GF_Err rawvout_evt(struct _video_out *vout, GF_Event *evt)
 	compositor->passthrough_pfmt = pfmt;
 	stride=0;
 	stride_uv = 0;
-	gf_pixel_get_size_info(pfmt, evt->setup.width, evt->setup.height, &compositor->framebuffer_size, &stride, &stride_uv, NULL, NULL);
+	if (!gf_pixel_get_size_info(pfmt, evt->setup.width, evt->setup.height, &compositor->framebuffer_size, &stride, &stride_uv, NULL, NULL)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Compositor] Cannot get proper size info for pixel format %s and hxw %dx%d\n", gf_pixel_fmt_name(pfmt), evt->setup.height, evt->setup.width));
+		return GF_NOT_SUPPORTED;
+	}
 
 	if (compositor->vout) {
 		gf_filter_pid_set_property(compositor->vout, GF_PROP_PID_PIXFMT, &PROP_UINT(pfmt));
@@ -693,6 +696,20 @@ static GF_Err gf_sc_load_driver(GF_Compositor *compositor)
 	if (!gf_opts_get_key("core", "video-output")) {
 		gf_opts_set_key("core", "video-output", compositor->video_out->module_name);
 	}
+	//also send a video setup as some drivers may init openGL only then
+	GF_Event evt;
+	memset(&evt, 0, sizeof(GF_Event));
+	evt.type = GF_EVENT_VIDEO_SETUP;
+	evt.setup.width = 128;
+	evt.setup.height = 128;
+	evt.setup.disable_vsync = compositor->bench_mode ? GF_TRUE : GF_FALSE;
+
+#ifndef GPAC_DISABLE_3D
+	evt.setup.use_opengl = GF_TRUE;
+	evt.setup.system_memory = GF_FALSE;
+	evt.setup.back_buffer = GF_TRUE;
+#endif
+	compositor->video_out->ProcessEvent(compositor->video_out, &evt);
 	gf_filter_register_opengl_provider(compositor->filter, GF_TRUE);
 	return GF_OK;
 }
@@ -1381,6 +1398,8 @@ GF_Err gf_sc_set_scene(GF_Compositor *compositor, GF_SceneGraph *scene_graph)
 			do_notif = 1;
 			if (w->type!=SVG_NUMBER_PERCENTAGE) {
 				width = FIX2INT(gf_sc_svg_convert_length_to_display(compositor, w) );
+				if (width>=GF_INT_MAX)
+					width = SC_DEF_WIDTH;
 			} else if ((u32) FIX2INT(vb->width)<compositor->video_out->max_screen_width)  {
 				width = FIX2INT(vb->width);
 			} else {
@@ -1389,6 +1408,8 @@ GF_Err gf_sc_set_scene(GF_Compositor *compositor, GF_SceneGraph *scene_graph)
 			}
 			if (h->type!=SVG_NUMBER_PERCENTAGE) {
 				height = FIX2INT(gf_sc_svg_convert_length_to_display(compositor, h) );
+				if (height>=GF_INT_MAX)
+					height = SC_DEF_WIDTH;
 			} else if ((u32) FIX2INT(vb->height)<compositor->video_out->max_screen_height)  {
 				height = FIX2INT(vb->height);
 			} else {
@@ -2761,7 +2782,7 @@ void gf_sc_render_frame(GF_Compositor *compositor)
 			compositor->scene_sampled_clock = compositor->passthrough_txh->last_frame_time + dur;
 		}
 	}
-	
+
 	//it may happen that we have a reconfigure request at this stage, especially if updating one of the textures
 	//forced a relayout - do it right away
 	if (compositor->msg_type) {
@@ -4700,7 +4721,7 @@ void gf_sc_connect_from_time(GF_Compositor *compositor, const char *URL, u64 sta
 			}
 		}
 		if (is_self) return;
-		
+
 		/*disconnect*/
 		gf_sc_disconnect(compositor);
 	}

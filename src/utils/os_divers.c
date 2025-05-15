@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2024
+ *			Copyright (c) Telecom ParisTech 2000-2025
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -140,7 +140,7 @@ u32 gf_sys_clock()
 {
 	struct timeval now;
 	gettimeofday(&now, NULL);
-	return (u32) ( ( (now.tv_sec)*1000 + (now.tv_usec) / 1000) - sys_start_time );
+	return (u32) ( ( (u64)(now.tv_sec)*1000 + (now.tv_usec) / 1000) - sys_start_time );
 }
 
 GF_EXPORT
@@ -148,7 +148,7 @@ u64 gf_sys_clock_high_res()
 {
 	struct timeval now;
 	gettimeofday(&now, NULL);
-	return (now.tv_sec)*1000000 + (now.tv_usec) - sys_start_time_hr;
+	return (u64)(now.tv_sec)*1000000 + (now.tv_usec) - sys_start_time_hr;
 }
 
 #endif
@@ -340,6 +340,8 @@ s32 __gettimeofday(struct timeval *tp, void *tz)
 
 
 #elif defined(WIN32)
+
+#include <WinSock2.h>
 
 static s32 gettimeofday(struct timeval *tp, void *tz)
 {
@@ -742,6 +744,8 @@ u64 gf_sys_clock_high_res()
 
 
 #ifdef WIN32
+
+#include <timeapi.h>
 
 static u32 OS_GetSysClockHIGHRES()
 {
@@ -1316,36 +1320,43 @@ Bool gf_sys_profiler_sampling_enabled()
 GF_List *all_blobs = NULL;
 
 GF_EXPORT
-GF_Err gf_blob_get(const char *blob_url, u8 **out_data, u32 *out_size, u32 *out_flags)
+GF_Err gf_blob_get_ex(GF_Blob *blob, u8 **out_data, u32 *out_size, u32 *out_flags)
 {
-	GF_Blob *blob = NULL;
-	if (strncmp(blob_url, "gmem://", 7)) return GF_BAD_PARAM;
-	if (sscanf(blob_url, "gmem://%p", &blob) != 1) return GF_BAD_PARAM;
 	if (!blob)
 		return GF_BAD_PARAM;
 	if (gf_list_find(all_blobs, blob)<0)
 		return GF_URL_REMOVED;
-	if (blob->data && blob->mx)
-		gf_mx_p(blob->mx);
+	gf_mx_p(blob->mx);
 	if (out_data) *out_data = blob->data;
 	if (out_size) *out_size = blob->size;
 	if (out_flags) *out_flags = blob->flags;
 	return GF_OK;
+}
+GF_EXPORT
+GF_Err gf_blob_get(const char *blob_url, u8 **out_data, u32 *out_size, u32 *out_flags)
+{
+	GF_Blob *blob = NULL;
+	if (sscanf(blob_url, "gmem://%p", &blob) != 1) return GF_BAD_PARAM;
+	return gf_blob_get_ex(blob, out_data, out_size, out_flags);
+}
+
+GF_EXPORT
+GF_Err gf_blob_release_ex(GF_Blob *blob)
+{
+    if (!blob)
+		return GF_BAD_PARAM;
+	if (gf_list_find(all_blobs, blob)<0)
+		return GF_URL_REMOVED;
+	gf_mx_v(blob->mx);
+    return GF_OK;
 }
 
 GF_EXPORT
 GF_Err gf_blob_release(const char *blob_url)
 {
     GF_Blob *blob = NULL;
-    if (strncmp(blob_url, "gmem://", 7)) return GF_BAD_PARAM;
     if (sscanf(blob_url, "gmem://%p", &blob) != 1) return GF_BAD_PARAM;
-    if (!blob)
-		return GF_BAD_PARAM;
-	if (gf_list_find(all_blobs, blob)<0)
-		return GF_URL_REMOVED;
-    if (blob->data && blob->mx)
-        gf_mx_v(blob->mx);
-    return GF_OK;
+	return gf_blob_release_ex(blob);
 }
 
 GF_EXPORT
@@ -1376,7 +1387,6 @@ void gf_blob_unregister(GF_Blob *blob)
 GF_Blob *gf_blob_from_url(const char *blob_url)
 {
 	GF_Blob *blob = NULL;
-	if (strncmp(blob_url, "gmem://", 7)) return NULL;
 	if (sscanf(blob_url, "gmem://%p", &blob) != 1) return NULL;
 	if (!blob)
 		return NULL;
@@ -1385,6 +1395,17 @@ GF_Blob *gf_blob_from_url(const char *blob_url)
 	return blob;
 }
 #endif
+
+
+GF_EXPORT
+GF_BlobRangeStatus gf_blob_query_range(GF_Blob *blob, u64 start_offset, u32 size)
+{
+	if (!blob) return GF_BLOB_RANGE_CORRUPTED;
+	if (blob->range_valid) return blob->range_valid(blob, start_offset, &size);
+
+	if (blob->flags & GF_BLOB_IN_TRANSFER) return GF_BLOB_RANGE_IN_TRANSFER;
+	return GF_BLOB_RANGE_VALID;
+}
 
 void gf_init_global_config(const char *profile);
 void gf_uninit_global_config(Bool discard_config);
@@ -2513,7 +2534,7 @@ GF_GlobalLock * gf_create_PID_file( const char * resourceName )
 		}
 		*pid = '\0';
 	}
-	int fd = open(pidfile, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+	int fd = open(pidfile, O_RDWR | O_CREAT , S_IRUSR | S_IWUSR);
 	if (fd == -1)
 		goto exit;
 	/* Get the flags */
@@ -2742,7 +2763,6 @@ s32 gf_net_get_ntp_diff_ms(u64 ntp)
 	return (s32) (local - remote);
 }
 
-#if 0
 /*!
 
 Adds or remove a given amount of microseconds to an NTP timestamp
@@ -2751,7 +2771,7 @@ Adds or remove a given amount of microseconds to an NTP timestamp
 \return adjusted NTP timestamp
  */
 GF_EXPORT
-u64 gf_net_add_usec(u64 ntp, s32 usec)
+u64 gf_net_ntp_add_usec(u64 ntp, s32 usec)
 {
 	u64 sec, frac;
 	s64 usec_ntp;
@@ -2772,7 +2792,6 @@ u64 gf_net_add_usec(u64 ntp, s32 usec)
 	ntp |= (sec<<32);
 	return ntp;
 }
-#endif
 
 
 GF_EXPORT
@@ -2921,6 +2940,7 @@ u64 gf_net_parse_date(const char *val)
 	year = month = day = h = m = s = 0;
 	oh = om = 0;
 	secs = 0;
+	Bool has_sep = strchr(val, ':') ? GF_TRUE : GF_FALSE;
 
 	if (sscanf(val, "%d-%d-%dT%d:%d:%g-%d:%d", &year, &month, &day, &h, &m, &secs, &oh, &om) == 8) {
 		neg_time_zone = GF_TRUE;
@@ -2928,6 +2948,8 @@ u64 gf_net_parse_date(const char *val)
 	else if (sscanf(val, "%d-%d-%dT%d:%d:%g+%d:%d", &year, &month, &day, &h, &m, &secs, &oh, &om) == 8) {
 	}
 	else if (sscanf(val, "%d-%d-%dT%d:%d:%gZ", &year, &month, &day, &h, &m, &secs) == 6) {
+	}
+	else if (sscanf(val, "%d/%d/%dT%d:%d:%gZ", &year, &month, &day, &h, &m, &secs) == 6) {
 	}
 	else if (sscanf(val, "%3s, %d %3s %d %d:%d:%d", szDay, &day, szMonth, &year, &h, &m, &s)==7) {
 		secs  = (Float) s;
@@ -2938,11 +2960,11 @@ u64 gf_net_parse_date(const char *val)
 	else if (sscanf(val, "%3s %3s %d %02d:%02d:%02d %d", szDay, szMonth, &day, &year, &h, &m, &s)==7) {
 		secs  = (Float) s;
 	}
-	else if (sscanf(val, LLU, &current_time) == 1 && current_time > 1000000000 && current_time < GF_INT_MAX) {
-		return current_time * 1000; // guessed raw duration since UTC0 in seconds
-	}
-	else if (sscanf(val, LLU, &current_time) == 1 && current_time > 1000000000000ULL && current_time < GF_INT_MAX * 1000ULL) {
+	else if (!has_sep && (sscanf(val, LLU, &current_time) == 1) && current_time > 1000000000000ULL && current_time < GF_INT_MAX * 1000ULL) {
 		return current_time; // guessed duration since UTC0 in milliseconds
+	}
+	else if (!has_sep && (sscanf(val, LLU, &current_time) == 1) && current_time < GF_INT_MAX) {
+		return current_time * 1000; // guessed raw duration since UTC0 in seconds
 	} else {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot parse date string %s\n", val));
 		return 0;
@@ -3188,10 +3210,17 @@ GF_Err gf_file_load_data(const char *file_name, u8 **out_data, u32 *out_size)
 
 #ifndef WIN32
 #include <unistd.h>
+#include <fcntl.h>
+
 GF_EXPORT
 u32 gf_sys_get_process_id()
 {
 	return getpid ();
+}
+GF_EXPORT
+Bool gf_sys_check_process_id(u32 pid)
+{
+	return (getpgid(pid) == -1) ? GF_FALSE : GF_TRUE;
 }
 #else
 #include <windows.h>
@@ -3200,7 +3229,69 @@ u32 gf_sys_get_process_id()
 {
 	return GetCurrentProcessId();
 }
+GF_EXPORT
+Bool gf_sys_check_process_id(u32 pid)
+{
+	HANDLE processHandle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+	Bool ret = GF_FALSE;
+	if (processHandle) {
+		CloseHandle(processHandle);
+		ret = GF_TRUE;
+	}
+	return ret;
+}
 #endif
+
+GF_EXPORT
+GF_LockStatus gf_sys_create_lockfile(const char *lockname)
+{
+	char szPID[20];
+	u32 retry = 10;
+	sprintf(szPID, "%u", gf_sys_get_process_id());
+	u32 len = (u32)strlen(szPID);
+
+	while (retry) {
+		retry--;
+#ifdef GPAC_HAS_FD
+		s32 fd = open(lockname, O_CREAT | O_EXCL | O_WRONLY | O_BINARY, S_IRUSR|S_IWUSR);
+		if (fd != -1) {
+			s32 wlen = write(fd, szPID, len);
+			close(fd);
+			if (wlen == (s32)len) return GF_LOCKFILE_NEW;
+			continue;
+		}
+#else
+#if defined __STDC_VERSION__
+		FILE *f = fopen(lockname, "wx");
+#else
+		FILE *f = gf_file_exists(lockname) ? NULL : fopen(lockname, "w");
+#endif
+		if (f) {
+			s32 wlen = (s32) fwrite(szPID, 1, len, f);
+			fclose(f);
+			if (wlen == (s32)len) return GF_LOCKFILE_NEW;
+			continue;
+		}
+#endif
+
+		//existing, check pid
+		u8 *data=NULL;
+		u32 size=0, pid;
+		GF_Err e = gf_file_load_data(lockname, &data, &size);
+		if (!data || !size || e!=GF_OK) continue;
+
+		sscanf(data, "%u", &pid);
+		gf_free(data);
+		//already locked by ourselves
+		if (pid == gf_sys_get_process_id()) return GF_LOCKFILE_REUSE;
+		//pid is alive, lock fail
+		if (gf_sys_check_process_id(pid)) return GF_LOCKFILE_FAILED;
+
+		//file exists but pid dead, grab the lock
+		gf_file_delete(lockname);
+	}
+	return GF_LOCKFILE_FAILED;
+}
 
 #ifndef WIN32
 #include <termios.h>

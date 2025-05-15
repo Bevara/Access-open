@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2023
+ *			Copyright (c) Telecom ParisTech 2005-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / NHML demuxer filter
@@ -319,7 +319,11 @@ restart:
 		j=0;
 		while ( (bs_child = (GF_XMLNode *)gf_list_enum(childnode->content, &j))) {
 			if (bs_child->type) continue;
-			if (!stricmp(bs_child->name, "BS")) has_bs = GF_TRUE;
+			if (!stricmp(bs_child->name, "BS") ||
+			    !stricmp(bs_child->name, "SCTE35") ||
+			    !stricmp(bs_child->name, "EventMessageEmptyBox") ||
+			    !stricmp(bs_child->name, "EventMessageInstanceBox"))
+				has_bs = GF_TRUE;
 		}
 
 
@@ -1355,6 +1359,8 @@ static GF_Err nhmldmx_send_sample(GF_Filter *filter, GF_NHMLDmxCtx *ctx)
 		if (stricmp(node->name, ctx->is_dims ? "DIMSUnit" : "NHNTSample") ) {
 			if (!strcmp(node->name, "NHNTReconfig")) {
 				nhmldmx_config_output(filter, ctx, node);
+			} else {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[NHMLDmx] Unknown XML node %s in %s - ignoring\n", node->name, ctx->is_dims ? "DIMSStream" : "NHNTStream"));
 			}
 			continue;
 		}
@@ -1477,7 +1483,10 @@ static GF_Err nhmldmx_send_sample(GF_Filter *filter, GF_NHMLDmxCtx *ctx)
 			if (!stricmp(childnode->name, "SAI")) {
 				has_sai_child = GF_TRUE;
 			}
-			if (!stricmp(childnode->name, "BS")) {
+			if (!stricmp(childnode->name, "BS") ||
+			    !stricmp(childnode->name, "SCTE35") || 
+			    !stricmp(childnode->name, "EventMessageEmptyBox") || 
+				!stricmp(childnode->name, "EventMessageInstanceBox")) {
 				has_subbs = GF_TRUE;
 			}
 			if (!stricmp(childnode->name, "Properties")) {
@@ -1797,7 +1806,8 @@ GF_FilterRegister NHMLDmxRegister = {
 	SETCAPS(NHMLDmxCaps),
 	.configure_pid = nhmldmx_configure_pid,
 	.process = nhmldmx_process,
-	.process_event = nhmldmx_process_event
+	.process_event = nhmldmx_process_event,
+	.hint_class_type = GF_FS_CLASS_TOOL
 };
 
 const GF_FilterRegister *dynCall_nhmldmx_register(GF_FilterSession *session)

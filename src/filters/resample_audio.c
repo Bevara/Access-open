@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2023
+ *			Copyright (c) Telecom ParisTech 2018-2025
  *					All rights reserved
  *
  *  This file is part of GPAC / audio resample filter
@@ -306,6 +306,8 @@ static GF_Err resample_process(GF_Filter *filter)
 				}
 			}
 		}
+		if (!ctx->speed)
+			return GF_OK;
 
 		if (ctx->passthrough) {
 			gf_filter_pck_forward(ctx->in_pck, ctx->opid);
@@ -456,6 +458,12 @@ static const GF_FilterCapability ResamplerCaps[] =
 	CAP_UINT(GF_CAPS_INPUT,GF_PROP_PID_CODECID, GF_CODECID_RAW),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_AUDIO),
 	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_CODECID, GF_CODECID_RAW),
+	{0},
+	CAP_UINT(GF_CAPFLAG_RECONFIG, GF_PROP_PID_SAMPLE_RATE, 0),
+	CAP_UINT(GF_CAPFLAG_RECONFIG, GF_PROP_PID_NUM_CHANNELS, 0),
+	CAP_UINT(GF_CAPFLAG_RECONFIG, GF_PROP_PID_AUDIO_FORMAT, 0),
+	CAP_LUINT(GF_CAPFLAG_RECONFIG, GF_PROP_PID_CHANNEL_LAYOUT, 0),
+	CAP_DOUBLE(GF_CAPFLAG_RECONFIG, GF_PROP_PID_AUDIO_SPEED, 0),
 };
 
 #define OFFS(_n)	#_n, offsetof(GF_ResampleCtx, _n)
@@ -482,6 +490,7 @@ GF_FilterRegister ResamplerRegister = {
 	.process = resample_process,
 	.reconfigure_output = resample_reconfigure_output,
 	.process_event = resample_process_event,
+	.hint_class_type = GF_FS_CLASS_AV
 };
 
 const GF_FilterRegister *resample_register(GF_FilterSession *session)

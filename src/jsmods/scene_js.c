@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2007-2023
+ *			Copyright (c) Telecom ParisTech 2007-2025
  *			All rights reserved
  *
  *  This file is part of GPAC / JavaScript Compositor extensions
@@ -917,9 +917,13 @@ static JSValue odm_getProperty(JSContext *ctx, JSValueConst this_val, int magic)
 
 	case GJS_OM_PROP_SERVICE_NAME:
 		if (odm->pid) {
-			const GF_PropertyValue *p = gf_filter_pid_get_property(odm->pid, GF_PROP_PID_SERVICE_NAME);
+			GF_PropertyEntry *pe=NULL;
+			JSValue ret = JS_NULL;
+			const GF_PropertyValue *p = gf_filter_pid_get_info(odm->pid, GF_PROP_PID_SERVICE_NAME, &pe);
 			if (p && p->value.string)
-				return JS_NewString(ctx, p->value.string);
+				ret = JS_NewString(ctx, p->value.string);
+			gf_filter_release_property(pe);
+			return ret;
 		}
 		return JS_NULL;
 
@@ -1025,6 +1029,7 @@ static JSValue gjs_odm_get_quality(JSContext *ctx, JSValueConst this_val, int ar
 	u32 sr=0, ch=0, w=0, h=0, bw=0, par_n=1, par_d=1, tile_adaptation_mode=0,dependent_group_index=0;
 	Bool ilced=GF_FALSE, disabled=GF_FALSE, selected=GF_FALSE, automatic=GF_FALSE;
 	Double fps=30.0;
+	u32 ssr = 0;
 	s32 idx;
 	s32 dep_idx=0;
 
@@ -1095,6 +1100,9 @@ static JSValue gjs_odm_get_quality(JSContext *ctx, JSValueConst this_val, int ar
 		else if (!strncmp(qdesc, "sar=", 4)) {
 			sscanf(qdesc, "sar=%d/%d", &par_n, &par_d);
 		}
+		else if (!strncmp(qdesc, "ssr=", 4)) {
+			sscanf(qdesc, "ssr=%u", &ssr);
+		}
 		if (!sep) break;
 		sep[0]=':';
 		qdesc = sep+2;
@@ -1139,6 +1147,7 @@ static JSValue gjs_odm_get_quality(JSContext *ctx, JSValueConst this_val, int ar
 	JS_SetPropertyStr(ctx, a, "channels", JS_NewInt32(ctx, ch));
 	JS_SetPropertyStr(ctx, a, "par_num", JS_NewInt32(ctx, par_n));
 	JS_SetPropertyStr(ctx, a, "par_den", JS_NewInt32(ctx, par_d));
+	JS_SetPropertyStr(ctx, a, "ssr", JS_NewInt32(ctx, ssr));
 	JS_SetPropertyStr(ctx, a, "disabled", JS_NewBool(ctx, disabled));
 	JS_SetPropertyStr(ctx, a, "is_selected", JS_NewBool(ctx, selected));
 	JS_SetPropertyStr(ctx, a, "automatic", JS_NewBool(ctx, automatic));
@@ -1579,7 +1588,7 @@ static Bool gjs_event_filter(void *udta, GF_Event *evt, Bool consumed_by_composi
 		evt_clone = gf_malloc(sizeof(GF_Event));
 		memcpy(evt_clone, evt, sizeof(GF_Event));
 		gf_list_add(sjs->event_queue, evt_clone);
-		GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[SCENEJS] Couldn't lock % mutex, queing event\n", (lock_fail==2) ? "JavaScript" : "Compositor"));
+		GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[SCENEJS] Couldn't lock % mutex, queuing event\n", (lock_fail==2) ? "JavaScript" : "Compositor"));
 		gf_mx_v(sjs->event_mx);
 
 		if (lock_fail==2){

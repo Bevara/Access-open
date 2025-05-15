@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2023
+ *			Copyright (c) Telecom ParisTech 2017-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / generic FILE input filter
@@ -29,11 +29,6 @@
 
 #ifndef GPAC_DISABLE_FIN
 
-#ifdef GPAC_HAS_FD
-#include <unistd.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#endif
 
 enum{
 	FILE_RAND_NONE=0,
@@ -52,6 +47,7 @@ typedef struct
 	u32 block_size;
 	GF_PropData pck;
 	GF_Fraction64 range;
+	GF_Fraction ptime;
 
 	//only one output pid declared
 	GF_FilterPid *pid;
@@ -72,7 +68,6 @@ typedef struct
 	Bool no_failure;
 } GF_FileInCtx;
 
-
 static GF_Err filein_initialize_ex(GF_Filter *filter)
 {
 	GF_FileInCtx *ctx = (GF_FileInCtx *) gf_filter_get_udta(filter);
@@ -90,7 +85,14 @@ static GF_Err filein_initialize_ex(GF_Filter *filter)
 		GF_Err e = gf_filter_pid_raw_new(filter, NULL, NULL, NULL, NULL, ctx->pck.ptr, ctx->pck.size, GF_FALSE, &ctx->pid);
 		if (e) return e;
 		gf_filter_pid_set_property(ctx->pid, GF_PROP_PID_URL, &PROP_STRING("NULL"));
+		if (ctx->ptime.den && (ctx->ptime.num>=0))
+			gf_filter_pid_set_property(ctx->pid, GF_PROP_PID_TIMESCALE, &PROP_UINT(ctx->ptime.den));
 		opck = gf_filter_pck_new_shared(ctx->pid, ctx->pck.ptr, ctx->pck.size, NULL);
+		if (ctx->ptime.den && (ctx->ptime.num>=0)) {
+			gf_filter_pck_set_dts(opck, ctx->ptime.num);
+			gf_filter_pck_set_cts(opck, ctx->ptime.num);
+		}
+		gf_filter_pck_set_sap(opck, GF_FILTER_SAP_1);
 		gf_filter_pck_send(opck);
 		gf_filter_pid_set_eos(ctx->pid);
 		ctx->is_end = GF_TRUE;
@@ -166,7 +168,7 @@ static GF_Err filein_initialize_ex(GF_Filter *filter)
 	if ((ctx->fd<0) && strncmp(src, "gfio://", 7) && !gf_opts_get_bool("core", "no-fd")
 		&& (!prev_url || strncmp(prev_url, "gfio://", 7))
 	) {
-		ctx->fd = open(src, O_RDONLY);
+		ctx->fd = gf_fd_open(src, O_RDONLY | O_BINARY, S_IRUSR | S_IWUSR);
 	} else
 #endif
 	if (!ctx->file) {
@@ -204,9 +206,7 @@ static GF_Err filein_initialize_ex(GF_Filter *filter)
 
 #ifdef GPAC_HAS_FD
 	if (ctx->fd>=0) {
-		struct stat sb;
-		fstat(ctx->fd, &sb);
-		ctx->file_size = sb.st_size;
+		ctx->file_size = gf_fd_fsize(ctx->fd);
 	} else
 #endif
 		ctx->file_size = gf_fsize(ctx->file);
@@ -230,7 +230,7 @@ static GF_Err filein_initialize_ex(GF_Filter *filter)
 	}
 #ifdef GPAC_HAS_FD
 	if (ctx->fd>=0) {
-		lseek(ctx->fd, ctx->file_pos, SEEK_SET);
+		lseek_64(ctx->fd, ctx->file_pos, SEEK_SET);
 	} else
 #endif
 		gf_fseek(ctx->file, ctx->file_pos, SEEK_SET);
@@ -348,7 +348,7 @@ static Bool filein_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 #ifdef GPAC_HAS_FD
 		res=0;
 		if (ctx->fd>=0) {
-			res = lseek(ctx->fd, evt->seek.start_offset, SEEK_SET);
+			res = lseek_64(ctx->fd, evt->seek.start_offset, SEEK_SET);
 			if (res>=0) res = 0;
 		} else
 #endif
@@ -697,7 +697,7 @@ static GF_Err filein_process(GF_Filter *filter)
 		char szStatus[1024], *szSrc;
 		szSrc = gf_file_basename(ctx->src);
 
-		sprintf(szStatus, "%s: % 16"LLD_SUF" /% 16"LLD_SUF" (%02.02f)", szSrc, (s64) ctx->file_pos, (s64) ctx->file_size, ((Double)ctx->file_pos*100.0)/ctx->file_size);
+		snprintf(szStatus, sizeof(szStatus), "%s: % 16"LLD_SUF" /% 16"LLD_SUF" (%02.02f)", szSrc, (s64) ctx->file_pos, (s64) ctx->file_size, ((Double)ctx->file_pos*100.0)/ctx->file_size);
 		gf_filter_update_status(filter, (u32) (ctx->file_pos*10000/ctx->file_size), szStatus);
 	}
 
@@ -720,12 +720,13 @@ static const GF_FilterArgs FileInArgs[] =
 	{ OFFS(ext), "override file extension", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(mime), "set file mime type", GF_PROP_NAME, NULL, NULL, 0},
 	{ OFFS(pck), "data to use instead of file", GF_PROP_DATA, NULL, NULL, 0},
+	{ OFFS(ptime), "timing for data packet, ignored if den is 0", GF_PROP_FRACTION, "0/0", NULL, 0},
 	{0}
 };
 
 static const GF_FilterCapability FileInCaps[] =
 {
-	CAP_UINT(GF_CAPS_OUTPUT,  GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	CAP_UINT(GF_CAPS_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 };
 
 GF_FilterRegister FileInRegister = {
@@ -740,6 +741,12 @@ GF_FilterRegister FileInRegister = {
 	"The special file name `randsc` is used to generate random data with `0x000001` start-code prefix.\n"
 	"\n"
 	"The filter handles both files and GF_FileIO objects as input URL.\n"
+	"\n"
+	"## Packet Injecting\n"
+	"The filter can be used to inject a single packet instead of a file using (-pck)[] option.\n"
+	"No specific properties are attached, except a timescale if (-ptime)[] is set.\n"
+	"EX gpac fin:pck=str@\"My Sample Text\":ptime=2500/100:#CodecID=stxt:#StreamType=text\n"
+	"This will declare the PID as WebVTT and send a single packet with payload `My Sample Text` and a timestamp value of 25 second.\n"
 	)
 	.private_size = sizeof(GF_FileInCtx),
 	.args = FileInArgs,
@@ -749,7 +756,8 @@ GF_FilterRegister FileInRegister = {
 	.finalize = filein_finalize,
 	.process = filein_process,
 	.process_event = filein_process_event,
-	.probe_url = filein_probe_url
+	.probe_url = filein_probe_url,
+	.hint_class_type = GF_FS_CLASS_NETWORK_IO
 };
 
 
@@ -766,4 +774,3 @@ const GF_FilterRegister *fin_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif // GPAC_DISABLE_FIN
-

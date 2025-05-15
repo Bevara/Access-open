@@ -41,38 +41,45 @@
 
 //#define DASH_USE_PULL
 
-enum
-{
+GF_OPT_ENUM (ISOMReaderScalableTileLoadMode,
 	MP4DMX_SPLIT=0,
 	MP4DMX_SPLIT_EXTRACTORS,
 	MP4DMX_SINGLE,
-};
+);
 
-enum
-{
+GF_OPT_ENUM (ISOMReaderParamSetsExtractMode,
 	MP4DMX_XPS_AUTO=0,
 	MP4DMX_XPS_KEEP,
 	MP4DMX_XPS_REMOVE,
-};
+);
+
+GF_OPT_ENUM (ISOMReaderEditListMode,
+	EDITS_AUTO=0,
+	EDITS_NO,
+	EDITS_STRICT,
+);
 
 typedef struct
 {
 	//options
 	char *src, *initseg;
 	Bool allt, itt, itemid;
-	u32 smode, edits;
+	ISOMReaderScalableTileLoadMode smode;
+	ISOMReaderEditListMode edits;
 	u32 stsd;
 	Bool expart;
-	Bool alltk;
+	Bool alltk, keepc;
 	u32 frame_size;
 	char* tkid;
-	Bool analyze;
-	u32 xps_check;
+	u32 analyze;
+	Bool norw;
+	ISOMReaderParamSetsExtractMode xps_check;
 	char *catseg;
 	Bool sigfrag;
 	Bool nocrypt, strtxt, lightp;
 	u32 nodata;
 	u32 mstore_purge, mstore_samples, mstore_size;
+	s32 ctso;
 
 	//internal
 
@@ -91,6 +98,7 @@ typedef struct
 	//fragmented file to be refreshed before processing it
 	Bool refresh_fragmented;
 	Bool input_is_stop;
+	Bool was_aborted;
 	u64 missing_bytes, last_size;
 
 	Bool seg_name_changed;
@@ -129,6 +137,11 @@ typedef struct
 	u64 last_min_offset;
 	GF_Err in_error;
 	Bool force_fetch;
+
+	u32 extkid, orig_id;
+	GF_ISOFile *extkmov;
+	u32 extk_flags;
+	Bool extk;
 } ISOMReader;
 
 typedef struct
@@ -151,6 +164,7 @@ typedef struct
 	GF_ISOSampleRollType sap_4_type;
 	s32 roll;
 	u32 xps_mask;
+	u32 cts_offset;
 	
 	u32 sample_num, sample_last;
 	s64 ts_offset;

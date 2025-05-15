@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / XIPH OGG demux filter
@@ -316,9 +316,13 @@ static GF_Err oggdmx_new_stream(GF_Filter *filter, GF_OGGDmxCtx *ctx, ogg_page *
 	st->parse_headers = st->info.num_init_headers;
 	switch (st->info.type) {
 	case GF_CODECID_VORBIS:
+		if (st->vorbis_parser)
+			gf_free(st->vorbis_parser);
 		GF_SAFEALLOC(st->vorbis_parser, GF_VorbisParser);
 		break;
 	case GF_CODECID_OPUS:
+		if (st->opus_cfg)
+			gf_free(st->opus_cfg);
 		GF_SAFEALLOC(st->opus_cfg, GF_OpusConfig);
 		break;
 	default:
@@ -409,7 +413,7 @@ static void oggdmx_check_dur(GF_Filter *filter, GF_OGGDmxCtx *ctx)
 	recompute_ts = 0;
 	max_gran = 0;
 	while (1) {
-		char buf[10000];
+		char buf[2000];
 		while (ogg_sync_pageout(&oy, &oggpage) != 1 ) {
 			char *buffer;
 			u32 bytes;
@@ -417,7 +421,7 @@ static void oggdmx_check_dur(GF_Filter *filter, GF_OGGDmxCtx *ctx)
 			if (gf_feof(stream))
 				break;
 
-			bytes = (u32) gf_fread(buf, 10000, stream);
+			bytes = (u32) gf_fread(buf, 2000, stream);
 			if (!bytes) break;
 			buffer = ogg_sync_buffer(&oy, bytes);
 			memcpy(buffer, buf, bytes);
@@ -813,7 +817,7 @@ GF_Err oggdmx_process(GF_Filter *filter)
 					gf_bs_write_u16(st->dsi_bs, oggpacket.bytes);
 					gf_bs_write_data(st->dsi_bs, (char *) oggpacket.packet, oggpacket.bytes);
 				}
-				
+
 				st->parse_headers--;
 				if (!st->parse_headers) {
 					st->got_headers = GF_TRUE;
@@ -878,14 +882,14 @@ GF_Err oggdmx_process(GF_Filter *filter)
 					}
 					dst_pck = gf_filter_pck_new_alloc(st->opid, oggpacket.bytes, &output);
 					if (!dst_pck) return GF_OUT_OF_MEM;
-					
+
 					memcpy(output, (char *) oggpacket.packet, oggpacket.bytes);
 					gf_filter_pck_set_cts(dst_pck, st->recomputed_ts);
 					//compat with old arch (keep same hashes), to remove once dropping it
 					if (!gf_sys_old_arch_compat()) {
 						gf_filter_pck_set_duration(dst_pck, block_size);
 					}
-					
+
 					if (st->info.type == GF_CODECID_VORBIS) {
 						gf_filter_pck_set_sap(dst_pck, GF_FILTER_SAP_1);
 					} else if (st->info.type == GF_CODECID_OPUS) {
@@ -987,6 +991,7 @@ GF_FilterRegister OGGDmxRegister = {
 	.process = oggdmx_process,
 	.process_event = oggdmx_process_event,
 	.probe_data = oggdmx_probe_data,
+	.hint_class_type = GF_FS_CLASS_DEMULTIPLEXER,
 };
 
 #endif // !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_OGG)
@@ -1000,4 +1005,3 @@ const GF_FilterRegister *dynCall_oggdmx_register(GF_FilterSession *session)
 #endif
 
 }
-

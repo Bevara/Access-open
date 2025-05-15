@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom Paris 2019-2023
+ *			Copyright (c) Telecom Paris 2019-2024
  *					All rights reserved
  *
  *  This file is part of GPAC / ffmpeg avfilter filter
@@ -874,7 +874,7 @@ static GF_Err ffavf_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		pix_fmt = ffmpeg_pixfmt_from_gpac(gf_pfmt, GF_FALSE);
 
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAR);
-		if (p && p->value.frac.num && p->value.frac.den) sar = p->value.frac;
+		if (p && (p->value.frac.num>0) && p->value.frac.den) sar = p->value.frac;
 
 		pid_ctx->stride = pid_ctx->stride_uv = 0;
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_STRIDE);
@@ -1082,7 +1082,7 @@ static const GF_FilterCapability FFAVFilterCaps[] =
 GF_FilterRegister FFAVFilterRegister = {
 	.name = "ffavf",
 	.version = LIBAVFILTER_IDENT,
-	GF_FS_SET_DESCRIPTION("FFmpeg AVFilter")
+	GF_FS_SET_DESCRIPTION("FFmpeg AV Filter")
 	GF_FS_SET_HELP("This filter provides libavfilter raw audio and video tools.\n"
 		"See FFmpeg documentation (https://ffmpeg.org/documentation.html) for more details\n"
 		"To list all supported avfilters for your GPAC build, use `gpac -h ffavf:*`.\n"
@@ -1137,6 +1137,7 @@ GF_FilterRegister FFAVFilterRegister = {
 	.process = ffavf_process,
 	.process_event = ffavf_process_event,
 	.update_arg = ffavf_update_arg,
+	.hint_class_type = GF_FS_CLASS_AV
 };
 
 #define OFFS(_n)	#_n, offsetof(GF_FFAVFilterCtx, _n)
