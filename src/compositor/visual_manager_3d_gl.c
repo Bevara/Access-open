@@ -127,7 +127,7 @@ void gf_sc_load_opengl_extensions(GF_Compositor *compositor, Bool has_gl_context
 	if (CHECK_GL_EXT("EXT_unpack_subimage") ) {
 		compositor->gl_caps.gles2_unpack = 1;
 	}
-	
+
 	if (!has_gl_context) return;
 
 
@@ -408,6 +408,9 @@ static GF_SHADERID visual_3d_shader_from_source_file(const char *src_path, u32 s
 #include <sys/sysctl.h>
 #endif
 
+#ifdef GPAC_CONFIG_EMSCRIPTEN
+#include "visual_manager_glsl.h"
+#endif
 
 static GF_SHADERID visual_3d_shader_with_flags(const char *src_path, u32 shader_type, u32 flags, u32 pixfmt) {
 
@@ -460,7 +463,21 @@ static GF_SHADERID visual_3d_shader_with_flags(const char *src_path, u32 shader_
 
 	char *shader_src;
 	u32 size;
+
+  #ifdef GPAC_CONFIG_EMSCRIPTEN
+  GF_Err e = GF_OK;
+
+  if (shader_type==GL_VERTEX_SHADER){
+    shader_src = VERTEX_CONTENT;
+  }else if (shader_type==GL_FRAGMENT_SHADER){
+    shader_src = FRAGMENT_CONTENT;
+  }else{
+     e = gf_file_load_data(src_path ,(u8 **) &shader_src, &size);
+  }
+
+  #else
 	GF_Err e = gf_file_load_data(src_path ,(u8 **) &shader_src, &size);
+  #endif
 
 	if (e) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to open shader file %s: %s\n", src_path, gf_error_to_string(e)));
@@ -491,9 +508,11 @@ static GF_SHADERID visual_3d_shader_with_flags(const char *src_path, u32 shader_
 			glDeleteShader(shader);
 			shader = 0;
 		}
-
+    #ifndef GPAC_CONFIG_EMSCRIPTEN
 		gf_free(shader_src);
-		gf_free(final_src);
+		#endif
+
+    gf_free(final_src);
 		gf_free(defs);
 	}
 	return shader;
@@ -1329,7 +1348,7 @@ void visual_3d_enable_antialias(GF_VisualManager *visual, Bool bOn)
 		glHint(GL_POINT_SMOOTH, GL_DONT_CARE);
 		glHint(GL_LINE_SMOOTH, GL_DONT_CARE);
 		glHint(GL_POLYGON_SMOOTH_HINT, GL_DONT_CARE);
-	
+
 		glDisable( GL_MULTISAMPLE_ARB);
 */
 	}
@@ -2489,7 +2508,7 @@ static void visual_3d_draw_mesh_shader_only(GF_TraverseState *tr_state, GF_Mesh 
 					yuv_mode = 2;
 					break;
 				}
-			
+
 				glUniform1i(loc, yuv_mode);
 			}
 			GL_CHECK_ERR()

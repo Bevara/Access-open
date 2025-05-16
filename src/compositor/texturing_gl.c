@@ -199,7 +199,7 @@ void gf_sc_texture_cleanup_hw(GF_Compositor *compositor)
 
 GF_Err gf_sc_texture_set_data(GF_TextureHandler *txh)
 {
-#if !defined(GPAC_DISABLE_3D) && !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
+#if (!defined(GPAC_DISABLE_3D) && !defined(GPAC_USE_TINYGL) && !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)) || defined(GPAC_CONFIG_EMSCRIPTEN)
 	u8 *data=NULL;
 	GF_FilterFrameInterface *fifce = txh->frame_ifce;
 	txh->tx_io->flags |= TX_NEEDS_RASTER_LOAD | TX_NEEDS_HW_LOAD;
@@ -250,7 +250,7 @@ GF_Err gf_sc_texture_set_data(GF_TextureHandler *txh)
 			gf_sc_texture_release_stream(txh);
 		}
 	}
-#endif
+  #endif
 	return GF_OK;
 }
 
@@ -469,7 +469,7 @@ static Bool tx_setup_format(GF_TextureHandler *txh)
     case GF_PIXEL_YUV_10:
 	case GF_PIXEL_YUV422:
 	case GF_PIXEL_YUV422_10:
-	case GF_PIXEL_YUV444:		
+	case GF_PIXEL_YUV444:
 	case GF_PIXEL_YUV444_10:
 	case GF_PIXEL_NV21:
 	case GF_PIXEL_NV21_10:
@@ -530,7 +530,7 @@ static Bool tx_setup_format(GF_TextureHandler *txh)
 			p = gf_filter_pid_get_property(txh->stream->odm->pid, GF_PROP_PID_COLR_MX);
 			if (p) cmx = p->value.uint;
 		}
-		
+
 		txh->tx_io->tx.pbo_state = (txh->compositor->gl_caps.pbo && txh->compositor->pbo) ? GF_GL_PBO_BOTH : GF_GL_PBO_NONE;
 		if (txh->tx_io->conv_format) {
 			stride = txh->tx_io->conv_stride;
@@ -616,7 +616,7 @@ common:
 	case GF_PIXEL_YUV_10:
 	case GF_PIXEL_YUV422:
 	case GF_PIXEL_YUV422_10:
-	case GF_PIXEL_YUV444:		
+	case GF_PIXEL_YUV444:
     case GF_PIXEL_YUV444_10:
 	case GF_PIXEL_NV12:
 	case GF_PIXEL_NV12_10:
@@ -677,7 +677,7 @@ common:
 	case GF_PIXEL_YUV_10:
 	case GF_PIXEL_YUV422:
 	case GF_PIXEL_YUV422_10:
-	case GF_PIXEL_YUV444:		
+	case GF_PIXEL_YUV444:
     case GF_PIXEL_YUV444_10:
 	case GF_PIXEL_NV21:
 	case GF_PIXEL_NV12:
@@ -871,7 +871,7 @@ Bool gf_sc_texture_push_image(GF_TextureHandler *txh, Bool generate_mipmaps, Boo
 	GL_CHECK_ERR()
 	gf_gl_txw_upload(&txh->tx_io->tx, data, txh->frame_ifce);
 	GL_CHECK_ERR()
-	
+
 #endif
 
 	push_time = gf_sys_clock() - push_time;
