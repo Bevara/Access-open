@@ -450,6 +450,8 @@ void xml_scte35_parse(GF_XMLNode *root, GF_BitStream *bs)
 	}
 }
 
+#ifndef GPAC_DISABLE_ISOM
+
 // SCTE-35 encapsulated in an EMEB box
 void xml_emeb_parse(GF_XMLNode *root, GF_BitStream *bs)
 {
@@ -531,7 +533,7 @@ void xml_emib_parse(GF_XMLNode *root, GF_BitStream *bs)
 
 	gf_isom_box_del((GF_Box*)emib);
 }
-
+#endif
 
 // generic bit parsing
 
@@ -570,6 +572,7 @@ GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, const char *parent_url, 
 		const char *szData = NULL;
 		if (node->type) continue;
 
+    #ifndef GPAC_DISABLE_ISOM
 		if (!stricmp(node->name, "SCTE35")) {
 			xml_scte35_parse(node, bs);
 			continue;
@@ -584,7 +587,7 @@ GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, const char *parent_url, 
 			if (e) goto exit;
 			continue;
 		}
-
+    #endif
 		j=0;
 		while ( (att = (GF_XMLAttribute *)gf_list_enum(node->attributes, &j))) {
 			if (!stricmp(att->name, "bits")) {

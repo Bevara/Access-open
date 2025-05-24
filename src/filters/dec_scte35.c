@@ -27,6 +27,8 @@
 #include <gpac/internal/isomedia_dev.h>
 #include <stdint.h> // UINT32_MAX
 
+#ifndef GPAC_DISABLE_ISOM
+
 #define IS_SEGMENTED (ctx->segdur.den && ctx->segdur.num>0)
 
 typedef struct {
@@ -380,7 +382,7 @@ static void scte35dec_get_timing(const u8 *data, u32 size, u64 *pts, u64 *dur, u
 		GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[Scte35Dec] Invalid section length %d\n", section_length));
 		goto exit;
 	}
-	
+
 	/*u8 protocol_version = */gf_bs_read_u8(bs);
 	Bool encrypted_packet = gf_bs_read_int(bs, 1);
 	/*u8 encryption_algorithm = */gf_bs_read_int(bs, 6);
@@ -763,7 +765,13 @@ GF_FilterRegister SCTE35DecRegister = {
 	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
+#endif
+
 const GF_FilterRegister *scte35dec_register(GF_FilterSession *session)
 {
+  #ifndef GPAC_DISABLE_ISOM
 	return &SCTE35DecRegister;
+  #else
+    return NULL;
+  #endif
 }

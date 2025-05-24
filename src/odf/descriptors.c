@@ -2053,6 +2053,7 @@ void gf_odf_ia_cfg_del(GF_IAConfig *cfg)
         gf_free(cfg);
 }
 
+#ifndef GPAC_DISABLE_AV_PARSERS
 GF_EXPORT
 GF_Err gf_odf_ia_cfg_write_bs(GF_IAConfig *cfg, GF_BitStream *bs)
 {
@@ -2069,6 +2070,7 @@ GF_Err gf_odf_ia_cfg_write_bs(GF_IAConfig *cfg, GF_BitStream *bs)
         return GF_OK;
 }
 
+
 GF_EXPORT
 GF_Err gf_odf_ia_cfg_write(GF_IAConfig *cfg, u8 **outData, u32 *outSize) {
 	GF_Err e;
@@ -2083,6 +2085,7 @@ GF_Err gf_odf_ia_cfg_write(GF_IAConfig *cfg, u8 **outData, u32 *outSize) {
 	return e;
 }
 
+
 GF_EXPORT
 u32 gf_odf_ia_cfg_size(GF_IAConfig *cfg)
 {
@@ -2093,3 +2096,5 @@ u32 gf_odf_ia_cfg_size(GF_IAConfig *cfg)
         cfg_size += cfg->configOBUs_size;
         return cfg_size;
 }
+
+#endif
