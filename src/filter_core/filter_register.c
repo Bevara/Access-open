@@ -27,7 +27,12 @@
 #include <gpac/network.h>
 #include <gpac/module.h>
 
-#if __EMSCRIPTEN__
+#if defined(GPAC_CONFIG_EMSCRIPTEN)
+
+void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
+{
+
+}
 
 GF_EXPORT
 void gf_fs_register_test_filters(GF_FilterSession *fsess)
@@ -159,7 +164,7 @@ REG_DEC(tsgendts)
 REG_DEC(httpout)
 REG_DEC(uncvdec)
 
-#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32) 
+#if !defined(GPAC_CONFIG_IOS) && !defined(GPAC_CONFIG_ANDROID) && !defined(GPAC_HAVE_DTAPI) && !defined(WIN32)
 REG_DEC(dtout)
 #endif
 

@@ -317,6 +317,7 @@ push_feature "writeqcp" "*QCP writer"
 push_feature "units" "*unit tests"
 push_feature "nvdec" "*NVDec decoder"
 push_feature "vtbdec" "*VideoToolBox (OSX/iOS) decoder"
+push_feature "seiload" "*SEI message loader"
 
 ar_it=""
 get_item()
@@ -2275,6 +2276,9 @@ if test "$has_st_nsec" = "yes" ; then
     echo "#define GPAC_HAS_MTIM_NSEC" >> $TMPH
 fi
 
+if test "$disable_seiload" = "yes" ; then
+    echo "#define GPAC_DISABLE_SEILOAD" >> $TMPH
+fi
 
 if test "$disable_smgr" = "yes" ; then
 disable_seng="yes"

@@ -505,6 +505,7 @@ static GF_Err seiload_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool i
 	gf_filter_pid_set_property(opid, GF_PROP_PID_SEI_LOADED, &PROP_BOOL(GF_TRUE) );
 	return gf_sei_init_from_pid(loader, opid);
 }
+
 static GF_Err seiload_process(GF_Filter *filter)
 {
 	u32 i, nb_eos=0, count = gf_filter_get_ipid_count(filter);
