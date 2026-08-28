@@ -29,7 +29,7 @@
 
 #if defined(GPAC_CONFIG_EMSCRIPTEN)
 
-void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess)
+void gf_fs_reg_all(GF_FilterSession *fsess, GF_FilterSession *a_sess);
 
 GF_EXPORT
 void gf_fs_register_test_filters(GF_FilterSession *fsess)

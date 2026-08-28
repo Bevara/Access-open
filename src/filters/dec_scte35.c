@@ -999,8 +999,6 @@ GF_FilterRegister SCTE35DecRegister = {
 	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
-#endif
-
 const GF_FilterRegister *scte35dec_register(GF_FilterSession *session)
 {
   #ifndef GPAC_DISABLE_ISOM
