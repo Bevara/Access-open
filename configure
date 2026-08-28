@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # GPAC configure script
-#     (c) 2003-2024 Telecom ParisTech
+#     (c) 2003-2026 Telecom Paris
 #     Authors: Jean Le Feuvre, Romain Bouqueau, Aurelien David
 #
 #set -v
@@ -74,6 +74,7 @@ readelf="readelf"
 install="${INSTALL:=install}"
 instflags="${INSTFLAGS:=-p}"
 cpu=`uname -m`
+sched="free"
 check_stack_size="32768"
 debuginfo="no"
 sdl_path=""
@@ -95,6 +96,7 @@ static_bin="no"
 unit_tests="no"
 static_modules="no"
 lm_lib=""
+is_arm="no"
 has_directx="no"
 win32="no"
 mingw32="no"
@@ -120,10 +122,12 @@ INSTFLAGS=""
 is_64="no"
 is_em="no"
 is_emcfg="no"
-has_remotery="yes"
+has_rmtws="yes"
 em_type="js"
 em_size="0"
+em_opt="2"
 fatal_assert="no"
+no_stack_prot="no"
 
 #flags not set by generic lib config
 has_x11="no"
@@ -133,6 +137,7 @@ has_x11_glx="no"
 ffmpeg_vvc="no"
 
 has_strlcpy="no"
+has_strlcat="no"
 
 ffmpeg_extra_ldflags=""
 
@@ -240,7 +245,6 @@ push_feature "vtt" "WebVTT support"
 push_feature "route" "ROUTE (ATSC3) support"
 push_feature "qjs" "QuickJS support"
 push_feature "qjs-libc" "QuickJS libc module support"
-push_feature "qjs-stack" "!stack depth checking in QuickJS (WILL CRASH in multithreaded modes)"
 push_feature "tinygl" "!TinyGL support"
 push_feature "doc" "Embedded documentation"
 push_feature "evg" "EVG (GPAC vector graphics tools)"
@@ -264,7 +268,7 @@ push_feature "gsfdmx" "*GPAC serialized format demuxer"
 push_feature "nhmlr" "*NHML demuxer"
 push_feature "nhntr" "*NHNT demuxer"
 push_feature "cecrypt" "*CENC Encryptor"
-push_feature "flist" "*Playlist concetenator"
+push_feature "flist" "*Playlist concatenator"
 push_feature "hevcmerge" "*HEVC tile merger"
 push_feature "hevcsplit" "*HEVC tile spliter"
 push_feature "fin" "*File input"
@@ -278,6 +282,7 @@ push_feature "mp4mx" "*MP4/QT muxer"
 push_feature "fout" "*File output"
 push_feature "pout" "*Pipe output"
 push_feature "rfac3" "*AC3 parser"
+push_feature "rfac4" "*AC4 parser"
 push_feature "rfadts" "*ADTS parser"
 push_feature "rfamr" "*AMR parser"
 push_feature "rfav1" "*AV1/VP9 parser"
@@ -300,6 +305,7 @@ push_feature "restamp" "*Restamper"
 push_feature "rewind" "*Reverse playback"
 push_feature "ufaac" "*ADTS and LATM rewriter"
 push_feature "ufmhas" "*MPEG-H Audio rewriter"
+push_feature "ufac4" "*AC4 Audio rewriter"
 push_feature "ufm4v" "*MPEG 1/2/4 and VC1 video rewriter"
 push_feature "ufnalu" "*NALU-based video rewriter"
 push_feature "ufobu" "*AV1/VP9 video rewriter"
@@ -382,6 +388,7 @@ GPAC build options:
   --extra-libs=ELIBS       add ELIBS [$ELIBS]
   --cpu=CPU                force cpu to CPU  [$cpu]
   --check-stack-size=SIZE  maximum stack size [$check_stack_size bytes]
+  --no-stack-protector     disables the default stack canaries
   --enable-debug           produce debug version
   --enable-gprof           enable profiling
   --enable-gcov            enable coverage
@@ -404,13 +411,14 @@ GPAC build options:
   --emscripten             configure for emscripten build (same as running emconfigure configure) - this will disable some features by default (network, avdevice), use --enable-FOO to re-enable
   --em-type=EXT            output type, can be js, html or wasm [$em_type]
   --em-size=V              total memory in bytes to use for emscripten - if 0, dynamic memory growth will be used [$em_size]
+  --em-opt=OPT             emscripten optimization level, can be 0, 1, 2, 3, s, or z (default: 2) [$em_opt]
 
 GPAC core configuration:
   --static-modules         embed modules in libgpac rather than using dynamic library modules
   --enable-fixed-point     enable fixed-point math
   --disable-ipv6           disable IPV6 support
   --enable-mem-track       enable tracking of all memory allocated by gpac
-  --disable-remotery       disable Remotery support
+  --disable-rmtws          disable the websocket monitoring server
   --disable-x11            disable X11
   --disable-x11-shm        disable X11 shared memory support
   --disable-x11-xv         disable X11 Xvideo support
@@ -420,7 +428,7 @@ GPAC core configuration:
 
 
 Extra libraries configuration:
-You can turn a library off or force using the local version in gpac/extra_lib/
+You can turn a library off or force using the local version in gpac/extra_lib/. It will fail if not found:
   --use-FOO=no             disable library FOO
   --use-FOO=local          force use of library FOO in gpac/extra_lib/include, gpac/extra_lib/lib/gcc/bin/
   --use-FOO=system         force using system version only of library FOO
@@ -633,6 +641,8 @@ for opt do
             ;;
         --check-stack-size=*) check_stack_size=`echo $opt | cut -d '=' -f 2`
             ;;
+        --no-stack-protector) no_stack_prot="yes"
+            ;;
         --enable-debug) debuginfo="yes"; no_gcc_opt="yes"
             ;;
         --disable-opt) no_gcc_opt="yes"
@@ -694,7 +704,7 @@ for opt do
             ;;
         --enable-mem-track) use_memory_tracking="yes"
             ;;
-        --disable-remotery) has_remotery="no"
+        --disable-rmtws) has_rmtws="no"
             ;;
         --disable-x11) append disabled_packages "x11"
             ;;
@@ -729,6 +739,12 @@ for opt do
             ;;
         --em-size=*) em_size=`echo $opt | cut -d '=' -f 2`
             ;;
+        --em-opt=*) em_opt=`echo $opt | cut -d '=' -f 2`
+            if test "$em_opt" != "0" -a "$em_opt" != "1" -a "$em_opt" != "2" -a "$em_opt" != "3" -a "$em_opt" != "s" -a "$em_opt" != "z"; then
+                echo "! Unrecognized emscripten optimization level $em_opt, using 2 !"
+                em_opt="2"
+            fi
+            ;;
         *) echo "! Unrecognized option $opt, ignoring !"
             ;;
     esac
@@ -760,7 +776,7 @@ if test "$is_em" = "yes" ; then
         echo "Emscripten missing PKG_CONFIG_PATH, disabling pkg-config"
         pkg_config="no"
     fi
-    has_remotery="no"
+    has_rmtws="no"
 
     #to refine
     append disabled_packages "freenect platinum vtb oss alsa jack pulseaudio directfb x11 dvb4linux directx"
@@ -804,11 +820,20 @@ case "$cpu" in
             fi
         fi
         ;;
+    arm64)
+        cpu="arm64"
+        sched=lock
+        is_64="yes"
+        is_arm="yes"
+        ;;
     armv4l|arm)
         cpu="armv4l"
+        is_arm="yes"
         ;;
     aarch64)
+        is_arm="yes"
         cpu="aarch64"
+        sched=lock
         if [ -z "`echo $CFLAGS | grep -- -m32`" ]; then
             is_64="yes"
             PIC_CFLAGS="-fPIC -DPIC"
@@ -956,7 +981,7 @@ EOF
 
     FreeBSD)
         make="gmake"
-        LDFLAGS="$LDFLAGS -export-dynamic"
+        LDFLAGS="$LDFLAGS -rdynamic"
         PTHREAD_CFLAGS=-pthread
         PTHREAD_LDFLAGS=-pthread
         freebsd="yes"
@@ -1161,10 +1186,26 @@ CFLAGS="$CFLAGS -Wall"
 if docc -fno-strict-aliasing ; then
     CFLAGS="$CFLAGS -fno-strict-aliasing"
 fi
+
+if test "$no_stack_prot" = "yes"; then
+    if docc -fno-stack-protector ; then
+        CFLAGS="$CFLAGS -fno-stack-protector"
+    fi
+else
+    if docc -fstack-protector-strong ; then
+        CFLAGS="$CFLAGS -fstack-protector-strong"
+    fi
+fi
+
+if docc -fwrapv ; then
+    CFLAGS="$CFLAGS -fwrapv"
+fi
+
 CXXFLAGS="$CFLAGS"
 if docc -lz -Wno-pointer-sign ; then
     CFLAGS="$CFLAGS -Wno-pointer-sign"
 fi
+
 
 
 #GCC opt
@@ -1195,6 +1236,9 @@ if test "$want_gcov"  = "yes" ; then
     CXXFLAGS="$CXXFLAGS --coverage"
     LDFLAGS="$LDFLAGS --coverage"
 fi
+
+# disable unsafe str functions for gpac
+CFLAGS="$CFLAGS -DGPAC_DISABLE_UNSAFE_STRFUNC"
 
 #force use of cflags with cc
 cc_naked=$cc
@@ -1302,8 +1346,23 @@ int main( void ) {
 }
 EOF
 has_strlcpy="no"
-if docc $LDFLAGS ; then
+if docc  -fno-builtin $LDFLAGS ; then
     has_strlcpy="yes"
+fi
+
+#look for strlcat support
+cat > $TMPC << EOF
+#include <string.h>
+int main( void ) {
+    char key[8];
+    strcpy( key, "a" );
+    strlcat( key, "b", sizeof(key) );
+    return 0;
+}
+EOF
+has_strlcat="no"
+if docc  -fno-builtin $LDFLAGS ; then
+    has_strlcat="yes"
 fi
 
 #look for sys/un.h support
@@ -1393,7 +1452,7 @@ config_package_test ()
 
     #test pkgconfig
     if test "$forced" != "local" -a "$custom" != "yes" ; then
-        if test "$cross_prefix" = "" -a "$is_port" != "yes" -a "$pkg_config" != "no"; then
+        if test "$cross_prefix" = "" -a "$is_port" != "yes" -a "$pkg_config" != "no" -a "$pkg_cfg_name" != ""; then
             if $pkg_config --exists $pkg_cfg_name ; then
                 pck_cflags=`$pkg_config --cflags $pkg_cfg_name`
                 pck_ldflags=`$pkg_config --libs $pkg_cfg_name`
@@ -1516,6 +1575,10 @@ config_package ()
     esac
 
     config_package_test "$1" "$2" "$3" "$4" "$5" "$6"
+    if test "$has_pck" = "no" -a "$forced" != "" -a "$forced" != "no" ; then
+        echo "error: $pname requested with --use-$pname=$forced but not found"
+        exit 1
+    fi
     if test "$has_pck" != "no" ; then
         eval "cflags_$pname=\"$pck_cflags\""
         if test "$pname" = "ngtcp2" ; then
@@ -1682,7 +1745,7 @@ config_package faad "faad2" "" "-lfaad -lm" "" '#include <faad.h>
 int main( void ) { NeAACDecOpen(); return 0; }'
 
 
-ffmpeg_lflags="-lz -lavcodec -lavformat -lavutil -lswscale -lpostproc"
+ffmpeg_lflags="-lz -lavcodec -lavformat -lavutil -lswscale"
 ffmpeg_pck_names="libavcodec libavformat libswscale libavutil"
 
 if test "$is_em" = "yes" ; then
@@ -1744,8 +1807,9 @@ config_package nghttp2 "libnghttp2" "" "-lnghttp2" "" '#include <stdio.h>
 #include <nghttp2/nghttp2.h>
 int main( void ) {  nghttp2_session *ng_sess; nghttp2_session_del(ng_sess); return 0; }'
 
-config_package ngtcp2 "libngtcp2" "" "-lngtcp2" "" '#include <stdio.h>
+config_package ngtcp2 "libngtcp2" "" "-lngtcp2 -lngtcp2_crypto_quictls" "" '#include <stdio.h>
 #include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto_quictls.h>
 int main( void ) {  ngtcp2_conn *ng_sess=NULL; ngtcp2_conn_del(ng_sess); return 0; }'
 
 config_package nghttp3 "libnghttp3" "" "-lnghttp3" "" '#include <stdio.h>
@@ -1759,8 +1823,7 @@ int main( void ) { caption_frame_t ccframe; caption_frame_init(&ccframe); return
 config_package libcaca "caca" "" "-lcaca" "" '#include <caca.h>
 int main( void ) { caca_canvas_t *canvas = caca_create_canvas(20, 20); return 0; }'
 
-
-config_package mpeghdec "mpeghdec" "" "-lMpeghDec -lMpegTPDec -lPCMutils -lIGFdec -lArithCoding -lFormatConverter -lgVBAPRenderer -lDRCdec -lUIManager -lSYS -lFDK -lm" "" '
+config_package mpeghdec "mpeghdec" "" "-lmpeghdec  -lm" "" '
 #ifndef bool
 typedef int bool;
 #endif
@@ -1902,12 +1965,13 @@ int main( void ) { lzma_options_lzma opt_lzma2; lzma_lzma_preset(&opt_lzma2, 9);
 #always force static modules when static build is used, we cannot have one exe with libgpac_static using a module with libgpac dynamic, this would cause bugs with gf_sys_init()
 if test "$static_build" = "yes"; then
 static_modules="yes"
-
-if test "$has_openhevc" != "no" -a "$has_ffmpeg!=no"; then
-    #we cannot have both openhevc and ffmpeg in static build
-    has_openhevc="no"
 fi
 
+if test "$static_modules" = "yes"; then
+if test "$has_openhevc" != "no" -a "$has_ffmpeg!=no"; then
+    #we cannot have both openhevc and ffmpeg in static build / modules
+    has_openhevc="no"
+fi
 fi
 
 
@@ -2474,10 +2538,6 @@ if test "$disable_depth_compositor" = "no" ; then
     echo "#define GF_SR_USE_DEPTH" >> $TMPH
 fi
 
-if test "$disable_qjs_stack" = "no" ; then
-    echo "#define GPAC_QJS_STACK_CHECK" >> $TMPH
-fi
-
 if test "$disable_doc" = "yes" ; then
     echo "Doc disabled"
     echo "#define GPAC_DISABLE_DOC" >> $TMPH
@@ -2614,7 +2674,7 @@ fi
 
 #we add no deprecate by default on osx (due to opengl ...)
 if test "$darwin" = "yes" ; then
-    CFLAGS="$CFLAGS -Wno-deprecated -Wno-deprecated-declarations"
+    CFLAGS="$CFLAGS -Wno-deprecated -Wno-deprecated-declarations -Wno-missing-braces -Wno-typedef-redefinition -Wno-implicit-const-int-float-conversion  -Wno-unknown-warning-option"
 else
     CFLAGS="$CFLAGS -Wno-deprecated -Wno-deprecated-declarations -Wno-int-in-bool-context"
 fi
@@ -2646,7 +2706,7 @@ fi
 else
 
 if test "$enable_sanitizer" = "yes" ; then
-    CFLAGS="$CFLAGS -fsanitize=address,undefined -fno-sanitize-recover -g -fno-omit-frame-pointer -DASAN_ENABLED"
+    CFLAGS="$CFLAGS -fsanitize=address,undefined,float-cast-overflow,bounds -fno-sanitize-recover -g -fno-omit-frame-pointer -fno-stack-protector -U_FORTIFY_SOURCE -DASAN_ENABLED"
     LDFLAGS="$LDFLAGS -fsanitize=address,undefined -ldl"
 fi
 
@@ -2729,6 +2789,9 @@ if test "$bigendian" = "yes" ; then
     echo "IS_BIGENDIAN=yes" >> config.mak
     echo "#define GPAC_BIG_ENDIAN" >> $TMPH
 fi
+if test "$is_arm" = "yes" ; then
+    echo "#define GPAC_CONFIG_ARM" >> $TMPH
+fi
 echo "EXTRALIBS=$extralibs" >> config.mak
 echo "LIBGPAC_CFLAGS=$libgpac_cflags" >> config.mak
 echo "LIBGPAC_LDFLAGS=$libgpac_extralibs" >> config.mak
@@ -2797,6 +2860,7 @@ elif test "$sunos" = "yes" ; then
 elif test "$is_em" = "yes" ; then
     echo "CONFIG_EMSCRIPTEN=yes" >> config.mak
     echo "EM_TYPE=$em_type" >> config.mak
+    echo "EM_OPT=$em_opt" >> config.mak
     echo "#define GPAC_CONFIG_EMSCRIPTEN" >> $TMPH
 else
     echo "#define GPAC_CONFIG_GENERIC" >> $TMPH
@@ -2810,6 +2874,9 @@ else
     echo "EXE_SUFFIX=.exe" >> config.mak
     echo "DYN_LIB_SUFFIX=.dll" >> config.mak
 fi
+
+
+echo "#define GPAC_SCHED_DEFAULT \"$sched\"" >> $TMPH
 
 
 echo "INSTFLAGS=$INSTFLAGS" >> config.mak
@@ -2860,8 +2927,8 @@ else
 fi
 echo "CONFIG_FT=$has_freetype" >> config.mak
 
-if test "$has_remotery" = "no" ; then
-    echo "#define GPAC_DISABLE_REMOTERY" >> $TMPH
+if test "$has_rmtws" = "no" ; then
+    echo "#define GPAC_DISABLE_RMTWS" >> $TMPH
 fi
 
 
@@ -2880,6 +2947,11 @@ fi
 echo "CONFIG_STRLCPY=$has_strlcpy" >> config.mak
 if test "$has_strlcpy" != "no" ; then
     echo "#define GPAC_HAS_STRLCPY" >> $TMPH
+fi
+
+echo "CONFIG_STRLCAT=$has_strlcat" >> config.mak
+if test "$has_strlcat" != "no" ; then
+    echo "#define GPAC_HAS_STRLCAT" >> $TMPH
 fi
 
 if test "$has_sock_un" != "no" ; then
@@ -3174,7 +3246,6 @@ build_object_files_directory_tree()
 
     mkdir -p applications
     ln -sf "$1/applications/Makefile" applications/Makefile
-    mkdir -p applications/testapps
 
     for dir in $APP_DIRS ; do
         mkdir -p "$dir"
@@ -3183,6 +3254,7 @@ build_object_files_directory_tree()
 
     mkdir -p modules
     ln -sf "$1/modules/Makefile" modules/Makefile
+    ln -sf "$1/modules/common.mak" modules/common.mak
 
     for moddir in "$1/modules/"* ; do
         if [ -d "$moddir"  -a -f "$moddir/Makefile" ]; then
@@ -3281,7 +3353,7 @@ generate_pkgconfig () {
 	echo "Name: gpac"
 	echo "Description: GPAC Multimedia Framework"
 	echo "URL: https://gpac.io"
-	echo "Version:$version"
+	echo "Version: $version"
 	echo "Cflags: -I\${prefix}/include"
 	echo "Libs: -L\${libdir} -lgpac"
 }

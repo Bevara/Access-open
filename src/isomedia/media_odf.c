@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2019
+ *			Copyright (c) Telecom ParisTech 2000-2025
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -166,7 +166,11 @@ GF_Err Media_RewriteODFrame(GF_MediaBox *mdia, GF_ISOSample *sample)
 				if (gf_isom_get_track_from_id(mdia->mediaTrack->moov, mpod->trackIDs[ref->trackRef - 1]) == NULL) continue;
 				//OK, get the esd
 				e = GetESDForTime(mdia->mediaTrack->moov, mpod->trackIDs[ref->trackRef - 1], sample->DTS, &esd);
-				if (e) goto err_exit;
+				if (e) {
+					gf_odf_com_del((GF_ODCom **)&esdU);
+					gf_odf_com_del((GF_ODCom**)&esdU2);
+					goto err_exit;
+				}
 				gf_list_add(esdU2->ESDescriptors, esd);
 			}
 			gf_odf_com_del((GF_ODCom **)&esdU);
@@ -512,7 +516,7 @@ u32 gf_isom_find_od_id_for_track(GF_ISOFile *file, u32 track)
 {
 	u32 i, j, di, the_od_id;
 	GF_TrackBox *od_tk;
-	GF_TrackBox *tk = gf_isom_get_track_from_file(file, track);
+	GF_TrackBox *tk = gf_isom_get_track_box(file, track);
 	if (!tk) return 0;
 
 	i=0;

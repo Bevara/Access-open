@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -149,7 +149,7 @@ typedef enum
 	GF_SCRIPT_ERROR							= -8,
 	/*! Buffer is too small to contain decoded data. Decoders shall use this error whenever they need to resize their output memory buffers*/
 	GF_BUFFER_TOO_SMALL						= -9,
-	/*! The bitstream is not compliant to the specfication it refers to*/
+	/*! The bitstream is not compliant to the specification it refers to*/
 	GF_NON_COMPLIANT_BITSTREAM				= -10,
 	/*! No filter could be found to handle the desired media type*/
 	GF_FILTER_NOT_FOUND						= -11,
@@ -509,6 +509,30 @@ Compares two timecodes
  */
 Bool gf_timecode_equal(GF_TimeCode *value1, GF_TimeCode *value2);
 
+
+/*!
+\brief Get CENC IV size
+
+Get CENC IV size from a key info chunk
+\param key_info CENC key info buffer
+\param key_info_size CENC key info buffer size
+\param key_idx index of key for multi-key cases, 0 otherwise
+\param const_iv_size set to const IV size if const IV is used, otherwise set to 0 - can be NULL
+\param const_iv set to const IV start in key_info buffer when constant IV is used, otherwise set to NULL - can be NULL
+\return IV size in bytes if constant IV is not used, otherwise 0
+ */
+u8 gf_cenc_key_info_get_iv_size(const u8 *key_info, u32 key_info_size, u32 key_idx, u8 *const_iv_size, const u8 **const_iv);
+
+/*!
+\brief validate a CENC key info chunk
+
+Checks whether a CENC key info chunk is valid or not
+\param key_info CENC key info buffer
+\param key_info_size CENC key info buffer size
+\return GF_TRUE if this chunk looks like a CENC key info buffer, GF_FALSE otherwise
+*/
+Bool gf_cenc_validate_key_info(const u8 *key_info, u32 key_info_size);
+
 /*! @} */
 
 /*!
@@ -730,39 +754,27 @@ const char *gf_sys_features(Bool disabled);
 */
 Bool gf_sys_solve_path(const char *tpl_path, char szPath[GF_MAX_PATH]);
 
-/*! callback function for remotery profiler
- \param udta user data passed by \ref gf_sys_profiler_set_callback
- \param text string sent by webbrowser client
+/*! Enables or disables the rmt websocket monitoring server
+\param start If true starts the webserver, if false stops it
+\return GF_OK if success, GF_BAD_PARAM if error, GF_NOT_SUPPORTED if ws server not supported
 */
-typedef void (*gf_rmt_user_callback)(void *udta, const char* text);
+GF_Err gf_sys_enable_rmtws(Bool start);
 
-/*! Enables remotery profiler callback. If remotery is enabled, commands sent via webbrowser client will be forwarded to the callback function specified
-\param udta user data
-\param rmt_usr_cbk callback function
-\return GF_OK if success, GF_BAD_PARAM if profiler is not running, GF_NOT_SUPPORTED if profiler not supported
+/*! Enables or disables the rmt websocket user server
+\param start If true starts the webserver, if false stops it
+\return GF_OK if success, GF_BAD_PARAM if error, GF_NOT_SUPPORTED if ws server not supported
 */
-GF_Err gf_sys_profiler_set_callback(void *udta, gf_rmt_user_callback rmt_usr_cbk);
+GF_Err gf_sys_enable_userws(Bool start);
 
-
-/*! Sends a log message to remotery web client
-\param msg text message to send. The message format should be json
-\return GF_OK if success, GF_BAD_PARAM if profiler is not running, GF_NOT_SUPPORTED if profiler not supported
+/*! Returns the monitoring websocket server handler
+\return the object to cast to RMT_WS*
 */
-GF_Err gf_sys_profiler_log(const char *msg);
+void* gf_sys_get_rmtws();
 
-/*! Sends a message to remotery web client
-\param msg text message to send. The message format should be json
-\return GF_OK if success, GF_BAD_PARAM if profiler is not running, GF_NOT_SUPPORTED if profiler not supported
+/*! Returns the user websocket server handler
+\return the object to cast to RMT_WS*
 */
-GF_Err gf_sys_profiler_send(const char *msg);
-
-/*! Enables sampling times in RMT
- \param enable if GF_TRUE, sampling will be enabled, otherwise disabled*/
-void gf_sys_profiler_enable_sampling(Bool enable);
-
-/*! Checks if sampling is enabled in RMT. Sampling is by default enabled when enabling remotery
- \return GF_TRUE if sampling is enabled, GF_FALSE otherwise*/
-Bool gf_sys_profiler_sampling_enabled();
+void* gf_sys_get_userws();
 
 /*!
 GPAC Log tools
@@ -923,6 +935,8 @@ typedef enum
 	GF_LOG_CONSOLE,
 	/*! Log for all messages coming the application, not used by libgpac or the modules*/
 	GF_LOG_APP,
+	/*! Log for all info regarding the rmt_ws server and bindings*/
+	GF_LOG_RMTWS,
 
 	/*! special value used to set a level for all tools*/
 	GF_LOG_ALL,
@@ -1103,6 +1117,8 @@ void gf_log_pop_extra(const GF_LogExtra *log);
 */
 void gf_log_reset_extras();
 
+#define GF_DBG(fmt, ...) fprintf(stderr, "%s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+
 /*!	@} */
 
 /*!
@@ -1268,8 +1284,9 @@ typedef struct __gf_blob
     u64 last_modification_time;
 	/*! function used to query if a range of a blob in transfer is valid. If NULL, any range is invalid until transfer is done
 	when set this function overrides the blob flags for gf_blob_query_range
+	If check_when_complete is true, range will be checked when blob transfer is over; if false, range will either be valid or corrupted for a transferred blob
 	size is updated to the maximum number of consecutive bytes starting from the goven offset */
-	GF_BlobRangeStatus (*range_valid)(struct __gf_blob *blob, u64 start, u32 *size);
+	GF_BlobRangeStatus (*range_valid)(struct __gf_blob *blob, Bool check_when_complete, u64 start, u32 *size);
 	/*! private data for range_valid function*/
 	void *range_udta;
 } GF_Blob;
@@ -1287,11 +1304,12 @@ GF_Err gf_blob_get(const char *blob_url, u8 **out_data, u32 *out_size, u32 *blob
 /*!
  * Checks if a given byte range is valid in blob
 \param blob  blob object
+\param check_when_complete when true, range will be checked when blob transfer is over; when false, range will either be valid or corrupted for a transferred blob)
 \param start_offset start offset of data to check in blob
 \param size size of data to check in blob
 \return blob range status
  */
-GF_BlobRangeStatus gf_blob_query_range(GF_Blob *blob, u64 start_offset, u32 size);
+GF_BlobRangeStatus gf_blob_query_range(GF_Blob *blob, Bool check_when_complete, u64 start_offset, u32 size);
 
 /*!
  * Releases blob data
@@ -1479,7 +1497,7 @@ typedef enum {
 	GF_LOCKFILE_FAILED=0,
 	/*! lockfile creation succeeded, creating a new lock file*/
 	GF_LOCKFILE_NEW,
-	/*! lockfile creation succeeded,  lock file was already present and created by this process*/
+	/*! lockfile creation succeeded, lock file was already present and created by this process*/
 	GF_LOCKFILE_REUSE
 } GF_LockStatus;
 
@@ -1657,8 +1675,8 @@ GF_Err gf_dir_cleanup(const char* DirPathName);
 
 
 /**
-Gets a newly allocated string containing the default cache directory.
-It is the responsibility of the caller to free the string.
+Gets a globally allocated string containing the default cache directory.
+The caller shall not free the string.
 \return a fully qualified path to the default cache directory
  */
 const char * gf_get_default_cache_directory();
@@ -1833,12 +1851,13 @@ FILE *gf_fopen(const char *file_name, const char *mode);
 \brief file opening
 
 Opens a file, potentially using file IO if the parent URL is a File IO wrapper
+
+\note If a parent GFIO file is used and file_name was obtained without using \ref gf_url_concatenate on the parent GFIO, make sur to call \ref gf_fileio_open_url in "url" mode to prevent further concatenations by the GFIO handler.
+
 \param file_name same as fopen
 \param parent_url URL of parent file. If not a file io wrapper (gfio://), the function is equivalent to gf_fopen
 \param mode same as fopen - value "mkdir" checks if parent dir(s) need to be created, create them if needed and returns NULL (no file open)
 \param no_warn if GF_TRUE, do not throw log message if failure
-\return stream handle of the file object
-\note You only need to call this function if you're suspecting the file to be a large one (usually only media files), otherwise use regular stdio.
 \return stream habdle of the file or file IO object*/
 FILE *gf_fopen_ex(const char *file_name, const char *parent_url, const char *mode, Bool no_warn);
 
@@ -1885,6 +1904,14 @@ char* gf_file_basename(const char* filename);
 \return a pointer to the start of a filepath extension or null
 */
 char* gf_file_ext_start(const char* filename);
+
+/*! return the canonicalized absolute pathname
+* portable version of POSIX realpath()
+\param path Path to resolve
+\param resolved_path A buffer to store the result, if NULL a buffer will be allocated and returned
+\return pointer to resolved_path or to a new buffer or NULL if error
+*/
+char* gf_realpath(const char* path, char* resolved_path);
 
 /*!\brief FileEnum info object
 
@@ -1988,6 +2015,9 @@ Checks if file with given name exists, for regular files or File IO wrapper
 \return GF_TRUE if file exists */
 Bool gf_file_exists_ex(const char *file_name, const char *par_name);
 
+
+
+
 /*!
 \brief Open file descriptor
 
@@ -2008,7 +2038,7 @@ typedef struct __gf_file_io GF_FileIO;
 \param mode opening mode of file, same as fopen mode. The following additional modes are defined:
 	- "ref": indicates this FileIO object is used by some part of the code and must not be destroyed upon closing of the file. Associated URL is null
 	- "unref": indicates this FileIO object is not used by some part of the code and may be destroyed if no more references to this object are set. Associated URL is null
-	- "url": indicates to create a new FileIO object for the given URL without opening the output file. The resulting FileIO object must be garbage collected by the app in case its is never used by the callers
+	- "url": indicates to create a new FileIO object for the given URL without opening the output file. The resulting FileIO object must be garbage collected by the app in case it is never used by the callers
 	- "probe": checks if the file exists, but no need to open the file. The function should return NULL in this case. If file does not exist, set out_error to GF_URL_ERROR
 	- "close": indicates the fileIO object is being closed (fclose)
 \param out_error must be set to error code if any (never NULL)
@@ -2101,7 +2131,7 @@ void *gf_fileio_get_udta(GF_FileIO *fileio);
 */
 const char * gf_fileio_url(GF_FileIO *fileio);
 
-/*! Gets a fileIO object from memory - the resulting fileIO can only be opened once at any time but can be closed/reopen.
+/*! Gets a fileIO object from memory - the resulting fileIO can be reopen multiple times but cannot be re-open once closed. Any URL concatenation against this object will fail (no dynamic creation of fileio from mem).
 \param URL of source data, may be null
 \param data memory, must be valid until next close
 \param size memory size
@@ -2210,6 +2240,27 @@ Bool gf_fileio_read_mode(GF_FileIO *fileio);
 \return GF_TRUE if write is enabled on this object
 */
 Bool gf_fileio_write_mode(GF_FileIO *fileio);
+
+/*! Function callback for GF_FileIO delete events. The callback is NOT thread-safe in GPAC, applications should take care of ensuring safety
+
+\note Applications must make sure that the underlying gfio objects are defined as GPAC does not track allocated gfio objects.
+
+ \param url a gfio:// url to be deleted or a regular  name if parent_gfio_url is NULL.
+ \param parent_gfio_url the parent GFIO associated with the URL string, or NULL if url is a gfio url
+ \return error code if any, GF_EOS if this callback is not handling this specific gfio
+*/
+typedef GF_Err (*gfio_delete_proc)(const char *url, const char *parent_gfio_url);
+
+/*! Register a GF_FileIO delete callback. This function is NOT threadsafe, applications should take care of ensuring safety
+\param del_proc the calback to register. It MUST be valid until unregistered
+\return error if any
+*/
+GF_Err gf_fileio_register_delete_proc(gfio_delete_proc del_proc);
+
+/*! Unregister a GF_FileIO delete callback. This function is NOT threadsafe, applications should take care of ensuring safety
+\param del_proc the calback to unregister.
+*/
+void gf_fileio_unregister_delete_proc(gfio_delete_proc del_proc);
 
 /*!	@} */
 
@@ -2523,7 +2574,7 @@ const char *gf_opts_get_filename();
 \param path_buffer GF_MAX_PATH buffer to store output
 \return GF_TRUE if success, GF_FALSE otherwise
  */
-Bool gf_opts_default_shared_directory(char *path_buffer);
+Bool gf_opts_default_shared_directory(char path_buffer[GF_MAX_PATH]);
 
 
 /*!
@@ -2548,43 +2599,14 @@ Bool gf_creds_check_membership(const char *username, const char *users, const ch
 
 //! @cond Doxygen_Suppress
 
-#if defined(GPAC_DISABLE_3D) && !defined(GPAC_DISABLE_REMOTERY)
-#define GPAC_DISABLE_REMOTERY 1
-#endif
-
-#ifdef GPAC_DISABLE_REMOTERY
-#define RMT_ENABLED 0
-#else
-#define RMT_USE_OPENGL	1
-#endif
-
-#include <gpac/Remotery.h>
-
-#define GF_RMT_AGGREGATE	RMTSF_Aggregate
-/*! begins remotery CPU sample*/
-#define gf_rmt_begin rmt_BeginCPUSample
-/*! begins remotery CPU sample with hash*/
-#define gf_rmt_begin_hash rmt_BeginCPUSampleStore
-/*! ends remotery CPU sample*/
-#define gf_rmt_end rmt_EndCPUSample
-/*! sets remotery thread name*/
-#define gf_rmt_set_thread_name rmt_SetCurrentThreadName
-/*! logs remotery text*/
-#define gf_rmt_log_text rmt_LogText
-/*! begins remotery OpenGL sample*/
-#define gf_rmt_begin_gl rmt_BeginOpenGLSample
-/*! begins remotery OpenGL sample with hash*/
-#define gf_rmt_begin_gl_hash rmt_BeginOpenGLSampleStore
-/*!ends remotery OpenGL sample*/
-#define gf_rmt_end_gl rmt_EndOpenGLSample
+#include <gpac/rmt_ws.h>
 
 //! @endcond
 
 
 /* \cond dummy */
 
-/*to call whenever the OpenGL library is opened - this function is needed to bind OpenGL and remotery, and to load
-OpenGL extensions on windows
+/*to call whenever the OpenGL library is opened - this function is needed to load OpenGL extensions on windows
 not exported, and not included in src/compositor/gl_inc.h since it may be needed even when no OpenGL
 calls are made by the caller*/
 void gf_opengl_init();
@@ -2643,6 +2665,10 @@ void gf_gl_txw_reset(GF_GLTextureWrapper *tx);
 
 /*! macros to get the size of an array of struct*/
 #define GF_ARRAY_LENGTH(a) (sizeof(a) / sizeof((a)[0]))
+
+/*! avoid UB when casting floats to ints */
+#define GF_FLOAT_TO_U32(x) (((x) >= 0) && ((x) <= (double)GF_UINT_MAX) ? (u32)(x) : 0)
+#define GF_FLOAT_TO_U64(x) (((x) >= 0) && ((x) <= (double)GF_UINT64_MAX) ? (u64)(x) : 0)
 
 #ifdef __cplusplus
 }

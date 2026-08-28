@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019-2024
+ *			Copyright (c) Telecom ParisTech 2019-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / rtp output filter
@@ -93,6 +93,7 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 	count = gf_list_count(streams);
 
 	gf_fprintf(sdp_out, "v=0\n");
+	//test mode, use static session IDs and version
 	if (gf_sys_is_test_mode()) {
 		*session_id = 0;
 		session_version = 0;
@@ -115,7 +116,7 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 		if (src)
 			gf_fprintf(sdp_out, "i=%s\n", src);
 	}
-	gf_fprintf(sdp_out, "u=%s\n", url ? url : (gf_sys_is_test_mode() ? "http://gpac.io" : "https://gpac.io") );
+	gf_fprintf(sdp_out, "u=%s\n", url ? url : "https://gpac.io");
 	if (email) {
 		gf_fprintf(sdp_out, "e=%s\n", email);
 	}
@@ -131,7 +132,7 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 	}
 
 	if (gf_sys_is_test_mode()) {
-		gf_fprintf(sdp_out, "a=x-copyright: Streamed with GPAC - http://gpac.io\n");
+		gf_fprintf(sdp_out, "a=x-copyright: Streamed with GPAC - https://gpac.io\n");
 	} else {
 		gf_fprintf(sdp_out, "a=x-copyright: Streamed with GPAC %s - %s\n", gf_gpac_version(), gf_gpac_copyright() );
 	}
@@ -183,7 +184,7 @@ GF_Err rtpout_create_sdp(GF_List *streams, Bool is_rtsp, const char *ip, const c
 		u32 dsi_len = 0;
 		u32 dsi_enh_len = 0;
 		u32 nb_chan = 0;
-        const GF_PropertyValue *p;
+		const GF_PropertyValue *p;
 		GF_RTPOutStream *stream = gf_list_get(streams, i);
 		if (!stream->rtp) continue;
 
@@ -281,8 +282,7 @@ static Bool check_mime_ext(const char *string, const char *pattern)
 	char szLwr[100];
 	if (!pattern) return GF_FALSE;
 
-	strncpy(szLwr, pattern, 99);
-	szLwr[99]=0;
+	gf_strcpy(szLwr, pattern);
 	strlwr(szLwr);
 	u32 len = (u32) strlen(szLwr);
 	char *sep = strstr(string, szLwr);
@@ -813,8 +813,7 @@ static GF_Err rtpout_initialize(GF_Filter *filter)
 			ctx->in_caps[1].val = PROP_NAME( ctx->mime );
 			ctx->in_caps[1].flags = GF_CAPS_INPUT;
 		} else {
-			strncpy(ctx->szExt, ctx->ext, 9);
-			ctx->szExt[9] = 0;
+			gf_strcpy(ctx->szExt, ctx->ext);
 			strlwr(ctx->szExt);
 			ctx->in_caps[1].code = GF_PROP_PID_FILE_EXT;
 			ctx->in_caps[1].val = PROP_NAME( ctx->szExt );
@@ -1243,7 +1242,7 @@ static GF_FilterProbeScore rtpout_probe_url(const char *url, const char *mime)
 }
 
 //regular caps when solving to sdp
-//for direct rtp:// scheme invocation, caps are overriden in rtpin_initialize
+//for direct rtp:// scheme invocation, caps are overridden in rtpin_initialize
 static const GF_FilterCapability RTPOutCaps[] =
 {
 	//media stream (not file and framed) result in SDP

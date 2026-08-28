@@ -252,6 +252,14 @@ typedef struct
 
 typedef struct
 {
+	Bool amve_valid;
+	u32 ambient_illuminance;
+	u16 ambient_light_x;
+	u16 ambient_light_y;
+} AVCSeiAmbientViewingEnv;
+
+typedef struct
+{
 	AVCSeiRecoveryPoint recovery_point;
 	//valid if num_clock_ts is set
 	AVCSeiPicTiming pic_timing;
@@ -262,6 +270,7 @@ typedef struct
 	u8 clli_valid, mdcv_valid;
 	u8 has_3d_ref_disp_info;
 	u8 alternative_transfer_characteristics;
+	AVCSeiAmbientViewingEnv ambient_view;
 } GF_SEIInfo;
 
 typedef struct
@@ -295,7 +304,9 @@ typedef struct
 	s32 extra_filter; //- removes the sei, + keeps the sei
 } SEI_Filter;
 
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 /*return sps ID or -1 if error*/
 s32 gf_avc_read_sps(const u8 *sps_data, u32 sps_size, AVCState *avc, u32 subseq_sps, u32 *vui_flag_pos);
 s32 gf_avc_read_sps_bs(GF_BitStream *bs, AVCState *avc, u32 subseq_sps, u32 *vui_flag_pos);
@@ -314,6 +325,10 @@ s32 gf_avc_parse_nalu(GF_BitStream *bs, AVCState *avc);
 /*remove SEI messages not allowed in MP4*/
 /*nota: 'buffer' remains unmodified but cannot be set const*/
 u32 gf_avc_reformat_sei(u8 *buffer, u32 nal_size, Bool isobmf_rewrite, AVCState *avc, SEI_Filter *sei_filter);
+#ifdef __cplusplus
+}
+#endif
+
 
 #ifndef GPAC_DISABLE_AV_PARSERS
 
@@ -521,8 +536,13 @@ typedef struct
 	u32 dimension_id[MAX_LHVC_LAYERS][16];
 	u32 layer_id_in_nuh[MAX_LHVC_LAYERS];
 	u32 layer_id_in_vps[MAX_LHVC_LAYERS];
-
-	u8 num_profile_tier_level, num_output_layer_sets;
+	u8 num_direct_ref_layers[64];
+	u8 num_ref_list_layers[64];
+	u8 num_profile_tier_level, num_output_layer_sets, default_ref_layers_active_flag;
+	u8 id_direct_ref_layers[64][MAX_LHVC_LAYERS];
+	u8 layer_idx_in_vps[MAX_LHVC_LAYERS];
+	u8 sub_layers_vps_max_minus1[MAX_LHVC_LAYERS];
+	u8 max_tid_il_ref_pics_plus1[MAX_LHVC_LAYERS][MAX_LHVC_LAYERS];
 	u32 profile_level_tier_idx[MAX_LHVC_LAYERS];
 	HEVC_ProfileTierLevel ext_ptl[MAX_LHVC_LAYERS];
 
@@ -539,13 +559,14 @@ typedef struct
 	Bool necessary_layers_flag[MAX_LHVC_LAYERS][MAX_LHVC_LAYERS];
 	u8 LayerSetLayerIdList[MAX_LHVC_LAYERS][MAX_LHVC_LAYERS];
 	u8 LayerSetLayerIdListMax[MAX_LHVC_LAYERS]; //the highest value in LayerSetLayerIdList[i]
+	u8 max_one_active_ref_layer_flag;
 } HEVC_VPS;
 
 typedef struct
 {
-	u8 nal_unit_type;
+	u8 nal_unit_type, layer_id, temporal_id;
 	u32 frame_num, poc_lsb, slice_type, header_size_with_emulation;
-	
+
 	s32 redundant_pic_cnt;
 
 	s32 poc;
@@ -558,7 +579,7 @@ typedef struct
 	u8 prev_layer_id_plus1;
 
 	//bit offset of the num_entry_point (if present) field
-	s32 entry_point_start_bits; 
+	s32 entry_point_start_bits;
 	u64 header_size_bits;
 	//byte offset of the payload start (after byte alignment)
 	s32 payload_start_offset;
@@ -677,6 +698,7 @@ typedef struct
 	u16 num_slices;
 } VVC_SubpicInfo;
 
+#define MAX_SPS_VIRTUAL_BOUNDARIES 3
 typedef struct
 {
 	s32 id;
@@ -869,11 +891,18 @@ typedef struct _vvc_state
 	u32 parse_mode;
 } VVCState;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 s32 gf_vvc_parse_nalu_bs(GF_BitStream *bs, VVCState *vvc, u8 *nal_unit_type, u8 *temporal_id, u8 *layer_id);
 void gf_vvc_parse_sei(char* buffer, u32 nal_size, VVCState *vvc);
 u32 gf_vvc_reformat_sei(char *buffer, u32 nal_size, Bool isobmf_rewrite, SEI_Filter *sei_filter);
 Bool gf_vvc_slice_is_ref(VVCState *vvc);
 s32 gf_vvc_parse_nalu(u8 *data, u32 size, VVCState *vvc, u8 *nal_unit_type, u8 *temporal_id, u8 *layer_id);
+#ifdef __cplusplus
+}
+#endif
+
 
 void gf_vvc_parse_ps(GF_VVCConfig* hevccfg, VVCState* vvc, u32 nal_type);
 
@@ -887,7 +916,10 @@ GF_Err gf_media_parse_ivf_file_header(GF_BitStream *bs, u32 *width, u32*height, 
 GF_Err gf_vp9_parse_sample(GF_BitStream *bs, GF_VPConfig *vp9_cfg, Bool *key_frame, u32 *FrameWidth, u32 *FrameHeight, u32 *renderWidth, u32 *renderHeight);
 GF_Err gf_vp9_parse_superframe(GF_BitStream *bs, u64 ivf_frame_size, u32 *num_frames_in_superframe, u32 frame_sizes[VP9_MAX_FRAMES_IN_SUPERFRAME], u32 *superframe_index_size);
 
-
+typedef struct
+{
+	GF_AC4Config *config;
+} AC4State;
 
 #define AV1_MAX_TILE_ROWS 64
 #define AV1_MAX_TILE_COLS 64
@@ -910,7 +942,7 @@ typedef struct
 {
 	Bool is_first_frame;
 	Bool seen_frame_header, seen_seq_header;
-	Bool key_frame, show_frame;
+	Bool key_frame, switch_frame, show_frame;
 	AV1FrameType frame_type;
 	GF_List *header_obus, *frame_obus; /*GF_AV1_OBUArrayEntry*/
 	AV1Tile tiles[AV1_MAX_TILE_ROWS * AV1_MAX_TILE_COLS];
@@ -1023,6 +1055,9 @@ typedef struct
 	//set to one if a temporal delim is found when calling aom_av1_parse_temporal_unit_from_section5
 	u8 has_temporal_delim;
 	u8 has_frame_data;
+
+	// detected rpu data in current access unit
+	Bool dolby_rpu_detected;
 } AV1State;
 
 GF_Err aom_av1_parse_temporal_unit_from_section5(GF_BitStream *bs, AV1State *state);
@@ -1064,7 +1099,7 @@ GF_Err gf_av1_parse_obu_header(GF_BitStream *bs, ObuType *obu_type, Bool *obu_ex
 
 typedef struct
 {
-	Bool seen_valid_ia_seq_header;
+	Bool seen_valid_iamf_seq_header;
 	Bool seen_first_frame;
 	Bool previous_obu_is_descriptor;
 
@@ -1083,7 +1118,11 @@ typedef struct
 
 typedef struct
 {
+	// Determined based on Sequence Header OBU.
+	u8 primary_profile;
+	u8 additional_profile;
 	// Determined based on Codec Config OBU.
+	u32 codec_id;
 	int num_samples_per_frame;
 	int sample_size;
 	int sample_rate;
@@ -1235,7 +1274,7 @@ typedef struct _webvtt_parser GF_WebVTTParser;
 typedef struct _webvtt_sample GF_WebVTTSample;
 
 GF_WebVTTParser *gf_webvtt_parser_new();
-GF_Err gf_webvtt_parser_init(GF_WebVTTParser *parser, FILE *vtt_file, s32 unicode_type, Bool is_srt,
+GF_Err gf_webvtt_parser_init(GF_WebVTTParser *parser, FILE **vtt_file, s32 unicode_type, Bool is_srt,
                              void *user, GF_Err (*report_message)(void *, GF_Err, char *, const char *),
                              void (*on_sample_parsed)(void *, GF_WebVTTSample *),
                              void (*on_header_parsed)(void *, const char *));
@@ -1303,4 +1342,3 @@ void gf_av1_format_mdcv_to_mpeg(u8 mdcv_in[24], u8 mdcv_out[24]);
 
 
 #endif		/*_GF_MEDIA_DEV_H_*/
-

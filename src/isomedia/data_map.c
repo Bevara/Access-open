@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2024
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -71,7 +71,7 @@ void gf_isom_datamap_close(GF_MediaInformationBox *minf)
 	}
 
 	//if ent NULL, the data entry was not used (smooth)
-	if (ent == NULL) return;
+	if (ent==NULL) return;
 
 	//self contained, do nothing
 	switch (ent->type) {
@@ -261,11 +261,17 @@ GF_Err gf_isom_datamap_open(GF_MediaBox *mdia, u32 dataRefIndex, u8 Edit)
 		}
 		//else this is a URL (read mode only)
 	} else {
+		const char *location = ent->location;
+		const char *parent_path = mdia->mediaTrack->moov->mov->fileName;
 #ifndef GPAC_DISABLE_ISOM_WRITE
-		e = gf_isom_datamap_new(ent->location, mdia->mediaTrack->moov->mov->fileName ? mdia->mediaTrack->moov->mov->fileName : mdia->mediaTrack->moov->mov->finalName, GF_ISOM_DATA_MAP_READ, & mdia->information->dataHandler);
-#else
-		e = gf_isom_datamap_new(ent->location, mdia->mediaTrack->moov->mov->fileName, GF_ISOM_DATA_MAP_READ, & mdia->information->dataHandler);
+		if (!parent_path) parent_path = mdia->mediaTrack->moov->mov->finalName;
 #endif
+		if (mdia->mediaTrack->moov->mov->override_dref_url) {
+			location = mdia->mediaTrack->moov->mov->override_dref_url;
+			parent_path = NULL;
+		}
+		
+		e = gf_isom_datamap_new(location, parent_path, GF_ISOM_DATA_MAP_READ, & mdia->information->dataHandler);
 		if (e) return (e==GF_URL_ERROR) ? GF_ISOM_UNKNOWN_DATA_REF : e;
 	}
 	//OK, set the data entry index
@@ -532,7 +538,7 @@ u32 gf_isom_fdm_get_data(GF_FileDataMap *ptr, u8 *buffer, u32 bufferLength, u64 
 
 	if (ptr->blob) {
 		gf_mx_p(ptr->blob->mx);
-		GF_BlobRangeStatus rs = gf_blob_query_range(ptr->blob, fileOffset, bufferLength);
+		GF_BlobRangeStatus rs = gf_blob_query_range(ptr->blob, GF_TRUE, fileOffset, bufferLength);
 		if (is_corrupted) *is_corrupted = rs;
 		if (rs==GF_BLOB_RANGE_IN_TRANSFER) {
 			gf_mx_v(ptr->blob->mx);
@@ -590,10 +596,16 @@ static Bool gf_isom_fdm_check_top_level(GF_FileDataMap *ptr)
 	}
 	gf_bs_seek(ptr->bs, fileOffset);
 	u32 size = gf_bs_peek_bits(ptr->bs, 32, 0);
+	u32 type = gf_bs_peek_bits(ptr->bs, 32, 4);
 	//no size: either range is invalid or the box extends till end of blob
 	if (!size)
-		size = ptr->blob->size - fileOffset;
-	GF_BlobRangeStatus rs = gf_blob_query_range(ptr->blob, fileOffset, size);
+		size = ptr->blob->size - (u32) fileOffset;
+
+	if ((type==GF_ISOM_BOX_TYPE_MDAT) || (type==GF_ISOM_BOX_TYPE_IDAT)) {
+		size = 8;
+	}
+
+	GF_BlobRangeStatus rs = gf_blob_query_range(ptr->blob, GF_TRUE, fileOffset, size);
 	gf_mx_v(ptr->blob->mx);
 	if (rs==GF_BLOB_RANGE_IN_TRANSFER)
 		return GF_FALSE;

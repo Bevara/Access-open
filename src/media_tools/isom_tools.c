@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / Media Tools sub-project
@@ -144,10 +144,10 @@ GF_Err gf_media_change_par(GF_ISOFile *file, u32 track, s32 ar_num, s32 ar_den, 
 					ar_num = dsi.par_num;
 					ar_den = dsi.par_den;
 				}
-				gf_odf_desc_del((GF_Descriptor *) esd);
-				if (e) return e;
 			}
 #endif
+			gf_odf_desc_del((GF_Descriptor *) esd);
+			if (e) return e;
 		} else {
 			u32 mtype = gf_isom_get_media_type(file, track);
 			if (gf_isom_is_video_handler_type(mtype)) {
@@ -292,7 +292,7 @@ GF_Err gf_media_get_file_hash(const char *file, u8 hash[20])
 #endif
 
 	in = gf_fopen(file, "rb");
-    if (!in) return GF_URL_ERROR;
+	if (!in) return GF_URL_ERROR;
 	size = gf_fsize(in);
 
 	ctx = gf_sha1_starts();
@@ -431,8 +431,8 @@ GF_Err gf_media_make_isma(GF_ISOFile *mp4file, Bool keepESIDs, Bool keepImage, B
 		mType = gf_isom_get_media_type(mp4file, i+1);
 		switch (mType) {
 		case GF_ISOM_MEDIA_VISUAL:
-        case GF_ISOM_MEDIA_AUXV:
-        case GF_ISOM_MEDIA_PICT:
+		case GF_ISOM_MEDIA_AUXV:
+		case GF_ISOM_MEDIA_PICT:
 			image_track = 0;
 			if (esd && esd->decoderConfig && ((esd->decoderConfig->objectTypeIndication==GF_CODECID_JPEG) || (esd->decoderConfig->objectTypeIndication==GF_CODECID_PNG)) )
 				image_track = 1;
@@ -739,8 +739,8 @@ GF_Err gf_media_make_3gpp(GF_ISOFile *mp4file)
 		stype = gf_isom_get_media_subtype(mp4file, i+1, 1);
 		switch (mType) {
 		case GF_ISOM_MEDIA_VISUAL:
-        case GF_ISOM_MEDIA_AUXV:
-        case GF_ISOM_MEDIA_PICT:
+		case GF_ISOM_MEDIA_AUXV:
+		case GF_ISOM_MEDIA_PICT:
 			/*remove image tracks if wanted*/
 			if (gf_isom_get_sample_count(mp4file, i+1)<=1) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[3GPP convert] Visual track ID %d: only one sample found\n", gf_isom_get_track_id(mp4file, i+1) ));
@@ -967,6 +967,7 @@ GF_Err gf_media_get_color_info(GF_ISOFile *file, u32 track, u32 sampleDescriptio
 	) {
 		AVCState *avc_state;
 		GF_AVCConfig *avcc = gf_isom_avc_config_get(file, track, sampleDescriptionIndex);
+		if (!avcc) return GF_NOT_FOUND;
 		u32 i;
 		s32 idx;
 		GF_NALUFFParam *slc;
@@ -1005,6 +1006,7 @@ GF_Err gf_media_get_color_info(GF_ISOFile *file, u32 track, u32 sampleDescriptio
 	) {
 		HEVCState *hvc_state;
 		GF_HEVCConfig *hvcc = gf_isom_hevc_config_get(file, track, sampleDescriptionIndex);
+		if (!hvcc) return GF_NOT_FOUND;
 		u32 i;
 		GF_NALUFFParamArray *pa;
 
@@ -1261,6 +1263,8 @@ GF_Err gf_media_check_qt_prores(GF_ISOFile *mp4)
 	else if (ifps>= 4990 && ifps<=5010) target_ts = 5000; //50
 	else if (ifps>= 5993 && ifps<=5995) target_ts = 60000; //59.94
 	else if (ifps>= 5996 && ifps<=6004) target_ts = 6000; //60
+	else if (ifps>= 4794 && ifps<=4796) target_ts = 48000; //47.952
+	else if (ifps>= 4799 && ifps<=4801) target_ts = 4800; //48
 
 	if (!target_ts) {
 		if (prores_type) {
@@ -1315,6 +1319,7 @@ GF_ESD *gf_media_map_esd(GF_ISOFile *mp4, u32 track, u32 stsd_idx)
 	case GF_ISOM_SUBTYPE_LHV1:
 	case GF_ISOM_SUBTYPE_LHE1:
 	case GF_ISOM_SUBTYPE_AV01:
+	case GF_ISOM_SUBTYPE_DAV1:
 	case GF_ISOM_SUBTYPE_VP09:
 	case GF_ISOM_SUBTYPE_VP08:
 	case GF_ISOM_SUBTYPE_VVC1:
@@ -1340,6 +1345,8 @@ GF_ESD *gf_media_map_esd(GF_ISOFile *mp4, u32 track, u32 stsd_idx)
 	if (subtype == GF_ISOM_SUBTYPE_3GP_DIMS) {
 		GF_BitStream *bs;
 		GF_DIMSDescription dims;
+		GF_Err e = gf_isom_get_dims_description(mp4, track, 1, &dims);
+		if (e!=GF_OK) return NULL;
 		esd = gf_odf_desc_esd_new(0);
 		if (!esd) return NULL;
 		esd->slConfig->timestampResolution = gf_isom_get_media_timescale(mp4, track);
@@ -1348,7 +1355,6 @@ GF_ESD *gf_media_map_esd(GF_ISOFile *mp4, u32 track, u32 stsd_idx)
 		esd->decoderConfig->streamType = GF_STREAM_SCENE;
 		/*use private DSI*/
 		esd->decoderConfig->objectTypeIndication = GF_CODECID_DIMS;
-		gf_isom_get_dims_description(mp4, track, 1, &dims);
 		bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 		/*format ext*/
 		gf_bs_write_u8(bs, dims.profile);
@@ -1870,6 +1876,9 @@ GF_Err gf_media_split_svc(GF_ISOFile *file, u32 track, Bool splitAll)
 		offset += size + nalu_size_length/8;
 		if (nal_type == GF_AVC_NALU_SVC_SLICE)
 		{
+			if (!avc_state->s_info.pps)
+				continue;
+
 			for (i = 0; i < num_pps; i++)
 			{
 				if (avc_state->s_info.pps->id == pps[i])
@@ -3765,8 +3774,12 @@ GF_Err gf_media_split_hevc_tiles(GF_ISOFile *file, u32 signal_mode)
 			for (j=0; j<nb_tiles; j++) {
 				sample->dataLength = 0;
 				gf_bs_get_content(tiles[j].sample_data, &sample->data, &sample->dataLength);
-				if (!sample->data)
+				if (!sample->data) {
+					gf_bs_del(tiles[j].sample_data);
+					tiles[j].sample_data = NULL;
 					continue;
+				}
+
 
 				e = gf_isom_add_sample(file, tiles[j].track, 1, sample);
 				if (e) goto err_exit;
@@ -3911,13 +3924,13 @@ GF_Err gf_media_fragment_file(GF_ISOFile *input, const char *output_file, Double
 	f = gf_fs_load_filter(fsess, szArgs, &e);
 	if (!f) { gf_fs_del(fsess); return e; }
 
-	strcpy(szArgs, "reframer:FID=1");
+	gf_strcpy(szArgs, "reframer:FID=1");
 	f = gf_fs_load_filter(fsess, szArgs, &e);
 	if (!f) { gf_fs_del(fsess); return e; }
 
 	sprintf(szArgs, "%s:SID=1:frag:cdur=%g:abs_offset:fragdur", output_file, max_duration_sec);
 	if (use_mfra)
-		strcat(szArgs, ":mfra");
+		gf_strcat(szArgs, ":mfra");
 
 	f = gf_fs_load_destination(fsess, szArgs, NULL, NULL, &e);
 	if (!f) { gf_fs_del(fsess); return e; }
@@ -3995,6 +4008,34 @@ GF_Err rfc_6381_get_codec_aac(char *szCodec, u32 codec_id,  u8 *dsi, u32 dsi_siz
 	return GF_OK;
 }
 
+GF_Err dolby_get_codec_ac4(char *szCodec, u32 codec_id,  u8 *dsi, u32 dsi_size)
+{
+	GF_Err e = GF_NON_COMPLIANT_BITSTREAM;
+	if (!dsi || !dsi_size) return e;
+
+	GF_AC4Config cfg = {0};
+	GF_BitStream *bs = gf_bs_new((const char *)dsi, dsi_size, GF_BITSTREAM_READ);
+	if (!bs) return GF_OUT_OF_MEM;
+
+	e = gf_odf_ac4_cfg_parse_bs(bs, &cfg);
+	gf_bs_del(bs);
+	if (e == GF_OK) {
+		e = GF_NON_COMPLIANT_BITSTREAM;
+		if (cfg.stream.n_presentations > 0) {
+			GF_AC4PresentationV1 *presentations = (GF_AC4PresentationV1*)gf_list_get(cfg.stream.presentations, 0);
+			if (presentations) {
+				snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "ac-4.%02d.%02d.%02d", cfg.stream.bitstream_version, presentations->presentation_version, presentations->mdcompat);
+				e = GF_OK;
+			}
+		}
+	}
+	gf_odf_ac4_cfg_clean_list(&cfg);
+	if (e) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[RFC6381] invalid AC4 DSI %s\n", gf_error_to_string(e) ));
+	}
+	return e;
+}
+
 GF_Err rfc_6381_get_codec_m4v(char *szCodec, u32 codec_id, u8 *dsi, u32 dsi_size)
 {
 #ifndef GPAC_DISABLE_AV_PARSERS
@@ -4024,12 +4065,12 @@ GF_Err rfc_6381_get_codec_hevc(char *szCodec, u32 subtype, GF_HEVCConfig *hvcc)
 	gf_assert(hvcc);
 
 	snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.", gf_4cc_to_str(subtype));
-	if (hvcc->profile_space==1) strcat(szCodec, "A");
-	else if (hvcc->profile_space==2) strcat(szCodec, "B");
-	else if (hvcc->profile_space==3) strcat(szCodec, "C");
+	if (hvcc->profile_space==1) gf_strlcat(szCodec, "A", RFC6381_CODEC_NAME_SIZE_MAX);
+	else if (hvcc->profile_space==2) gf_strlcat(szCodec, "B", RFC6381_CODEC_NAME_SIZE_MAX);
+	else if (hvcc->profile_space==3) gf_strlcat(szCodec, "C", RFC6381_CODEC_NAME_SIZE_MAX);
 	//profile idc encoded as a decimal number
 	sprintf(szTemp, "%d", hvcc->profile_idc);
-	strcat(szCodec, szTemp);
+	gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 	//general profile compatibility flags: hexa, bit-reversed
 	{
 		u32 val = hvcc->general_profile_compatibility_flags;
@@ -4041,13 +4082,13 @@ GF_Err rfc_6381_get_codec_hevc(char *szCodec, u32 subtype, GF_HEVCConfig *hvcc)
 			val >>=1;
 		}
 		sprintf(szTemp, ".%X", res);
-		strcat(szCodec, szTemp);
+		gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 	}
 
-	if (hvcc->tier_flag) strcat(szCodec, ".H");
-	else strcat(szCodec, ".L");
+	if (hvcc->tier_flag) gf_strlcat(szCodec, ".H", RFC6381_CODEC_NAME_SIZE_MAX);
+	else gf_strlcat(szCodec, ".L", RFC6381_CODEC_NAME_SIZE_MAX);
 	sprintf(szTemp, "%d", hvcc->level_idc);
-	strcat(szCodec, szTemp);
+	gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 
 	c = hvcc->progressive_source_flag << 7;
 	c |= hvcc->interlaced_source_flag << 6;
@@ -4055,26 +4096,26 @@ GF_Err rfc_6381_get_codec_hevc(char *szCodec, u32 subtype, GF_HEVCConfig *hvcc)
 	c |= hvcc->frame_only_constraint_flag << 4;
 	c |= (hvcc->constraint_indicator_flags >> 40);
 	sprintf(szTemp, ".%X", c);
-	strcat(szCodec, szTemp);
+	gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 	if (hvcc->constraint_indicator_flags & 0xFFFFFFFF) {
 		c = (hvcc->constraint_indicator_flags >> 32) & 0xFF;
 		sprintf(szTemp, ".%X", c);
-		strcat(szCodec, szTemp);
+		gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 		if (hvcc->constraint_indicator_flags & 0x00FFFFFF) {
 			c = (hvcc->constraint_indicator_flags >> 24) & 0xFF;
 			sprintf(szTemp, ".%X", c);
-			strcat(szCodec, szTemp);
+			gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 			if (hvcc->constraint_indicator_flags & 0x0000FFFF) {
 				c = (hvcc->constraint_indicator_flags >> 16) & 0xFF;
 				sprintf(szTemp, ".%X", c);
-				strcat(szCodec, szTemp);
+				gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 				if (hvcc->constraint_indicator_flags & 0x000000FF) {
 					c = (hvcc->constraint_indicator_flags >> 8) & 0xFF;
 					sprintf(szTemp, ".%X", c);
-					strcat(szCodec, szTemp);
+					gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 					c = (hvcc->constraint_indicator_flags ) & 0xFF;
 					sprintf(szTemp, ".%X", c);
-					strcat(szCodec, szTemp);
+					gf_strlcat(szCodec, szTemp, RFC6381_CODEC_NAME_SIZE_MAX);
 				}
 			}
 		}
@@ -4122,7 +4163,7 @@ GF_Err rfc_6381_get_codec_av1(char *szCodec, u32 subtype, GF_AV1Config *av1c, CO
 			colr.override == GF_TRUE ? colr.transfer_characteristics : av1_state->transfer_characteristics,
 			colr.override == GF_TRUE ? colr.matrix_coefficients : av1_state->matrix_coefficients,
 			colr.override == GF_TRUE ? colr.full_range : av1_state->color_range);
-		strcat(szCodec, tmp);
+		gf_strlcat(szCodec, tmp, RFC6381_CODEC_NAME_SIZE_MAX);
 	} else {
 		if ((av1_state->color_primaries == 2) && (av1_state->transfer_characteristics == 2) && (av1_state->matrix_coefficients == 2) && av1_state->color_range == GF_FALSE) {
 
@@ -4152,6 +4193,20 @@ GF_Err rfc_6381_get_codec_vpx(char *szCodec, u32 subtype, GF_VPConfig *vpcc, COL
 		colr.override == GF_TRUE ? colr.matrix_coefficients : vpcc->matrix_coefficients,
 		colr.override == GF_TRUE ? colr.full_range : vpcc->video_fullRange_flag);
 	return GF_OK;
+}
+
+GF_Err rfc_6381_get_codec_avs3v(char *szCodec, u32 subtype, GF_AVS3VConfig *av3c, COLR colr)
+{
+#ifndef GPAC_DISABLE_AV_PARSERS
+	if (!av3c || !av3c->sequence_header || av3c->sequence_header_length < 6)
+		return GF_BAD_PARAM;
+	u8 profile = av3c->sequence_header[4];
+	u8 level = av3c->sequence_header[5];
+	snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.%2x.%2x", gf_4cc_to_str(subtype), profile, level);
+	return GF_OK;
+#else
+	return GF_NOT_SUPPORTED;
+#endif
 }
 
 GF_Err rfc_6381_get_codec_dolby_vision(char *szCodec, u32 subtype, GF_DOVIDecoderConfigurationRecord *dovi)
@@ -4187,10 +4242,10 @@ GF_Err rfc_6381_get_codec_vvc(char *szCodec, u32 subtype, GF_VVCConfig *vvcc)
 		pos--;
 	}
 	if (!pos) {
-		strcat(szCodec, ".CA");
+		gf_strlcat(szCodec, ".CA", RFC6381_CODEC_NAME_SIZE_MAX);
 		return GF_OK;
 	}
-	strcat(szCodec, ".C");
+	gf_strlcat(szCodec, ".C", RFC6381_CODEC_NAME_SIZE_MAX);
 	len = (u32) strlen(szCodec);
 	bs = gf_bs_new(buf, pos, GF_BITSTREAM_READ);
 	while (1) {
@@ -4220,6 +4275,7 @@ GF_Err rfc_6381_get_codec_vvc(char *szCodec, u32 subtype, GF_VVCConfig *vvcc)
 
 	return GF_OK;
 }
+
 GF_Err rfc_6381_get_codec_mpegha(char *szCodec, u32 subtype, u8 *dsi, u32 dsi_size, s32 pl)
 {
 	if (dsi && (dsi_size>=2) ) {
@@ -4230,6 +4286,52 @@ GF_Err rfc_6381_get_codec_mpegha(char *szCodec, u32 subtype, u8 *dsi, u32 dsi_si
 	}
 	snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.0x%02X", gf_4cc_to_str(subtype), pl);
 	return GF_OK;
+}
+
+GF_Err rfc_6381_get_codec_iamf(char *szCodec, GF_IAConfig *cfg)
+{
+#ifndef GPAC_DISABLE_AV_PARSERS
+	IAMFState state;
+	gf_iamf_init_state(&state);
+
+	u32 obu_count = cfg ? gf_list_count(cfg->configOBUs) : 0;
+	for (u32 i=0; i<obu_count; ++i) {
+		GF_IamfObu *obu = gf_list_get(cfg->configOBUs, i);
+		GF_BitStream *bs = gf_bs_new(obu->raw_obu_bytes, obu->obu_length, GF_BITSTREAM_READ);
+
+		u64 obu_size = 0;
+		IamfObuType obu_type;
+		GF_Err e = gf_iamf_parse_obu(bs, &obu_type, &obu_size, &state);
+		gf_bs_del(bs);
+		if (e) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[IAMF] could not parse configOBU #%u. Leaving parsing.\n", i));
+			return GF_ISOM_INVALID_FILE;
+		}
+	}
+
+	const char *codec = NULL;
+	switch (state.codec_id) {
+		case GF_4CC('O', 'p', 'u', 's'):
+			codec = "opus";
+			break;
+		case GF_4CC('f', 'L', 'a', 'C'):
+			codec = "fLaC";
+			break;
+		case GF_4CC('i', 'p', 'c', 'm'):
+			codec = "ipcm";
+			break;
+		case GF_4CC('m', 'p', '4', 'a'):
+			codec = "mp4a.40.2";
+			break;
+		default:
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[IAMF] Unsupported codec_id=%u. Leaving parsing.\n", state.codec_id));
+			return GF_ISOM_INVALID_FILE;
+	}
+	snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "iamf.%03u.%03u.%s", state.primary_profile, state.additional_profile, codec);
+	return GF_OK;
+#else
+	return GF_NOT_SUPPORTED;
+#endif
 }
 
 GF_Err rfc_6381_get_codec_uncv(char *szCodec, u32 subtype, u8 *dsi, u32 dsi_size);
@@ -4251,25 +4353,25 @@ GF_Err rfc_6381_get_codec_stpp(char *szCodec, u32 subtype,
                                const char *xml_schema_loc,
                                const char *mimes)
 {
-    // we ignore schema location and auxiliary mime types
-    // we focus on the provided list of namespaces
-    if (xmlnamespace != NULL) {
-        int i;
-        for (i = 0; i < TTML_NAMESPACES_COUNT; i+=2) {
-            if(strstr(xmlnamespace, ttml_namespaces[i+1]) != NULL) {
-                snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.%s.%s", gf_4cc_to_str(subtype), "ttml", ttml_namespaces[i]);
-                return GF_OK;
-            }
-        }
-        // if none of the namespaces above have been found, search the default TTML namespace
-        if(strstr(xmlnamespace, "http://www.w3.org/ns/ttml")) {
-            snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.%s", gf_4cc_to_str(subtype), "ttml");
-            return GF_OK;
-        }
-    }
-    // None of the known namespaces are found, default
-    snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
-    return GF_OK;
+	// we ignore schema location and auxiliary mime types
+	// we focus on the provided list of namespaces
+	if (xmlnamespace != NULL) {
+		int i;
+		for (i = 0; i < TTML_NAMESPACES_COUNT; i+=2) {
+			if(strstr(xmlnamespace, ttml_namespaces[i+1]) != NULL) {
+				snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.%s.%s", gf_4cc_to_str(subtype), "ttml", ttml_namespaces[i]);
+				return GF_OK;
+			}
+		}
+		// if none of the namespaces above have been found, search the default TTML namespace
+		if(strstr(xmlnamespace, "http://www.w3.org/ns/ttml")) {
+			snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s.%s", gf_4cc_to_str(subtype), "ttml");
+			return GF_OK;
+		}
+	}
+	// None of the known namespaces are found, default
+	snprintf(szCodec, RFC6381_CODEC_NAME_SIZE_MAX, "%s", gf_4cc_to_str(subtype));
+	return GF_OK;
 }
 
 GF_Err rfc6381_codec_name_default(char *szCodec, u32 subtype, u32 codec_id)
@@ -4372,7 +4474,7 @@ GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *movie, u32 track, u32 stsd_i
 			gf_odf_avc_cfg_del(avcc);
 			return e;
 		}
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[RFC6381] Cannot find AVC configuration box"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[RFC6381] Cannot find AVC configuration box\n"));
 		return GF_ISOM_INVALID_FILE;
 
 	case GF_ISOM_SUBTYPE_SVC_H264:
@@ -4432,6 +4534,24 @@ GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *movie, u32 track, u32 stsd_i
 			return e;
 		}
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[RFC6381] No config found for AV1 file (\"%s\") when computing RFC6381.\n", gf_4cc_to_str(subtype)));
+		return GF_BAD_PARAM;
+	}
+
+	case GF_ISOM_SUBTYPE_AVS3:
+	{
+		GF_AVS3VConfig *av3c = gf_isom_avs3v_config_get(movie, track, stsd_idx);
+		if (av3c) {
+			u32 colour_type;
+			COLR colr;
+			memset(&colr, 0, sizeof(colr));
+			if (GF_OK == gf_isom_get_color_info(movie, track, stsd_idx, &colour_type, &colr.colour_primaries, &colr.transfer_characteristics, &colr.matrix_coefficients, &colr.full_range)) {
+				colr.override = GF_TRUE;
+			}
+			e = rfc_6381_get_codec_avs3v(szCodec, subtype, av3c, colr);
+			gf_odf_avs3v_cfg_del(av3c);
+			return e;
+		}
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[RFC6381] No config found for AVS3 Video file (\"%s\") when computing RFC6381.\n", gf_4cc_to_str(subtype)));
 		return GF_BAD_PARAM;
 	}
 
@@ -4503,6 +4623,18 @@ GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *movie, u32 track, u32 stsd_i
 		return e;
 	}
 
+	case GF_ISOM_SUBTYPE_IAMF:
+	{
+		GF_IAConfig *iamf = gf_isom_iamf_config_get(movie, track, stsd_idx);
+		if (!iamf) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[RFC6381] No config found for IAMF file (\"%s\") when computing RFC6381.\n", gf_4cc_to_str(subtype)));
+			return GF_NON_COMPLIANT_BITSTREAM;
+		}
+		e = rfc_6381_get_codec_iamf(szCodec, iamf);
+		gf_odf_iamf_cfg_del(iamf);
+		return e;
+	}
+
 	case GF_ISOM_SUBTYPE_UNCV:
 	{
 		GF_GenericSampleDescription *udesc = gf_isom_get_generic_sample_description(movie, track, stsd_idx);
@@ -4514,21 +4646,20 @@ GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *movie, u32 track, u32 stsd_i
 		}
 		return e;
 	}
-    case GF_ISOM_SUBTYPE_STPP:
-    {
-        const char *xmlnamespace;
-        const char *xml_schema_loc;
-        const char *mimes;
-        e = gf_isom_xml_subtitle_get_description(movie, track, stsd_idx,
-                                             &xmlnamespace, &xml_schema_loc, &mimes);
-        if (e == GF_OK) {
-            rfc_6381_get_codec_stpp(szCodec, subtype, xmlnamespace, xml_schema_loc, mimes);
-        }
-        return e;
-    }
+	case GF_ISOM_SUBTYPE_STPP:
+	{
+		const char *xmlnamespace;
+		const char *xml_schema_loc;
+		const char *mimes;
+		e = gf_isom_xml_subtitle_get_description(movie, track, stsd_idx,
+		                                     &xmlnamespace, &xml_schema_loc, &mimes);
+		if (e == GF_OK) {
+			rfc_6381_get_codec_stpp(szCodec, subtype, xmlnamespace, xml_schema_loc, mimes);
+		}
+		return e;
+	}
 	default:
 		return rfc6381_codec_name_default(szCodec, subtype, gf_codec_id_from_isobmf(subtype));
-
 	}
 	return GF_OK;
 }
@@ -4591,10 +4722,10 @@ GF_Err gf_media_av1_layer_size_get(GF_ISOFile *file, u32 trackNumber, u32 sample
 	gf_isom_sample_del(&samp);
 
   if (op_index > av1_state->operating_points_count) {
-    if (av1_state->config) gf_odf_av1_cfg_del(av1_state->config);
-    gf_av1_reset_state(av1_state, GF_TRUE);
-    gf_free(av1_state);
-    return GF_BAD_PARAM;
+	if (av1_state->config) gf_odf_av1_cfg_del(av1_state->config);
+	gf_av1_reset_state(av1_state, GF_TRUE);
+	gf_free(av1_state);
+	return GF_BAD_PARAM;
   }
 
 	for (i=0; i<3; i++) {

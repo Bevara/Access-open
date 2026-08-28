@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -31,14 +31,14 @@
 //ugly patch, we have a concurrence issue with gf_4cc_to_str, for now fixed by rolling buffers
 #define NB_4CC_BUF	10
 static char szTYPE_BUF[NB_4CC_BUF][GF_4CC_MSIZE];
-static u32 buf_4cc_idx = NB_4CC_BUF;
+static u32 buf_4cc_idx = 0;
 
 GF_EXPORT
 const char *gf_4cc_to_str_safe(u32 type, char szType[GF_4CC_MSIZE])
 {
 	u32 ch, i;
 	if (!type) {
-		strcpy(szType, "00000000");
+		gf_strlcpy(szType, "00000000", GF_4CC_MSIZE);
 		return szType;
 	}
 	char *name = (char *)szType;
@@ -47,7 +47,7 @@ const char *gf_4cc_to_str_safe(u32 type, char szType[GF_4CC_MSIZE])
 		if ( ch >= 0x20 && ch <= 0x7E ) {
 			*name = ch;
 			name++;
-		} else if (!gf_sys_is_test_mode() ) {
+		} else {
 			char szTmp[2];
 			szTmp[0] = 0xc2;
 			szTmp[1] = ch;
@@ -58,7 +58,7 @@ const char *gf_4cc_to_str_safe(u32 type, char szType[GF_4CC_MSIZE])
 			} else {
 				szTmp[0] = 0xc3;
 				if (gf_utf8_is_legal(szTmp, 2)) {
-					name[0] = 0xc2;
+					name[0] = 0xc3;
 					name[1] = ch;
 					name+=2;
 				} else {
@@ -66,9 +66,6 @@ const char *gf_4cc_to_str_safe(u32 type, char szType[GF_4CC_MSIZE])
 					name += 2;
 				}
 			}
-		} else {
-			sprintf(name, "%02X", ch);
-			name += 2;
 		}
 	}
 	*name = 0;
@@ -80,10 +77,16 @@ GF_EXPORT
 const char *gf_4cc_to_str(u32 type)
 {
 	if (!type) return "00000000";
-	if (safe_int_dec(&buf_4cc_idx)==0)
-		buf_4cc_idx=NB_4CC_BUF;
 
-	return gf_4cc_to_str_safe(type, szTYPE_BUF[buf_4cc_idx-1]);
+	// we get the value *before* the increment insuring that other thread get another value
+	u32 old_idx = safe_int_fetch_add(&buf_4cc_idx, 1);
+
+	// keep our specific value between 0 and NB_4CC_BUF-1
+	// we might have an issue when buf_4cc_idx > INT_MAX since our atomics cast to int
+	// when it gets > UINT_MAX it should just wrap around and be ok
+	u32 buffer_index = old_idx % NB_4CC_BUF;
+
+	return gf_4cc_to_str_safe(type, szTYPE_BUF[buffer_index]);
 }
 
 
@@ -235,6 +238,7 @@ static struct log_tool_info {
 	{ GF_LOG_ROUTE, "route", GF_LOG_WARNING, .alt = "flute" },
 	{ GF_LOG_CONSOLE, "console", GF_LOG_INFO },
 	{ GF_LOG_APP, "app", GF_LOG_INFO },
+	{ GF_LOG_RMTWS, "rmtws", GF_LOG_WARNING },
 };
 
 #define GF_LOG_TOOL_MAX_NAME_SIZE (GF_LOG_TOOL_MAX*10)
@@ -265,8 +269,7 @@ GF_Err gf_log_modify_tools_levels(const char *val_)
 	const char *val = tmp;
 	if (!val_) val_ = "";
 	if (strlen(val_) >= GF_LOG_TOOL_MAX_NAME_SIZE) return GF_BAD_PARAM;
-	strncpy(tmp, val_, GF_LOG_TOOL_MAX_NAME_SIZE - 1);
-	tmp[GF_LOG_TOOL_MAX_NAME_SIZE - 1] = 0;
+	gf_strcpy(tmp, val_);
 
 	while (val && strlen(val)) {
 		void default_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist);
@@ -420,16 +423,16 @@ char *gf_log_get_tools_levels()
 	u32 i, level, len;
 	char szLogs[GF_MAX_PATH];
 	char szLogTools[GF_MAX_PATH];
-	strcpy(szLogTools, "");
+	gf_strcpy(szLogTools, "");
 
 	level = GF_LOG_QUIET;
 	while (level <= GF_LOG_DEBUG) {
 		u32 nb_tools = 0;
-		strcpy(szLogs, "");
+		gf_strcpy(szLogs, "");
 		for (i=0; i<GF_LOG_TOOL_MAX; i++) {
 			if (global_log_tools[i].level == level) {
-				strcat(szLogs, global_log_tools[i].name);
-				strcat(szLogs, ":");
+				gf_strcat(szLogs, global_log_tools[i].name);
+				gf_strcat(szLogs, ":");
 				nb_tools++;
 			}
 		}
@@ -442,21 +445,21 @@ char *gf_log_get_tools_levels()
 			else if (level==GF_LOG_DEBUG) levelstr = "@debug";
 
 			if (nb_tools>GF_LOG_TOOL_MAX/2) {
-				strcpy(szLogs, szLogTools);
-				strcpy(szLogTools, "all");
-				strcat(szLogTools, levelstr);
+				gf_strcpy(szLogs, szLogTools);
+				gf_strcpy(szLogTools, "all");
+				gf_strcat(szLogTools, levelstr);
 				if (strlen(szLogs)) {
-					strcat(szLogTools, ":");
-					strcat(szLogTools, szLogs);
+					gf_strcat(szLogTools, ":");
+					gf_strcat(szLogTools, szLogs);
 				}
 			} else {
 				if (strlen(szLogTools)) {
-					strcat(szLogTools, ":");
+					gf_strcat(szLogTools, ":");
 				}
 				/*remove last ':' from tool*/
 				szLogs[ strlen(szLogs) - 1 ] = 0;
-				strcat(szLogTools, szLogs);
-				strcat(szLogTools, levelstr);
+				gf_strcat(szLogTools, szLogs);
+				gf_strcat(szLogTools, levelstr);
 			}
 		}
 		level++;
@@ -789,6 +792,7 @@ Bool gpac_log_utc_time = GF_FALSE;
 Bool gpac_log_dual = GF_FALSE;
 Bool last_log_is_lf = GF_TRUE;
 static u64 gpac_last_log_time=0;
+Bool gpac_use_logx = GF_FALSE;
 
 static void do_log_time(FILE *logs, const char *fmt)
 {
@@ -874,18 +878,120 @@ void default_log_callback_color(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool
 
 
 
-static void *user_log_cbk = NULL;
+void *user_log_cbk = NULL;
 gf_log_cbk log_cbk = default_log_callback_color;
 static Bool log_exit_on_error = GF_FALSE;
 #ifdef GPAC_CONFIG_EMSCRIPTEN
 Bool gpac_log_console = GF_FALSE;
 #endif
+static GF_List *logs_thread_tags = NULL;
+
+typedef struct
+{
+	u32 th_id;
+	Bool tagged;
+	u32 type;
+	void *udta;
+} GF_LogThreadTag;
+
+void gf_logs_init()
+{
+	logs_thread_tags = gf_list_new();
+}
+
+void gf_logs_close()
+{
+	if (gpac_log_file) {
+		gf_fclose(gpac_log_file);
+		gpac_log_file = NULL;
+	}
+	while (gf_list_count(logs_thread_tags)) {
+		GF_LogThreadTag *tag = gf_list_pop_back(logs_thread_tags);
+		gf_free(tag);
+	}
+	gf_list_del(logs_thread_tags);
+}
+
+static void gf_logs_set_thread_tag_internal(void *tag_val, u32 tag_type, Bool is_tag, Bool is_rem)
+{
+	if (!is_rem && !gpac_use_logx && (tag_type>1))
+		return;
+
+	if (!logs_thread_tags)
+		return;
+
+	gf_mx_p(logs_mx);
+	u32 i, count = gf_list_count(logs_thread_tags);
+	GF_LogThreadTag *tag = NULL;
+	for (i=0;i<count;i++) {
+		tag = gf_list_get(logs_thread_tags, i);
+		if (tag->udta == tag_val) {
+			if (is_rem) {
+				gf_list_rem(logs_thread_tags, i);
+				gf_free(tag);
+				gf_mx_v(logs_mx);
+				return;
+			}
+			break;
+		}
+		tag = NULL;
+	}
+	if (is_rem) return;
+
+	if (!tag) {
+		GF_SAFEALLOC(tag, GF_LogThreadTag)
+		tag->udta = tag_val;
+		gf_list_add(logs_thread_tags, tag);
+	}
+	gf_mx_v(logs_mx);
+	tag->tagged = is_tag;
+	tag->type = tag_type;
+	tag->th_id = gf_th_id();
+}
+
+void gf_logs_thread_tag(void *tag_val, u32 tag_type)
+{
+	gf_logs_set_thread_tag_internal(tag_val, tag_type, GF_TRUE, GF_FALSE);
+}
+void gf_logs_thread_untag(void *tag_val)
+{
+	gf_logs_set_thread_tag_internal(tag_val, 0, GF_FALSE, GF_FALSE);
+}
+void gf_logs_thread_tag_del(void *tag_val)
+{
+	gf_logs_set_thread_tag_internal(tag_val, 0, GF_FALSE, GF_TRUE);
+}
+
+
+void *gf_logs_get_thread_tag(u32 *tag_type, u32 *o_th_id)
+{
+	u32 th_id = gf_th_id();
+	u32 i, count = gf_list_count(logs_thread_tags);
+	GF_LogThreadTag *highest_tag = NULL;
+	for (i=0; i<count; i++) {
+		GF_LogThreadTag *tag = gf_list_get(logs_thread_tags, i);
+		if (tag->tagged && (tag->th_id == th_id)) {
+			if (!highest_tag || (highest_tag->type < tag->type))
+				highest_tag = tag;
+		}
+	}
+	*o_th_id = th_id;
+	if (highest_tag) {
+		*tag_type = highest_tag->type;
+		return highest_tag->udta;
+	}
+	*tag_type = 0;
+	return NULL;
+}
 
 GF_EXPORT
 Bool gf_log_use_color()
 {
 	return (log_cbk == default_log_callback_color) ? GF_TRUE : GF_FALSE;
 }
+
+static Bool in_log_callback = GF_FALSE;
+
 
 GF_EXPORT
 void gf_log(const char *fmt, ...)
@@ -897,12 +1003,17 @@ void gf_log(const char *fmt, ...)
 		});
 	}
 #endif
-	va_list vl;
-	va_start(vl, fmt);
 	gf_mx_p(logs_mx);
-	log_cbk(user_log_cbk, call_lev, call_tool, fmt, vl);
+	//don't allow GF_LOG to be called from GF_LOG this will likely throw infinite recursion
+	if (!in_log_callback) {
+		va_list vl;
+		va_start(vl, fmt);
+		in_log_callback = GF_TRUE;
+		log_cbk(user_log_cbk, call_lev, call_tool, fmt, vl);
+		in_log_callback = GF_FALSE;
+		va_end(vl);
+	}
 	gf_mx_v(logs_mx);
-	va_end(vl);
 #ifdef GPAC_CONFIG_EMSCRIPTEN
 	if (gpac_log_console && (call_tool!=GF_LOG_APP)) {
 		EM_ASM({
@@ -918,7 +1029,15 @@ void gf_log(const char *fmt, ...)
 GF_EXPORT
 void gf_log_va_list(GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vl)
 {
-	log_cbk(user_log_cbk, call_lev, call_tool, fmt, vl);
+	gf_mx_p(logs_mx);
+	//don't allow GF_LOG to be called from GF_LOG this will likely throw infinite recursion
+	if (!in_log_callback) {
+		in_log_callback = GF_TRUE;
+		log_cbk(user_log_cbk, call_lev, call_tool, fmt, vl);
+		in_log_callback = GF_FALSE;
+	}
+	gf_mx_v(logs_mx);
+
 	if (log_exit_on_error && (call_lev==GF_LOG_ERROR) && (call_tool != GF_LOG_MEMORY)) {
 		exit(1);
 	}
@@ -964,6 +1083,11 @@ gf_log_cbk gf_log_set_callback(void *usr_cbk, gf_log_cbk cbk)
 }
 
 #else
+
+void gf_logs_thread_tag(void *tag_val, u32 tag_type){}
+void gf_logs_thread_untag(void *tag_val){}
+void gf_logs_thread_tag_del(void *tag_val){}
+
 GF_EXPORT
 void gf_log(const char *fmt, ...)
 {
@@ -1522,6 +1646,9 @@ static const char *gf_disabled_features()
 #ifdef GPAC_DISABLE_RFAC3
 	                       "GPAC_DISABLE_RFAC3 "
 #endif
+#ifdef GPAC_DISABLE_RFAC4
+	                       "GPAC_DISABLE_RFAC4 "
+#endif
 #ifdef GPAC_DISABLE_RFADTS
 	                       "GPAC_DISABLE_RFADTS "
 #endif
@@ -1587,6 +1714,9 @@ static const char *gf_disabled_features()
 #endif
 #ifdef GPAC_DISABLE_UFMHAS
 	                       "GPAC_DISABLE_UFMHAS "
+#endif
+#ifdef GPAC_DISABLE_UFAC4
+	                       "GPAC_DISABLE_UFAC4 "
 #endif
 #ifdef GPAC_DISABLE_UFM4V
 	                       "GPAC_DISABLE_UFM4V "
@@ -2213,15 +2343,18 @@ GF_Err gf_dynstrcat(char **str, const char *to_append, const char *sep)
 	lsep = sep ? (u32) strlen(sep) : 0;
 	l1 = *str ? (u32) strlen(*str) : 0;
 	l2 = (u32) strlen(to_append);
-	if (l1) (*str) = gf_realloc((*str), sizeof(char)*(l1+l2+lsep+1));
-	else (*str) = gf_realloc((*str), sizeof(char)*(l2+lsep+1));
+	u32 asize = l2+1;
+	if (l1) asize += l1+lsep;
 
+	(*str) = gf_realloc((*str), sizeof(char)*asize);
 	if (! (*str) )
 		return GF_OUT_OF_MEM;
 
-	(*str)[l1]=0;
-	if (l1 && sep) strcat((*str), sep);
-	strcat((*str), to_append);
+	if (l1 && sep) {
+		memcpy( (*str) + l1, sep, lsep );
+		l1 += lsep;
+	}
+	memcpy((*str) + l1, to_append, l2 + 1); //include NUL-term
 	return GF_OK;
 }
 
@@ -2275,6 +2408,8 @@ Bool gf_parse_lfrac(const char *value, GF_Fraction64 *frac)
 		frac->den = 1;
 		while (i<len) {
 			i++;
+			if (frac->den > GF_UINT64_MAX / 10)
+				return GF_FALSE;
 			frac->den *= 10;
 		}
 		//trash trailing zero
@@ -2283,6 +2418,8 @@ Bool gf_parse_lfrac(const char *value, GF_Fraction64 *frac)
 			if (sep[i] != '0') {
 				break;
 			}
+			if (div_trail_zero > GF_UINT_MAX / 10)
+				return GF_FALSE;
 			div_trail_zero *= 10;
 			i--;
 		}
@@ -2352,6 +2489,101 @@ const char* gf_strmemstr(const char *data, u32 data_size, const char *pat)
        return NULL;
 }
 
+
+/*
+ * FROM: https://github.com/freebsd/freebsd-src/blob/master/sys/libkern/strlcpy.c
+ *
+ * Copyright (c) 1998, 2015 Todd C. Miller <Todd.Miller@courtesan.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ */
+/*
+ * Copy string src to buffer dst of size dsize.  At most dsize-1
+ * chars will be copied.  Always NUL terminates (unless dsize == 0).
+ * Returns strlen(src); if retval >= dsize, truncation occurred.
+ */
+GF_EXPORT
+size_t gf_strlcpy(char * dst, const char * src, size_t dsize)
+{
+#ifdef GPAC_HAS_STRLCPY
+	return strlcpy(dst, src, dsize);
+#else
+	const char *osrc = src;
+	size_t nleft = dsize;
+
+	/* Copy as many bytes as will fit. */
+	if (nleft != 0) {
+		while (--nleft != 0) {
+			if ((*dst++ = *src++) == '\0')
+				break;
+		}
+	}
+
+	/* Not enough room in dst, add NUL and traverse rest of src. */
+	if (nleft == 0) {
+		if (dsize != 0)
+			*dst = '\0';		/* NUL-terminate dst */
+		while (*src++)
+			;
+	}
+
+	return(src - osrc - 1);	/* count does not include NUL */
+#endif
+}
+
+/*
+ * FROM: https://github.com/freebsd/freebsd-src/blob/master/sys/libkern/strlcat.c
+ *
+ * Copyright (c) 1998, 2015 Todd C. Miller <Todd.Miller@courtesan.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ */
+/*
+ * Appends src to string dst of size siz (unlike strncat, siz is the
+ * full size of dst, not space left).  At most siz-1 characters
+ * will be copied.  Always NUL terminates (unless siz <= strlen(dst)).
+ * Returns strlen(src) + MIN(siz, strlen(initial dst)).
+ * If retval >= siz, truncation occurred.
+ */
+GF_EXPORT
+size_t gf_strlcat(char *dst, const char *src, size_t siz)
+{
+#ifdef GPAC_HAS_STRLCPY
+	return strlcat(dst, src, siz);
+#else
+	char *d = dst;
+	const char *s = src;
+	size_t n = siz;
+	size_t dlen;
+
+	/* Find the end of dst and adjust bytes left but don't go past end */
+	while (n-- != 0 && *d != '\0')
+		d++;
+	dlen = d - dst;
+	n = siz - dlen;
+
+	if (n == 0)
+		return(dlen + strlen(s));
+	while (*s != '\0') {
+		if (n != 1) {
+			*d++ = *s;
+			n--;
+		}
+		s++;
+	}
+	*d = '\0';
+
+	return(dlen + (s - src));	/* count does not include NUL */
+#endif
+}
+
+
 GF_EXPORT
 Bool gf_sys_solve_path(const char *url, char szPath[GF_MAX_PATH])
 {
@@ -2373,8 +2605,7 @@ Bool gf_sys_solve_path(const char *url, char szPath[GF_MAX_PATH])
 	}
 
 	if (path && path[0]) {
-		strncpy(szPath, path, GF_MAX_PATH-1);
-		szPath[GF_MAX_PATH-1] = 0;
+		gf_strlcpy(szPath, path, GF_MAX_PATH);
 		if (rem_name) {
 			char *sep = strrchr(szPath, '/');
 			if (!sep) sep = strrchr(szPath, '\\');
@@ -2384,7 +2615,7 @@ Bool gf_sys_solve_path(const char *url, char szPath[GF_MAX_PATH])
 		if ((szPath[len-1]=='/') || (szPath[len-1]=='\\'))
 			szPath[len-1]=0;
 
-		strncat(szPath, url+radlen, GF_MAX_PATH-strlen(szPath)-1);
+		gf_strlcat(szPath, url+radlen, GF_MAX_PATH);
 		return GF_TRUE;
 	}
 	return GF_FALSE;

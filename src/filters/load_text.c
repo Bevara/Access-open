@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / text import filter
@@ -267,12 +267,13 @@ static GF_Err gf_text_guess_format(GF_TXTIn *ctx, const char *filename, u32 *fmt
 	if (uni_type>1) {
 		const u16 *sptr;
 		char szUTF[1024];
-		u32 read = (u32) gf_fread(szUTF, 1023, test);
+		u32 read = (u32) gf_fread(szUTF, 1022, test);
 		if ((s32) read < 0) {
 			gf_fclose(test);
 			return GF_IO_ERR;
 		}
 		szUTF[read]=0;
+		szUTF[read+1]=0;
 		sptr = (u16*)szUTF;
 		/*read = (u32) */gf_utf8_wcstombs(szLine, read, &sptr);
 	} else {
@@ -321,7 +322,7 @@ static GF_Err gf_text_guess_format(GF_TXTIn *ctx, const char *filename, u32 *fmt
 
 
 
-char *gf_text_get_utf8_line(char *szLine, u32 lineSize, FILE *txt_in, s32 unicode_type, Bool *io_progress)
+char *gf_text_get_utf8_line(char szLine[2048], u32 lineSize, FILE *txt_in, s32 unicode_type, Bool *io_progress)
 {
 	u32 i, j, len;
 	u32 start_pos = (u32) gf_ftell(txt_in);
@@ -330,6 +331,7 @@ char *gf_text_get_utf8_line(char *szLine, u32 lineSize, FILE *txt_in, s32 unicod
 	unsigned short *sptr;
 	Bool in_eof = *io_progress;
 	*io_progress = GF_FALSE;
+	if (lineSize<2) return NULL;
 
 	memset(szLine, 0, sizeof(char)*lineSize);
 	sOK = gf_fgets(szLine, lineSize, txt_in);
@@ -408,7 +410,7 @@ char *gf_text_get_utf8_line(char *szLine, u32 lineSize, FILE *txt_in, s32 unicod
 			j = lineSize-1 ;
 		}
 		szLineConv[j] = 0;
-		strcpy(szLine, szLineConv);
+		gf_strlcpy(szLine, szLineConv, 2048);
 		return sOK;
 	}
 
@@ -428,11 +430,13 @@ char *gf_text_get_utf8_line(char *szLine, u32 lineSize, FILE *txt_in, s32 unicod
 			i+=2;
 		}
 	}
+	szLine[lineSize-2]=0;
+	szLine[lineSize-1]=0;
 	sptr = (u16 *)szLine;
 	i = gf_utf8_wcstombs(szLineConv, 2048, (const unsigned short **) &sptr);
 	if (i == GF_UTF8_FAIL) i = 0;
 	szLineConv[i] = 0;
-	strcpy(szLine, szLineConv);
+	gf_strlcpy(szLine, szLineConv, 2048);
 	/*this is ugly indeed: since input is UTF16-LE, there are many chances the gf_fgets never reads the \0 after a \n*/
 	if (unicode_type==3) gf_fgetc(txt_in);
 
@@ -564,7 +568,7 @@ static void txtin_probe_duration(GF_TXTIn *ctx)
 				} else {
 					if (strcmp(att->name, "duration")) continue;
 					duration = atoi(att->value);
-					dur.num += (s32) ( (1000 * duration) / ctx->txml_timescale);
+					dur.num += (s32) ( (1000 * duration) / (ctx->txml_timescale ? ctx->txml_timescale : 1) );
 				}
 			}
 		}
@@ -741,7 +745,9 @@ static void txtin_process_send_text_sample(GF_TXTIn *ctx, GF_TextSample *txt_sam
 	if (!ctx->pid_framed && (ctx->stxtmod <=STXT_MODE_SBTT)) {
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, txt_samp->len, &pck_data);
 		if (!dst_pck) return;
-		memcpy(pck_data, txt_samp->text, txt_samp->len);
+		if (txt_samp->text) {
+			memcpy(pck_data, txt_samp->text, txt_samp->len);
+		}
 	} else {
 		u32 size = gf_isom_text_sample_size(txt_samp);
 
@@ -828,7 +834,7 @@ static GF_Err parse_srt_line(GF_TXTIn *ctx, char *szLine, u32 *char_l, Bool *set
 						}
 					}
 
-					if (e_sep) {
+					if (e_sep && e_sep[0]) {
 						char c_sep = e_sep[0];
 						e_sep[0] = 0;
 						font_style = gf_color_parse(a_sep);
@@ -1338,7 +1344,7 @@ static GF_Err txtin_webvtt_setup(GF_Filter *filter, GF_TXTIn *ctx)
 
 	ctx->vttparser = gf_webvtt_parser_new();
 
-	e = gf_webvtt_parser_init(ctx->vttparser, ctx->src, ctx->unicode_type, is_srt, ctx, gf_webvtt_import_report, gf_webvtt_flush_sample, gf_webvtt_import_header);
+	e = gf_webvtt_parser_init(ctx->vttparser, &ctx->src, ctx->unicode_type, is_srt, ctx, gf_webvtt_import_report, gf_webvtt_flush_sample, gf_webvtt_import_header);
 	if (e != GF_OK) {
 		gf_webvtt_parser_del(ctx->vttparser);
 		ctx->vttparser = NULL;
@@ -1485,7 +1491,7 @@ u64 ttml_get_timestamp_ex(char *value, u32 tick_rate, u32 *ttml_fps_num, u32 *tt
 	u64 ts = GF_FILTER_NO_TS;
 	u32 len = (u32) strlen(value);
 
-	//tick metrick - cannot be fractional
+	//tick metric - cannot be fractional
 	if (len && (value[len-1]=='t')) {
 		value[len-1] = 0;
 		ts = (s64) (atoi(value) * 1000);
@@ -1545,10 +1551,10 @@ u64 ttml_get_timestamp_ex(char *value, u32 tick_rate, u32 *ttml_fps_num, u32 *tt
 	else {
 		u32 nb_val=0;
 		Bool has_dot=GF_FALSE;
-		u32 vals[6];
+		u32 vals[6] = {0};
 		char *cur = value;
 		while (cur) {
-			char sep;
+			char sep = 0;
 			char *next_col = strchr(cur, ':');
 			if (!next_col) next_col = strchr(cur, '.');
 			if (next_col) {
@@ -1561,7 +1567,7 @@ u64 ttml_get_timestamp_ex(char *value, u32 tick_rate, u32 *ttml_fps_num, u32 *tt
 			has_dot = (sep=='.') ? GF_TRUE : GF_FALSE;
 			next_col[0] = sep;
 			cur = next_col+1;
-			if (nb_val>6) break;
+			if (nb_val>=6) break;
 		}
 		h = vals[0];
 		m = vals[1];
@@ -1849,6 +1855,7 @@ static GF_Err ttml_push_resources(GF_TXTIn *ctx, TTMLInterval *interval, GF_XMLN
 	return GF_OK;
 }
 
+// modifications in this function should be mirrored in writegen_rewrite_timestamp_ttml()
 static GF_Err ttml_rewrite_timestamp(GF_TXTIn *ctx, s64 ttml_zero, GF_XMLAttribute *att, s64 *value, Bool *drop)
 {
 	u64 v;
@@ -1866,11 +1873,11 @@ static GF_Err ttml_rewrite_timestamp(GF_TXTIn *ctx, s64 ttml_zero, GF_XMLAttribu
 	*value -= ttml_zero;
 	v = (u64) (*value / 1000);
 	h = (u32) (v / 3600);
-	m = (u32) (v - h*60) / 60;
+	m = (u32) (v - h*3600) / 60;
 	s = (u32) (v - h*3600 - m*60);
 	ms = (*value) % 1000;
 
-	snprintf(szTS, 20, "%02d:%02d:%02d.%03d", h, m, s, ms);
+	snprintf(szTS, 20, "%02u:%02u:%02u.%03u", h, m, s, ms);
 	szTS[20] = 0;
 	gf_free(att->value);
 	att->value = gf_strdup(szTS);
@@ -2754,11 +2761,15 @@ static GF_Err gf_text_process_sub(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 			continue;
 		}
 		while (szLine[i+1] && szLine[i+1]!='}') {
+			if (i>=GF_ARRAY_LENGTH(szTime)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[sub->bifs] Bad frame (line %d): expected \"}\" before %d chars after \"{\"\n", line, GF_ARRAY_LENGTH(szTime)));
+				szTime[0] = 0;
+				goto exit;
+			}
 			szTime[i] = szLine[i+1];
 			i++;
-			if (i>=40) break;
 		}
-		szTime[i] = 0;
+		szTime[MIN(i, GF_ARRAY_LENGTH(szTime)-1)] = 0;
 		ctx->start = atoi(szTime);
 		if (ctx->start < ctx->end) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TXTIn] corrupted SUB frame (line %d) - starts (at %d ms) before end of previous one (%d ms) - adjusting time stamps\n", line, ctx->start, ctx->end));
@@ -2771,11 +2782,15 @@ static GF_Err gf_text_process_sub(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 			continue;
 		}
 		while (szLine[i+1+j] && szLine[i+1+j]!='}') {
+			if (i>=GF_ARRAY_LENGTH(szTime)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[sub->bifs] Bad frame (line %d): expected \"}\" before %d chars after \"{\"\n", line, GF_ARRAY_LENGTH(szTime)));
+				szTime[0] = 0;
+				goto exit;
+			}
 			szTime[i] = szLine[i+1+j];
 			i++;
-			if (i>=40) break;
 		}
-		szTime[i] = 0;
+		szTime[MIN(i, GF_ARRAY_LENGTH(szTime)-1)] = 0;
 		ctx->end = atoi(szTime);
 		j+=i+2;
 
@@ -2820,6 +2835,7 @@ static GF_Err gf_text_process_sub(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 			return GF_OK;
 		}
 	}
+exit:
 	/*final flush*/
 	if (ctx->end && !ctx->noflush) {
 		samp = gf_isom_new_text_sample();
@@ -2832,12 +2848,16 @@ static GF_Err gf_text_process_sub(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 	return GF_EOS;
 }
 
+#define MAX_LINE_SIZE 2048
+
+#define LINE_CAT(line, str) (gf_strlcat((line), (str), MAX_LINE_SIZE))
+
 static GF_Err gf_text_process_ssa(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPacket *ipck)
 {
 	u32 i, j, len, line;
 	u32 state = 0;
 	GF_TextSample *samp;
-	char szLine[2048], szText[2048];
+	char szLine[MAX_LINE_SIZE], szText[MAX_LINE_SIZE];
 
 	//same setup as for srt
 	if (!ctx->is_setup) {
@@ -2958,14 +2978,25 @@ static GF_Err gf_text_process_ssa(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 
 		memset(szText, 0, 2048);
 		i=j=0;
+		u32 start_p_len = (u32)strlen(start_p);
 		while (1) {
+			if (i>=start_p_len)
+				break;
 			char c = start_p[i];
 			if (c == 0) {
+				if (j >= MAX_LINE_SIZE) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[TXTIn] Line too long\n"));
+					return GF_BAD_PARAM;
+				}
 				szText[j] = 0;
 				break;
 			}
 			if (c=='\\') {
 				if ((start_p[i+1] == 'N') || (start_p[i+1] == 'n')) {
+					if (j >= MAX_LINE_SIZE) {
+						GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[TXTIn] Line too long\n"));
+						return GF_BAD_PARAM;
+					}
 					szText[j] = 0;
 					parse_srt_line(ctx, szText, &char_len, &set_start_char, &set_end_char);
 
@@ -3014,28 +3045,32 @@ static GF_Err gf_text_process_ssa(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 					i++;
 
 					if (style==1) {
-						if (is_end) {strcat(szText, "</i>"); j+=4;}
-						else {strcat(szText, "<i>"); j+=3;}
+						if (is_end) {LINE_CAT(szText, "</i>"); j+=4;}
+						else {LINE_CAT(szText, "<i>"); j+=3;}
 					} else if (style==2) {
-						if (is_end) {strcat(szText, "</b>"); j+=4;}
-						else {strcat(szText, "<b>"); j+=3;}
+						if (is_end) {LINE_CAT(szText, "</b>"); j+=4;}
+						else {LINE_CAT(szText, "<b>"); j+=3;}
 					} else if (style==3) {
-						if (is_end) {strcat(szText, "</u>"); j+=4;}
-						else {strcat(szText, "<u>"); j+=3;}
+						if (is_end) {LINE_CAT(szText, "</u>"); j+=4;}
+						else {LINE_CAT(szText, "<u>"); j+=3;}
 					} else if (style==4) {
-						if (is_end) {strcat(szText, "</font>"); j+=7;}
+						if (is_end) {LINE_CAT(szText, "</font>"); j+=7;}
 						else {
 							char szFont[100];
 							sprintf(szFont, "<font color=\"0x%X\">", color);
-							strcat(szText, szFont);
+							LINE_CAT(szText, szFont);
 							j+=(u32) strlen(szFont);
 						}
 					} else if (style==5) {
-						if (is_end) {strcat(szText, "</strike>"); j+=9;}
-						else {strcat(szText, "<strike>"); j+=8;}
+						if (is_end) {LINE_CAT(szText, "</strike>"); j+=9;}
+						else {LINE_CAT(szText, "<strike>"); j+=8;}
 					}
 					continue;
 				}
+			}
+			if (j >= MAX_LINE_SIZE) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[TXTIn] Line too long\n"));
+				return GF_BAD_PARAM;
 			}
 			szText[j] = c;
 			j++;
@@ -3066,7 +3101,7 @@ static GF_Err gf_text_process_ssa(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 	return GF_EOS;
 }
 
-
+#undef LINE_CAT
 
 static u32 ttxt_get_color(char *val)
 {
@@ -3810,6 +3845,11 @@ static GF_Err txtin_process_texml(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 							if (!strcmp(style->name, "style")) break;
 						}
 						if (style) {
+							if (nb_styles >= GF_ARRAY_LENGTH(styles)) {
+								GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TXTLoad] Too many style blocks, will ignore.\n"));
+								nb_styles = GF_ARRAY_LENGTH(styles)-1;
+								continue;
+							}
 							char *cur;
 							s32 start=0;
 							char css_style[1024], css_val[1024];
@@ -3931,6 +3971,11 @@ static GF_Err txtin_process_texml(GF_Filter *filter, GF_TXTIn *ctx, GF_FilterPac
 						while ((text=(GF_XMLNode*)gf_list_enum(sub->content, &m))) {
 							if (!text->type) {
 								if (!strcmp(text->name, "marker")) {
+									if (nb_marks >= GF_ARRAY_LENGTH(marks)) {
+										GF_LOG(GF_LOG_WARNING, GF_LOG_PARSER, ("[TXTLoad] Too many marker blocks, will ignore.\n"));
+										nb_marks = GF_ARRAY_LENGTH(marks)-1;
+										continue;
+									}
 									u32 z;
 									memset(&marks[nb_marks], 0, sizeof(Marker));
 									marks[nb_marks].pos = nb_chars+txt_len;
@@ -4534,7 +4579,6 @@ force_format:
 static GF_Err txtin_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 {
 	return txtin_configure_pid_ex(filter, pid, is_remove, 0);
-
 }
 static Bool txtin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 {
@@ -4636,10 +4680,12 @@ static const char *txtin_probe_data(const u8 *data, u32 data_size, GF_FilterProb
 
 	data = res;
 	//strip all spaces and \r\n\t
-	while (data[0] && strchr("\n\r\t ", (char) data[0])) {
+	while (res_size && data[0] && strchr("\n\r\t ", (char) data[0])) {
 		data++;
 		res_size--;
 	}
+
+	if (!res_size) goto exit;
 
 #define PROBE_OK(_score, _mime) \
 		*score = _score;\
@@ -4680,6 +4726,7 @@ static const char *txtin_probe_data(const u8 *data, u32 data_size, GF_FilterProb
 		PROBE_OK(GF_FPROBE_MAYBE_SUPPORTED, "subtitle/ttml")
 	}
 
+exit:
 	if (dst) gf_free(dst);
 	return NULL;
 }

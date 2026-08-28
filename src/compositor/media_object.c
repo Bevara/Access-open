@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -758,8 +758,8 @@ retry:
 		&& (mo->type==GF_MEDIA_OBJECT_VIDEO)
 		//if no buffer playout we are in low latency configuration, don"t skip resync
 		&& mo->odm->buffer_playout_ms
+		&& mo->odm->parentscene
 	) {
-		gf_assert(mo->odm->parentscene);
 		if (! mo->odm->parentscene->compositor->drop) {
 			if (mo->odm->parentscene->compositor->force_late_frame_draw) {
 				mo->flags |= GF_MO_IN_RESYNC;
@@ -1027,8 +1027,10 @@ void gf_mo_release_data(GF_MediaObject *mo, u32 nb_bytes, s32 drop_mode)
 	if (nb_bytes==0xFFFFFFFF) {
 		mo->RenderedLength = mo->size;
 	} else {
-		gf_assert(mo->RenderedLength + nb_bytes <= mo->size);
-		mo->RenderedLength += nb_bytes;
+		if (mo->RenderedLength + nb_bytes <= mo->size)
+			mo->RenderedLength += nb_bytes;
+		else
+			mo->RenderedLength = mo->size;
 	}
 
 	if (drop_mode<0) {
@@ -1248,9 +1250,9 @@ Bool gf_mo_is_same_url(GF_MediaObject *obj, MFURL *an_url, Bool *keep_fragment, 
 
 	if (!obj->URLs.count) {
 		if (!obj->odm) return GF_FALSE;
-		strcpy(szURL1, obj->odm->scene_ns->url);
+		gf_strcpy(szURL1, obj->odm->scene_ns->url);
 	} else {
-		strcpy(szURL1, obj->URLs.vals[0].url);
+		gf_strcpy(szURL1, obj->URLs.vals[0].url);
 	}
 
 	/*don't analyse audio/video to locate segments or viewports*/
@@ -1316,7 +1318,7 @@ Bool gf_mo_is_same_url(GF_MediaObject *obj, MFURL *an_url, Bool *keep_fragment, 
 	if (ext) ext[0] = 0;
 	for (i=0; i<an_url->count; i++) {
 		if (!an_url->vals[i].url) return GF_FALSE;
-		strcpy(szURL2, an_url->vals[i].url);
+		gf_strcpy(szURL2, an_url->vals[i].url);
 		ext = strrchr(szURL2, '#');
 		if (ext) ext[0] = 0;
 		if (!stricmp(szURL1, szURL2)) return GF_TRUE;

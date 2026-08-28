@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -69,6 +69,10 @@ void gf_odm_reset_media_control(GF_ObjectManager *odm, Bool signal_reset)
 
 void gf_odm_del(GF_ObjectManager *odm)
 {
+	if (odm->has_pending_remove_task) {
+		odm->flags |= GF_ODM_DESTROYED;
+		return;
+	}
 	if (odm->addon && (odm->addon->root_od==odm)) {
 		odm->addon->root_od = NULL;
 		odm->addon->started = 0;
@@ -145,6 +149,8 @@ void gf_filter_pid_exec_event(GF_FilterPid *pid, GF_FilterEvent *evt);
 GF_EXPORT
 void gf_odm_disconnect(GF_ObjectManager *odm, u32 do_remove)
 {
+	if (odm->flags & GF_ODM_DESTROYED) return;
+
 	GF_Compositor *compositor = odm->parentscene ? odm->parentscene->compositor : odm->subscene->compositor;
 
 	if (odm->skip_disconnect_state) {
@@ -739,7 +745,7 @@ void gf_odm_update_duration(GF_ObjectManager *odm, GF_FilterPid *pid)
 		dur /= prop->value.lfrac.den;
 	}
 	gf_filter_release_property(pe);
-	
+
 	if ((u32) dur > odm->duration) {
 		odm->duration = (u32) dur;
 		/*update scene duration*/
@@ -751,6 +757,12 @@ void gf_odm_update_duration(GF_ObjectManager *odm, GF_FilterPid *pid)
 		odm->flags |= GF_ODM_HAS_TEMI;
 	else
 		odm->flags &= ~GF_ODM_HAS_TEMI;
+
+	prop = gf_filter_pid_get_property(pid, GF_PROP_PID_TIME_DISCONTINUITY);
+	if (prop && (prop->value.uint != odm->last_ckdisc)) {
+		odm->last_ckdisc = prop->value.uint;
+		gf_clock_reset(odm->ck);
+	}
 
 }
 
@@ -795,7 +807,7 @@ void gf_odm_play(GF_ObjectManager *odm)
 	GF_Clock *parent_ck = NULL;
 
 	if (!scene) return;
-	
+
 	if (odm->mo && odm->mo->pck && !(odm->flags & GF_ODM_PREFETCH)) {
 		/*reset*/
 		gf_filter_pck_unref(odm->mo->pck);
@@ -998,7 +1010,7 @@ void gf_odm_play(GF_ObjectManager *odm)
 					if (gf_list_find(scene->compositor->systems_pids, xpid->pid)<0)
 						gf_list_add(scene->compositor->systems_pids, xpid->pid);
 				}
-				
+
 				gf_filter_pid_send_event(xpid->pid, &com);
 			}
 		}
@@ -1042,7 +1054,7 @@ void gf_odm_stop(GF_ObjectManager *odm, Bool force_close)
 	GF_FilterEvent com;
 
 	odm->flags &= ~GF_ODM_PREFETCH;
-	
+
 	//root ODs of dynamic scene may not have seen play/pause request
 	if (!odm->state && (!odm->subscene || !odm->subscene->is_dynamic_scene) ) return;
 
@@ -1455,12 +1467,12 @@ void gf_odm_init_segments(GF_ObjectManager *odm, GF_List *list, MFURL *url)
 		str = strstr(url->vals[i].url, "#");
 		if (!str) continue;
 		str++;
-		strcpy(seg_url, str);
+		gf_strcpy(seg_url, str);
 		/*segment closed range*/
 		if ((sep = strstr(seg_url, "-")) ) {
-			strcpy(seg2, sep+1);
+			gf_strcpy(seg2, sep+1);
 			sep[0] = 0;
-			strcpy(seg1, seg_url);
+			gf_strcpy(seg1, seg_url);
 			first_seg = gf_odm_find_segment(odm, seg1);
 			if (!first_seg) continue;
 			last_seg = gf_odm_find_segment(odm, seg2);
@@ -1468,7 +1480,7 @@ void gf_odm_init_segments(GF_ObjectManager *odm, GF_List *list, MFURL *url)
 		/*segment open range*/
 		else if ((sep = strstr(seg_url, "+")) ) {
 			sep[0] = 0;
-			strcpy(seg1, seg_url);
+			gf_strcpy(seg1, seg_url);
 			first_seg = gf_odm_find_segment(odm, seg_url);
 			if (!first_seg) continue;
 			last_seg = NULL;
@@ -1573,7 +1585,7 @@ Bool gf_odm_check_buffering(GF_ObjectManager *odm, GF_FilterPid *pid)
 	Bool check_disc = GF_FALSE;
 	Bool check_full_buffer = GF_TRUE;
 
-	gf_assert(odm);
+	if (!odm) return GF_FALSE;
 
 	if (!pid) {
 		check_full_buffer = GF_FALSE;

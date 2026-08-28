@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2022
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / IETF RTP/RTSP/SDP sub-project
@@ -113,7 +113,7 @@ GF_Err RTSP_WriteCommand(GF_RTSPSession *sess, GF_RTSPCommand *com, unsigned cha
 	char *buffer;
 
 	*out_buffer = NULL;
-	
+
 	size = RTSP_WRITE_STEPALLOC;
 	buffer = (char *) gf_malloc(size);
 	cur_pos = 0;
@@ -327,17 +327,17 @@ GF_Err gf_rtsp_send_command(GF_RTSPSession *sess, GF_RTSPCommand *com)
 	}
 
 	if (!strcmp(com->method, GF_RTSP_OPTIONS)) {
-		sprintf(buffer, "OPTIONS %s %s\r\n", sCtrl, GF_RTSP_VERSION);
+		snprintf(buffer, 1024, "OPTIONS %s %s\r\n", sCtrl, GF_RTSP_VERSION);
 	} else {
 		rad = (sess->ConnectionType == GF_SOCK_TYPE_TCP) ? "rtsp" : "rtspu";
 		if (sCtrl) {
 			char szServURL[1024];
 			sprintf(szServURL, "%s://%s:%d/%s", rad, sess->Server, sess->Port, sess->Service);
 			char *ctrl_url = gf_url_concatenate(szServURL, sCtrl);
-			sprintf(buffer, "%s %s %s\r\n", com->method, ctrl_url, GF_RTSP_VERSION);
+			snprintf(buffer, 1024, "%s %s %s\r\n", com->method, ctrl_url, GF_RTSP_VERSION);
 			gf_free(ctrl_url);
 		} else {
-			sprintf(buffer, "%s %s://%s:%d/%s %s\r\n", com->method, rad, sess->Server, sess->Port, sess->Service, GF_RTSP_VERSION);
+			snprintf(buffer, 1024, "%s %s://%s:%d/%s %s\r\n", com->method, rad, sess->Server, sess->Port, sess->Service, GF_RTSP_VERSION);
 		}
 	}
 
@@ -376,7 +376,7 @@ GF_Err gf_rtsp_send_command(GF_RTSPSession *sess, GF_RTSPCommand *com)
 	else sess->RTSP_State = GF_RTSP_STATE_WAITING;
 	//teardown invalidates the session most of the time, so we force the user to wait for the reply
 	//as the reply may indicate a connection-closed
-	strcpy(sess->RTSPLastRequest, com->method);
+	gf_strcpy(sess->RTSPLastRequest, com->method);
 
 exit:
 	if (result) gf_free(result);
@@ -562,7 +562,7 @@ GF_Err gf_rtsp_get_command(GF_RTSPSession *sess, GF_RTSPCommand *com)
 		char *sess_cookie = strstr(sess->tcp_buffer, "x-sessioncookie");
 		if (sess_cookie) sess_cookie = strchr(sess_cookie, ':');
 		if (sess_cookie) {
-			while (strchr(" :", sess_cookie[0]))
+			while (sess_cookie[0] && strchr(" :", sess_cookie[0]))
 				sess_cookie++;
 			char *sep = strchr(sess_cookie, '\r');
 			if (sep) {

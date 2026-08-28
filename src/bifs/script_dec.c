@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2012
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / BIFS codec sub-project
@@ -70,16 +70,14 @@ void SFS_GetBoolean(ScriptParser *parser);
 
 static void SFS_AddString(ScriptParser *parser, char *str)
 {
-	char *new_str;
 	if (!str) return;
-	if (strlen(parser->string) + strlen(str) >= parser->length) {
-		parser->length = (u32) ( strlen(parser->string) + strlen(str) + PARSER_STEP_ALLOC );
-		new_str = (char *)gf_malloc(sizeof(char)*parser->length);
-		strcpy(new_str, parser->string);
-		gf_free(parser->string);
-		parser->string = new_str;
+	u32 c_str = (u32) strlen(parser->string);
+	u32 a_str = (u32) strlen(str);
+	if (c_str + a_str >= parser->length) {
+		parser->length = c_str + a_str + PARSER_STEP_ALLOC;
+		parser->string = (char *)gf_realloc(parser->string, sizeof(char)*parser->length);
 	}
-	strncat(parser->string, str, parser->length - strlen(parser->string) - 1);
+	gf_strlcat(parser->string, str, parser->length);
 }
 
 static void SFS_AddInt(ScriptParser *parser, s32 val)
@@ -354,6 +352,10 @@ void SFS_SwitchStatement(ScriptParser *parser)
 	u32 numBits, caseValue;
 
 	if (parser->codec->LastError) return;
+	if (!gf_bs_available(parser->bs)) {
+		parser->codec->LastError = GF_NON_COMPLIANT_BITSTREAM;
+		return;
+	}
 	SFS_AddString(parser, "switch (");
 	SFS_CompoundExpression(parser);
 	SFS_AddString(parser, ")");
@@ -440,6 +442,10 @@ void SFS_OptionalExpression(ScriptParser *parser)
 #define MAX_EXPR_STACK	500
 void SFS_Expression(ScriptParser *parser)
 {
+	if (!gf_bs_available(parser->bs)) {
+		parser->codec->LastError = GF_NON_COMPLIANT_BITSTREAM;
+		return;
+	}
 	u32 val = gf_bs_read_int(parser->bs, NUMBITS_EXPR_TYPE);
 	if (parser->codec->LastError) return;
 
@@ -762,6 +768,10 @@ void SFS_GetNumber(ScriptParser *parser)
 	u32 val, nbBits;
 
 	if (parser->codec->LastError) return;
+	if (!gf_bs_available(parser->bs)) {
+		parser->codec->LastError = GF_NON_COMPLIANT_BITSTREAM;
+		return;
+	}
 	// integer
 	if (gf_bs_read_int(parser->bs, 1)) {
 		nbBits = gf_bs_read_int(parser->bs, 5);
@@ -780,6 +790,10 @@ void SFS_GetNumber(ScriptParser *parser)
 			SFS_AddChar(parser, 'E');
 		} else if (val==12) {
 			SFS_AddChar(parser, '-');
+		}
+		if (!gf_bs_available(parser->bs)) {
+			parser->codec->LastError = GF_NON_COMPLIANT_BITSTREAM;
+			return;
 		}
 		val = gf_bs_read_int(parser->bs, 4);
 	}

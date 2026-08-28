@@ -419,7 +419,7 @@ GF_Err stbl_GetSampleInfos(GF_SampleTableBox *stbl, u32 sampleNumber, u64 *offse
 		(*descIndex) = ent->sampleDescriptionIndex;
 		(*chunkNumber) = sampleNumber;
 		if (out_ent) *out_ent = ent;
-		if ( stbl->ChunkOffset->type == GF_ISOM_BOX_TYPE_STCO) {
+		if (stbl->ChunkOffset->type == GF_ISOM_BOX_TYPE_STCO) {
 			stco = (GF_ChunkOffsetBox *)stbl->ChunkOffset;
 			if (!stco->offsets) return GF_ISOM_INVALID_FILE;
 			if (stco->nb_entries < sampleNumber) return GF_ISOM_INVALID_FILE;
@@ -458,9 +458,8 @@ GF_Err stbl_GetSampleInfos(GF_SampleTableBox *stbl, u32 sampleNumber, u64 *offse
 
 	//first get the chunk
 	for (; i < stbl->SampleToChunk->nb_entries; i++) {
-		gf_assert(stbl->SampleToChunk->firstSampleInCurrentChunk <= sampleNumber);
 		//corrupted file (less sample2chunk info than sample count
-		if (k > stbl->SampleToChunk->ghostNumber) {
+		if (stbl->SampleToChunk->firstSampleInCurrentChunk > sampleNumber || k > stbl->SampleToChunk->ghostNumber) {
 			return GF_ISOM_INVALID_FILE;
 		}
 

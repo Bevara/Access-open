@@ -2,7 +2,7 @@
  *					GPAC Multimedia Framework
  *
  *			Authors: Cyril Concolato - Jean le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2024
+ *			Copyright (c) Telecom ParisTech 2005-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -30,12 +30,13 @@
 
 GF_MetaBox *gf_isom_get_meta(GF_ISOFile *file, Bool root_meta, u32 track_num)
 {
-	GF_TrackBox *tk;
+	GF_TrackBox *tk = NULL;
 	if (!file) return NULL;
 	if (root_meta) return file->meta;
 	if (!track_num) return file->moov ? file->moov->meta : NULL;
 
-	tk = (GF_TrackBox*)gf_list_get(file->moov->trackList, track_num-1);
+	if (file->moov)
+		tk = (GF_TrackBox*)gf_list_get(file->moov->trackList, track_num-1);
 	return tk ? tk->meta : NULL;
 }
 
@@ -295,6 +296,10 @@ static GF_Err gf_isom_extract_meta_item_intern(GF_ISOFile *file, Bool root_meta,
 	/*FIXME*/
 	else if (location_entry->data_reference_index) {
 		char *item_url = NULL, *item_urn = NULL;
+
+		if (!meta || !meta->file_locations || !meta->file_locations->dref || !meta->file_locations->dref->child_boxes)
+			return GF_ISOM_INVALID_FILE;
+
 		GF_FullBox *a = (GF_FullBox *)gf_list_get(meta->file_locations->dref->child_boxes, location_entry->data_reference_index-1);
 		if (!a) return GF_ISOM_INVALID_FILE;
 		if (a->type==GF_ISOM_BOX_TYPE_URL) {
@@ -346,15 +351,18 @@ static GF_Err gf_isom_extract_meta_item_intern(GF_ISOFile *file, Bool root_meta,
 	if (out_data) {
 		item_bs = gf_bs_new(*out_data, *out_size, GF_BITSTREAM_WRITE_DYN);
 	} else if (dump_file_name) {
-		strcpy(szPath, dump_file_name);
+		gf_strlcpy(szPath, dump_file_name, sizeof(szPath));
 		resource = gf_fopen(szPath, "wb");
 		item_bs = gf_bs_from_file(resource, GF_BITSTREAM_WRITE);
 	} else {
-		if (item_name && strlen(item_name) > 0) strcpy(szPath, item_name);
-		else sprintf(szPath, "item_id%02d", item_id);
+		if (item_name && strlen(item_name) > 0) gf_strlcpy(szPath, item_name, sizeof(szPath));
+		else snprintf(szPath, sizeof(szPath), "item_id%02d", item_id);
 		resource = gf_fopen(szPath, "wb");
 		item_bs = gf_bs_from_file(resource, GF_BITSTREAM_WRITE);
 	}
+
+	if (!item_bs)
+		return GF_BAD_PARAM;
 
 	if ((item_type == GF_ISOM_SUBTYPE_HVC1) || (item_type == GF_ISOM_SUBTYPE_AVC_H264)  || (item_type == GF_ISOM_SUBTYPE_VVC1) ) {
 		u32 j, nb_assoc;
@@ -610,7 +618,7 @@ GF_Err gf_isom_set_meta_type(GF_ISOFile *file, Bool root_meta, u32 track_num, u3
 	char szName[40];
 	GF_MetaBox *meta;
 
-	GF_Err e = CanAccessMovie(file, GF_ISOM_OPEN_WRITE);
+	GF_Err e = gf_isom_can_access_movie(file, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
 
 	meta = gf_isom_get_meta(file, root_meta, track_num);
@@ -700,7 +708,7 @@ GF_Err gf_isom_set_meta_xml(GF_ISOFile *file, Bool root_meta, u32 track_num, cha
 	if (!XMLFileName && !data)
 		return GF_BAD_PARAM;
 
-	e = CanAccessMovie(file, GF_ISOM_OPEN_WRITE);
+	e = gf_isom_can_access_movie(file, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
 
 	meta = gf_isom_get_meta(file, root_meta, track_num);
@@ -1442,7 +1450,7 @@ GF_Err gf_isom_add_meta_item_extended(GF_ISOFile *file, Bool root_meta, u32 trac
 	u32 lastItemID = 0;
 	u32 item_id = io_item_id ? *io_item_id : 0;
 
-	e = CanAccessMovie(file, GF_ISOM_OPEN_WRITE);
+	e = gf_isom_can_access_movie(file, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
 	meta = gf_isom_get_meta(file, root_meta, track_num);
 	if (!meta) {
@@ -1470,7 +1478,7 @@ GF_Err gf_isom_add_meta_item_extended(GF_ISOFile *file, Bool root_meta, u32 trac
 			GF_ItemInfoEntryBox *iinf_e= (GF_ItemInfoEntryBox *)gf_list_get(meta->item_infos->item_infos, i);
 			if (iinf_e->item_ID > lastItemID) lastItemID = iinf_e->item_ID;
 			if (item_id == iinf_e->item_ID) {
-				GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[IsoMedia] Item with id %d already exists, ignoring id\n", item_id));
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[IsoMedia] Item with ID %d already exists, ignoring ID\n", item_id));
 				item_id = 0;
 			}
 		}
@@ -1785,6 +1793,14 @@ GF_Err gf_isom_add_meta_item(GF_ISOFile *file, Bool root_meta, u32 track_num, Bo
 }
 
 GF_EXPORT
+GF_Err gf_isom_add_meta_item2(GF_ISOFile *file, Bool root_meta, u32 track_num, Bool self_reference, char *resource_path, const char *item_name, u32 *io_item_id, u32 item_type,
+                              const char *mime_type, const char *content_encoding, const char *URL, const char *URN,
+                              GF_ImageItemProperties *image_props)
+{
+	return gf_isom_add_meta_item_extended(file, root_meta, track_num, self_reference, resource_path, item_name, io_item_id, item_type, mime_type, content_encoding, image_props, URL, URN, NULL, 0, NULL, 0, 0);
+}
+
+GF_EXPORT
 GF_Err gf_isom_add_meta_item_memory(GF_ISOFile *file, Bool root_meta, u32 track_num, const char *item_name, u32 *item_id, u32 item_type, const char *mime_type, const char *content_encoding, GF_ImageItemProperties *image_props, char *data, u32 data_len, GF_List *item_extent_refs)
 {
 	return gf_isom_add_meta_item_extended(file, root_meta, track_num, GF_FALSE, NULL, item_name, item_id, item_type, mime_type, content_encoding, image_props, NULL, NULL, data, data_len, item_extent_refs, 0, 0);
@@ -1874,7 +1890,7 @@ GF_Err gf_isom_remove_meta_item(GF_ISOFile *file, Bool root_meta, u32 track_num,
 
 	item_num = gf_isom_get_meta_item_by_id(file, root_meta, track_num, item_id);
 	if (!item_num) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error: No item with ID %d in file, cannnot remove\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error: No item with ID %d in file, cannot remove\n"));
 		return GF_NOT_FOUND;
 	}
 	iinf = (GF_ItemInfoEntryBox *)gf_list_get(meta->item_infos->item_infos, item_num-1);

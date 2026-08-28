@@ -412,7 +412,7 @@ GF_Err text_box_read(GF_Box *s, GF_BitStream *bs)
 		return GF_OK;
 	}
 	if (pSize) {
-		ptr->textName = (char*) gf_malloc(pSize+1 * sizeof(char));
+		ptr->textName = (char*) gf_malloc((pSize+1) * sizeof(char));
 		if (!ptr->textName) return GF_OUT_OF_MEM;
 
 		if (gf_bs_read_data(bs, ptr->textName, pSize) != pSize) {
@@ -428,7 +428,7 @@ GF_Err text_box_read(GF_Box *s, GF_BitStream *bs)
 
 	u32 next_size = gf_bs_peek_bits(bs, 32, 0);
 	if (next_size > ptr->size) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Broken text box detected, skiping parsing.\n"));
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Broken text box detected, skipping parsing.\n"));
 		ptr->textJustification = 1;
 		return GF_OK;
 	}
@@ -1060,6 +1060,7 @@ GF_Err dimC_box_read(GF_Box *s, GF_BitStream *bs)
 	p->streamType = gf_bs_read_int(bs, 1);
 	p->containsRedundant = gf_bs_read_int(bs, 2);
 
+	if (p->size > GF_UINT_MAX-1) return GF_ISOM_INVALID_FILE;
 	char *str = gf_malloc( (size_t) (p->size+1));
 	if (!str) return GF_OUT_OF_MEM;
 	msize = (u32) p->size;
@@ -1115,20 +1116,20 @@ GF_Err dimC_box_write(GF_Box *s, GF_BitStream *bs)
 	gf_bs_write_int(bs, p->fullRequestHost, 1);
 	gf_bs_write_int(bs, p->streamType, 1);
 	gf_bs_write_int(bs, p->containsRedundant, 2);
-    if (p->textEncoding)
-        gf_bs_write_data(bs, p->textEncoding, (u32) strlen(p->textEncoding));
-    gf_bs_write_u8(bs, 0);
-    if (p->contentEncoding)
-        gf_bs_write_data(bs, p->contentEncoding, (u32) strlen(p->contentEncoding));
-    gf_bs_write_u8(bs, 0);
+	if (p->textEncoding)
+		gf_bs_write_data(bs, p->textEncoding, (u32) strlen(p->textEncoding));
+	gf_bs_write_u8(bs, 0);
+	if (p->contentEncoding)
+		gf_bs_write_data(bs, p->contentEncoding, (u32) strlen(p->contentEncoding));
+	gf_bs_write_u8(bs, 0);
 	return GF_OK;
 }
 GF_Err dimC_box_size(GF_Box *s)
 {
 	GF_DIMSSceneConfigBox *p = (GF_DIMSSceneConfigBox *)s;
-    s->size += 3 + 2;
-    if (p->textEncoding) s->size += strlen(p->textEncoding);
-    if (p->contentEncoding) s->size += strlen(p->contentEncoding);
+	s->size += 3 + 2;
+	if (p->textEncoding) s->size += strlen(p->textEncoding);
+	if (p->contentEncoding) s->size += strlen(p->contentEncoding);
 	return GF_OK;
 }
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
@@ -1151,10 +1152,11 @@ GF_Err diST_box_read(GF_Box *s, GF_BitStream *bs)
 {
 	GF_DIMSScriptTypesBox *p = (GF_DIMSScriptTypesBox *)s;
 
+	if (s->size > GF_UINT_MAX-1) return GF_ISOM_INVALID_FILE;
 	p->content_script_types = gf_malloc(sizeof(u8) * ((u32) s->size + 1));
 	if (!p->content_script_types) return GF_OUT_OF_MEM;
 	gf_bs_read_data(bs, p->content_script_types, (u32) s->size);
-	p->content_script_types[s->size] = 0;
+	p->content_script_types[(u32) s->size] = 0;
 	return GF_OK;
 }
 

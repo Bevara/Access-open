@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2025
+ *			Copyright (c) Telecom ParisTech 2017-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / common ffmpeg filters
@@ -246,6 +246,7 @@ static const GF_FF_PFREG FF2GPAC_PixelFormats[] =
 	{AV_PIX_FMT_RGB444, GF_PIXEL_RGB_444},
 	{AV_PIX_FMT_RGB555, GF_PIXEL_RGB_555},
 	{AV_PIX_FMT_RGB565, GF_PIXEL_RGB_565},
+	{AV_PIX_FMT_RGB8, GF_PIXEL_RGB_332},
 	{AV_PIX_FMT_RGBA, GF_PIXEL_RGBA},
 	{AV_PIX_FMT_ARGB, GF_PIXEL_ARGB},
 	{AV_PIX_FMT_ABGR, GF_PIXEL_ABGR},
@@ -743,7 +744,9 @@ void ffmpeg_initialize()
 	ffmpeg_init = GF_TRUE;
 
 #ifndef GPAC_DISABLE_LOG
-	av_log_set_callback(&ff_log_callback);
+	if (!gf_opts_get_bool("temp", "disable_ffmpeg_log_harness")) {
+		av_log_set_callback(&ff_log_callback);
+	}
 #endif
 
 }
@@ -933,8 +936,8 @@ GF_FilterArgs ffmpeg_arg_translate(const struct AVOption *opt)
 				def_size+=1000;
 				enum_val = gf_realloc(enum_val, sizeof(char)*def_size);
 			}
-			if (i) strcat(enum_val, "|");
-			strcat(enum_val, n);
+			if (i) gf_strlcat(enum_val, "|", def_size);
+			gf_strlcat(enum_val, n, def_size);
 			all_len+=len-1;
 		}
 		arg.min_max_enum = enum_val;
@@ -1854,23 +1857,23 @@ GF_Err ffmpeg_extradata_from_gpac(u32 gpac_codec_id, const u8 *dsi_in, u32 dsi_i
 		gf_bs_del(bs);
 		if (!flac_dsi || !flac_dsi_size) return GF_NON_COMPLIANT_BITSTREAM;
 		*dsi_out_size = flac_dsi_size;
-		*dsi_out = av_malloc(sizeof(char) * (flac_dsi_size) );
+		*dsi_out = av_malloc(sizeof(char) * (flac_dsi_size) + AV_INPUT_BUFFER_PADDING_SIZE);
 		if (! *dsi_out) return GF_OUT_OF_MEM;
 		memcpy(*dsi_out, flac_dsi, flac_dsi_size);
 	} else if (gpac_codec_id==GF_CODECID_OPUS) {
 		*dsi_out_size = dsi_in_size+8;
-		*dsi_out = av_malloc(sizeof(char) * (dsi_in_size+8) );
+		*dsi_out = av_malloc(sizeof(char) * (dsi_in_size+8) + AV_INPUT_BUFFER_PADDING_SIZE);
 		if (! *dsi_out) return GF_OUT_OF_MEM;
 		memcpy(*dsi_out, "OpusHead", 8);
 		memcpy(*dsi_out+8, dsi_in, dsi_in_size);
 	} else if ((gpac_codec_id==GF_CODECID_SMPTE_VC1) && (dsi_in_size>7)) {
 		*dsi_out_size = dsi_in_size-7;
-		*dsi_out = av_malloc(sizeof(char) * (dsi_in_size-7) );
+		*dsi_out = av_malloc(sizeof(char) * (dsi_in_size-7) + AV_INPUT_BUFFER_PADDING_SIZE);
 		if (! *dsi_out) return GF_OUT_OF_MEM;
 		memcpy(*dsi_out, dsi_in+7, dsi_in_size-7);
 	} else {
 		*dsi_out_size = dsi_in_size;
-		*dsi_out = av_malloc(sizeof(char) * dsi_in_size);
+		*dsi_out = av_malloc(sizeof(char) * dsi_in_size + AV_INPUT_BUFFER_PADDING_SIZE);
 		if (! *dsi_out) return GF_OUT_OF_MEM;
 		memcpy(*dsi_out, dsi_in, dsi_in_size);
 	}
@@ -2190,7 +2193,7 @@ GF_Err ffmpeg_codec_par_to_gpac(AVCodecParameters *codecpar, GF_FilterPid *opid,
 	if (codecpar->sample_aspect_ratio.num) {
 		gf_filter_pid_set_property(opid, GF_PROP_PID_SAR, &PROP_FRAC_INT(codecpar->sample_aspect_ratio.num, codecpar->sample_aspect_ratio.den));
 	}
-	//not supported by all versions of ffmpeg
+	//not supported by all versions of ffmpeg, so we comment it in test mode
 	if (codecpar->width && !gf_sys_is_test_mode()) {
 		if (codecpar->color_range==AVCOL_RANGE_JPEG)
 			gf_filter_pid_set_property(opid, GF_PROP_PID_COLR_RANGE, &PROP_BOOL(GF_TRUE));

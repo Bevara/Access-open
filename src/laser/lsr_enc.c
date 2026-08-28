@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2023
+ *			Copyright (c) Telecom ParisTech 2005-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / LASeR codec sub-project
@@ -399,8 +399,8 @@ static void lsr_write_byte_align_string_list(GF_LASeRCodec *lsr, GF_List *l, con
 		} else {
 			str = (char*)gf_list_get(l, i);
 		}
-		strncat(text, str, 4096-strlen(text)-1);
-		if (i+1<count) strcat(text, ";");
+		gf_strcat(text, str);
+		if (i+1<count) gf_strcat(text, ";");
 	}
 	lsr_write_byte_align_string(lsr, text, name);
 }
@@ -2138,7 +2138,7 @@ static void lsr_write_path_type(GF_LASeRCodec *lsr, SVG_PathData *path, const ch
 	}
 	lsr_write_point_sequence(lsr, &pts, "seq");
 	gf_list_del(pts);
-	/*first moveTo is skiped*/
+	/*first moveTo is skipped*/
 	lsr_write_vluimsbf5(lsr, nb_types-1, "nbOfTypes");
 	for (i=0; i<path->n_points; ) {
 		switch (path->tags[i]) {

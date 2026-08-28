@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2023-2024
+ *			Copyright (c) Telecom ParisTech 2023-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / WebCodec encoder filter
@@ -72,7 +72,7 @@ void wcenc_on_error(GF_WCEncCtx *ctx, int state, char *msg)
 }
 
 EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int height, double FPS, int realtime, int sample_rate, int num_channels), {
-	let codec_str = _codec_str ? Module.UTF8ToString(_codec_str) : null;
+	let codec_str = _codec_str ? UTF8ToString(_codec_str) : null;
 	let config = {};
 	config.codec = codec_str;
 	let enc_class = null;
@@ -95,18 +95,18 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 	}
 	config.bitrate = bitrate;
 
-	if (typeof Module._to_webenc != 'function') {
-		Module._web_encs = [];
-		Module._to_webenc = (ctx) => {
-          for (let i=0; i<Module._web_encs.length; i++) {
-            if (Module._web_encs[i]._wc_ctx==ctx) return Module._web_encs[i];
-          }
-          return null;
+	if (typeof libgpac._to_webenc != 'function') {
+		libgpac._web_encs = [];
+		libgpac._to_webenc = (ctx) => {
+		  for (let i=0; i<libgpac._web_encs.length; i++) {
+			if (libgpac._web_encs[i]._wc_ctx==ctx) return libgpac._web_encs[i];
+		  }
+		  return null;
 		};
-		Module._on_wcenc_error = Module.cwrap('wcenc_on_error', null, ['number', 'number', 'string']);
-		Module._on_wcenc_config = Module.cwrap('wcenc_on_config', null, ['number', 'number']);
-		Module._on_wcenc_frame = Module.cwrap('wcenc_on_frame', null, ['number', 'bigint', 'number', 'number', 'number']);
-		Module._on_wcenc_flush = Module.cwrap('wcenc_on_flush', null, ['number']);
+		libgpac._on_wcenc_error = cwrap('wcenc_on_error', null, ['number', 'number', 'string']);
+		libgpac._on_wcenc_config = cwrap('wcenc_on_config', null, ['number', 'number']);
+		libgpac._on_wcenc_frame = cwrap('wcenc_on_frame', null, ['number', 'bigint', 'number', 'number', 'number']);
+		libgpac._on_wcenc_flush = cwrap('wcenc_on_flush', null, ['number']);
 	}
 	enc_class.isConfigSupported(config).then( supported => {
 		if (supported.supported) {
@@ -153,7 +153,7 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	const GF_PropertyValue *p;
 	u32 streamtype;
 	char *codec_par=NULL;
-    GF_WCEncCtx *ctx = gf_filter_get_udta(filter);
+	GF_WCEncCtx *ctx = gf_filter_get_udta(filter);
 
 	if (is_remove) {
 		if (ctx->opid) {
@@ -320,32 +320,32 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 
 
 	char szCodec[RFC6381_CODEC_NAME_SIZE_MAX];
-	strncpy(szCodec, ctx->c, RFC6381_CODEC_NAME_SIZE_MAX);
+	gf_strcpy(szCodec, ctx->c);
 	u32 ctype = gf_codecid_4cc_type(ctx->codecid);
 	if (ctype) {
-		strcpy(szCodec, gf_4cc_to_str(ctype));
+		gf_strcpy(szCodec, gf_4cc_to_str(ctype));
 
 		if (codec_par) {
-			strncat(szCodec, codec_par, RFC6381_CODEC_NAME_SIZE_MAX);
+			gf_strcat(szCodec, codec_par);
 		} else {
 			switch (ctx->codecid) {
 			case GF_CODECID_AVC:
-				strcpy(szCodec, "avc1.640028");
+				gf_strcpy(szCodec, "avc1.640028");
 				break;
 			case GF_CODECID_HEVC:
-				strcpy(szCodec, "hvc1.1.6.L153.0");
+				gf_strcpy(szCodec, "hvc1.1.6.L153.0");
 				break;
 			case GF_CODECID_VVC:
-				strcpy(szCodec, "vvc1.1.H102.CQA");
+				gf_strcpy(szCodec, "vvc1.1.H102.CQA");
 				break;
 			case GF_CODECID_AV1:
-				strcpy(szCodec, "av01.0.08M.08");
+				gf_strcpy(szCodec, "av01.0.08M.08");
 				break;
 			case GF_CODECID_AAC_MPEG2_MP:
 			case GF_CODECID_AAC_MPEG2_LCP:
 			case GF_CODECID_AAC_MPEG2_SSRP:
 			case GF_CODECID_AAC_MPEG4:
-				strcpy(szCodec, "mp4a.40.2");
+				gf_strcpy(szCodec, "mp4a.40.2");
 				break;
 			}
 		}
@@ -372,10 +372,10 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 EM_JS(int, wcenc_encode_frame, (int wc_ctx, u32 w, u32 h, u32 uv_h, int _format, u64 ts, u32 dur, u32 planes, u32 stride1, u32 stride2, u32 sap, int buf, u32 buf_size), {
 	let c = Module._to_webenc(wc_ctx);
 	if (!c || !buf || !_format) return;
-	let format = Module.UTF8ToString(_format);
+	let format = UTF8ToString(_format);
 
 	//setup source frame
-	let ab = new Uint8Array(Module.HEAPU8.buffer, buf, buf_size);
+	let ab = new Uint8Array(HEAPU8.buffer, buf, buf_size);
 	let vbinit = {
 		format: format,
 		layout: [],
@@ -407,7 +407,7 @@ EM_JS(int, wcenc_encode_frame, (int wc_ctx, u32 w, u32 h, u32 uv_h, int _format,
 EM_JS(int, wcenc_encode_audio, (int wc_ctx, u32 sr, u32 ch, u32 frames, int _format, u64 ts, int buf, u32 buf_size), {
 	let c = Module._to_webenc(wc_ctx);
 	if (!c || !buf || !_format) return;
-	let format = Module.UTF8ToString(_format);
+	let format = UTF8ToString(_format);
 
 	//setup source frame
 	let adinit = {
@@ -416,7 +416,7 @@ EM_JS(int, wcenc_encode_audio, (int wc_ctx, u32 sr, u32 ch, u32 frames, int _for
 		numberOfChannels: ch,
 		numberOfFrames: frames,
 		timestamp: Number(ts),
-		data: new Uint8Array(Module.HEAPU8.buffer, buf, buf_size)
+		data: new Uint8Array(HEAPU8.buffer, buf, buf_size)
 	};
 	let adata = new AudioData(adinit);
 	c.enc.encode(adata);
@@ -545,7 +545,7 @@ EM_JS(int, wcenc_get_config, (int wc_ctx, int buf, int buf_size), {
 		return;
 	}
 	//setup dst
-	let dst = new Uint8Array(Module.HEAPU8.buffer, buf, buf_size);
+	let dst = new Uint8Array(HEAPU8.buffer, buf, buf_size);
 	dst.set(c.decoderConfig);
 })
 
@@ -571,7 +571,7 @@ EM_JS(int, wcenc_get_frame, (int wc_ctx, int buf, int buf_size), {
 		return;
 	}
 	//setup dst
-	let dst = new Uint8Array(Module.HEAPU8.buffer, buf, buf_size);
+	let dst = new Uint8Array(HEAPU8.buffer, buf, buf_size);
 	c.chunk.copyTo(dst);
 })
 
@@ -625,10 +625,10 @@ void wcenc_on_frame(GF_WCEncCtx *ctx, u64 timestamp, u32 duration, u32 size, int
 
 GF_Err wcenc_initialize(GF_Filter *filter)
 {
-    GF_WCEncCtx *ctx = gf_filter_get_udta(filter);
-    ctx->filter = filter;
+	GF_WCEncCtx *ctx = gf_filter_get_udta(filter);
+	ctx->filter = filter;
 	ctx->src_pcks = gf_list_new();
-    return GF_OK;
+	return GF_OK;
 }
 
 EM_JS(int, wcenc_del, (int wc_ctx), {
@@ -645,10 +645,10 @@ EM_JS(int, wcenc_del, (int wc_ctx), {
 
 void wcenc_finalize(GF_Filter *filter)
 {
-    GF_WCEncCtx *ctx = gf_filter_get_udta(filter);
-    wcenc_del(EM_CAST_PTR ctx);
+	GF_WCEncCtx *ctx = gf_filter_get_udta(filter);
+	wcenc_del(EM_CAST_PTR ctx);
 
-    while (gf_list_count(ctx->src_pcks)) {
+	while (gf_list_count(ctx->src_pcks)) {
 		GF_FilterPacket *pck = gf_list_pop_back(ctx->src_pcks);
 		gf_filter_pck_unref(pck);
 	}

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / ISOBMFF reader filter
@@ -322,8 +322,7 @@ static ISOMChannel *isor_setup_channel(ISOMReader *read, u32 track, u32 streamty
 	gf_filter_pid_set_property(pid, GF_PROP_PID_STREAM_TYPE, &PROP_UINT(streamtype));
 	gf_filter_pid_set_property(pid, GF_PROP_PID_TIMESCALE, &PROP_UINT( gf_isom_get_media_timescale(read->mov, track) ) );
 
-	if (!gf_sys_is_test_mode())
-		gf_filter_pid_set_property(pid, GF_PROP_PID_TRACK_NUM, &PROP_UINT(track) );
+	gf_filter_pid_set_property(pid, GF_PROP_PID_TRACK_NUM, &PROP_UINT(track) );
 
 	//create our channel
 	ch = isor_create_channel(read, pid, track, 0, (use_lhvc) ? GF_TRUE : GF_FALSE);
@@ -438,8 +437,8 @@ static ISOMChannel *isor_setup_channel(ISOMReader *read, u32 track, u32 streamty
 	if (!read->mem_load_mode) {
 		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_MEDIA_DATA_SIZE, &PROP_LONGUINT(gf_isom_get_media_data_size(read->mov, track) ) );
 	}
-	//in no cache mode, depending on fetch speed we may have fetched a fragment or not, resulting in has_rap set
-	//always for HAS_SYNC to false
+	//in test mode with no cache, depending on fetch speed we may have fetched a fragment or not, resulting in has_rap set to 0 or 1
+	//so we always force HAS_SYNC to false if no samples
 	else if (gf_sys_is_test_mode() && !sample_count) {
 		gf_filter_pid_set_property(pid, GF_PROP_PID_HAS_SYNC, &PROP_BOOL(GF_FALSE) );
 	}
@@ -570,10 +569,11 @@ static ISOMChannel *isor_setup_channel(ISOMReader *read, u32 track, u32 streamty
 				buffer[len] = 0;
 
 				l1 = tx3g_config_sdp ? (u32) strlen(tx3g_config_sdp) : 0;
-				tx3g_config_sdp = gf_realloc(tx3g_config_sdp, len+3+l1);
+				u32 blen = len+3+l1;
+				tx3g_config_sdp = gf_realloc(tx3g_config_sdp, blen);
 				tx3g_config_sdp[l1] = 0;
-				if (i) strcat(tx3g_config_sdp, ", ");
-				strcat(tx3g_config_sdp, buffer);
+				if (i) gf_strlcat(tx3g_config_sdp, ", ", blen);
+				gf_strlcat(tx3g_config_sdp, buffer, blen);
 			}
 		}
 		if (tx3g_config_sdp) {
@@ -609,9 +609,8 @@ static ISOMChannel *isor_setup_channel(ISOMReader *read, u32 track, u32 streamty
 		}
 		idx++;
 
-		//do not expose tool
-		if (!gf_sys_is_test_mode() && (itag == GF_ISOM_ITUNE_TOOL))
-			continue;
+		//do not expose tool ?
+		//if (itag == GF_ISOM_ITUNE_TOOL) continue;
 
 		if (!data || !data_len) continue;
 
@@ -678,6 +677,9 @@ static ISOMChannel *isor_setup_channel(ISOMReader *read, u32 track, u32 streamty
 			}
 			break;
 		}
+
+		if (dyname)
+			gf_free(dyname);
 	}
 
 	if (gf_sys_old_arch_compat()) {
@@ -688,107 +690,106 @@ static ISOMChannel *isor_setup_channel(ISOMReader *read, u32 track, u32 streamty
 	if (read->nodata==2)
 		gf_filter_pid_set_property_str(ch->pid, "nodata", &PROP_BOOL(GF_TRUE) );
 
-	if (!gf_sys_is_test_mode()) {
-		u32 nb_udta, alt_grp=0;
-		const char *hdlr = NULL;
-		gf_isom_get_handler_name(read->mov, ch->track, &hdlr);
-		if (hdlr)
-			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_HANDLER, &PROP_STRING(hdlr));
 
-		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_TRACK_FLAGS, &PROP_UINT( gf_isom_get_track_flags(read->mov, ch->track) ));
+	u32 nb_udta, alt_grp=0;
+	const char *hdlr = NULL;
+	gf_isom_get_handler_name(read->mov, ch->track, &hdlr);
+	if (hdlr)
+		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_HANDLER, &PROP_STRING(hdlr));
 
-		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_TRACK_FLAGS, &PROP_UINT( gf_isom_get_track_flags(read->mov, ch->track) ));
+	gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_TRACK_FLAGS, &PROP_UINT( gf_isom_get_track_flags(read->mov, ch->track) ));
 
-		gf_isom_get_track_switch_group_count(read->mov, ch->track, &alt_grp, NULL);
-		if (alt_grp)
-			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_ALT_GROUP, &PROP_UINT( alt_grp ));
+	gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_TRACK_FLAGS, &PROP_UINT( gf_isom_get_track_flags(read->mov, ch->track) ));
 
-
-		if (streamtype==GF_STREAM_VISUAL) {
-			GF_PropertyValue p;
-			u32 vals[9];
-			memset(vals, 0, sizeof(u32)*9);
-			memset(&p, 0, sizeof(GF_PropertyValue));
-			p.type = GF_PROP_SINT_LIST;
-			p.value.uint_list.nb_items = 9;
-			p.value.uint_list.vals = vals;
-			if (read->extkmov)
-				gf_isom_get_track_matrix(read->extkmov, read->extkid, vals);
-			else
-				gf_isom_get_track_matrix(read->mov, ch->track, vals);
-			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_TRACK_MATRIX, &p);
-		}
+	gf_isom_get_track_switch_group_count(read->mov, ch->track, &alt_grp, NULL);
+	if (alt_grp)
+		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_ALT_GROUP, &PROP_UINT( alt_grp ));
 
 
-		nb_udta = gf_isom_get_udta_count(read->mov, ch->track);
-		if (nb_udta) {
-			for (i=0; i<nb_udta; i++) {
-				u32 j, type, nb_items;
-				bin128 uuid;
-				gf_isom_get_udta_type(read->mov, ch->track, i+1, &type, &uuid);
-				if (type==GF_ISOM_BOX_TYPE_KIND) continue;
-				nb_items = gf_isom_get_user_data_count(read->mov, ch->track, type, uuid);
-				//we only export 4CC udta boxes
-				if (!type) continue;
+	if (streamtype==GF_STREAM_VISUAL) {
+		GF_PropertyValue p;
+		u32 vals[9];
+		memset(vals, 0, sizeof(u32)*9);
+		memset(&p, 0, sizeof(GF_PropertyValue));
+		p.type = GF_PROP_SINT_LIST;
+		p.value.uint_list.nb_items = 9;
+		p.value.uint_list.vals = vals;
+		if (read->extkmov)
+			gf_isom_get_track_matrix(read->extkmov, read->extkid, vals);
+		else
+			gf_isom_get_track_matrix(read->mov, ch->track, vals);
+		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ISOM_TRACK_MATRIX, &p);
+	}
 
-				for (j=0; j<nb_items; j++) {
-					char szName[31];
-					u8 *udta=NULL;
-					u32 udta_size;
-					gf_isom_get_user_data(read->mov, ch->track, type, uuid, j+1, &udta, &udta_size);
-					if (!udta || !udta_size) continue;
-					if (nb_items>1)
-						snprintf(szName, 30, "udta_%s_%d", gf_4cc_to_str(type), j+1);
-					else
-						snprintf(szName, 30, "udta_%s", gf_4cc_to_str(type));
-					szName[30]=0;
-					if (gf_utf8_is_legal(udta, udta_size)) {
-						if (!udta[udta_size-1]) {
-							gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_STRING_NO_COPY(udta));
-						} else {
-							char *data = gf_malloc(udta_size+1);
-							memcpy(data, udta, udta_size);
-							data[udta_size]=0;
-							gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_STRING_NO_COPY(data));
-							gf_free(udta);
-						}
+
+	nb_udta = gf_isom_get_udta_count(read->mov, ch->track);
+	if (nb_udta) {
+		for (i=0; i<nb_udta; i++) {
+			u32 j, type, nb_items;
+			bin128 uuid;
+			gf_isom_get_udta_type(read->mov, ch->track, i+1, &type, &uuid);
+			if (type==GF_ISOM_BOX_TYPE_KIND) continue;
+			nb_items = gf_isom_get_user_data_count(read->mov, ch->track, type, uuid);
+			//we only export 4CC udta boxes
+			if (!type) continue;
+
+			for (j=0; j<nb_items; j++) {
+				char szName[31];
+				u8 *udta=NULL;
+				u32 udta_size;
+				gf_isom_get_user_data(read->mov, ch->track, type, uuid, j+1, &udta, &udta_size);
+				if (!udta || !udta_size) continue;
+				if (nb_items>1)
+					snprintf(szName, 30, "udta_%s_%d", gf_4cc_to_str(type), j+1);
+				else
+					snprintf(szName, 30, "udta_%s", gf_4cc_to_str(type));
+				szName[30]=0;
+				if (gf_utf8_is_legal(udta, udta_size)) {
+					if (!udta[udta_size-1]) {
+						gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_STRING_NO_COPY(udta));
 					} else {
-						gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_DATA_NO_COPY(udta, udta_size));
+						char *data = gf_malloc(udta_size+1);
+						memcpy(data, udta, udta_size);
+						data[udta_size]=0;
+						gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_STRING_NO_COPY(data));
+						gf_free(udta);
 					}
+				} else {
+					gf_filter_pid_set_property_dyn(ch->pid, szName, &PROP_DATA_NO_COPY(udta, udta_size));
 				}
 			}
 		}
-		GF_PropertyValue kinds;
-		kinds.type = GF_PROP_STRING_LIST;
-		kinds.value.string_list.nb_items = nb_udta = gf_isom_get_user_data_count(read->mov, ch->track, GF_ISOM_BOX_TYPE_KIND, NULL);
-		if (nb_udta) {
-			kinds.value.string_list.vals = gf_malloc(sizeof(char*)*nb_udta);
-			memset(kinds.value.string_list.vals, 0, sizeof(char*)*nb_udta);
-			for (i=0; i<nb_udta; i++) {
-				char *scheme=NULL, *val=NULL;
-				gf_isom_get_track_kind(read->mov, ch->track, i, &scheme, &val);
-				if (scheme) gf_dynstrcat(&kinds.value.string_list.vals[i], scheme, NULL);
-				gf_dynstrcat(&kinds.value.string_list.vals[i], val ? val : "", scheme ? ":" : NULL);
-				if (scheme) gf_free(scheme);
-				if (val) gf_free(val);
-			}
-			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ROLE, &kinds);
+	}
+	GF_PropertyValue kinds;
+	kinds.type = GF_PROP_STRING_LIST;
+	kinds.value.string_list.nb_items = nb_udta = gf_isom_get_user_data_count(read->mov, ch->track, GF_ISOM_BOX_TYPE_KIND, NULL);
+	if (nb_udta) {
+		kinds.value.string_list.vals = gf_malloc(sizeof(char*)*nb_udta);
+		memset(kinds.value.string_list.vals, 0, sizeof(char*)*nb_udta);
+		for (i=0; i<nb_udta; i++) {
+			char *scheme=NULL, *val=NULL;
+			gf_isom_get_track_kind(read->mov, ch->track, i, &scheme, &val);
+			if (scheme) gf_dynstrcat(&kinds.value.string_list.vals[i], scheme, NULL);
+			gf_dynstrcat(&kinds.value.string_list.vals[i], val ? val : "", scheme ? ":" : NULL);
+			if (scheme) gf_free(scheme);
+			if (val) gf_free(val);
 		}
+		gf_filter_pid_set_property(ch->pid, GF_PROP_PID_ROLE, &kinds);
+	}
 
 
-		//delcare track groups
-		u32 idx=0;
-		while (1) {
-			char szTK[100];
-			u32 track_group_type, track_group_id;
-			if (!gf_isom_enum_track_group(read->extkmov ? read->extkmov : read->mov,
-						read->extkmov ? read->extkid : ch->track,
-						&idx, &track_group_type, &track_group_id)
-			)
-				break;
-			sprintf(szTK, "tkgp_%s", gf_4cc_to_str(track_group_type));
-			gf_filter_pid_set_property_dyn(ch->pid, szTK, &PROP_SINT(track_group_id));
-		}
+	//delcare track groups
+	idx=0;
+	while (1) {
+		char szTK[100];
+		u32 track_group_type, track_group_id;
+		if (!gf_isom_enum_track_group(read->extkmov ? read->extkmov : read->mov,
+					read->extkmov ? read->extkid : ch->track,
+					&idx, &track_group_type, &track_group_id)
+		)
+			break;
+		sprintf(szTK, "tkgp_%s", gf_4cc_to_str(track_group_type));
+		gf_filter_pid_set_property_dyn(ch->pid, szTK, &PROP_SINT(track_group_id));
 	}
 
 props_done:
@@ -963,6 +964,16 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			codec_id = GF_CODECID_OPUS;
 			gf_isom_opus_config_get(read->mov, track, stsd_idx, &dsi, &dsi_size);
 			break;
+		case GF_ISOM_SUBTYPE_IAMF:
+		{
+			codec_id = GF_CODECID_IAMF;
+			GF_IAConfig *iamf = gf_isom_iamf_config_get(read->mov, track, stsd_idx);
+			if (iamf) {
+				gf_odf_iamf_cfg_write(iamf, &dsi, &dsi_size);
+				gf_odf_iamf_cfg_del(iamf);
+			}
+		}
+			break;
 
 		case GF_QT_SUBTYPE_FL32:
 		case GF_QT_SUBTYPE_FL64:
@@ -1079,6 +1090,17 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			gf_isom_get_tile_info(read->mov, track, stsd_idx, NULL, &srd_id, &srd_indep, &srd_full_frame, &srd_x, &srd_y, &srd_w, &srd_h);
 			break;
 
+		case GF_ISOM_SUBTYPE_AVS3:
+		{
+			GF_AVS3VConfig *avs3cfg = gf_isom_avs3v_config_get(read->mov, track, stsd_idx);
+			if (avs3cfg) {
+				gf_odf_avs3v_cfg_write(avs3cfg, &dsi, &dsi_size);
+				gf_odf_avs3v_cfg_del(avs3cfg);
+			}
+			codec_id = GF_CODECID_AVS3_VIDEO;
+		}
+			break;
+
 		case GF_ISOM_SUBTYPE_AC3:
 		case GF_ISOM_SUBTYPE_EC3:
 		{
@@ -1086,9 +1108,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			codec_id = (m_subtype==GF_ISOM_SUBTYPE_AC3) ? GF_CODECID_AC3 : GF_CODECID_EAC3;
 			if (ac3cfg) {
 				gf_odf_ac3_cfg_write(ac3cfg, &dsi, &dsi_size);
-				if (!gf_sys_is_test_mode()) {
-					ch_layout = gf_ac3_get_channel_layout(ac3cfg);
-				}
+				ch_layout = gf_ac3_get_channel_layout(ac3cfg);
 				gf_free(ac3cfg);
 			} else {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[IsoMedia] Track %d missing AC3/EC3 configuration !\n", track));
@@ -1096,6 +1116,18 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		}
 			break;
 
+		case GF_ISOM_SUBTYPE_AC4:
+		{
+			GF_AC4Config *ac4cfg = gf_isom_ac4_config_get(read->mov, track, stsd_idx);
+			codec_id = GF_ISOM_SUBTYPE_AC4;
+			if (ac4cfg) {
+				gf_odf_ac4_cfg_write(ac4cfg, &dsi, &dsi_size);
+				gf_odf_ac4_cfg_del(ac4cfg);
+			} else {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[IsoMedia] Track %d missing AC4 configuration !\n", track));
+			}
+		}
+			break;
 		case GF_ISOM_SUBTYPE_MLPA:
 		{
 			u32 fmt, prate;
@@ -1128,7 +1160,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			load_default = GF_TRUE;
 			break;
 
-		case GF_4CC('e','v','t','e'):
+		case GF_ISOM_SUBTYPE_EVTE:
 			codec_id = m_subtype;
 			load_default = GF_TRUE;
 			break;
@@ -1353,6 +1385,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 			if (svcc) gf_odf_avc_cfg_del(svcc);
 		}
 
+		//do not expose dates in test mode
 		if (!gf_sys_is_test_mode()) {
 			u64 create_date, modif_date;
 			gf_isom_get_creation_time(read->mov, &create_date, &modif_date);
@@ -1362,12 +1395,10 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 
 		isor_get_chapters(read->extkmov ? read->extkmov : read->mov, ch->pid);
 
-		if (!gf_sys_is_test_mode()) {
-			Bool has_roll=GF_FALSE;
-			gf_isom_has_cenc_sample_group(read->mov, track, NULL, &has_roll);
-			if (has_roll)
-				gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CENC_HAS_ROLL, &PROP_BOOL(GF_TRUE));
-		}
+		Bool has_roll=GF_FALSE;
+		gf_isom_has_cenc_sample_group(read->mov, track, NULL, &has_roll);
+		if (has_roll)
+			gf_filter_pid_set_property(ch->pid, GF_PROP_PID_CENC_HAS_ROLL, &PROP_BOOL(GF_TRUE));
 	}
 
 	//all stsd specific init/reconfig
@@ -1570,7 +1601,7 @@ static void isor_declare_track(ISOMReader *read, ISOMChannel *ch, u32 track, u32
 		gf_filter_pid_set_property_str(ch->pid, "meta:mime", &PROP_STRING(mime_cfg) );
 	}
 
-	if (!gf_sys_is_test_mode() && (m_subtype==GF_ISOM_SUBTYPE_MPEG4))
+	if (m_subtype==GF_ISOM_SUBTYPE_MPEG4)
 		m_subtype = gf_isom_get_mpeg4_subtype(read->mov, ch->track, stsd_idx);
 
 	if (m_subtype)
@@ -1896,6 +1927,11 @@ GF_Err isor_declare_objects(ISOMReader *read)
 			break;
 		}
 
+		//do not export chapter tracks, we extract them into properties
+		if (gf_isom_is_track_referenced(read->mov, i+1, GF_ISOM_REF_CHAP)) {
+			continue;
+		}
+
 		if (!read->alltk && !read->tkid && !gf_isom_is_track_enabled(read->mov, i+1)) {
 			if (count>1) {
 				u32 type = gf_isom_get_media_type(read->mov, i+1);
@@ -1903,8 +1939,6 @@ GF_Err isor_declare_objects(ISOMReader *read)
 				//we don't warn for disabled text tracks due to chapters and forced subs
 				if ((type==GF_ISOM_SUBTYPE_TEXT) || (type==GF_ISOM_MEDIA_SUBT))
 					continue;
-				//disabled tracks using QT chapter refs, do not warn
-				if (gf_isom_is_track_referenced(read->mov, i+1, GF_ISOM_REF_CHAP)) continue;
 
 				GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[IsoMedia] Track %d is disabled, ignoring track - you may retry by specifying alltk option\n", i+1));
 				continue;
@@ -2162,7 +2196,7 @@ retry:
 		gf_filter_pid_set_property(pid, GF_PROP_PID_PRIMARY_ITEM, &PROP_BOOL(GF_FALSE));
 	}
 
-	if (!gf_sys_is_test_mode() && !read->itt)
+	if (!read->itt)
 		gf_filter_pid_set_property(pid, GF_PROP_PID_ITEM_NUM, &PROP_UINT(item_idx) );
 
 	gf_filter_pid_set_property_str(pid, "meta:mime", item_mime_type ? &PROP_STRING(item_mime_type) : NULL );

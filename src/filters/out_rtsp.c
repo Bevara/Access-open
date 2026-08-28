@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2019-2024
+ *			Copyright (c) Telecom ParisTech 2019-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / rtsp output filter
@@ -208,7 +208,7 @@ static GF_Err rtspout_send_sdp(GF_RTSPOutSession *sess)
 		if (!sess->sessionID || !sess->ctrl_name[0]) {
 			char *sep = strchr(sess->setup_ctrl, '_');
 			if (sep) sep[0] = 0;
-			strncpy(sess->ctrl_name, sess->setup_ctrl+1, 9);
+			memcpy(sess->ctrl_name, sess->setup_ctrl+1, 9);
 			sess->ctrl_name[9] = 0;
 			if (sep) sep[0] = '_';
 		}
@@ -459,8 +459,9 @@ static GF_Err rtspout_check_new_session(GF_RTSPOutCtx *ctx, Bool single_session)
 	sess->response = gf_rtsp_response_new();
 	sess->streams = gf_list_new();
 	sess->filter_srcs = gf_list_new();
+	//test mode, use a static control name
 	if (gf_sys_is_test_mode()) {
-		strcpy(sess->ctrl_name, "/trackID");
+		gf_strcpy(sess->ctrl_name, "/trackID");
 	} else {
 		u64 seed = gf_rand();
 		seed <<= 32;
@@ -518,7 +519,7 @@ static GF_Err rtspout_initialize(GF_Filter *filter)
 		if (sep) {
 			u32 cplen = (u32) (sep-ctx->dst-7);
 			if (cplen>1023) cplen = 1023;
-			strncpy(szIP, ctx->dst+7, cplen);
+			memcpy(szIP, ctx->dst+7, cplen);
 			szIP[MIN(cplen,1023)] = 0;
 			sep = strchr(szIP, ':');
 			if (sep) {

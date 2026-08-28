@@ -210,6 +210,7 @@ This section documents the base data types of GPAC.
 #define GPAC_HAS_SSL
 #define GPAC_DISABLE_OGG
 #define GPAC_HAS_STRLCPY
+#define GPAC_HAS_STRLCAT
 #define GPAC_HAS_VTB
 #define GPAC_HAS_HTTP2
 #define GPAC_HAS_POLL
@@ -230,6 +231,10 @@ This section documents the base data types of GPAC.
 #else
 #error "Unknown target platform used with static configuration file"
 #endif
+
+
+#define GPAC_SCHED_DEFAULT "free"
+
 
 /*disables player */
 //#define GPAC_DISABLE_COMPOSITOR

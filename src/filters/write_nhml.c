@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2024
+ *			Copyright (c) Telecom ParisTech 2017-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / NHML stream to file filter
@@ -92,26 +92,24 @@ GF_Err nhmldump_config_side_stream(GF_Filter *filter, GF_NHMLDumpCtx *ctx)
 {
 	char *mime=NULL, *name;
 	char szTempName[GF_MAX_PATH];
-	char fileName[GF_MAX_PATH+1];
+	char fileName[GF_MAX_PATH];
 	const GF_PropertyValue *p;
 	GF_FileIO *gfio = NULL;
 
 	if (ctx->name) {
-		strncpy(fileName, ctx->name, GF_MAX_PATH);
-		fileName[GF_MAX_PATH] = 0;
+		gf_strcpy(fileName, ctx->name);
 	} else {
 		char *url = gf_filter_pid_get_destination(ctx->opid_nhml);
 		if (url) {
 			if (!strncmp(url, "gfio://", 7)) {
 				gfio = gf_fileio_from_url(url);
-				strncpy(fileName, gf_fileio_translate_url(url), GF_MAX_PATH);
+				gf_strcpy(fileName, gf_fileio_translate_url(url));
 			} else {
-				strncpy(fileName, url, GF_MAX_PATH);
+				gf_strcpy(fileName, url);
 			}
-			fileName[GF_MAX_PATH] = 0;
 			gf_free(url);
  		} else {
-			strcpy(fileName, "dump");
+			gf_strcpy(fileName, "dump");
 		}
 	}
 	name = gf_file_ext_start(fileName);
@@ -149,7 +147,8 @@ GF_Err nhmldump_config_side_stream(GF_Filter *filter, GF_NHMLDumpCtx *ctx)
 
 		name = gf_file_ext_start(fileName);
 		if (name) name[0] = 0;
-		strcat(fileName, ".media");
+		if (strcmp(fileName, "null") && strcmp(fileName, "/dev/null"))
+			gf_strcat(fileName, ".media");
 		if (gfio) {
 			res_name = (char *) gf_fileio_factory(gfio, nhmldump_get_resolved_basename(ctx->ipid, fileName, szTempName) );
 		} else {
@@ -177,7 +176,8 @@ GF_Err nhmldump_config_side_stream(GF_Filter *filter, GF_NHMLDumpCtx *ctx)
 
 		name = gf_file_ext_start(fileName);
 		if (name) name[0] = 0;
-		strcat(fileName, ".info");
+		if (strcmp(fileName, "null") && strcmp(fileName, "/dev/null"))
+			gf_strcat(fileName, ".info");
 		if (gfio) {
 			res_name = (char *) gf_fileio_factory(gfio, nhmldump_get_resolved_basename(ctx->ipid, fileName, szTempName) );
 		} else {
@@ -304,15 +304,15 @@ GF_Err nhmldump_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remo
 		ext = ctx->dims ? "dims" : "nhml";
 
 		if (ctx->name) {
-			char fileName[GF_MAX_PATH+1];
-			strncpy(fileName, ctx->name, GF_MAX_PATH);
-			fileName[GF_MAX_PATH] = 0;
+			char fileName[GF_MAX_PATH];
+			gf_strcpy(fileName, ctx->name);
 			name = gf_file_ext_start(fileName);
 			if (name) {
 				name[0] = 0;
 				gf_filter_pid_set_property(ctx->opid_nhml, GF_PROP_PID_OUTPATH, &PROP_STRING(ctx->name) );
 			} else {
-				strcat(fileName, ".nhml");
+				if (strcmp(fileName, "null") && strcmp(fileName, "/dev/null"))
+					gf_strcat(fileName, ".nhml");
 				gf_filter_pid_set_property(ctx->opid_nhml, GF_PROP_PID_OUTPATH, &PROP_STRING(fileName) );
 			}
 		}
@@ -605,7 +605,7 @@ static GF_Err nhmldump_send_dims(GF_NHMLDumpCtx *ctx, char *data, u32 data_size,
 			if (err == Z_OK) {
 				while ((s32) d_stream.total_in < size-1) {
 					err = inflate(&d_stream, Z_NO_FLUSH);
-					if (err < Z_OK) break;
+					if (err < Z_OK || d_stream.total_out / ZLIB_INFLATE_MAX_MULTIPLIER > size) break;
 					svg_data[d_stream.total_out - done] = 0;
 					gf_bs_write_data(ctx->bs_w, svg_data, (u32) strlen(svg_data));
 
@@ -876,7 +876,8 @@ static GF_Err nhmldump_send_frame(GF_NHMLDumpCtx *ctx, char *data, u32 data_size
 	} else if (ctx->is_stpp && ctx->nhmlonly) {
 		sprintf(nhml, "<NHNTSubSample><![CDATA[\n");
 		gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
-		gf_bs_write_data(ctx->bs_w, data, data_size);
+		if (data && data_size)
+			gf_bs_write_data(ctx->bs_w, data, data_size);
 		sprintf(nhml, "]]></NHNTSubSample>\n");
 		gf_bs_write_data(ctx->bs_w, nhml, (u32) strlen(nhml));
 	}

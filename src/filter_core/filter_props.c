@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2025
+ *			Copyright (c) Telecom ParisTech 2017-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -30,7 +30,6 @@
 //for base64 decode
 #include <gpac/base_coding.h>
 
-typedef u32(*cst_parse_proto)(const char *val);
 typedef const char *(*cst_name_proto)(u32 val);
 
 static struct {
@@ -39,8 +38,8 @@ static struct {
 	const char *(*cst_name)(u32 val);
 	const char *(*cst_all_names)();
 } EnumProperties[] = {
-	{GF_PROP_PIXFMT, (cst_parse_proto) gf_pixel_fmt_parse, (cst_name_proto) gf_pixel_fmt_name, gf_pixel_fmt_all_names},
-	{GF_PROP_PCMFMT, (cst_parse_proto) gf_audio_fmt_parse, (cst_name_proto) gf_audio_fmt_name, gf_audio_fmt_all_names},
+	{GF_PROP_PIXFMT, gf_pixel_fmt_parse, gf_pixel_fmt_name, gf_pixel_fmt_all_names},
+	{GF_PROP_PCMFMT, gf_audio_fmt_parse, gf_audio_fmt_name, gf_audio_fmt_all_names},
 	{GF_PROP_CICP_COL_PRIM, gf_cicp_parse_color_primaries, gf_cicp_color_primaries_name, gf_cicp_color_primaries_all_names},
 	{GF_PROP_CICP_COL_TFC, gf_cicp_parse_color_transfer, gf_cicp_color_transfer_name, gf_cicp_color_transfer_all_names},
 	{GF_PROP_CICP_COL_MX, gf_cicp_parse_color_matrix, gf_cicp_color_matrix_name, gf_cicp_color_matrix_all_names},
@@ -250,7 +249,11 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 		}
 
 		if (!value && !enum_values) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s - using 0\n", value, name));
+			//patch for ka option, used as Bool in pin/sockin/... but as enum in flist, triggering this error when piping playlist
+			//fortunately in pipe mode of playlist, flist.ka is not used
+			if (strcmp(name, "ka")) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s - using 0\n", value, name));
+			}
 			p.value.uint = 0;
 			break;
 		}
@@ -269,7 +272,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				}
 				if (!a_len && len) {
 					char szVal[50];
-					gf_strlcpy(szVal, str_start, MIN(len+1, 50) );
+					gf_strcpy(szVal, str_start);
 					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for unsigned int arg %s enum %s - using `%s`\n", value, name, enum_values, szVal));
 					break;
 				}
@@ -542,7 +545,10 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				szV[0] = value[2*i];
 				szV[1] = value[2*i + 1];
 				szV[2] = 0;
-				sscanf(szV, "%x", &res);
+				if (sscanf(szV, "%x", &res) != 1) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong hex format for data: %s\n", value));
+					res = 0;
+				}
 				p.value.data.ptr[i] = res;
 			}
 		} else if (!strnicmp(value, "bxml@", 5) ) {
@@ -633,6 +639,14 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 			u32 len=0;
 			char *nv;
 			char *sep = strchr(v, list_sep_char);
+			while (sep && sep[1] == list_sep_char) {
+				// skip doubled separator
+				size_t len = strlen(sep+1);
+				memmove(sep, sep+1, len);
+				sep[len] = 0;
+				sep = strchr(sep+1, list_sep_char);
+			}
+
 			if (sep && is_xml) {
 				char *xml_end = strchr(v, '>');
 				len = (u32) (sep - v);
@@ -652,7 +666,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				len = (u32) (sep - v);
 
 			nv = gf_malloc(sizeof(char)*(len+1));
-			strncpy(nv, v, sizeof(char)*len);
+			memcpy(nv, v, sizeof(char)*len);
 			nv[len] = 0;
 			if (!strnicmp(nv, "file@", 5) ) {
 				u8 *data;
@@ -693,7 +707,7 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 			if (!sep)
 			 	len = (u32) strlen(v);
 			if (len>=99) len=99;
-			strncpy(szV, v, len);
+			memcpy(szV, v, len);
 			szV[len] = 0;
 			if (p.type == GF_PROP_UINT_LIST) {
 				u32 val_uint;
@@ -713,7 +727,10 @@ GF_PropertyValue gf_props_parse_value(u32 type, const char *name, const char *va
 				p.value.uint_list.vals[p.value.uint_list.nb_items] = val_uint;
 			} else if (p.type == GF_PROP_SINT_LIST) {
 				s32 val_int;
-				sscanf(szV, "%d", &val_int);
+				if (sscanf(szV, "%d", &val_int) != 1) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_FILTER, ("Wrong argument value %s for sint arg %s[%d] - using 0\n", value, name, p.value.sint_list.nb_items));
+					val_int = 0;
+				}
 				p.value.sint_list.vals = gf_realloc(p.value.sint_list.vals, (p.value.sint_list.nb_items+1) * sizeof(u32));
 				p.value.sint_list.vals[p.value.sint_list.nb_items] = val_int;
 			} else {
@@ -905,10 +922,12 @@ Bool gf_props_equal_internal(const GF_PropertyValue *p1, const GF_PropertyValue 
 	}
 	return GF_FALSE;
 }
+GF_EXPORT
 Bool gf_props_equal(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
 {
 	return gf_props_equal_internal(p1, p2, GF_FALSE);
 }
+GF_EXPORT
 Bool gf_props_equal_strict(const GF_PropertyValue *p1, const GF_PropertyValue *p2)
 {
 	return gf_props_equal_internal(p1, p2, GF_TRUE);
@@ -1699,8 +1718,10 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	"- same value as ASID: regular SSR not used for cross-AS switching\n"
 	"- ID of another AdaptationSet: enable cross-AS switching between this AS and the referenced one\n"
 	"- negative value: LL-HLS compatability mode", GF_PROP_SINT, GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PID_AS_QUERY, "ASQuery", "Query string to add to this Adaptation Set when requesting segments", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_MUX_SRC, "MuxSrc", "Name of mux source(s), set by dasher to direct its outputs", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_DASH_MODE, "DashMode", "DASH mode to be used by multiplexer if any, set by dasher. 0 is no DASH, 1 is regular DASH, 2 is VoD", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PID_DASH_INIT_BASE64, "InitBase64", "Indicate that multiplexer should send the base64 encoded version of the init segment", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_FORCE_SEG_SYNC, "SegSync", "Indicate segment must be completely flushed before sending segment/fragment size events", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_DASH_DUR, "DashDur", "DASH target segment duration in seconds", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_DASH_FDUR, "FragDur", "DASH target fragment duration in seconds", GF_PROP_FRACTION, GF_PROP_FLAG_GSF_REM),
@@ -1801,10 +1822,10 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	"- 3: GHI(X) manifest", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_SPARSE, "Sparse", "PID has potentially empty times between packets", GF_PROP_BOOL, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_CHARSET, "CharSet", "Character set for input text PID", GF_PROP_STRING, GF_PROP_FLAG_GSF_REM),
-	DEC_PROP_F( GF_PROP_PID_FORCED_SUB, "ForcedSub", "PID or Packet is forced sub\n"
+	DEC_PROP_F( GF_PROP_PID_FORCED_SUB, "ForcedSub", "PID forced sub\n"
 	"- 0: not forced\n"
-	"- 1: forced frame\n"
-	"- 2: all frames are forced (PID only)", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
+	"- 1: some frames are forced\n"
+	"- 2: all frames are forced", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
 
 	DEC_PROP_F( GF_PROP_PID_CHAP_TIMES, "ChapTimes", "Chapter start times", GF_PROP_UINT_LIST, GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PID_CHAP_NAMES, "ChapNames", "Chapter names", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM),
@@ -1870,7 +1891,17 @@ GF_BuiltInProperty GF_BuiltInProps [] =
 	DEC_PROP_F( GF_PROP_PCK_MASTER_DISPLAY_COLOUR, "MasterDisplayColour", "Master display colour info, payload of mdcv box (see ISO/IEC 14496-12), can be set as a list of 10 integers in fragment declaration (e.g. \"=dpx0,dpy0,dpx1,dpy1,dpx2,dpy2,wpx,wpy,max,min\")", GF_PROP_DATA, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM),
 	DEC_PROP_F( GF_PROP_PCK_SEI_LOADED, "SEILoaded", "indicate that packet has SEI/inband data in its properties", GF_PROP_BOOL, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM),
 
+	DEC_PROP_F( GF_PROP_PCK_ORIGINAL_PTS, "OriginalPTS", "indicate original PTS or PCR when remapping M2TS PCR", GF_PROP_LUINT, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PCK_ORIGINAL_DTS, "OriginalDTS", "indicate original DTS when remapping M2TS PCR", GF_PROP_LUINT, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM),
 
+	DEC_PROP_F( GF_PROP_PID_MABR_URLS, "MABRBaseURLs", "optionnal URLs for MABR - if first is `none`source server is not declared as repair server", GF_PROP_STRING_LIST, GF_PROP_FLAG_GSF_REM),
+
+	DEC_PROP_F( GF_PROP_PCK_FORCED_SUB, "Forced", "indicate packet is a forced subtitle", GF_PROP_BOOL, GF_PROP_FLAG_PCK|GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PID_TIME_DISCONTINUITY, "TimeDiscontinuity", "indicate a time discontinuity in PID - the value increases by one between each discontinuity", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
+
+	DEC_PROP_F( GF_PROP_PID_AMVE_ILLUMINANCE, "AmbientIlluminance", "indicate the ambient illuminance extracted from the stream", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PID_AMVE_LIGNT_X, "AmbientLightX", "indicate the ambient light x extracted from the stream", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
+	DEC_PROP_F( GF_PROP_PID_AMVE_LIGNT_Y, "AmbientLightY", "indicate the ambient light y extracted from the stream", GF_PROP_UINT, GF_PROP_FLAG_GSF_REM),
 };
 
 static u32 gf_num_props = sizeof(GF_BuiltInProps) / sizeof(GF_BuiltInProperty);
@@ -1991,7 +2022,7 @@ const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUM
 		if (!dump) return NULL;
 		break;
 	}
-	Bool no_reduce = dump_data_flags & GF_PROP_DUMP_NO_REDUCE;
+	Bool no_reduce = (dump_data_flags & GF_PROP_DUMP_NO_REDUCE) ? GF_TRUE : GF_FALSE;
 	u32 dump_data_type = dump_data_flags&0xFF;
 
 	dump[0] = 0;
@@ -2012,7 +2043,7 @@ const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUM
 					len = (u32) strlen(str_start);
 				}
 				if (att->value.uint == enum_val) {
-					strncpy(dump, str_start, len);
+					memcpy(dump, str_start, len);
 					dump[len]=0;
 					break;
 				}
@@ -2100,20 +2131,20 @@ const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUM
 	case GF_PROP_STRING_LIST:
 	{
 		u32 i, count = att->value.string_list.nb_items;
-		u32 len = GF_PROP_DUMP_ARG_SIZE-1;
-		dump[len]=0;
+		dump[0]=0;
 		for (i=0; i<count; i++) {
 			char *s = att->value.string_list.vals[i];
-			if (!i) {
-				strncpy(dump, s, len);
-			} else {
-				strcat(dump, ",");
-				strncat(dump, s, len-1);
-			}
-			len = GF_PROP_DUMP_ARG_SIZE - 1 - (u32) strlen(dump);
-			if (len<=1) {
+			if (!s) continue;
+			u32 slen = (u32) strlen(s);
+			if (strlen(dump)+slen>=GF_PROP_DUMP_ARG_SIZE) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_FILTER, ("String list is too large to fit in predefined property dump buffer of %d bytes, truncating\n", GF_PROP_DUMP_ARG_SIZE));
 				return dump;
+			}
+			if (!i) {
+				gf_strlcpy(dump, s, GF_PROP_DUMP_ARG_SIZE);
+			} else {
+				gf_strlcat(dump, ",", GF_PROP_DUMP_ARG_SIZE);
+				gf_strlcat(dump, s, GF_PROP_DUMP_ARG_SIZE);
 			}
 		}
 		return dump;
@@ -2124,8 +2155,7 @@ const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUM
 	case GF_PROP_VEC2I_LIST:
 	{
 		u32 i, count = att->value.uint_list.nb_items;
-		u32 len = GF_PROP_DUMP_ARG_SIZE-1;
-		dump[len]=0;
+		dump[0]=0;
 		for (i=0; i<count; i++) {
 			char szItem[1024];
 			if (att->type==GF_PROP_UINT_LIST) {
@@ -2137,16 +2167,16 @@ const char *gf_props_dump_val(const GF_PropertyValue *att, char dump[GF_PROP_DUM
 			} else {
 				sprintf(szItem, "%dx%d", att->value.v2i_list.vals[i].x, att->value.v2i_list.vals[i].x);
 			}
-			if (!i) {
-				strncpy(dump, szItem, len);
-			} else {
-				strcat(dump, ",");
-				strncat(dump, szItem, len-1);
-			}
-			len = GF_PROP_DUMP_ARG_SIZE - 1 - (u32) strlen(dump);
-			if (len<=1) {
+			u32 slen = (u32) strlen(szItem);
+			if (strlen(dump) + slen >= GF_PROP_DUMP_ARG_SIZE) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_FILTER, ("List is too large to fit in predefined property dump buffer of %d bytes, truncating\n", GF_PROP_DUMP_ARG_SIZE));
 				return dump;
+			}
+			if (!i) {
+				gf_strlcpy(dump, szItem, GF_PROP_DUMP_ARG_SIZE);
+			} else {
+				gf_strlcat(dump, ",", GF_PROP_DUMP_ARG_SIZE);
+				gf_strlcat(dump, szItem, GF_PROP_DUMP_ARG_SIZE);
 			}
 		}
 		return dump;
@@ -2206,13 +2236,12 @@ const char *gf_props_dump(u32 p4cc, const GF_PropertyValue *att, char dump[GF_PR
 		return dump;
 
 	case GF_PROP_PID_CHANNEL_LAYOUT:
-		if (!gf_sys_is_test_mode()) {
-			u32 cicp = gf_audio_fmt_get_cicp_from_layout(att->value.longuint);
-			const char *name = gf_audio_fmt_get_cicp_name(cicp);
-			if (name) return name;
-		}
+	{
+		const char *name = gf_audio_fmt_get_cicp_name( gf_audio_fmt_get_cicp_from_layout(att->value.longuint) );
+		if (name) return name;
 		return gf_props_dump_val(att, dump, dump_data_mode, NULL);
-
+	}
+	
 	case GF_PROP_PID_DECODER_CONFIG_ENHANCEMENT:
 		//for tx3d SDP config only
 		if (gf_utf8_is_legal(att->value.data.ptr, att->value.data.size))

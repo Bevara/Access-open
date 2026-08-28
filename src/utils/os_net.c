@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2024
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -131,6 +131,9 @@ static int wsa_init = 0;
 #include <sys/types.h>
 #include <arpa/inet.h>
 
+#if defined(__FreeBSD__)
+#include <sys/stat.h>
+#endif
 
 /*not defined on solaris*/
 #if !defined(INADDR_NONE)
@@ -526,8 +529,7 @@ static struct addrinfo *gf_sk_get_ipv6_addr(const char *PeerName, u16 PortNumber
 		service = (char *)portstring;
 	}
 	if (PeerName) {
-		strncpy(node, PeerName, MAX_PEER_NAME_LEN-1);
-		node[MAX_PEER_NAME_LEN-1] = 0;
+		gf_strlcpy(node, PeerName, MAX_PEER_NAME_LEN);
 		if (node[0]=='[') {
 			node[strlen(node)-1] = 0;
 			memmove(node, &node[1], MAX_PEER_NAME_LEN-1);
@@ -649,7 +651,7 @@ GF_Err gf_sk_get_host_name(char *buffer)
 }
 
 GF_EXPORT
-GF_Err gf_sk_get_local_ip(GF_Socket *sock, char *buffer)
+GF_Err gf_sk_get_local_ip(GF_Socket *sock, char buffer[GF_MAX_IP_NAME_LEN])
 {
 #ifdef GPAC_HAS_IPV6
 	char clienthost[NI_MAXHOST];
@@ -666,7 +668,7 @@ GF_Err gf_sk_get_local_ip(GF_Socket *sock, char *buffer)
 		if (getnameinfo((struct sockaddr *)&clientaddr, addrlen, clienthost, sizeof(clienthost), NULL, 0, NI_NUMERICHOST))
 			return GF_IP_NETWORK_FAILURE;
 	}
-	strcpy(buffer, clienthost);
+	gf_strlcpy(buffer, clienthost, GF_MAX_IP_NAME_LEN);
 #else
 	char *ip;
 	if (sock->flags & GF_SOCK_HAS_PEER) {
@@ -678,7 +680,7 @@ GF_Err gf_sk_get_local_ip(GF_Socket *sock, char *buffer)
 		ip = inet_ntoa(name.sin_addr);
 	}
 	if (!ip) return GF_IP_NETWORK_FAILURE;
-	strcpy(buffer, ip);
+	gf_strlcpy(buffer, ip, GF_MAX_IP_NAME_LEN);
 #endif
 	return GF_OK;
 }
@@ -982,6 +984,11 @@ static void gf_netcap_load_pck_gpac(GF_NetcapFilter *nf)
 		nf->pck_len -= 2;
 	} else {
 		nf->src_port = 0;
+	}
+
+	if (gf_bs_is_overflow(nf->cap_bs)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[NetCap] Corrupted netcap file, aborting\n"));
+		nf->pck_len = -1;
 	}
 
 	//broken packet
@@ -2200,7 +2207,7 @@ GF_Err gf_sk_connect_ex(GF_Socket *sock, const char *PeerName, u16 PortNumber, c
 				gf_sk_set_block_mode(sock, GF_TRUE);
 		}
 		server_add.sun_family = AF_UNIX;
-		strncpy(server_add.sun_path, PeerName, sizeof(server_add.sun_path)-1);
+		gf_strcpy(server_add.sun_path, PeerName);
 		server_add.sun_path[sizeof(server_add.sun_path)-1]=0;
 		if (connect(sock->socket, (struct sockaddr *)&server_add, sizeof(struct sockaddr_un)) < 0) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[Socket] Failed to connect unix domain socket to %s\n", PeerName));
@@ -2525,8 +2532,7 @@ GF_Err gf_sk_bind_ex(GF_Socket *sock, const char *ifce_ip_or_name, u16 port, con
 		if (sock->flags & GF_SOCK_NON_BLOCKING)
 			gf_sk_set_block_mode(sock, GF_TRUE);
 		server_un.sun_family = AF_UNIX;
-		strncpy(server_un.sun_path, peer_name, sizeof(server_un.sun_path)-1);
-		server_un.sun_path[sizeof(server_un.sun_path)-1]=0;
+		gf_strcpy(server_un.sun_path, peer_name);
 		ret = bind(sock->socket, (struct sockaddr *) &server_un, (int) sizeof(struct sockaddr_un));
 		if (ret == SOCKET_ERROR) {
 			if (LASTSOCKERROR == EADDRINUSE) {
@@ -2808,7 +2814,13 @@ static GF_Err poll_select(GF_Socket *sock, GF_SockSelectMode mode, u32 usec, Boo
 		struct pollfd pfd;
 		pfd.fd = sock->socket;
 		pfd.revents = 0;
-		if (mode == GF_SK_SELECT_WRITE) pfd.events = POLLOUT;
+		if (mode == GF_SK_SELECT_WRITE) {
+			//ugly patch, poll(timeout=0) sometimes crash on arm64 linux... (M4, ubuntu24 vm)
+#if defined(GPAC_CONFIG_ARM) && defined(GPAC_CONFIG_LINUX)
+			if (usec<1000) usec = 1000;
+#endif
+			pfd.events = POLLOUT;
+		}
 		else if (mode == GF_SK_SELECT_READ) pfd.events = POLLIN;
 		else pfd.events = POLLIN|POLLOUT;
 
@@ -3479,8 +3491,8 @@ GF_Err gf_sk_setup_multicast_ex(GF_Socket *sock, const char *multi_IPAdd, u16 Mu
 		if (!res) {
 			if (sock->flags & GF_SOCK_IS_IPV6) {
 				char szIP[100];
-				strcpy(szIP, "::ffff:");
-				strcat(szIP, multi_IPAdd);
+				gf_strcpy(szIP, "::ffff:");
+				gf_strcat(szIP, multi_IPAdd);
 				is_mapped_v4 = GF_TRUE;
 				res = gf_sk_get_ipv6_addr(szIP, MultiPortNumber, AF_INET6, 0, SOCK_DGRAM);
 			}
@@ -4253,7 +4265,9 @@ GF_Err gf_sk_server_mode(GF_Socket *sock, Bool serverOn)
 		return GF_BAD_PARAM;
 
 	if (!(sock->flags & GF_SOCK_IS_TCP)) {
+#if defined(IPV6_MTU_DISCOVER) || defined(IPV6_PMTUDISC_DO) || defined(IPV6_DONTFRAG) || defined(IP_MTU_DISCOVER) || defined(IP_DONTFRAG)
 		int val;
+#endif
 #ifdef GPAC_HAS_IPV6
 		sock->dest_addr_len = sizeof(struct sockaddr_storage);
 #else
@@ -4299,7 +4313,7 @@ GF_Err gf_sk_server_mode(GF_Socket *sock, Bool serverOn)
 }
 
 GF_EXPORT
-GF_Err gf_sk_get_remote_address_port(GF_Socket *sock, char *buf, u32 *port)
+GF_Err gf_sk_get_remote_address_port(GF_Socket *sock, char buf[GF_MAX_IP_NAME_LEN], u32 *port)
 {
 #ifdef GPAC_HAS_IPV6
 	char clienthost[NI_MAXHOST];
@@ -4307,16 +4321,16 @@ GF_Err gf_sk_get_remote_address_port(GF_Socket *sock, char *buf, u32 *port)
 	struct sockaddr_in6 * addrptr = (struct sockaddr_in6 *)(&sock->dest_addr);
 	if (!sock || SOCKET_INVALID(sock->socket)) return GF_BAD_PARAM;
 	my_inet_ntop(AF_INET, addrptr, clienthost, NI_MAXHOST);
-	strcpy(buf, clienthost);
+	gf_strlcpy(buf, clienthost, GF_MAX_IP_NAME_LEN);
 	if (port) {
 		*port = ntohs(addrptr->sin6_port);
 	}
 	if (getnameinfo((struct sockaddr *)addrptr, sock->dest_addr_len, clienthost, NI_MAXHOST, servname, NI_MAXHOST, NI_NUMERICHOST) == 0) {
-		strcpy(buf, clienthost);
+		gf_strlcpy(buf, clienthost, GF_MAX_IP_NAME_LEN);
 	}
 #else
 	if (!sock || SOCKET_INVALID(sock->socket)) return GF_BAD_PARAM;
-	strcpy(buf, inet_ntoa(sock->dest_addr.sin_addr));
+	gf_strlcpy(buf, inet_ntoa(sock->dest_addr.sin_addr), GF_MAX_IP_NAME_LEN);
 	if (port) {
 		*port = ntohs(sock->dest_addr.sin_port);
 	}
@@ -4457,7 +4471,7 @@ char *gf_net_bump_ip_address(const char *in_ip, u32 increment)
 	if (!increment) return gf_strdup(in_ip);
 
 	u32 new_range=0;
-	
+
 	char *alloc_ip=NULL;
 	if (!strnicmp(in_ip, "ff", 2)) {
 		char *add_end = strstr(in_ip, "::");

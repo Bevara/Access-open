@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2025
+ *			Copyright (c) Telecom ParisTech 2017-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / filters sub-project
@@ -136,6 +136,7 @@ typedef struct __gf_filter_pck_inst
 	GF_FilterPidInst *pid;
 	u8 pid_props_change_done;
 	u8 pid_info_change_done;
+	u8 is_marked;
 
 	//DO NOT EXTEND UNLESS UPDATING CODE IN gf_filter_pck_send()
 } GF_FilterPacketInstance;
@@ -196,7 +197,10 @@ enum
 	GF_PCKF_FORCE_MAIN = 1<<12,
 	//only valid when GF_PCK_CMD_PID_EOS is set
 	GF_PCKF_IS_FLUSH = 1<<11,
-	//RESERVED bits [8,10]
+	GF_PCKF_IS_SWITCH_FRAME = 1<<10,
+	//only valid when GF_PCKF_PROPS_REFERENCE is set
+	GF_PCKF_IS_MARKED = 1<<9,
+	//RESERVED bits [8]
 
 	//2 bits for is_leading
 	GF_PCK_ISLEADING_POS = 6,
@@ -258,7 +262,7 @@ struct __gf_filter_pck
 	struct __gf_filter_pck *reference;
 
 	GF_FilterFrameInterface *frame_ifce;
-	
+
 	//properties applying to this packet
 	GF_PropertyMap *props;
 	//pid properties applying to this packet
@@ -340,11 +344,6 @@ typedef struct __gf_fs_thread
 	u64 run_time;
 	u64 active_time;
 
-#ifndef GPAC_DISABLE_REMOTERY
-	u32 rmt_tasks;
-	char rmt_name[20];
-#endif
-
 } GF_SessionThread;
 
 typedef enum {
@@ -374,6 +373,10 @@ enum
 
 //#define GF_FS_ENABLE_LOCALES
 
+typedef struct {
+	char *reg_name;
+	char *metric;
+} GF_FSCustomMetric;
 
 struct __gf_filter_session
 {
@@ -493,7 +496,7 @@ struct __gf_filter_session
 
 	GF_List *parsed_args;
 
-	char sep_args, sep_name, sep_frag, sep_list, sep_neg;
+	char sep_args, sep_name, sep_frag, sep_list, sep_neg, sep_link;
 	char *blacklist;
 	Bool init_done;
 
@@ -508,7 +511,6 @@ struct __gf_filter_session
 #ifdef GPAC_HAS_QJS
 	struct JSContext *js_ctx;
 	GF_List *jstasks;
-	struct __jsfs_task *new_f_task, *del_f_task, *on_evt_task, *on_auth_task;
 #endif
 
 	gf_fs_on_filter_creation on_filter_create_destroy;
@@ -531,6 +533,8 @@ struct __gf_filter_session
 
 	u32 dbg_flags;
 	Bool check_props;
+
+	GF_List *additionnal_metrics;
 };
 
 #ifdef GPAC_HAS_QJS
@@ -611,7 +615,7 @@ struct __gf_filter
 	char *dynamic_source_ids;
 
 	char *restricted_source_id;
-	
+
 	//parent media session
 	GF_FilterSession *session;
 
@@ -704,6 +708,7 @@ struct __gf_filter
 	volatile u32 detach_pid_tasks_pending;
 	volatile u32 nb_shared_packets_out;
 	volatile u32 abort_pending;
+	volatile u32 pid_rem_packet_pending;
 	GF_List *postponed_packets;
 
 	//list of blacklisted filtered registries
@@ -737,11 +742,17 @@ struct __gf_filter
 	u64 nb_hw_pck_sent;
 	//number of processing errors in the lifetime of the filter
 	u32 nb_errors;
+	//number of consecutive errors, reset at each successfull process - only used for logs
+	//Difference with nb_consecutive_errors: nb_consecutive_errors is reset whenever there is a packet IO
+	//to avoid killing a filter were all process() lead to error due to input bitstream
+	u32 nb_current_errors;
 
 	//number of bytes sent by this filter
 	u64 nb_bytes_sent;
 	//number of microseconds this filter was active
 	u64 time_process;
+	//last task time in us
+	u32 last_task_time;
 
 #ifdef GPAC_MEMORY_TRACKING
 	//various stats in mem tracking mode, mostly used to detect heavy alloc/free usage by the filter
@@ -836,13 +847,10 @@ struct __gf_filter
 	//for encoder filters, set to the corresponding stream type - used to discard filters during the resolution
 	u32 encoder_codec_id;
 	GF_PropStringList skip_cids;
-	Bool filter_skiped;
+	Bool filter_skipped;
 
 	Bool act_as_sink;
 	Bool require_source_id;
-#ifndef GPAC_DISABLE_REMOTERY
-	rmtU32 rmt_hash;
-#endif
 
 	//signals that pid info has changed, to notify the filter chain
 	Bool pid_info_changed;
@@ -918,6 +926,7 @@ void gf_fs_post_pid_instance_delete_task(GF_FilterSession *session, GF_Filter *f
 
 void gf_filter_pid_inst_reset(GF_FilterPidInst *pidinst);
 void gf_filter_pid_inst_del(GF_FilterPidInst *pidinst);
+void gf_filter_pid_inst_check_delete(GF_FilterPidInst *pidinst);
 
 void gf_filter_forward_clock(GF_Filter *filter);
 
@@ -939,6 +948,18 @@ typedef struct
 	GF_EventPropagateType recursive;
 } GF_FilterUpdate;
 
+typedef enum
+{
+	//no discard of input packets
+	GF_PIDI_DISCARD_OFF = 0,
+	//discard of input packets
+	GF_PIDI_DISCARD_ON,
+	//temporary mode to discard inputs but process all reconfiguration packets
+	GF_PIDI_DISCARD_RCFG,
+	//temporary mode to discard inputs but process all reconfiguration packets and delete the PID instance
+	//at the end of the reconfigure task
+	GF_PIDI_DISCARD_RCFG_DELETE,
+} GF_PidInstDiscardMode;
 
 //structure for input pids, in order to handle fan-outs of a pid into several filters
 struct __gf_filter_pid_inst
@@ -963,9 +984,7 @@ struct __gf_filter_pid_inst
 	volatile u32 discard_packets;
 
 	Bool force_reconfig;
-
-	//set by filter
-	u32 discard_inputs;
+	GF_PidInstDiscardMode discard_inputs;
 
 	//amount of media data in us in the packet queue - concurrent inc/dec
 	volatile s64 buffer_duration;
@@ -989,13 +1008,15 @@ struct __gf_filter_pid_inst
 	Bool keepalive_signaled;
 	Bool is_playing, is_paused;
 	u8 play_queued, stop_queued;
-	
+
 	volatile u32 nb_eos_signaled;
 
 	Bool is_encoder_input;
 	Bool is_decoder_input;
 	GF_PropertyMap *reconfig_pid_props;
-	
+
+	GF_Filter *swap_source;
+	Bool in_swap;
 	//clock handling by the consumer: the clock values are not automatically dispatched to the output pids and are kept
 	//available as regular packets in the input pid
 	Bool handles_clock_references;
@@ -1015,6 +1036,7 @@ struct __gf_filter_pid_inst
 
 	u64 last_buf_query_clock;
 	u64 last_buf_query_dur;
+	u32 last_buf_query_max;
 
 	/*! last RT info update time - input pid only */
 	u64 last_rt_report;
@@ -1028,6 +1050,8 @@ struct __gf_filter_pid_inst
 #ifndef GPAC_DISABLE_DEBUG
 	GF_List *prop_dump;
 #endif
+	//identifier of pidinst during a swap
+	u32 swap_id;
 };
 
 typedef struct
@@ -1059,7 +1083,7 @@ struct __gf_filter_pid
 	volatile u32 nb_shared_packets_out;
 
 	GF_PropertyMap *infos;
-	
+
 	//set whenever an eos packet is dispatched, reset whenever a regular packet is dispatched
 	Bool has_seen_eos;
 	Bool eos_keepalive;
@@ -1097,7 +1121,7 @@ struct __gf_filter_pid
 	u32 playback_speed_scaler;
 
 	GF_Fraction64 last_ts_sent;
-	
+
 	Bool initial_play_done;
 	Bool is_playing;
 	void *udta;
@@ -1118,6 +1142,8 @@ struct __gf_filter_pid
 	volatile u32 num_pidinst_del_pending;
 
 	u32 link_flags;
+	//identifier of pidinst the pid was detached from during a swap
+	u32 swap_id;
 };
 
 
@@ -1150,6 +1176,8 @@ void gf_filter_set_id(GF_Filter *filter, const char *ID);
 void gf_filter_post_remove(GF_Filter *filter);
 
 void gf_filter_check_pending_pids(GF_Filter *filter);
+
+Bool gf_filter_pid_caps_negociate_match(GF_FilterPid *pid, const GF_FilterRegister *freg);
 
 typedef struct
 {
@@ -1308,9 +1336,14 @@ Bool gf_fq_res_add(GF_FilterQueue *fq, void *item);
 Bool filter_source_id_match(GF_FilterPid *src_pid, const char *id, GF_Filter *dst_filter, Bool *pid_excluded, Bool *needs_clone, const char *source_ids);
 const char *gf_filter_last_id_in_chain(GF_Filter *filter, Bool ignore_first);
 
+enum {
+	GF_LOG_TAG_FILTERSESSION = 0,
+	GF_LOG_TAG_FILTERSESSION_THREAD = 1,
+	GF_LOG_TAG_FILTER = 2
+};
+
+void gf_logs_thread_tag(void *tag_val, u32 tag_type);
+void gf_logs_thread_untag(void *tag_val);
+void gf_logs_thread_tag_del(void *tag_val);
 
 #endif //_GF_FILTER_SESSION_H_
-
-
-
-

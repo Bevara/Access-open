@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2020-2024
+ *			Copyright (c) Telecom ParisTech 2020-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / MHAS reframer filter
@@ -251,7 +251,7 @@ static void mhas_dmx_check_dur(GF_Filter *filter, GF_MHASDmxCtx *ctx)
 		ctx->duration = duration;
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
-		if (duration.num && !gf_sys_is_test_mode() ) {
+		if (duration.num) {
 			rate *= 8 * ctx->duration.den;
 			rate /= ctx->duration.num;
 			ctx->bitrate = (u32) rate;
@@ -343,6 +343,7 @@ static Bool mhas_dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	u32 i;
 	GF_FilterEvent fevt;
 	GF_MHASDmxCtx *ctx = gf_filter_get_udta(filter);
+	if (!ctx->ipid) return GF_TRUE;
 
 	if (evt->base.on_pid != ctx->opid) return GF_TRUE;
 

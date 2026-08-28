@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Graph sub-project
@@ -751,6 +751,7 @@ static JSValue deleteRoute(JSContext *c, JSValueConst this_val, int argc, JSValu
 
 static JSValue loadURL(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+	JSClassID _classID;
 	u32 i;
 	GF_JSAPIParam par;
 	GF_JSField *f;
@@ -769,7 +770,7 @@ static JSValue loadURL(JSContext *c, JSValueConst this_val, int argc, JSValueCon
 	}
 	if (!JS_IsObject(argv[0])) return GF_JS_EXCEPTION(c);
 
-	f = (GF_JSField *) JS_GetOpaque_Nocheck(argv[0]);
+	f = (GF_JSField *) JS_GetAnyOpaque(argv[0], &_classID);
 	if (!f || !f->mfvals) return GF_JS_EXCEPTION(c);
 
 	for (i=0; i<f->mfvals_count; i++) {
@@ -1012,8 +1013,9 @@ static JSValue field_toString(JSContext *c, JSValueConst this_val, int argc, JSV
 	u32 i;
 	JSValue item;
 	Double d;
+	JSClassID _classID;
 	char *str = NULL;
-	GF_JSField *f = JS_GetOpaque_Nocheck(this_val);
+	GF_JSField *f = JS_GetAnyOpaque(this_val, &_classID);
 	if (!f) return JS_FALSE;
 
 	if (gf_sg_vrml_is_sf_field(f->field.fieldType)) {
@@ -1053,7 +1055,7 @@ static JSValue field_toString(JSContext *c, JSValueConst this_val, int argc, JSV
 			break;
 			default:
 				if (JS_IsObject(item)) {
-					GF_JSField *sf = (GF_JSField *) JS_GetOpaque_Nocheck(item);
+					GF_JSField *sf = (GF_JSField *) JS_GetAnyOpaque(item, &_classID);
 					sffield_toString(&str, sf->field.far_ptr, sf->field.fieldType);
 				}
 				break;
@@ -1199,7 +1201,7 @@ static JSValue node_toString(JSContext *c, JSValueConst obj, int argc, JSValueCo
 			snprintf(str, 500, "DEF %d ", id - 1);
 		}
 	}
-	strncat(str, gf_node_get_class_name(n), 500);
+	gf_strcat(str, gf_node_get_class_name(n));
 	return JS_NewString(c, (const char *) str);
 }
 
@@ -1347,7 +1349,8 @@ static int node_setProperty(JSContext *c, JSValueConst obj, JSAtom atom, JSValue
 /* Generic field destructor */
 static void field_finalize(JSRuntime *rt, JSValue obj)
 {
-	GF_JSField *ptr = (GF_JSField *) JS_GetOpaque_Nocheck(obj);
+	JSClassID _classID;
+	GF_JSField *ptr = (GF_JSField *) JS_GetAnyOpaque(obj, &_classID);
 	JS_ObjectDestroyed(rt, obj, ptr, 1);
 	if (!ptr) return;
 
@@ -1734,7 +1737,7 @@ static JSValue vec3f_setProperty(JSContext *c, JSValueConst obj, JSValueConst va
 
 static JSValue vec3f_operand(JSContext *c, JSValueConst obj, int argc, JSValueConst *argv, u32 op)
 {
-	SFVec3f vec, wvec, *v1, *v2;
+	SFVec3f vec, wvec, *v1, *v2=NULL;
 	Double d=0;
 	JSValue pNew;
 	Fixed v;
@@ -1792,8 +1795,10 @@ static JSValue vec3f_operand(JSContext *c, JSValueConst obj, int argc, JSValueCo
 		SFVec3f_Create(c, pNew, vec.x, vec.y, vec.z);
 		break;
 	case 8:
-		vec = gf_vec_cross(*v1, *v2);
-		SFVec3f_Create(c, pNew, vec.x, vec.y, vec.z);
+		if (v2) {
+			vec = gf_vec_cross(*v1, *v2);
+			SFVec3f_Create(c, pNew, vec.x, vec.y, vec.z);
+		}
 		break;
 	}
 	return pNew;
@@ -2266,7 +2271,8 @@ static JSValue MFNodeConstructor(JSContext *c, JSValueConst new_target, int argc
 static void array_finalize_ex(JSRuntime *rt, JSValue obj, Bool is_js_call)
 {
 	u32 i;
-	GF_JSField *ptr = JS_GetOpaque_Nocheck(obj);
+	JSClassID _classID;
+	GF_JSField *ptr = JS_GetAnyOpaque(obj, &_classID);
 
 	JS_ObjectDestroyed(rt, obj, ptr, 1);
 	if (!ptr) return;
@@ -2298,7 +2304,8 @@ static void array_finalize(JSRuntime *rt, JSValue obj)
 static JSValue array_getElement(JSContext *c, JSValueConst obj, JSAtom atom, JSValueConst receiver)
 {
 	u32 idx;
-	GF_JSField *ptr = JS_GetOpaque_Nocheck(obj);
+	JSClassID _classID;
+	GF_JSField *ptr = JS_GetAnyOpaque(obj, &_classID);
 
 	if (!JS_AtomIsArrayIndex(c, &idx, atom)) {
 		JSValue ret = JS_UNDEFINED;
@@ -2306,7 +2313,7 @@ static JSValue array_getElement(JSContext *c, JSValueConst obj, JSAtom atom, JSV
 		if (!str) return ret;
 
 		if (!strcmp(str, "length")) {
-			GF_JSField *f_ptr = JS_GetOpaque_Nocheck(obj);
+			GF_JSField *f_ptr = JS_GetAnyOpaque(obj, &_classID);
 			if (!f_ptr) {
 				ret = GF_JS_EXCEPTION(c);
 			} else if (f_ptr->field.fieldType==GF_SG_VRML_MFNODE) {
@@ -2329,7 +2336,7 @@ static JSValue array_getElement(JSContext *c, JSValueConst obj, JSAtom atom, JSV
 		JSValue val;
 		if (idx>=ptr->mfvals_count) return JS_NULL;
 		val = ptr->mfvals[idx];
-//		GF_JSField *sf = JS_GetOpaque_Nocheck(val);
+//		GF_JSField *sf = JS_GetAnyOpaque(val, &_classID);
 		return JS_DupValue(c, val);
 	}
 	return JS_NULL;
@@ -2442,8 +2449,9 @@ static int array_setElement(JSContext *c, JSValueConst obj, JSAtom atom, JSValue
 	GF_JSClass *the_sf_class = NULL;
 	char *str_val;
 	void *sf_slot;
+	JSClassID _classID;
 	Bool is_append = 0;
-	GF_JSField *ptr = (GF_JSField *) JS_GetOpaque_Nocheck(obj);
+	GF_JSField *ptr = (GF_JSField *) JS_GetAnyOpaque(obj, &_classID);
 	if (!ptr) return -1;
 
 	if (!JS_AtomIsArrayIndex(c, &ind, atom)) {
@@ -2819,7 +2827,8 @@ static JSClassExoticMethods MFArray_exotic =
 
 static void field_gc_mark(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_func)
 {
-    GF_JSField *jsf = JS_GetOpaque_Nocheck(val);
+	JSClassID _classID;
+    GF_JSField *jsf = JS_GetAnyOpaque(val, &_classID);
 	if (!jsf) return;
 	if (!JS_IsUndefined(jsf->obj) && jsf->owner) {
 		JS_MarkValue(rt, jsf->obj, mark_func);
@@ -2901,8 +2910,10 @@ static void vrml_js_init_api(GF_ScriptPriv *sc, GF_Node *script)
     JS_SetPropertyStr(sc->js_ctx, sc->js_obj, "alert", JS_NewCFunction(sc->js_ctx, js_print, "print", 1));
     JS_SetPropertyStr(sc->js_ctx, sc->js_obj, "parseXML", JS_NewCFunction(sc->js_ctx, vrml_parse_xml, "parseXML", 1));
 
-	/*remember pointer to scene graph!!*/
-	JS_SetOpaque(sc->js_obj, script->sgprivate->scenegraph);
+	/*remember pointer to scene graph - do NOT use global object private, might be owned by QuickJS !*/
+	JSValue sg_obj = JS_NewObject(sc->js_ctx);
+	JS_SetOpaque(sg_obj, script->sgprivate->scenegraph);
+    JS_SetPropertyStr(sc->js_ctx, sc->js_obj, "__scenegraph", sg_obj);
 
 	JS_SetPropertyStr(sc->js_ctx, sc->js_obj, "FALSE", JS_FALSE);
 	JS_SetPropertyStr(sc->js_ctx, sc->js_obj, "TRUE", JS_TRUE);
@@ -2929,6 +2940,7 @@ static void vrml_js_init_api(GF_ScriptPriv *sc, GF_Node *script)
 void gf_sg_script_to_node_field(JSContext *c, JSValue val, GF_FieldInfo *field, GF_Node *owner, GF_JSField *parent)
 {
 	Double d;
+	JSClassID _classID;
 	Bool changed;
 	const char *str_val;
 	GF_JSField *p, *from;
@@ -3088,7 +3100,7 @@ void gf_sg_script_to_node_field(JSContext *c, JSValue val, GF_FieldInfo *field, 
 		break;
 	}
 
-	p = (GF_JSField *) JS_GetOpaque_Nocheck(val);
+	p = (GF_JSField *) JS_GetAnyOpaque(val, &_classID);
 	if (!p) return;
 
 	len = p->mfvals_count;
@@ -3627,7 +3639,8 @@ JSValue gf_sg_script_to_qjs_field(GF_ScriptPriv *priv, GF_FieldInfo *field, GF_N
 		return obj;
 
 	if (!jsf) {
-		jsf = JS_GetOpaque_Nocheck(obj);
+		JSClassID _classID;
+		jsf = JS_GetAnyOpaque(obj, &_classID);
 		gf_assert(jsf);
 	}
 	//store field associated with object if needed
@@ -4121,7 +4134,8 @@ static void JSScript_LoadVRML(GF_Node *node)
 	str = NULL;
 	for (i=0; i<script->url.count; i++) {
 		str = script->url.vals[i].script_text;
-		while (strchr("\n\t ", str[0])) str++;
+		if (!str) continue;
+		while (str[0] && strchr("\n\t ", str[0])) str++;
 
 		if (!strnicmp(str, "javascript:", 11)) str += 11;
 		else if (!strnicmp(str, "vrmlscript:", 11)) str += 11;
@@ -4356,6 +4370,7 @@ void gf_sg_handle_dom_event_for_vrml(GF_Node *node, GF_DOM_Event *event, GF_Node
 #ifndef GPAC_DISABLE_SVG
 	GF_ScriptPriv *priv;
 	Bool prev_type;
+	JSClassID _classID;
 	//JSBool ret = JS_FALSE;
 	GF_DOM_Event *prev_event = NULL;
 	SVG_handlerElement *hdl;
@@ -4374,7 +4389,7 @@ void gf_sg_handle_dom_event_for_vrml(GF_Node *node, GF_DOM_Event *event, GF_Node
 	priv = JS_GetScriptStack(hdl->js_data->ctx);
 	gf_js_lock(priv->js_ctx, 1);
 
-	prev_event = JS_GetOpaque_Nocheck(priv->the_event);
+	prev_event = JS_GetAnyOpaque(priv->the_event, &_classID);
 	/*break loops*/
 	if (prev_event && (prev_event->type==event->type) && (prev_event->target==event->target)) {
 		gf_js_lock(priv->js_ctx, 0);

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2023-2024
+ *			Copyright (c) Telecom ParisTech 2023-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / TrueHD reframer filter
@@ -458,6 +458,7 @@ static Bool truehd_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	u32 i;
 	GF_FilterEvent fevt;
 	GF_TrueHDDmxCtx *ctx = gf_filter_get_udta(filter);
+	if (!ctx->ipid) return GF_TRUE;
 
 	switch (evt->base.type) {
 	case GF_FEVT_PLAY:
@@ -687,7 +688,7 @@ restart:
 		}
 		ctx->is_sync = GF_TRUE;
 
-		if (!ctx->in_seek) {
+		if (!ctx->in_seek && remain >= hdr.frame_size) {
 			dst_pck = gf_filter_pck_new_alloc(ctx->opid, hdr.frame_size, &output);
 			if (!dst_pck) return GF_OUT_OF_MEM;
 			gf_filter_pck_merge_properties(ctx->src_pck ? ctx->src_pck : ctx->src_current, dst_pck);

@@ -1227,17 +1227,14 @@ u32 gf_sc_texture_enable_ex(GF_TextureHandler *txh, GF_Node *tx_transform, GF_Re
 		return 0;
 
 	if (!txh->stream || txh->data || txh->frame_ifce) {
-		gf_rmt_begin_gl(gf_sc_texture_push_image);
 		glGetError();
 		res = gf_sc_texture_push_image(txh, 0, 0);
-		gf_rmt_end_gl();
 		glGetError();
 		if (!res) return 0;
 	}
 
 skip_push:
 
-	gf_rmt_begin_gl(gf_sc_texture_enable);
 	glGetError();
 
 	if (bounds && txh->compute_gradient_matrix) {
@@ -1269,7 +1266,6 @@ skip_push:
 		tx_bind(txh);
 	}
 
-	gf_rmt_end_gl();
 	glGetError();
 	return 1;
 

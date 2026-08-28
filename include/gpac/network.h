@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / common tools sub-project
@@ -146,7 +146,7 @@ Bool gf_url_is_relative(const char *url);
 Returns a pointer to the first colon at the end of a filename or URL, if any.
 
 If assign_sep is specified, for example '=', the function will make sure that the colon is after the file extension if found and that '=' is not present between colon and file ext.
-This is used to parse 'a:b.mp4:c' (expected result ':c...' and not ':b...') vs 'a:b=c.mp4' ' (expected result ':b') 
+This is used to parse 'a:b.mp4:c' (expected result ':c...' and not ':b...') vs 'a:b=c.mp4' ' (expected result ':b')
 
 \param URL path or URL to inspect
 \param assign_sep value of assignment operand character. If 0, only checks for colon, otherwise chec that no assign sep or colon is present before file extension, if present
@@ -581,7 +581,7 @@ Gets local IP address of a connected socket, typically used for server after an 
 \param buffer destination buffer for IP address. Buffer must be GF_MAX_IP_NAME_LEN long
 \return error if any
  */
-GF_Err gf_sk_get_local_ip(GF_Socket *sock, char *buffer);
+GF_Err gf_sk_get_local_ip(GF_Socket *sock, char buffer[GF_MAX_IP_NAME_LEN]);
 /*!
 \brief get local info
 
@@ -612,7 +612,7 @@ Gets the remote address and port of a peer. The socket MUST be connected.
 \param port set to the remote port, may be NULL
 \return error if any
  */
-GF_Err gf_sk_get_remote_address_port(GF_Socket *sock, char *buffer, u32 *port);
+GF_Err gf_sk_get_remote_address_port(GF_Socket *sock, char buffer[GF_MAX_IP_NAME_LEN], u32 *port);
 
 /*!
 \brief set remote address
@@ -795,4 +795,3 @@ Bool gf_sk_group_sock_is_set(GF_SockGroup *sg, GF_Socket *sk, GF_SockSelectMode 
 
 
 #endif		/*_GF_NET_H_*/
-

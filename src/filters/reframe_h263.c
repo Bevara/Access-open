@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2024
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / H263 reframer filter
@@ -212,7 +212,7 @@ static void h263dmx_check_dur(GF_Filter *filter, GF_H263DmxCtx *ctx)
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION, & PROP_FRAC64(ctx->duration));
 
 
-		if (duration && !gf_sys_is_test_mode() ) {
+		if (duration) {
 			rate *= 8 * ctx->duration.den;
 			rate /= ctx->duration.num;
 			ctx->bitrate = (u32) rate;
@@ -265,6 +265,7 @@ static Bool h263dmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	u64 file_pos = 0;
 	GF_FilterEvent fevt;
 	GF_H263DmxCtx *ctx = gf_filter_get_udta(filter);
+	if (!ctx->ipid) return GF_TRUE;
 
 	switch (evt->base.type) {
 	case GF_FEVT_PLAY:

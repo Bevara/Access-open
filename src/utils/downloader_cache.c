@@ -2,7 +2,7 @@
  *					GPAC Multimedia Framework
  *
  *			Authors: Jean Le Feuvre, Pierre Souchay
- *			Copyright (c) Telecom ParisTech 2010-2025
+ *			Copyright (c) Telecom ParisTech 2010-2026
  *					All rights reserved
  *
  *   This file is part of GPAC / downloader sub-project
@@ -62,8 +62,8 @@ static const char * CACHE_SECTION_USERS = "users";
 enum CacheValid
 {
 	CORRUPTED = 1,
-    DELETED = 1<<1,
-    IN_PROGRESS = 1<<2,
+	DELETED = 1<<1,
+	IN_PROGRESS = 1<<2,
 };
 
 /**
@@ -124,15 +124,15 @@ struct __DownloadedCacheEntryStruct
 	//allocation
 	u32 mem_allocated;
 	u8 *mem_storage;
-    GF_Blob cache_blob;
+	GF_Blob cache_blob;
 
 	//for external blob only
-    GF_Blob *external_blob;
+	GF_Blob *external_blob;
 	char *forced_headers;
 	u32 downtime;
 
 	//prevent deleting files when deleting entries, typically for init segments
-    Bool persistent;
+	Bool persistent;
 };
 
 Bool gf_sys_check_process_id(u32 pid);
@@ -246,7 +246,7 @@ static Bool gather_cache_files(void *cbck, char *item_name, char *item_path, GF_
 u64 gf_cache_cleanup(const char * directory, u64 max_size)
 {
 	char szLOCK[GF_MAX_PATH];
-	sprintf(szLOCK, "%s/.lock", directory);
+	snprintf(szLOCK, sizeof(szLOCK), "%s/.lock", directory);
 	if (!gf_sys_create_lockfile(szLOCK))
 		return max_size;
 
@@ -531,7 +531,7 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 	if (!url || !cache_directory) return NULL;
 
 	sz = (u32) strlen ( url );
-	if ( sz > GF_MAX_PATH ) {
+	if ( sz >= GF_MAX_PATH ) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_CACHE,
 		       ("[CACHE] ERROR, URL is too long (%d chars), more than %d chars.\n", sz, GF_MAX_PATH ));
 		return NULL;
@@ -539,9 +539,9 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 	tmp[0] = '\0';
 	/*generate hash of the full url*/
 	if (start_range && end_range) {
-		sprintf(tmp, "%s_"LLD"-"LLD, url, start_range, end_range );
+		snprintf(tmp, GF_MAX_PATH, "%s_"LLD"-"LLD, url, start_range, end_range );
 	} else {
-		strcpy ( tmp, url );
+		gf_strcpy ( tmp, url );
 	}
 	gf_sha1_csum ((u8*) tmp, (u32) strlen ( tmp ), hash );
 	tmp[0] = 0;
@@ -552,7 +552,7 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 			char t[3];
 			t[2] = 0;
 			sprintf ( t, "%02X", hash[i] );
-			strcat ( tmp, t );
+			gf_strcat ( tmp, t );
 		}
 	}
 	assert ( strlen ( tmp ) == (_CACHE_HASH_SIZE * 2) );
@@ -577,12 +577,14 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 	entry->write_session = NULL;
 	entry->sessions = gf_list_new();
 
+	u32 asize;
 	if (entry->memory_stored) {
-		entry->cache_filename = (char*)gf_malloc ( strlen ("gmem://") + 8 + strlen("@") + 16 + 1);
+		asize =  (u32) strlen ("gmem://") + 8 +  (u32) strlen("@") + 16 + 1;
 	} else {
 		/* Sizeof cache directory + hash + possible extension */
-		entry->cache_filename = (char*)gf_malloc ( strlen ( cache_directory ) + strlen(cache_file_prefix) + strlen(tmp) + _CACHE_MAX_EXTENSION_SIZE + 1);
+		asize =  (u32) strlen ( cache_directory ) +  (u32) strlen(cache_file_prefix) +  (u32) strlen(tmp) + _CACHE_MAX_EXTENSION_SIZE + 1;
 	}
+	entry->cache_filename = (char*)gf_malloc(asize);
 
 	if ( !entry->hash || !entry->url || !entry->cache_filename || !entry->sessions) {
 		/* Probably out of memory */
@@ -597,7 +599,7 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 		entry->cache_blob.size = entry->contentLength;
 		char *burl = gf_blob_register(&entry->cache_blob);
 		if (burl) {
-			strcpy(entry->cache_filename, burl);
+			gf_strlcpy(entry->cache_filename, burl, asize);
 			gf_free(burl);
 		}
 		return entry;
@@ -605,10 +607,10 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 
 
 	tmp[0] = '\0';
-	strcpy ( entry->cache_filename, cache_directory );
-	strcat( entry->cache_filename, cache_file_prefix );
-	strcat ( entry->cache_filename, entry->hash );
-	strcpy ( tmp, url );
+	gf_strlcpy ( entry->cache_filename, cache_directory, asize );
+	gf_strlcat( entry->cache_filename, cache_file_prefix, asize);
+	gf_strlcat ( entry->cache_filename, entry->hash, asize);
+	gf_strcpy ( tmp, url );
 
 	{
 		char * parser;
@@ -619,19 +621,16 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 		if ( parser )
 			parser[0] = '\0';
 		parser = strrchr ( tmp, '.' );
-		if ( parser && ( strlen ( parser ) < _CACHE_MAX_EXTENSION_SIZE ) )
-			strncpy(ext, parser, _CACHE_MAX_EXTENSION_SIZE);
-		else
-			strncpy(ext, default_cache_file_suffix, _CACHE_MAX_EXTENSION_SIZE);
+		gf_strcpy(ext, parser ? parser : default_cache_file_suffix);
 		assert (strlen(ext));
-		strcat( entry->cache_filename, ext);
+		gf_strlcat( entry->cache_filename, ext, asize);
 	}
 
 	gf_dynstrcat(&entry->cfg_filename, entry->cache_filename, NULL);
 	gf_dynstrcat(&entry->cfg_filename, cache_file_info_suffix, NULL);
 
 	char szLOCK[GF_MAX_PATH];
-	sprintf(szLOCK, "%s.lock", entry->cfg_filename);
+	snprintf(szLOCK, sizeof(szLOCK), "%s.lock", entry->cfg_filename);
 	GF_LockStatus lock_type = cache_entry_lock(szLOCK);
 	if (!lock_type) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CACHE, ("[CACHE] Failed to grab cache lock for entry %s, request will not be cached\n", url));
@@ -642,7 +641,8 @@ DownloadedCacheEntry gf_cache_create_entry(const char * cache_directory, const c
 	Bool in_cache = gf_file_exists(entry->cfg_filename);
 
 	GF_Config *cfg = gf_cfg_force_new ( NULL, entry->cfg_filename);
-	if ( !cfg ) {
+	if ( !cfg || !gf_cfg_get_filename(cfg) ) {
+		if (cfg) gf_cfg_del(cfg);
 		GF_LOG(GF_LOG_WARNING, GF_LOG_CACHE, ("[CACHE] Failed to create cache entry for %s, request will not be cached\n", url));
 		gf_cache_delete_entry ( entry );
 		if (lock_type==GF_LOCKFILE_NEW) gf_file_delete(szLOCK);
@@ -802,7 +802,7 @@ GF_Err gf_cache_open_write_cache( const DownloadedCacheEntry entry, const GF_Dow
 		entry->cache_blob.size = entry->contentLength;
 		char *burl = gf_blob_register(&entry->cache_blob);
 		if (burl) {
-			strcpy(entry->cache_filename, burl);
+			gf_strlcpy(entry->cache_filename, burl, (strlen(entry->cache_filename)+1) );
 			gf_free(burl);
 		}
 		gf_mx_v(entry->cache_blob.mx);
@@ -827,7 +827,7 @@ GF_Err gf_cache_open_write_cache( const DownloadedCacheEntry entry, const GF_Dow
 		gf_fseek(entry->writeFilePtr, 0, SEEK_END);
 
 	char szLOCK[GF_MAX_PATH];
-	sprintf(szLOCK, "%s.lock", entry->cfg_filename);
+	snprintf(szLOCK, sizeof(szLOCK), "%s.lock", entry->cfg_filename);
 	GF_LockStatus lock_type = cache_entry_lock(szLOCK);
 	GF_Config *cfg = gf_cfg_new(NULL, entry->cfg_filename);
 	char szUTC[20];
@@ -862,7 +862,7 @@ GF_Err gf_cache_write_to_cache( const DownloadedCacheEntry entry, const GF_Downl
 			entry->cache_blob.size = entry->contentLength;
 			char *burl = gf_blob_register(&entry->cache_blob);
 			if (burl) {
-				strcpy(entry->cache_filename, burl);
+				gf_strlcpy(entry->cache_filename, burl, (strlen(entry->cache_filename)+1) );
 				gf_free(burl);
 			}
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_CACHE, ("[CACHE] Reallocating memory cache to %d bytes\n", new_size));
@@ -913,7 +913,7 @@ void gf_cache_delete_entry( const DownloadedCacheEntry entry )
 
 	if (!entry->mem_storage ) {
 		char szLOCK[GF_MAX_PATH];
-		sprintf(szLOCK, "%s.lock", entry->cfg_filename);
+		snprintf(szLOCK, sizeof(szLOCK), "%s.lock", entry->cfg_filename);
 		GF_LockStatus lock_type = cache_entry_lock(szLOCK);
 
 		GF_Config *cfg = gf_cfg_new(NULL, entry->cfg_filename);
@@ -940,7 +940,7 @@ void gf_cache_delete_entry( const DownloadedCacheEntry entry )
 			gf_file_delete(entry->cache_filename);
 			gf_file_delete(entry->cfg_filename);
 		}
-    }
+	}
 	if (entry->cfg_filename) gf_free(entry->cfg_filename);
 	if (entry->cache_filename) gf_free(entry->cache_filename);
 	if (entry->serverETag) gf_free(entry->serverETag);
@@ -997,7 +997,7 @@ void gf_cache_set_max_age(const DownloadedCacheEntry entry, u32 max_age, Bool mu
 	if (!entry || entry->mem_storage) return;
 
 	char szLOCK[GF_MAX_PATH];
-	sprintf(szLOCK, "%s.lock", entry->cfg_filename);
+	snprintf(szLOCK, sizeof(szLOCK), "%s.lock", entry->cfg_filename);
 	GF_LockStatus lock_type = cache_entry_lock(szLOCK);
 	GF_Config *cfg = gf_cfg_new(NULL, entry->cfg_filename);
 
@@ -1096,17 +1096,17 @@ u32 gf_cache_get_downtime(const DownloadedCacheEntry entry)
 }
 u32 gf_cache_is_done(const DownloadedCacheEntry entry)
 {
-    if (!entry) return 1;
-    u32 res = 1;
-    if (entry->external_blob) {
-        gf_mx_p(entry->external_blob->mx);
-        res = (entry->external_blob->flags & GF_BLOB_IN_TRANSFER) ? 0 : 1;
-        if (res && (entry->external_blob->flags & GF_BLOB_CORRUPTED))
+	if (!entry) return 1;
+	u32 res = 1;
+	if (entry->external_blob) {
+		gf_mx_p(entry->external_blob->mx);
+		res = (entry->external_blob->flags & GF_BLOB_IN_TRANSFER) ? 0 : 1;
+		if (res && (entry->external_blob->flags & GF_BLOB_CORRUPTED))
 			res = 2;
-        gf_mx_v(entry->external_blob->mx);
-    } else if (entry->mem_storage) {
-        res = (entry->cache_blob.flags & GF_BLOB_IN_TRANSFER) ? 0 : 1;
-    } else {
+		gf_mx_v(entry->external_blob->mx);
+	} else if (entry->mem_storage) {
+		res = (entry->cache_blob.flags & GF_BLOB_IN_TRANSFER) ? 0 : 1;
+	} else {
 		if (!(entry->flags & IN_PROGRESS)) return 1;
 		char szLOCK[GF_MAX_PATH];
 		sprintf(szLOCK, "%s.lock", entry->cfg_filename);
@@ -1122,66 +1122,66 @@ u32 gf_cache_is_done(const DownloadedCacheEntry entry)
 		gf_cfg_del(cfg);
 		if (lock_type==GF_LOCKFILE_NEW) gf_file_delete(szLOCK);
 	}
-    return res;
+	return res;
 }
 const u8 *gf_cache_get_content(const DownloadedCacheEntry entry, u32 *size, u32 *max_valid_size, Bool *was_modified)
 {
-    if (!entry) return NULL;
+	if (!entry) return NULL;
 	*was_modified = GF_FALSE;
-    if (entry->external_blob) {
-        u8 *data;
+	if (entry->external_blob) {
+		u8 *data;
 		GF_Err e = gf_blob_get_ex(entry->external_blob, &data, size, NULL);
-        if (e) return NULL;
-        *max_valid_size = *size;
+		if (e) return NULL;
+		*max_valid_size = *size;
 		if (entry->external_blob->range_valid) {
 			gf_mx_p(entry->external_blob->mx);
-			entry->external_blob->range_valid(entry->external_blob, 0, max_valid_size);
+			entry->external_blob->range_valid(entry->external_blob, GF_FALSE, 0, max_valid_size);
 			gf_mx_v(entry->external_blob->mx);
 		}
 		if (entry->external_blob->last_modification_time != entry->cache_blob.last_modification_time) {
 			*was_modified = GF_TRUE;
 			entry->cache_blob.last_modification_time = entry->external_blob->last_modification_time;
 		}
-        return data;
-    }
-    *max_valid_size = *size = entry->cache_blob.size;
-    return entry->cache_blob.data;
+		return data;
+	}
+	*max_valid_size = *size = entry->cache_blob.size;
+	return entry->cache_blob.data;
 }
 void gf_cache_release_content(const DownloadedCacheEntry entry)
 {
-    if (!entry) return;
-    if (!entry->external_blob) return;
-    gf_blob_release_ex(entry->external_blob);
+	if (!entry) return;
+	if (!entry->external_blob) return;
+	gf_blob_release_ex(entry->external_blob);
 }
 Bool gf_cache_is_deleted(const DownloadedCacheEntry entry)
 {
-    if (!entry) return GF_TRUE;
-    if (entry->flags & DELETED) return GF_TRUE;
-    return GF_FALSE;
+	if (!entry) return GF_TRUE;
+	if (entry->flags & DELETED) return GF_TRUE;
+	return GF_FALSE;
 }
 
 Bool gf_cache_set_content(const DownloadedCacheEntry entry, GF_Blob *blob, Bool copy, GF_Mutex *mx)
 {
 	if (!entry || !entry->memory_stored) return GF_FALSE;
 
-    if (!blob) {
-        entry->flags |= DELETED;
-        if (entry->external_blob) {
+	if (!blob) {
+		entry->flags |= DELETED;
+		if (entry->external_blob) {
 			gf_blob_unregister(entry->external_blob);
 			entry->external_blob = NULL;
 		}
-        return GF_TRUE;
-    }
-    if (blob->mx)
-        gf_mx_p(blob->mx);
+		return GF_TRUE;
+	}
+	if (blob->mx)
+		gf_mx_p(blob->mx);
 
-    if (!copy) {
-        if (entry->mem_allocated) gf_free(entry->mem_storage);
+	if (!copy) {
+		if (entry->mem_allocated) gf_free(entry->mem_storage);
 		entry->mem_storage = (u8 *) blob->data;
-        if (!entry->written_in_cache) {
+		if (!entry->written_in_cache) {
 			char *burl = gf_blob_register(blob);
 			if (burl) {
-				strcpy(entry->cache_filename, burl);
+				gf_strlcpy(entry->cache_filename, burl, (strlen(entry->cache_filename)+1) );
 				gf_free(burl);
 			}
 		}
@@ -1190,47 +1190,47 @@ Bool gf_cache_set_content(const DownloadedCacheEntry entry, GF_Blob *blob, Bool 
 		entry->mem_allocated = 0;
 		entry->cache_blob.data = NULL;
 		entry->cache_blob.size = 0;
-        entry->external_blob = blob;
+		entry->external_blob = blob;
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CACHE, ("[CACHE] Storing %d bytes to memory from external module\n", blob->size));
-    } else {
+	} else {
 		if (!entry->cache_blob.mx)
 			entry->cache_blob.mx = mx;
 		gf_mx_p(entry->cache_blob.mx);
 
-        if (blob->size >= entry->mem_allocated) {
-            u32 new_size;
-            new_size = MAX(entry->mem_allocated*2, blob->size+1);
-            entry->mem_storage = (u8*)gf_realloc(entry->mem_allocated ? entry->mem_storage : NULL, (new_size+2));
-            entry->mem_allocated = new_size;
-            entry->cache_blob.data = entry->mem_storage;
-            entry->cache_blob.size = entry->contentLength;
-            if (!entry->written_in_cache) {
+		if (blob->size >= entry->mem_allocated) {
+			u32 new_size;
+			new_size = MAX(entry->mem_allocated*2, blob->size+1);
+			entry->mem_storage = (u8*)gf_realloc(entry->mem_allocated ? entry->mem_storage : NULL, (new_size+2));
+			entry->mem_allocated = new_size;
+			entry->cache_blob.data = entry->mem_storage;
+			entry->cache_blob.size = entry->contentLength;
+			if (!entry->written_in_cache) {
 				char *burl = gf_blob_register(&entry->cache_blob);
 				if (burl) {
-					strcpy(entry->cache_filename, burl);
+					gf_strlcpy(entry->cache_filename, burl, (strlen(entry->cache_filename)+1) );
 					gf_free(burl);
 				}
-            }
-            GF_LOG(GF_LOG_DEBUG, GF_LOG_CACHE, ("[CACHE] Reallocating memory cache to %d bytes\n", new_size));
-        }
-        memcpy(entry->mem_storage, blob->data, blob->size);
-        entry->mem_storage[blob->size] = 0;
-        entry->cache_blob.size = entry->written_in_cache = blob->size;
-        GF_LOG(GF_LOG_DEBUG, GF_LOG_CACHE, ("[CACHE] Storing %d bytes to cache memory\n", blob->size));
+			}
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CACHE, ("[CACHE] Reallocating memory cache to %d bytes\n", new_size));
+		}
+		memcpy(entry->mem_storage, blob->data, blob->size);
+		entry->mem_storage[blob->size] = 0;
+		entry->cache_blob.size = entry->written_in_cache = blob->size;
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CACHE, ("[CACHE] Storing %d bytes to cache memory\n", blob->size));
 
 		gf_mx_v(entry->cache_blob.mx);
 
 		entry->cache_blob.flags = blob->flags;
-    }
+	}
 	if (blob->flags & GF_BLOB_IN_TRANSFER)
 		entry->contentLength = 0;
 	else
 		entry->contentLength = blob->size;
 
-    if (blob->mx)
-        gf_mx_v(blob->mx);
+	if (blob->mx)
+		gf_mx_v(blob->mx);
 
-    return GF_TRUE;
+	return GF_TRUE;
 }
 
 static Bool gf_cache_entry_can_reuse(const DownloadedCacheEntry entry, Bool skip_revalidate)
@@ -1392,7 +1392,7 @@ void gf_dm_configure_cache(GF_DownloadSession *sess)
 		Bool use_mem = (sess->flags & (GF_NETIO_SESSION_MEMORY_CACHE | GF_NETIO_SESSION_NO_STORE)) ? GF_TRUE : GF_FALSE;
 		entry = gf_cache_create_entry(sess->dm->cache_directory, sess->orig_url, sess->range_start, sess->range_end, use_mem, sess->dm->cache_mx);
 		if (!entry) {
-			SET_LAST_ERR(GF_OUT_OF_MEM)
+			SET_LAST_ERR(GF_IO_ERR)
 			return;
 		}
 		gf_mx_p( sess->dm->cache_mx );

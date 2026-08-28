@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2024
+ *			Copyright (c) Telecom ParisTech 2017-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / generic FILE output filter
@@ -108,8 +108,8 @@ static void fileout_close_hls_chunk(GF_FileOutCtx *ctx, Bool final_flush)
 	if (!ctx->llhls_file_name) return;
 
 	char szName[GF_MAX_PATH];
-	strcpy(szName, ctx->llhls_file_name);
-	strcat(szName, ATOMIC_SUFFIX);
+	gf_strcpy(szName, ctx->llhls_file_name);
+	gf_strcat(szName, ATOMIC_SUFFIX);
 	gf_file_delete(ctx->llhls_file_name);
 	gf_file_move(szName, ctx->llhls_file_name);
 	gf_free(ctx->llhls_file_name);
@@ -120,8 +120,8 @@ static void fileout_check_close(GF_FileOutCtx *ctx)
 {
 	if (!ctx->use_move) return;
 	char szName[GF_MAX_PATH];
-	strcpy(szName, ctx->szFileName);
-	strcat(szName, ATOMIC_SUFFIX);
+	gf_strcpy(szName, ctx->szFileName);
+	gf_strcat(szName, ATOMIC_SUFFIX);
 	gf_file_delete(ctx->szFileName);
 	gf_file_move(szName, ctx->szFileName);
 	ctx->use_move = GF_FALSE;
@@ -156,6 +156,9 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 	else if (!strcmp(filename, "stdout")) ctx->is_std = GF_TRUE;
 	else ctx->is_std = GF_FALSE;
 
+	if (!strcmp(filename, "null") || !strcmp(filename, "/dev/null"))
+		ext = NULL;
+
 	if (ctx->is_std) {
 		ctx->file = stdout;
 		ctx->nb_write = 0;
@@ -179,25 +182,26 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 	if (ctx->dynext) {
 		const char *has_ext = gf_file_ext_start(url);
 
-		strcpy(szFinalName, url);
-		if (!has_ext && ext) {
-			strcat(szFinalName, ".");
-			strcat(szFinalName, ext);
+		gf_strcpy(szFinalName, url);
+
+		if (!has_ext && ext && (GF_ARRAY_LENGTH(szFinalName) > (strlen(szFinalName)+1+strlen(ext)))) {
+			gf_strcat(szFinalName, ".");
+			gf_strcat(szFinalName, ext);
 		}
 	} else {
-		strcpy(szFinalName, url);
+		gf_strcpy(szFinalName, url);
 	}
 
 	if (ctx->use_templates) {
 		GF_Err e;
 		gf_assert(ctx->dst);
 		if (!strcmp(filename, ctx->dst)) {
-			strcpy(szName, szFinalName);
+			gf_strcpy(szName, szFinalName);
 			e = gf_filter_pid_resolve_file_template(ctx->pid, szName, szFinalName, file_idx, file_suffix);
 		} else {
 			char szFileName[GF_MAX_PATH];
-			strcpy(szFileName, szFinalName);
-			strcpy(szName, ctx->dst);
+			gf_strcpy(szFileName, szFinalName);
+			gf_strcpy(szName, ctx->dst);
 			e = gf_filter_pid_resolve_file_template_ex(ctx->pid, szName, szFinalName, file_idx, file_suffix, szFileName);
 		}
 		if (e) {
@@ -227,7 +231,7 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 	}
 
 	if (check_no_open && (ctx->llhas_mode==GF_LLHAS_SUBSEG)) {
-		strcpy(ctx->szFileName, szFinalName);
+		gf_strcpy(ctx->szFileName, szFinalName);
 		ctx->nb_write = 0;
 		return GF_OK;
 	}
@@ -238,9 +242,9 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 	if (ctx->atomic && !append && !is_gfio && (!ctx->original_url || strncmp(ctx->original_url, "gfio://", 7))) {
 		ctx->use_move = GF_TRUE;
 	}
-	strcpy(szName, szFinalName);
-	if (ctx->use_move) {
-		strcat(szName, ATOMIC_SUFFIX);
+	gf_strcpy(szName, szFinalName);
+	if (ctx->use_move && (GF_ARRAY_LENGTH(szName) > (strlen(szName)+strlen(ATOMIC_SUFFIX)))) {
+		gf_strcat(szName, ATOMIC_SUFFIX);
 	}
 
 #ifdef GPAC_HAS_FD
@@ -258,7 +262,7 @@ static GF_Err fileout_open_close(GF_FileOutCtx *ctx, const char *filename, const
 	if (!strcmp(szFinalName, ctx->szFileName) && !append && ctx->nb_write && !explicit_overwrite) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[FileOut] re-opening in write mode output file %s, content overwrite (use `cat` option to enable append)\n", szFinalName));
 	}
-	strcpy(ctx->szFileName, szFinalName);
+	gf_strcpy(ctx->szFileName, szFinalName);
 
 	ctx->nb_write = 0;
 	if (!ctx->file
@@ -437,7 +441,7 @@ static GF_Err fileout_initialize(GF_Filter *filter)
 		ctx->in_caps[1].val = PROP_NAME( ctx->mime );
 		ctx->in_caps[1].flags = GF_CAPS_INPUT;
 	} else {
-		strncpy(ctx->szExt, ext, 9);
+		gf_strcpy(ctx->szExt, ext);
 		ctx->szExt[9] = 0;
 		strlwr(ctx->szExt);
 		ctx->in_caps[1].code = GF_PROP_PID_FILE_EXT;
@@ -495,7 +499,7 @@ restart:
 		if (gf_filter_pid_is_eos(ctx->pid) && !gf_filter_pid_is_flush_eos(ctx->pid)) {
 			if (gf_filter_reporting_enabled(filter)) {
 				char szStatus[1024];
-				snprintf(szStatus, 1024, "%s: done - wrote "LLU" bytes", gf_file_basename(ctx->szFileName), ctx->nb_write);
+				snprintf(szStatus, 1024, "done info=\"%s\" s_bytes="LLU, gf_file_basename(ctx->szFileName), ctx->nb_write);
 				gf_filter_update_status(filter, 10000, szStatus);
 			}
 
@@ -561,7 +565,7 @@ restart:
 			if (!p) p = gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENAME);
 			if (p) filename = p->value.string;
 			if (filename) {
-				strcpy(ctx->szFileName, filename);
+				gf_strcpy(ctx->szFileName, filename);
 			} else {
 				sprintf(ctx->szFileName, "%d", fnum);
 			}
@@ -702,18 +706,34 @@ restart:
 	}
 	p = gf_filter_pck_get_property(pck, GF_PROP_PCK_LLHAS_FRAG_NUM);
 	if (p) {
+#ifndef GPAC_DISABLE_MPD
 		char *llhas_chunkname = gf_mpd_resolve_subnumber(ctx->llhas_template, ctx->szFileName, p->value.uint);
 		//for now we only use buffered IO for hls chunks, too small to really benefit from direct write
 		fileout_close_hls_chunk(ctx, GF_FALSE);
+
 		if (ctx->use_move) {
 			ctx->llhls_file_name = gf_strdup(llhas_chunkname);
 			gf_dynstrcat(&llhas_chunkname, ATOMIC_SUFFIX, NULL);
-			ctx->hls_chunk = gf_fopen_ex(llhas_chunkname, ctx->original_url, "w+b", GF_FALSE);
-		} else {
-			ctx->hls_chunk = gf_fopen_ex(llhas_chunkname, ctx->original_url, "w+b", GF_FALSE);
 		}
+
+		//we need a gf_url_concatenate to register target gfio, so simulate one
+		//this works because file subparts are always in the same dir as segment file
+		if (ctx->original_url && !strncmp(ctx->original_url, "gfio://", 7)) {
+			const char *rad = strrchr(llhas_chunkname, '/');
+			if (!rad) rad = strrchr(llhas_chunkname, '\\');
+			if (!rad) rad = llhas_chunkname;
+			else rad += 1;
+			//no need to check return: if failure, following gf_fopen_ex will also fail
+			gf_fileio_open_url(gf_fileio_from_url(ctx->original_url), rad, "url", &e);
+		}
+		ctx->hls_chunk = gf_fopen_ex(llhas_chunkname, ctx->original_url, "w+b", GF_FALSE);
+
 		ctx->gfio_pending = GF_TRUE;
 		gf_free(llhas_chunkname);
+#else
+		gf_filter_setup_failure(filter, GF_NOT_SUPPORTED);
+		return GF_NOT_SUPPORTED;
+#endif
 	}
 
 check_gfio:
@@ -945,11 +965,13 @@ check_gfio:
 
 	if (gf_filter_reporting_enabled(filter)) {
 		char szStatus[1024];
-		snprintf(szStatus, 1024, "%s: wrote % 16"LLD_SUF" bytes", gf_file_basename(ctx->szFileName), (s64) ctx->nb_write);
+		snprintf(szStatus, 1024, "info=\"%s\" s_bytes="LLD, gf_file_basename(ctx->szFileName), (s64) ctx->nb_write);
 		gf_filter_update_status(filter, -1, szStatus);
 	}
 	return e;
 }
+
+GF_Err gf_fileio_file_delete(const char *fileName, const char *parent_gfio);
 
 static Bool fileout_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 {
@@ -959,7 +981,15 @@ static Bool fileout_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileOut] null delete (file name was %s)\n", evt->file_del.url));
 		} else {
 			GF_LOG(GF_LOG_INFO, GF_LOG_MMIO, ("[FileOut] delete file %s\n", evt->file_del.url));
-			if (ctx->use_rel) {
+
+			char *gfio_sep = NULL;
+			if (!strncmp(evt->file_del.url, "gfio://", 7)) gfio_sep = strchr(evt->file_del.url, '@');
+			if (gfio_sep) {
+				gfio_sep[0] = 0;
+				gf_fileio_file_delete(gfio_sep+1, evt->file_del.url);
+				gfio_sep[0] = '@';
+			}
+			else if (ctx->use_rel) {
 				char *fname = gf_url_concatenate(ctx->dst, evt->file_del.url);
 				gf_file_delete(fname);
 				gf_free(fname);
@@ -1033,7 +1063,7 @@ GF_FilterRegister FileOutRegister = {
 		"The output file name can use gpac templating mechanism, see `gpac -h doc`."
 		"The filter watches the property `FileNumber` on incoming packets to create new files.\n"
 		"\n"
-		"By default output files are created directly, which may lead to issues if concourrent programs attempt to access them.\n"
+		"By default output files are created directly, which may lead to issues if concurrent programs attempt to access them.\n"
 		"By enabling [-atomic](), files will be created in target destination folder with the `"ATOMIC_SUFFIX"` suffix and move to their final name upon close.\n"
 		"\n"
 		"# Discard sink mode\n"

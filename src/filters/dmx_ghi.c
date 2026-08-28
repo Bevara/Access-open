@@ -259,7 +259,10 @@ GF_Err ghi_dmx_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remov
 				continue;
 			}
 			//make sure this comes from the same source, otherwise we could match tracks with same IDs in different files - cf #2840
-			if (!st->check_res_url || strcmp(st->check_res_url, url->value.string)) continue;
+			if (st->check_res_url && !strcmp(st->check_res_url, url->value.string)) {}
+			else if (st->res_url && !strcmp(st->res_url, url->value.string)) {}
+			else continue;
+
 			if (!st->track_id) break;
 			if (st->track_id == p_id->value.uint) break;
 			st = NULL;
@@ -576,6 +579,8 @@ static void ghi_dmx_declare_opid_bin(GF_Filter *filter, GHIDmxCtx *ctx, GHIStrea
 		case GF_PROP_CONST_DATA:
 			p.value.data.size = gf_bs_read_u32(bs);
 			if (p.value.data.size > gf_bs_available(bs)) {
+				p.value.data.size = 0;
+				p.value.data.ptr = NULL;
 				gf_bs_mark_overflow(bs, GF_FALSE);
 				break;
 			}
@@ -588,6 +593,12 @@ static void ghi_dmx_declare_opid_bin(GF_Filter *filter, GHIDmxCtx *ctx, GHIStrea
 		//string list: memory is ALWAYS duplicated
 		case GF_PROP_STRING_LIST:
 			p.value.string_list.nb_items = gf_bs_read_u32(bs);
+			if (p.value.string_list.nb_items > gf_bs_available(bs)) {
+				p.value.string_list.nb_items = 0;
+				p.value.string_list.vals = NULL;
+				gf_bs_mark_overflow(bs, GF_FALSE);
+				break;
+			}
 			p.value.string_list.vals = gf_malloc(sizeof(char*) * p.value.string_list.nb_items);
 			for (pidx=0; pidx<p.value.string_list.nb_items; pidx++) {
 				p.value.string_list.vals[pidx] = gf_bs_read_utf8(bs);
@@ -599,6 +610,12 @@ static void ghi_dmx_declare_opid_bin(GF_Filter *filter, GHIDmxCtx *ctx, GHIStrea
 		case GF_PROP_SINT_LIST:
 		case GF_PROP_4CC_LIST:
 			p.value.uint_list.nb_items = gf_bs_read_u32(bs);
+			if (sizeof(u32) * p.value.string_list.nb_items > gf_bs_available(bs)) {
+				p.value.uint_list.nb_items = 0;
+				p.value.uint_list.vals = NULL;
+				gf_bs_mark_overflow(bs, GF_FALSE);
+				break;
+			}
 			p.value.uint_list.vals = gf_malloc(sizeof(u32) * p.value.string_list.nb_items);
 			for (pidx=0; pidx<p.value.uint_list.nb_items; pidx++) {
 				p.value.uint_list.vals[pidx] = gf_bs_read_u32(bs);
@@ -606,7 +623,13 @@ static void ghi_dmx_declare_opid_bin(GF_Filter *filter, GHIDmxCtx *ctx, GHIStrea
 			break;
 		case GF_PROP_VEC2I_LIST:
 			p.value.v2i_list.nb_items = gf_bs_read_u32(bs);
-			p.value.v2i_list.vals = gf_malloc(sizeof(u32) * p.value.string_list.nb_items);
+			if (sizeof(GF_PropVec2i) * p.value.v2i_list.nb_items > gf_bs_available(bs)) {
+				p.value.v2i_list.nb_items = 0;
+				p.value.v2i_list.vals = NULL;
+				gf_bs_mark_overflow(bs, GF_FALSE);
+				break;
+			}
+			p.value.v2i_list.vals = gf_malloc(sizeof(GF_PropVec2i) * p.value.v2i_list.nb_items);
 			for (pidx=0; pidx<p.value.v2i_list.nb_items; pidx++) {
 				p.value.v2i_list.vals[pidx].x = gf_bs_read_u32(bs);
 				p.value.v2i_list.vals[pidx].y = gf_bs_read_u32(bs);
@@ -816,8 +839,12 @@ GF_Err ghi_dmx_init_bin(GF_Filter *filter, GHIDmxCtx *ctx, GF_BitStream *bs)
 
 		//locate segment
 		if (ctx->sn > st->nb_segs) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[GHIX] Invalid segment index %d - only %d segments available\n", ctx->sn, st->nb_segs));
-			return GF_BAD_PARAM;
+			if (!st->inactive) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[GHIX] Invalid segment index %d - only %d segments available\n", ctx->sn, st->nb_segs));
+				return GF_BAD_PARAM;
+			}
+			//not active, use last entry for init below
+			st->seg_num = st->nb_segs;
 		//todo: locate by other criteria ? (time)
 		} else {
 			st->seg_num = ctx->sn;
@@ -936,9 +963,13 @@ GF_Err ghi_dmx_init_xml(GF_Filter *filter, GHIDmxCtx *ctx, const u8 *data)
 
 			//locate segment
 			if (ctx->sn > gf_list_count(st->segs_xml)) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[GHIX] Invalid segment index %d - only %d segments available\n", ctx->sn, gf_list_count(st->segs_xml)));
-				gf_mpd_del(mpd);
-				return GF_BAD_PARAM;
+				if (!st->inactive) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[GHIX] Invalid segment index %d - only %d segments available\n", ctx->sn, gf_list_count(st->segs_xml)));
+					gf_mpd_del(mpd);
+					return GF_BAD_PARAM;
+				}
+				//not active, use last entry for init below
+				st->seg_num = gf_list_count(st->segs_xml);
 			//todo: locate by other criteria ? (time)
 			} else {
 				st->seg_num = ctx->sn;
@@ -1059,7 +1090,11 @@ GF_Err ghi_dmx_init(GF_Filter *filter, GHIDmxCtx *ctx)
 			continue;
 		}
 
-		char *args = gf_strdup(st->check_res_url);
+		char *args = NULL;
+		if (st->check_res_url) args = gf_strdup(st->check_res_url);
+		//if no check_res_url, use res_url directly - this happens when source idx is a gf_fileio_from_mem
+		//in which case we don't mem-wrap the inputs
+		else if (st->res_url) args = gf_strdup(st->res_url);
 
 		if (st->first_frag_start_offset) {
 			char szRange[100];
@@ -1379,4 +1414,3 @@ const GF_FilterRegister *ghidmx_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif // GPAC_DISABLE_GHIDMX
-

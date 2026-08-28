@@ -82,6 +82,7 @@ static void bifs_info_del(BIFSStreamInfo *info)
 		gf_list_rem_last(info->config.elementaryMasks);
 		gf_free(em);
 	}
+	gf_list_del(info->config.elementaryMasks);
 	gf_free(info);
 }
 
@@ -91,7 +92,7 @@ GF_BifsDecoder *gf_bifs_decoder_new(GF_SceneGraph *scenegraph, Bool command_dec)
 	GF_BifsDecoder *tmp;
 	GF_SAFEALLOC(tmp, GF_BifsDecoder);
 	if (!tmp) return NULL;
-	
+
 	tmp->QPs = gf_list_new();
 	tmp->streamInfo = gf_list_new();
 	tmp->info = NULL;
@@ -103,6 +104,7 @@ GF_BifsDecoder *gf_bifs_decoder_new(GF_SceneGraph *scenegraph, Bool command_dec)
 		tmp->dec_memory_mode = GF_TRUE;
 		tmp->force_keep_qp = GF_TRUE;
 	}
+	tmp->conditional_nodes = gf_list_new();
 	tmp->current_graph = NULL;
 	return tmp;
 }
@@ -165,7 +167,7 @@ GF_Err gf_bifs_decoder_configure_stream(GF_BifsDecoder * codec, u16 ESID, u8 *De
 	}
 
 	if (e && (e != GF_ODF_INVALID_DESCRIPTOR)) {
-		gf_free(pInfo);
+		bifs_info_del(pInfo);
 		gf_bs_del(bs);
 		return GF_BIFS_UNKNOWN_VERSION;
 	}
@@ -236,6 +238,15 @@ void gf_bifs_decoder_del(GF_BifsDecoder *codec)
 	gf_list_del(codec->streamInfo);
 
 	command_buffers_del(codec->command_buffers);
+
+	if (codec->conditional_nodes) {
+		u32 i;
+		for (i = 0; i < gf_list_count(codec->conditional_nodes); i++) {
+			GF_BifsDecoder** ptr = (GF_BifsDecoder**)gf_list_get(codec->conditional_nodes, i);
+			*ptr = NULL;
+		}
+		gf_list_del(codec->conditional_nodes);
+	}
 
 	gf_free(codec);
 }
@@ -542,4 +553,3 @@ Bool gf_bifs_get_aq_info(GF_Node *Node, u32 FieldIndex, u8 *QType, u8 *AType, Fi
 }
 
 #endif /*GPAC_DISABLE_BIFS*/
-

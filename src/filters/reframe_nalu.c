@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / NALU (AVC, HEVC, VVC)  reframer filter
@@ -70,7 +70,7 @@ typedef struct
 	//filter args
 	GF_Fraction fps;
 	Double index;
-	Bool explicit, force_sync, nosei, importer, subsamples, nosvc, novpsext, deps, seirw, audelim, analyze, notime, refs;
+	Bool explicit, force_sync, nosei, importer, subsamples, nosvc, novpsext, deps, seirw, audelim, keepfiller, analyze, notime, refs;
 	u32 nal_length;
 	GF_GOPBufferingMode strict_poc;
 	u32 bsdbg;
@@ -253,6 +253,8 @@ typedef struct
 	GF_FilterPacket *prev_sap;
 
 	GF_SEILoader *sei_loader;
+
+	Bool has_colr_info;
 } GF_NALUDmxCtx;
 
 static void naludmx_enqueue_or_dispatch(GF_NALUDmxCtx *ctx, GF_FilterPacket *n_pck, Bool flush_ref);
@@ -535,9 +537,8 @@ static void naludmx_check_dur(GF_Filter *filter, GF_NALUDmxCtx *ctx)
 		} else {
 			p = gf_filter_pid_get_property(ctx->ipid, GF_PROP_PID_DOWN_SIZE);
 			if (!p || (p->value.longuint > 20000000)) {
-				GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[%s] Source file larger than 20M, skipping indexing\n", ctx->log_name));
-				if (!gf_sys_is_test_mode())
-					probe_size = 20000000;
+				GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[%s] Large source file - estimating dur/rate on first 20 MB\n", ctx->log_name));
+				probe_size = 20000000;
 			} else {
 				ctx->index = -ctx->index;
 			}
@@ -732,7 +733,7 @@ static void naludmx_check_dur(GF_Filter *filter, GF_NALUDmxCtx *ctx)
 		if (probe_size)
 			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DURATION_AVG, &PROP_BOOL(GF_TRUE) );
 
-		if (duration && ctx->duration.num && (!gf_sys_is_test_mode() || gf_opts_get_bool("temp", "force_indexing"))) {
+		if (duration && ctx->duration.num) {
 			filesize *= 8 * ctx->duration.den;
 			filesize /= ctx->duration.num;
 			ctx->bitrate = (u32) filesize;
@@ -1533,7 +1534,6 @@ Bool naludmx_create_avc_decoder_config(GF_NALUDmxCtx *ctx, u8 **dsi, u32 *dsi_si
 				&& (sps->vui.time_scale / 1000 <= sps->vui.num_units_in_tick)
 			) {
 				/*ISO/IEC 14496-10 n11084 Table E-6*/
-				/* not used :				u8 DeltaTfiDivisorTable[] = {1,1,1,2,2,2,2,3,3,4,6}; */
 				u8 DeltaTfiDivisorIdx;
 				if (!sps->vui.pic_struct_present_flag) {
 					DeltaTfiDivisorIdx = 1 + (1 - ctx->avc_state->s_info.field_pic_flag);
@@ -1817,7 +1817,6 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 	u32 crc_cfg, crc_cfg_enh;
 	GF_Fraction sar;
 	Bool has_hevc_base = GF_TRUE;
-	Bool has_colr_info = GF_FALSE;
 	Bool res;
 	Bool is_reconfig_only;
 	Bool dsi_is_superset = (!ctx->crc_cfg || ctx->ps_changed) ? GF_FALSE : GF_TRUE;
@@ -1975,7 +1974,7 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 			if (ctx->hevc_state->sei.alternative_transfer_characteristics){
 				gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_TRANSFER_ALT, & PROP_UINT(ctx->hevc_state->sei.alternative_transfer_characteristics) );
 			}
-			has_colr_info = GF_TRUE;
+			ctx->has_colr_info = GF_TRUE;
 		}
 	} else if (ctx->codecid==GF_CODECID_VVC) {
 	} else {
@@ -1988,11 +1987,11 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_TRANSFER, & PROP_UINT(vui->transfer_characteristics) );
 			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, & PROP_UINT(vui->matrix_coefficients) );
 			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_RANGE, & PROP_BOOL(vui->video_full_range_flag) );
-			has_colr_info = GF_TRUE;
+			ctx->has_colr_info = GF_TRUE;
 		}
 	}
 
-	if (!has_colr_info) {
+	if (!ctx->has_colr_info) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_PRIMARIES, NULL);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_TRANSFER, NULL);
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_COLR_MX, NULL);
@@ -2002,7 +2001,6 @@ static void naludmx_check_pid(GF_Filter *filter, GF_NALUDmxCtx *ctx, Bool force_
 	naludmx_update_clli_mdcv(ctx, GF_TRUE);
 
 	naludmx_set_dolby_vision(ctx);
-
 }
 
 static Bool naludmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
@@ -2011,6 +2009,7 @@ static Bool naludmx_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	u64 file_pos = 0;
 	GF_FilterEvent fevt;
 	GF_NALUDmxCtx *ctx = gf_filter_get_udta(filter);
+	if (!ctx->ipid) return GF_TRUE;
 
 	switch (evt->base.type) {
 	case GF_FEVT_PLAY:
@@ -2571,6 +2570,12 @@ static s32 naludmx_parse_nal_hevc(GF_NALUDmxCtx *ctx, char *data, u32 size, Bool
 		} else {
 			ctx->nb_nalus--;
 		}
+		// set ambinet viewing environment information
+		if (ctx->hevc_state->sei.ambient_view.amve_valid == GF_TRUE && ctx->opid) {
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_AMVE_ILLUMINANCE, & PROP_UINT(ctx->hevc_state->sei.ambient_view.ambient_illuminance));
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_AMVE_LIGNT_X, & PROP_UINT(ctx->hevc_state->sei.ambient_view.ambient_light_x));
+			gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_AMVE_LIGNT_Y, & PROP_UINT(ctx->hevc_state->sei.ambient_view.ambient_light_y));
+		}
 		*skip_nal = GF_TRUE;
 		break;
 	case GF_HEVC_NALU_SEI_SUFFIX:
@@ -2635,8 +2640,10 @@ static s32 naludmx_parse_nal_hevc(GF_NALUDmxCtx *ctx, char *data, u32 size, Bool
 			memcpy(ctx->init_aud, data, 3);
 		}
 		break;
-	/*remove*/
 	case GF_HEVC_NALU_FILLER_DATA:
+		*skip_nal = !ctx->keepfiller;
+		break;
+	/*remove*/
 	case GF_HEVC_NALU_END_OF_SEQ:
 	case GF_HEVC_NALU_END_OF_STREAM:
 		*skip_nal = GF_TRUE;
@@ -2840,8 +2847,10 @@ static s32 naludmx_parse_nal_vvc(GF_NALUDmxCtx *ctx, char *data, u32 size, Bool 
 			memcpy(ctx->init_aud, data, 3);
 		}
 		break;
-	/*remove*/
 	case GF_VVC_NALU_FILLER_DATA:
+		*skip_nal = !ctx->keepfiller;
+		break;
+	/*remove*/
 	case GF_VVC_NALU_END_OF_SEQ:
 	case GF_VVC_NALU_END_OF_STREAM:
 		*skip_nal = GF_TRUE;
@@ -2941,8 +2950,10 @@ static s32 naludmx_parse_nal_avc(GF_NALUDmxCtx *ctx, char *data, u32 size, u32 n
 			memcpy(ctx->init_aud, data, 2);
 		}
 		return 1;
-	/*remove*/
 	case GF_AVC_NALU_FILLER_DATA:
+		*skip_nal = !ctx->keepfiller;
+		break;
+	/*remove*/
 	case GF_AVC_NALU_END_OF_SEQ:
 	case GF_AVC_NALU_END_OF_STREAM:
 		*skip_nal = GF_TRUE;
@@ -3005,23 +3016,23 @@ static s32 naludmx_parse_nal_avc(GF_NALUDmxCtx *ctx, char *data, u32 size, u32 n
 			res=0;
 			ctx->avc_state->s_info.poc = ctx->last_poc;
 		}
-        if (ctx->avc_state->s_info.sps) {
-            switch (ctx->avc_state->s_info.slice_type) {
-            case GF_AVC_TYPE_P:
-            case GF_AVC_TYPE2_P:
-                ctx->avc_state->s_info.sps->nb_ep++;
-                break;
-            case GF_AVC_TYPE_I:
-            case GF_AVC_TYPE2_I:
-                ctx->avc_state->s_info.sps->nb_ei++;
-                break;
-            case GF_AVC_TYPE_B:
-            case GF_AVC_TYPE2_B:
-                ctx->avc_state->s_info.sps->nb_eb++;
-                break;
-            }
-        }
-        break;
+		if (ctx->avc_state->s_info.sps) {
+			switch (ctx->avc_state->s_info.slice_type) {
+			case GF_AVC_TYPE_P:
+			case GF_AVC_TYPE2_P:
+				ctx->avc_state->s_info.sps->nb_ep++;
+				break;
+			case GF_AVC_TYPE_I:
+			case GF_AVC_TYPE2_I:
+				ctx->avc_state->s_info.sps->nb_ei++;
+				break;
+			case GF_AVC_TYPE_B:
+			case GF_AVC_TYPE2_B:
+				ctx->avc_state->s_info.sps->nb_eb++;
+				break;
+			}
+		}
+		break;
 	case GF_AVC_NALU_SLICE_AUX:
 		*is_slice = 1;
 		break;
@@ -3269,7 +3280,7 @@ naldmx_flush:
 		gf_bs_reassign_buffer(ctx->bs_r, start, remain);
 	}
 
-    gf_assert(remain>=0);
+	gf_assert(remain>=0);
 
 	while (remain) {
 		u8 *pck_data;
@@ -3487,12 +3498,12 @@ naldmx_flush:
 			naldmx_check_timestamp_switch(ctx, &nalu_store_before, nal_size, &drop_packet, pck);
 			continue;
 		}
-		//check output pid cfg after skiping nal, to make sure we can flush pending packets when config change
+		//check output pid cfg after skipping nal, to make sure we can flush pending packets when config changes
 		naludmx_check_pid(filter, ctx, force_au_flush, (is_slice==2) ? GF_TRUE : GF_FALSE);
 
 		if (!ctx->is_playing) {
 			ctx->resume_from = (u32) (start - ctx->nal_store);
-            gf_assert(ctx->resume_from<=ctx->nal_store_size);
+			gf_assert(ctx->resume_from<=ctx->nal_store_size);
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[%s] not yet playing\n", ctx->log_name));
 
 			if (drop_packet)
@@ -3672,10 +3683,10 @@ naldmx_flush:
 					avc_svc_subs_priority = (63 - (p[1] & 0x3F)) << 2;
 				}
 				if (nal_type==GF_AVC_NALU_SVC_PREFIX_NALU) {
-                    if (ctx->svc_prefix_buffer_size) {
-                        GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[%s] broken bitstream, two consecutive SVC prefix NALU without SVC slice in-between\n", ctx->log_name));
-                        ctx->svc_prefix_buffer_size = 0;
-                    }
+					if (ctx->svc_prefix_buffer_size) {
+						GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[%s] broken bitstream, two consecutive SVC prefix NALU without SVC slice in-between\n", ctx->log_name));
+						ctx->svc_prefix_buffer_size = 0;
+					}
 
 					/* remember reserved and priority value */
 					ctx->svc_nalu_prefix_reserved = avc_svc_subs_reserved;
@@ -3819,12 +3830,13 @@ naldmx_flush:
 				s64 pdiff = ctx->last_poc;
 				pdiff -= slice_poc;
 				if (pdiff<0) pdiff=-pdiff;
-				if (pdiff>GF_INT_MAX) {
+				if (pdiff>GF_INT_MAX || slice_poc <= GF_INT_MIN) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[%s] POC diff overflow %d vs last %d, reseting poc counter - timing will likely be corrupted\n", ctx->log_name, slice_poc, ctx->last_poc));
 					pdiff = 0;
 					slice_poc = ctx->last_poc;
 					ctx->poc_shift = slice_poc;
 				}
+
 
 				if ((slice_poc < 0) && !ctx->last_poc)
 					ctx->poc_diff = 0;
@@ -4037,7 +4049,7 @@ naldmx_flush:
 	if ((ctx->nb_nalus>nalu_before) && gf_filter_reporting_enabled(filter)) {
 		char szStatus[1024];
 
-		sprintf(szStatus, "%s %dx%d % 10d NALU % 8d I % 8d P % 8d B % 8d SEI", ctx->log_name, ctx->width, ctx->height, ctx->nb_nalus, ctx->nb_i, ctx->nb_p, ctx->nb_b, ctx->nb_sei);
+		sprintf(szStatus, "NALU=%u I=%u P=%u B=%u SI=%u SP=%u IDR=%u CRA=%u SEI=%d", ctx->nb_nalus, ctx->nb_i, ctx->nb_p, ctx->nb_b, ctx->nb_sp, ctx->nb_si, ctx->nb_idr, ctx->nb_cra, ctx->nb_sei);
 		gf_filter_update_status(filter, -1, szStatus);
 	}
 	if (ctx->full_au_source && ctx->poc_probe_done) {
@@ -4084,6 +4096,16 @@ static GF_Err naludmx_initialize(GF_Filter *filter)
 		}
 	}
 	ctx->sei_loader = gf_sei_loader_new();
+
+	gf_filter_add_status_metric(filter, "NALU=NAL Units");
+	gf_filter_add_status_metric(filter, "I=I slices");
+	gf_filter_add_status_metric(filter, "P=P slices");
+	gf_filter_add_status_metric(filter, "B=B slices");
+	gf_filter_add_status_metric(filter, "SI=SI slices");
+	gf_filter_add_status_metric(filter, "SP=SP slices");
+	gf_filter_add_status_metric(filter, "IDR=IDR slices");
+	gf_filter_add_status_metric(filter, "CRA=CRA slices");
+	gf_filter_add_status_metric(filter, "SEI=SEI Messages");
 	return GF_OK;
 }
 
@@ -4281,7 +4303,7 @@ static const char *naludmx_probe_data(const u8 *data, u32 size, GF_FilterProbeSc
 			not_vvc++;
 			continue;
 		}
-		nal_type = data[1] >> 3;
+		nal_type = size > 1 ? data[1] >> 3 : 0;
 		if (nal_type>31) {
 			not_vvc++;
 			continue;
@@ -4392,6 +4414,7 @@ static const GF_FilterArgs NALUDmxArgs[] =
 	{ OFFS(refs), "import sample reference picture list (currently only for HEVC and VVC)", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(seirw), "rewrite AVC sei messages for ISOBMFF constraints", GF_PROP_BOOL, "true", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(audelim), "keep Access Unit delimiter in payload", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
+	{ OFFS(keepfiller), "keep filler NAL units in output", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(analyze), "skip reformat of decoder config and SEI and dispatch all NAL in input order - shall only be used with inspect filter analyze mode!", GF_PROP_UINT, "off", "off|on|bs|full", GF_FS_ARG_HINT_HIDE},
 	{ OFFS(notime), "ignore input timestamps, rebuild from 0", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 

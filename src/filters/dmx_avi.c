@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2024
+ *			Copyright (c) Telecom ParisTech 2005-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / AVI demuxer filter
@@ -606,7 +606,7 @@ restart:
 				pc = (u32) ( file_offset * 100  / ctx->file_size);
 			}
 
-			if (st->audio_bps) {
+			if (st->audio_bps && st->nb_channels && (size < GF_INT_MAX/8)) {
 				u32 nb_samples = (8*size) / (st->audio_bps * st->nb_channels);
 				gf_filter_pck_set_cts(dst_pck, st->audio_ts);
 				gf_filter_pck_set_sap(dst_pck, GF_FILTER_SAP_1);
@@ -640,17 +640,17 @@ restart:
 		}
 
 		if (ctx->video_done && (nb_done==count) ) {
-			sprintf(szStatus, "100 %%");
+			sprintf(szStatus, "done");
 			v_pc=100;
 		}
 		else if (count && ctx->v_in_use) {
-			sprintf(szStatus, "V %d %% A %d %%", v_pc, a_pc);
+			sprintf(szStatus, "[Video type=V prog=%u/100, Audio type=A prog=%u/100]", v_pc, a_pc);
 			if (v_pc>a_pc) v_pc=a_pc;
 		} else if (count) {
-			sprintf(szStatus, "A %d %%", a_pc);
+			sprintf(szStatus, "[Audio type=A prog=%u/100]", a_pc);
 			v_pc = a_pc;
 		} else {
-			sprintf(szStatus, "V %d %%", v_pc);
+			sprintf(szStatus, "[Video type=V prog=%u/100]", v_pc);
 		}
 		gf_filter_update_status(filter, v_pc, szStatus);
 	}

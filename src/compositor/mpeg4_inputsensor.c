@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2023
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Compositor sub-project
@@ -228,6 +228,15 @@ GF_Err gf_input_sensor_setup_object(GF_ObjectManager *odm, GF_ESD *esd)
 			gf_modules_close_interface((GF_BaseInterface *) ifce);
 		}
 		if (!is_ctx->io_dev) {
+			// not registered/added to input_streams yet - free our own lists here
+			while (gf_list_count(is_ctx->ddf)) {
+				GF_FieldInfo* fi = (GF_FieldInfo*)gf_list_get(is_ctx->ddf, 0);
+				gf_list_rem(is_ctx->ddf, 0);
+				gf_sg_vrml_field_pointer_del(fi->far_ptr, fi->fieldType);
+				gf_free(fi);
+			}
+			gf_list_del(is_ctx->ddf);
+			gf_list_del(is_ctx->is_nodes);
 			gf_free(is_ctx);
 			return GF_NOT_SUPPORTED;
 		}
@@ -399,9 +408,7 @@ static GF_Err IS_ProcessData(GF_InputSensorCtx *is_ctx, const char *inBuffer, u3
 	/*apply it*/
 	i=0;
 	while ((st = (ISStack*)gf_list_enum(is_ctx->is_nodes, &i))) {
-		gf_assert(st->is);
-		gf_assert(st->mo);
-		if (!st->is->enabled) continue;
+		if (!st->is || !st->mo || !st->is->enabled) continue;
 
 		count = gf_list_count(st->is->buffer.commandList);
 		scene_time = gf_scene_get_time(is_ctx->odm->parentscene);
@@ -450,12 +457,22 @@ static void InputSensorUnregister(GF_Node *node, ISStack *st)
 	}
 }
 
+void gf_input_sensor_mo_destroyed(GF_Node *node)
+{
+	ISStack *st = (ISStack *)gf_node_get_private(node);
+	if (!st) return;
+
+	st->registered = 0;
+	st->mo = NULL;
+}
+
 static void InputSensorRegister(GF_Node *n)
 {
 	GF_ObjectManager *odm;
 	GF_InputSensorCtx *is_ctx;
 	u32 i;
 	ISStack *st = (ISStack *)gf_node_get_private(n);
+	if (!st || !st->mo) return;
 	odm = st->mo->odm;
 	if (!odm || (odm->type != GF_STREAM_INTERACT)) return;
 
@@ -522,6 +539,7 @@ void InputSensorModified(GF_Node *node)
 {
 	GF_MediaObject *mo;
 	ISStack *st = (ISStack *)gf_node_get_private(node);
+	if (!st) return;
 
 	mo = gf_mo_register(node, &st->is->url, 0, 0);
 	if ((mo!=st->mo) || !st->registered) {

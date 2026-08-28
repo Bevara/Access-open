@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2025
+ *			Copyright (c) Telecom ParisTech 2018-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / MPEG-2 TS mux filter
@@ -172,7 +172,7 @@ typedef struct
 	u32 frag_offset, frag_size, frag_duration;
 	Bool frag_has_intra;
 
-	Bool force_seg_sync;
+	Bool force_seg_sync, seg_close_sent;
 	u32 pending_packets;
 
 	u32 sync_init_time;
@@ -505,23 +505,23 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 
 					p = gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENAME);
 					if (p) {
-						strcpy(tspid->ctx->dash_file_name, p->value.string);
+						gf_strcpy(tspid->ctx->dash_file_name, p->value.string);
 						tspid->ctx->dash_file_switch = GF_TRUE;
 					}
 					p = gf_filter_pck_get_property(pck, GF_PROP_PCK_LLHAS_TEMPLATE);
 					if (p) {
-						strcpy(tspid->ctx->llhas_template, p->value.string);
+						gf_strcpy(tspid->ctx->llhas_template, p->value.string);
 					}
 					return GF_OK;
 				}
 				else if (tspid->ctx->last_is_eods_flush) {
 					const GF_PropertyValue *p2 = gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENAME);
 					if (p2) {
-						strcpy(tspid->ctx->dash_file_name, p2->value.string);
+						gf_strcpy(tspid->ctx->dash_file_name, p2->value.string);
 						tspid->ctx->next_is_start = GF_TRUE;
 						p2 = gf_filter_pck_get_property(pck, GF_PROP_PCK_LLHAS_TEMPLATE);
 						if (p2)
-							strcpy(tspid->ctx->llhas_template, p2->value.string);
+							gf_strcpy(tspid->ctx->llhas_template, p2->value.string);
 					}
 				}
 			}
@@ -532,7 +532,7 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 
 			p = gf_filter_pck_get_property(pck, GF_PROP_PCK_IDXFILENAME);
 			if (p) {
-				strcpy(tspid->ctx->idx_file_name, p->value.string);
+				gf_strcpy(tspid->ctx->idx_file_name, p->value.string);
 			}
 
 			p = gf_filter_pck_get_property(pck, GF_PROP_PCK_EODS);
@@ -684,7 +684,7 @@ static GF_Err tsmux_esi_ctrl(GF_ESInterface *ifce, u32 act_type, void *param)
 
 					s64 diff_usec = pck_ts;
 					diff_usec -= temi->ntp_init_cts;
-					ntp = gf_net_ntp_add_usec(temi->ntp_init_ts, diff_usec);
+					ntp = gf_net_ntp_add_usec(temi->ntp_init_ts, (s32) diff_usec);
 				}
 				tsmux_format_af_descriptor(tspid->temi_af_bs, tspid->ctx->realtime, temi->id, tc, timescale, temi->mode_64bits, ntp, temi->url, temi->delay, &tspid->last_temi_url, GF_FALSE, GF_FALSE, NULL, GF_FALSE, GF_FALSE);
 			}
@@ -1270,6 +1270,9 @@ static GF_Err tsmux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_STREAM_TYPE);
 	if (!p) return GF_NOT_SUPPORTED;
 	streamtype = p->value.uint;
+	if (codec_id == GF_CODECID_SCTE35) {
+		streamtype = GF_STREAM_METADATA; // necessary when importing from NHML
+	}
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_SERVICE_ID);
 	service_id = p ? p->value.uint : ctx->sid;
@@ -1455,9 +1458,6 @@ static GF_Err tsmux_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 			m2pid->prog->pmt->table_needs_update = GF_TRUE;
 			m2pid->ctx->pmt_update_pending = GF_TRUE;
 			m2pid->ctx->update_mux = GF_TRUE;
-		}
-		if (codec_id == GF_CODECID_SCTE35) {
-			streamtype = GF_STREAM_METADATA; // necessary when importing from NHML
 		}
 
 		GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[M2TSMux] Setting up program ID %d - send rates: PSI %d ms PCR every %d ms max - PCR offset %d\n", service_id, ctx->pmt_rate, ctx->max_pcr, ctx->pcr_offset));
@@ -1848,13 +1848,13 @@ static GF_Err tsmux_process(GF_Filter *filter)
 			}
 			p = gf_filter_pck_get_property(pck, GF_PROP_PCK_FILENAME);
 			if (p)
-				strcpy(tspid->ctx->dash_file_name, p->value.string);
+				gf_strcpy(tspid->ctx->dash_file_name, p->value.string);
 			p = gf_filter_pck_get_property(pck, GF_PROP_PCK_LLHAS_TEMPLATE);
 			if (p)
-				strcpy(tspid->ctx->llhas_template, p->value.string);
+				gf_strcpy(tspid->ctx->llhas_template, p->value.string);
 			p = gf_filter_pck_get_property(pck, GF_PROP_PCK_IDXFILENAME);
 			if (p)
-				strcpy(tspid->ctx->idx_file_name, p->value.string);
+				gf_strcpy(tspid->ctx->idx_file_name, p->value.string);
 		}
 		ctx->init_dash = GF_FALSE;
 		ctx->next_is_start = GF_TRUE;
@@ -1863,14 +1863,24 @@ static GF_Err tsmux_process(GF_Filter *filter)
 
 	if (ctx->update_mux) {
 		gf_m2ts_mux_update_config(ctx->mux, GF_FALSE);
+		ctx->update_mux = GF_FALSE;
 	}
 
 
 	if (ctx->wait_dash_flush || ctx->wait_llhas_flush) {
 		//we are waiting for all packets to be flushed
-		if (ctx->pending_packets)
+		if (ctx->pending_packets) {
+			if (!ctx->seg_close_sent) {
+				pck = gf_filter_pck_new_alloc(ctx->opid, 0, NULL);
+				if (pck) {
+					gf_filter_pck_set_framing(pck, GF_FALSE, GF_TRUE);
+					gf_filter_pck_send(pck);
+					ctx->seg_close_sent = GF_TRUE;
+				}
+			}
+			gf_filter_ask_rt_reschedule(filter, 1000);
 			return GF_OK;
-
+		}
 		Bool is_llhas_flush = GF_FALSE;
 		Bool is_eods_flush = GF_FALSE;
 		u32 i, done=0, count = gf_list_count(ctx->pids);
@@ -1894,6 +1904,7 @@ static GF_Err tsmux_process(GF_Filter *filter)
 			ctx->mux->force_pat = GF_TRUE;
 
 			if (is_llhas_flush) {
+				ctx->seg_close_sent = GF_FALSE;
 				ctx->wait_llhas_flush = GF_FALSE;
 				ctx->next_is_llhas_start = GF_TRUE;
 
@@ -1921,6 +1932,7 @@ static GF_Err tsmux_process(GF_Filter *filter)
 				ctx->pck_start_idx = ctx->nb_pck;
 				if (ctx->next_is_start) ctx->nb_pck_in_file = 0;
 				ctx->nb_pck_first_sidx = ctx->nb_pck_in_file;
+				ctx->seg_close_sent = GF_FALSE;
 			}
 		}
 	}
@@ -1984,9 +1996,6 @@ static GF_Err tsmux_process(GF_Filter *filter)
 			if (ctx->llhas_mode>GF_LLHAS_BYTERANGES) {
 				ctx->frag_num=0;
 				u32 fnum = ctx->frag_num;
-				//we'll need to redo all LLHLS tests
-				if (gf_sys_is_test_mode() && (ctx->llhas_mode == GF_LLHAS_PARTS))
-					fnum++;
 				gf_filter_pck_set_property(pck, GF_PROP_PCK_LLHAS_FRAG_NUM, &PROP_UINT(fnum));
 			}
 		}
@@ -1994,9 +2003,6 @@ static GF_Err tsmux_process(GF_Filter *filter)
 			if (ctx->llhas_mode>GF_LLHAS_BYTERANGES) {
 				u32 fnum = ctx->frag_num;
 				ctx->frag_num++;
-				//we'll need to redo all LLHLS tests
-				if (gf_sys_is_test_mode() && (ctx->llhas_mode == GF_LLHAS_PARTS))
-					fnum++;
 				gf_filter_pck_set_property(pck, GF_PROP_PCK_LLHAS_FRAG_NUM, &PROP_UINT(fnum));
 			}
 			ctx->next_is_llhas_start = GF_FALSE;
@@ -2056,12 +2062,12 @@ static GF_Err tsmux_process(GF_Filter *filter)
 
 			if (ctx->total_bytes_in) ohead =  ((Double) (total_bytes_out - ctx->total_bytes_in)*100 / ctx->total_bytes_in);
 
-			sprintf(szStatus, "done - TS clock % 6d ms bitrate %d kbps - bytes "LLD" in "LLD" out overhead %02.02f%%", gf_m2ts_get_ts_clock(ctx->mux), ctx->mux->bit_rate/1000, ctx->total_bytes_in, total_bytes_out, ohead);
+			sprintf(szStatus, "done mux_clock=%d ms s_rate=%d kbps r_bytes="LLD" s_bytes="LLD" ohead=%02.02f %%", gf_m2ts_get_ts_clock(ctx->mux), ctx->mux->bit_rate/1000, ctx->total_bytes_in, total_bytes_out, ohead);
 			gf_filter_update_status(filter, 10000, szStatus);
 		} else {
 
-			sprintf(szStatus, "sysclock % 6d ms TS clock % 6d ms bitrate % 8d kbps", gf_m2ts_get_sys_clock(ctx->mux), gf_m2ts_get_ts_clock(ctx->mux), ctx->mux->bit_rate/1000);
-			gf_filter_update_status(filter, -1, szStatus);
+			sprintf(szStatus, "sys_clock=%d ms mux_clock=%d ms s_rate=%d kbps", gf_m2ts_get_sys_clock(ctx->mux), gf_m2ts_get_ts_clock(ctx->mux), ctx->mux->bit_rate/1000);
+			gf_filter_update_status(filter, 0, szStatus);
 		}
 	}
 
@@ -2129,11 +2135,19 @@ static GF_Err tsmux_initialize(GF_Filter *filter)
 	ctx->mux = gf_m2ts_mux_new(ctx->rate, ctx->pat_rate, ctx->realtime);
 	ctx->mux->flush_pes_at_rap = ctx->flush_rap;
 
-	if (gf_sys_is_test_mode() && ctx->pcr_init<0)
+	//test mode, don't use a random PCR init
+	if (gf_sys_is_test_mode() && (ctx->pcr_init==-1))
 		ctx->pcr_init = 1000000;
 
 	gf_m2ts_mux_use_single_au_pes_mode(ctx->mux, ctx->pes_pack);
-	if (ctx->pcr_init>=0) gf_m2ts_mux_set_initial_pcr(ctx->mux, (u64) ctx->pcr_init);
+	if (ctx->pcr_init != -1) {
+		u64 pcr_init;
+		if (ctx->pcr_init>=0)
+			pcr_init = (u64) ctx->pcr_init;
+		else
+			pcr_init = GF_M2TS_MAX_PCR + ctx->pcr_init;
+		gf_m2ts_mux_set_initial_pcr(ctx->mux, pcr_init);
+	}
 	gf_m2ts_mux_set_pcr_max_interval(ctx->mux, ctx->max_pcr);
 	gf_m2ts_mux_enable_pcr_only_packets(ctx->mux, ctx->pcr_only);
 
@@ -2155,6 +2169,8 @@ static GF_Err tsmux_initialize(GF_Filter *filter)
 		gf_m2ts_get_sys_clock(ctx->mux);
 	}
 #endif
+	gf_filter_add_status_metric(filter, "sys_clock=M2TS System clock;u=ms");
+	gf_filter_add_status_metric(filter, "mux_clock=M2TS Multiplex time;u=ms");
 	return GF_OK;
 }
 
@@ -2231,6 +2247,9 @@ static const GF_FilterCapability TSMuxCaps[] =
 	//for MPEG-H audio MHAS we need to insert sync packets
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_CODECID, GF_CODECID_MHAS),
 
+	//for AC4 we need bitstream framing
+	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_CODECID, GF_CODECID_AC4),
+
 	//static output cap file extension
 	CAP_UINT(GF_CAPS_OUTPUT_STATIC,  GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
 	CAP_STRING(GF_CAPS_OUTPUT_STATIC, GF_PROP_PID_FILE_EXT, M2TS_FILE_EXTS),
@@ -2255,7 +2274,9 @@ static const GF_FilterCapability TSMuxCaps[] =
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_SMPTE_VC1),
 	//we don't accept MPEG-H audio without MHAS
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_MPHA),
-	//no RAW support for now$
+	//we don't accept AC4 audio without framing
+	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_AC4),
+	//no RAW support for now
 	CAP_UINT(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_RAW),
 	{0},
 
@@ -2299,7 +2320,7 @@ static const GF_FilterArgs TSMuxArgs[] =
 	"- copy: uses BIFS PES but removes timestamps in BIFS SL and only carries PES timestamps", GF_PROP_UINT, "off", "off|on|copy", GF_FS_ARG_HINT_EXPERT},
 	{ OFFS(flush_rap), "force flushing mux program when RAP is found on video, and injects PAT and PMT before the next video PES begin", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(pcr_only), "enable PCR-only TS packets", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_HINT_EXPERT},
-	{ OFFS(pcr_init), "set initial PCR value for the programs. A negative value means random value is picked", GF_PROP_LSINT, "-1", NULL, 0},
+	{ OFFS(pcr_init), "set initial PCR value for the programs. -1 means random value is picked, other negative value means offset to maximum PCR", GF_PROP_LSINT, "-1", NULL, 0},
 	{ OFFS(sid), "set service ID for the program", GF_PROP_UINT, "0", NULL, 0},
 	{ OFFS(name), "set service name for the program", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(provider), "set service provider name for the program", GF_PROP_STRING, NULL, NULL, 0},

@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2024
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / general OS configuration file
@@ -859,6 +859,36 @@ void* gf_realloc(void *ptr, size_t size);
 */
 size_t gf_strlcpy(char *dst, const char *src, size_t dsize);
 
+/*! concat source string to destination, ensuring 0-terminated string result
+\param dst  destination buffer
+\param src  source buffer
+\param dsize size of destination buffer
+\return same as strlcat
+*/
+size_t gf_strlcat(char *dst, const char *src, size_t dsize);
+
+/*! safe strcpy macro calling gf_strlcpy */
+#define gf_strcpy(_dst, _src) gf_strlcpy(_dst, _src, sizeof(_dst) / sizeof(_dst[0]) )
+/*! safe gf_strcat macro calling gf_strlcat */
+#define gf_strcat(_dst, _src) gf_strlcat(_dst, _src, sizeof(_dst) / sizeof(_dst[0]) )
+
+
+/*! by default always disable unsafe str functions*/
+#ifdef GPAC_DISABLE_UNSAFE_STRFUNC
+#undef strcpy
+#define strcpy #error "strcpy forbidden in libgpac - use gf_strcpy, gf_strlcpy or memcpy or undef GPAC_DISABLE_UNSAFE_STRFUNC before including GPAC headers"
+
+#undef strcat
+#define strcat #error "strcat forbidden in libgpac - use gf_strlcat, gf_strcat or memcpy or undef GPAC_DISABLE_UNSAFE_STRFUNC before including GPAC headers"
+
+#undef strncpy
+#define strncpy #error "strncpy forbidden in libgpac - use gf_strlcpy, gf_strcpy or memcpy or undef GPAC_DISABLE_UNSAFE_STRFUNC before including GPAC headers"
+
+#undef strncat
+#define strncat #error "strncat forbidden in libgpac - use gf_strlcat, gf_strcat or memcpy or undef GPAC_DISABLE_UNSAFE_STRFUNC before including GPAC headers"
+
+#endif //GPAC_DISABLE_UNSAFE_STRFUNC
+
 #ifdef GPAC_ASSERT_FATAL
 /*! fatal error assert, will always kill the program if condition is false
  \param _cond condition to test
@@ -907,6 +937,12 @@ size_t gf_strlcpy(char *dst, const char *src, size_t dsize);
 #define GF_NOT_EXPORTED
 #endif
 //! @endcond
+
+#ifndef GPAC_DISABLE_ZLIB
+#define ZLIB_INFLATE_MAX_MULTIPLIER 32
+#define ZLIB_COMPRESS_SAFE 4
+#endif
+
 
 #ifdef __cplusplus
 }

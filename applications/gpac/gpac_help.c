@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2017-2025
+ *			Copyright (c) Telecom ParisTech 2017-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / gpac application
@@ -160,13 +160,16 @@ const char *gpac_doc =
 "When a filter uses an option defined as a string using the same separator character as gpac, you can either "
 "modify the set of separators, or escape the separator by duplicating it. The options enclosed by duplicated "
 "separator are not parsed. This is mostly used for meta filters, such as ffmpeg, to pass options to sub-filters "
-"such as libx264 (cf `x264opts` parameter).\n"
+"such as libx264 (cf `x264opts` parameter). This can also be used to escape a list value containing the comma "
+"separator character.\n"
 "EX f:a=foo:b=bar\n"
 "This will set option `a` to `foo` and option `b` to `bar` on the filter.\n"
 "EX f::a=foo:b=bar\n"
 "This will set option `a` to `foo:b=bar` on the filter.\n"
 "EX f:a=foo::b=bar:c::d=fun\n"
 "This will set option `a` to `foo`, `b` to `bar:c` and the option `d` to `fun` on the filter.\n"
+"EX f:list=a,b1,,b2,c\n"
+"This will set list values to `a`, `b1,b2`, and `c`.\n"
 "\n"
 "# Filter linking [__LINK__]\n"
 "\n"
@@ -251,6 +254,10 @@ const char *gpac_doc =
 "EX fA:FID=1 fB:FID=2 fC:SID=1 fD:SID=1,2\n"
 "This indicates that `fD` only accepts input from `fA` and `fB` and `fC` only from `fA`\n"
 "Note: A filter with sourceID set cannot get input from filters with no IDs.\n"
+"\n"
+"A sourceID name can end with `*` to match by prefix rather than full name, the prefix being all the characters up to `*`.\n"
+"EX fA:FID=AB1 fB:FID=ABCD fC:FID=B1 fD:SID=AB*\n"
+"This indicates that `fD` only accepts input from `fA` and `fB` but not from `fC`\n"
 "\n"
 "A sourceID name can be further extended using fragment identifier (`#` by default):\n"
 "- name#PIDNAME: accepts only PID(s) with name `PIDNAME`\n"
@@ -489,7 +496,7 @@ const char *gpac_doc =
 "This will dump first service in dump_10.ts, second service in dump_12.ts, etc...\n"
 "\n"
 "As seen previously, the following options may be set on any filter, but are not visible in individual filter help:\n"
-"- FID: filter identifier\n"
+"- FID: filter identifier (string value)\n"
 "- SID: filter source(s) (string value)\n"
 "- N=NAME: filter name (string value)\n"
 "- FS: sub-session identifier (unsigned int value)\n"
@@ -762,6 +769,8 @@ static GF_GPACArg gpac_args[] =
 	GF_DEF_ARG("o", "dst", "specify an output file - see [filters help (-h doc)](filters_general)", NULL, NULL, GF_ARG_STRING, 0),
 	GF_DEF_ARG("ib", NULL, "specify an input file to wrap as GF_FileIO object (testing of GF_FileIO)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("ibx", NULL, "specify an input file to wrap as GF_FileIO object without caching (testing of GF_FileIO)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
+	GF_DEF_ARG("ibb", NULL, "specify an input file to wrap as blob object (testing of GF_Blob)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
+	GF_DEF_ARG("ibm", NULL, "specify an input file to wrap as GF_FileIO object from mem (testing of GF_Blob + GF_FileIO)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("ob", NULL, "specify an output file to wrap as GF_FileIO object (testing of GF_FileIO)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("cl", NULL, "force complete mode when no link directive are set - see [filters help (-h doc)](filters_general)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("sid", NULL, "force source IDs to be present when attempting to link - see [filters help (-h doc)](filters_general)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
@@ -827,7 +836,7 @@ static GF_GPACArg gpac_args[] =
 	GF_DEF_ARG("cache-unflat", NULL, "revert all items in GPAC cache directory to their original name and server path", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("cache-list", NULL, "list entries in cache", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_ADVANCED),
 	GF_DEF_ARG("cache-clean", NULL, "clean cache", NULL, NULL, GF_ARG_INT, GF_ARG_HINT_ADVANCED),
-	GF_DEF_ARG("js", NULL, "specify javascript file to use as controller of filter session", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
+	GF_DEF_ARG("js", NULL, "specify javascript file to use as controller of filter session (can be set multiple times for multiple scripts)", NULL, NULL, GF_ARG_STRING, GF_ARG_HINT_EXPERT),
 
 	GF_DEF_ARG("wc", NULL, "write all core options in the config file unless already set", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
 	GF_DEF_ARG("we", NULL, "write all file extensions in the config file unless already set (useful to change some default file extensions)", NULL, NULL, GF_ARG_BOOL, GF_ARG_HINT_EXPERT),
@@ -933,7 +942,7 @@ static const char *gpac_defer =
 "- `@F` indicates the destination filter using a 0-based index `F` starting from the last laoded filter, e.g. `@0` indicates the last loaded filter.\n"
 "- `@@F` indicates the target filter using a 0-based index `F` starting from the first laoded filter, e.g. `@@1` indicates the second loaded filter.\n"
 "- `@SRC`or `@@SRC`: same syntax as link directives\n"
-"Sources MUST be set before relinking outputs using (-rl)[].\n"
+"Sources MUST be set before relinking outputs using [-rl]().\n"
 "EX gpac -dl -i SRC F1 F2 [...] @1@2 @0@2\n"
 "This will set SRC as source to F1 and SRC as source to F2 after loading all filters.\n"
 "\n"
@@ -1209,10 +1218,11 @@ void gpac_suggest_arg(char *aname)
 			i++;
 			if (gf_sys_word_match(aname, arg->name)) {
 				if (!found) {
-					GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Unrecognized option \"%s\", did you mean:\n", aname));
+					GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Unrecognized option \"%s\", did you mean: %s? (see gpac -hx%s)", aname, arg->name, k ? " core" : ""));
 					found = GF_TRUE;
+				} else {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("\t-%s (see gpac -hx%s)\n", arg->name, k ? " core" : ""));
 				}
-				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("\t-%s (see gpac -hx%s)\n", arg->name, k ? " core" : ""));
 			}
 		}
 	}
@@ -1222,10 +1232,11 @@ void gpac_suggest_arg(char *aname)
 		const char *key = gf_opts_get_key_name("gpac.alias", k);
 		if (gf_sys_word_match(aname, key)) {
 			if (!found) {
-				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Unrecognized option \"%s\", did you mean:\n", aname));
+				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Unrecognized option \"%s\", did you mean: %s? (see gpac -h)", aname, key));
 				found = GF_TRUE;
+			} else {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("\t%s (see gpac -h)\n", key));
 			}
-			GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("\t%s (see gpac -h)\n", key));
 		}
 	}
 
@@ -1568,7 +1579,7 @@ static void dump_caps(u32 nb_caps, const GF_FilterCapability *caps)
 		if (!(cap->flags & GF_CAPFLAG_IN_BUNDLE) && i+1==nb_caps) break;
 		if (cap->flags & GF_CAPFLAG_RECONFIG) break;
 
-		if (!i) gf_sys_format_help(helpout, help_flags, "Capabilities Bundle:\n");
+		if (!i) gf_sys_format_help(helpout, help_flags, "\nCapabilities Bundle:\n");
 		else if (!(cap->flags & GF_CAPFLAG_IN_BUNDLE) ) {
 			gf_sys_format_help(helpout, help_flags, "Capabilities Bundle:\n");
 			continue;
@@ -2006,10 +2017,10 @@ static void print_filter(const GF_FilterRegister *reg, GF_SysArgMode argmode, GF
 						char szName[100];
 						const char *a_sep = strchr(a_val, '|');
 						u32 len = a_sep ? (u32)(a_sep - a_val) : (u32)strlen(a_val);
-						strcpy(szName, "- ");
-						strncat(szName, a_val, MIN(sizeof(szName)-3,len));
+						gf_strcpy(szName, "- ");
+						gf_strcat(szName, a_val);
 						szName[2+len]=0;
-						strcat(szName, ": ");
+						gf_strcat(szName, ": ");
 
 						if (!strstr(a->arg_desc, szName)) {
 							fprintf(stderr, "\nWARNING: filter %s bad description format for arg %s, missing list bullet \"%s\"\n", reg_name, a->arg_name, szName);
@@ -2116,9 +2127,9 @@ static Bool jsinfo_enum(void *cbck, char *item_name, char *item_path, GF_FileEnu
 		char szPath[GF_MAX_PATH];
 		char *ext;
 		if (jsi->js_dir) {
-			strcpy(szPath, jsi->js_dir);
+			gf_strcpy(szPath, jsi->js_dir);
 		} else {
-			strcpy(szPath, item_name);
+			gf_strcpy(szPath, item_name);
 		}
 		ext = gf_file_ext_start(szPath);
 		if (ext) ext[0] = 0;
@@ -2136,9 +2147,9 @@ static Bool jsinfo_dir_enum(void *cbck, char *item_name, char *item_path, GF_Fil
 	struct __jsenum_info *jsi = (struct __jsenum_info *)cbck;
 	jsi->js_dir = item_name;
 
-	strcpy(szPath, jsi->path);
-	strcat(szPath, item_name);
-	strcat(szPath, "/");
+	gf_strcpy(szPath, jsi->path);
+	gf_strcat(szPath, item_name);
+	gf_strcat(szPath, "/");
 	gf_enum_directory(szPath, GF_FALSE, jsinfo_enum, jsi, ".js");
 	jsi->js_dir = NULL;
 	return GF_FALSE;
@@ -2321,7 +2332,7 @@ Bool print_filters(int argc, char **argv, GF_SysArgMode argmode)
 				if (f) {
 					char *ext;
 					char szPath[GF_MAX_PATH];
-					strcpy(szPath, gf_file_basename(arg) );
+					gf_strcpy(szPath, gf_file_basename(arg) );
 					ext = gf_file_ext_start(szPath);
 					if (ext) ext[0] = 0;
 					if (optname) {
@@ -2352,7 +2363,7 @@ Bool print_filters(int argc, char **argv, GF_SysArgMode argmode)
 		gf_log_set_tools_levels("console@error", GF_FALSE);
 
 		if (gf_opts_default_shared_directory(szPath)) {
-			strcat(szPath, "/scripts/jsf/");
+			gf_strcat(szPath, "/scripts/jsf/");
 			jsi.path = szPath;
 			gf_enum_directory(szPath, GF_FALSE, jsinfo_enum, &jsi, ".js");
 			gf_enum_directory(szPath, GF_TRUE, jsinfo_dir_enum, &jsi, NULL);
@@ -2362,17 +2373,17 @@ Bool print_filters(int argc, char **argv, GF_SysArgMode argmode)
 			if (sep) {
 				u32 cplen = (u32) (sep-js_dirs);
 				if (cplen>=GF_MAX_PATH) cplen = GF_MAX_PATH-1;
-				strncpy(szPath, js_dirs, cplen);
+				memcpy(szPath, js_dirs, cplen);
 				szPath[cplen]=0;
 				js_dirs = sep+1;
 			} else {
-				strcpy(szPath, js_dirs);
+				gf_strcpy(szPath, js_dirs);
 			}
 			//pre 1.1, $GJS was inserted by default
 			if (strcmp(szPath, "$GJS")) {
 				u32 len = (u32) strlen(szPath);
 				if (len && (szPath[len-1]!='/') && (szPath[len-1]!='\\'))
-					strcat(szPath, "/");
+					gf_strcat(szPath, "/");
 				gf_enum_directory(szPath, GF_FALSE, jsinfo_enum, &jsi, ".js");
 			}
 			if (!sep) break;
@@ -2529,9 +2540,9 @@ void dump_all_props(char *pname)
 		if (! prop_info->name) continue;
 
 		if (gen_doc==1) {
-			strcpy(szFlags, "");
-			if (prop_info->flags & GF_PROP_FLAG_GSF_REM) strcat(szFlags, "D");
-			if (prop_info->flags & GF_PROP_FLAG_PCK) strcat(szFlags, "P");
+			gf_strcpy(szFlags, "");
+			if (prop_info->flags & GF_PROP_FLAG_GSF_REM) gf_strcat(szFlags, "D");
+			if (prop_info->flags & GF_PROP_FLAG_PCK) gf_strcat(szFlags, "P");
 
 			gf_sys_format_help(helpout, help_flags | GF_PRINTARG_NL_TO_BR, "%s | %s | %s | %s | %s  \n", prop_info->name,  gf_props_get_type_name(prop_info->data_type),
 				szFlags,
@@ -2564,8 +2575,8 @@ void dump_all_props(char *pname)
 				else continue;
 			}
 			szFlags[0]=0;
-			if (prop_info->flags & GF_PROP_FLAG_GSF_REM) strcat(szFlags, "D");
-			if (prop_info->flags & GF_PROP_FLAG_PCK) strcat(szFlags, "P");
+			if (prop_info->flags & GF_PROP_FLAG_GSF_REM) gf_strcat(szFlags, "D");
+			if (prop_info->flags & GF_PROP_FLAG_PCK) gf_strcat(szFlags, "P");
 
 			gf_sys_format_help(helpout, help_flags | GF_PRINTARG_HIGHLIGHT_FIRST, "%s", prop_info->name);
 			len = (u32) strlen(prop_info->name);
@@ -2831,12 +2842,12 @@ void dump_all_codecs(GF_SysArgMode argmode)
 
 		szFlags[0] = 0;
 		if (enc_found || dec_found || dmx_found || mx_found) {
-			strcpy(szFlags, " [");
-			if (dmx_found) { szCap[0] = 'I'; strcat(szFlags, szCap); }
-			if (mx_found) { szCap[0] = 'O'; strcat(szFlags, szCap); }
-			if (dec_found) { szCap[0] = 'D'; strcat(szFlags, szCap); }
-			if (enc_found) { szCap[0] = 'E'; strcat(szFlags, szCap); }
-			strcat(szFlags, "]");
+			gf_strcpy(szFlags, " [");
+			if (dmx_found) { szCap[0] = 'I'; gf_strcat(szFlags, szCap); }
+			if (mx_found) { szCap[0] = 'O'; gf_strcat(szFlags, szCap); }
+			if (dec_found) { szCap[0] = 'D'; gf_strcat(szFlags, szCap); }
+			if (enc_found) { szCap[0] = 'E'; gf_strcat(szFlags, szCap); }
+			gf_strcat(szFlags, "]");
 		}
 
 		mime = gf_codecid_mime(cp.value.uint);
@@ -2896,10 +2907,10 @@ void dump_all_codecs(GF_SysArgMode argmode)
 					count--;
 				}
 			}
-			strcpy(szFlags, " [");
-			if (has_dec) strcat(szFlags, "D");
-			if (has_enc) strcat(szFlags, "E");
-			strcat(szFlags, "]");
+			gf_strcpy(szFlags, " [");
+			if (has_dec) gf_strcat(szFlags, "D");
+			if (has_enc) gf_strcat(szFlags, "E");
+			gf_strcat(szFlags, "]");
 
 			gf_sys_format_help(helpout, help_flags | GF_PRINTARG_HIGHLIGHT_FIRST, "%s%s: ", name, szFlags);
 			u32 len = (u32) (2 + strlen(name) + strlen(szFlags));
@@ -3578,7 +3589,7 @@ static Bool check_param_extension(char *szArg, int arg_idx, int argc, char **arg
 			return GF_FALSE;
 		}
 		par_end[0] = 0;
-		strcpy(szPar, par_start+2);
+		gf_strcpy(szPar, par_start+2);
 		par_start[0] = 0;
 
 	 	ok = gpac_expand_alias_arg(szPar, szArg, par_end+1, arg_idx, argc, argv, alias_name);
@@ -3796,14 +3807,16 @@ void parse_sep_set(const char *arg, Bool *override_seps)
 	u32 len = (u32) strlen(arg), i;
 	if (!len) return;
 	char save_seps[sizeof(separator_set)];
-	strcpy(save_seps, separator_set);
+	gf_strcpy(save_seps, separator_set);
 	Bool save_override_seps=*override_seps;
 	*override_seps = GF_TRUE;
 
 	if (len+1>sizeof(separator_set)) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("Separator set too long (%s): ", arg));
 	}
-	strncpy(separator_set, arg, MIN(len, sizeof(separator_set)-1));
+	u32 copy_len = MIN(len, sizeof(separator_set)-1);
+	memcpy(separator_set, arg, copy_len);
+	separator_set[copy_len] = 0;
 	if (len+1>sizeof(separator_set)) {
 		GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("truncating to (%s)\n", separator_set));
 	}
@@ -3812,7 +3825,7 @@ void parse_sep_set(const char *arg, Bool *override_seps)
 		if(strchr(separator_set+i+1, separator_set[i])) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_APP, ("Invalid separator set (%s): duplicate characters found. Reverting to previous set (%s)\n", separator_set, save_seps));
 			*override_seps = save_override_seps;
-			strcpy(separator_set, save_seps);
+			gf_strcpy(separator_set, save_seps);
 			return;
 		}
 	}

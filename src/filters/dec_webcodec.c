@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2023-2024
+ *			Copyright (c) Telecom ParisTech 2023-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / WebCodec decoder filter
@@ -68,7 +68,7 @@ void wcdec_on_error(GF_WCDecCtx *ctx, int state, char *msg)
 }
 
 EM_JS(int, wcdec_init, (int wc_ctx, int _codec_str, int width, int height, int sample_rate, int num_channels, int dsi, int dsi_size), {
-	let codec_str = _codec_str ? Module.UTF8ToString(_codec_str) : null;
+	let codec_str = _codec_str ? UTF8ToString(_codec_str) : null;
 	let config = {};
 	config.codec = codec_str;
 	let dec_class = null;
@@ -82,7 +82,7 @@ EM_JS(int, wcdec_init, (int wc_ctx, int _codec_str, int width, int height, int s
 		dec_class = AudioDecoder;
 	}
 	if (dsi_size) {
-		config.description = new Uint8Array(Module.HEAPU8.buffer, dsi, dsi_size);
+		config.description = new Uint8Array(HEAPU8.buffer, dsi, dsi_size);
 	}
 
 	if (typeof Module._to_webdec != 'function') {
@@ -93,11 +93,11 @@ EM_JS(int, wcdec_init, (int wc_ctx, int _codec_str, int width, int height, int s
           }
           return null;
 		};
-		Module._on_wcdec_error = Module.cwrap('wcdec_on_error', null, ['number', 'number', 'string']);
-		Module._on_wcdec_frame = Module.cwrap('wcdec_on_video', null, ['number', 'bigint', 'string', 'number', 'number']);
-		Module._on_wcdec_audio = Module.cwrap('wcdec_on_audio', null, ['number', 'bigint', 'string', 'number', 'number', 'number']);
-		Module._on_wcdec_flush = Module.cwrap('wcdec_on_flush', null, ['number']);
-		Module._on_wcdec_frame_copy = Module.cwrap('wcdec_on_frame_copy', null, ['number', 'number', 'number']);
+		libgpac._on_wcdec_error = cwrap('wcdec_on_error', null, ['number', 'number', 'string']);
+		libgpac._on_wcdec_frame = cwrap('wcdec_on_video', null, ['number', 'bigint', 'string', 'number', 'number']);
+		libgpac._on_wcdec_audio = cwrap('wcdec_on_audio', null, ['number', 'bigint', 'string', 'number', 'number', 'number']);
+		libgpac._on_wcdec_flush = cwrap('wcdec_on_flush', null, ['number']);
+		libgpac._on_wcdec_frame_copy = cwrap('wcdec_on_frame_copy', null, ['number', 'number', 'number']);
 	}
 	let c = Module._to_webdec(wc_ctx);
 	if (!c) {
@@ -231,7 +231,7 @@ static GF_Err wcdec_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_AUDIO_FORMAT, &PROP_UINT(ctx->af));
 	}
 	if (codecid==GF_CODECID_OPUS) {
-		strcpy(ctx->szCodec, "opus");
+		gf_strlcpy(ctx->szCodec, "opus", RFC6381_CODEC_NAME_SIZE_MAX);
 		dsi = NULL; //if description is set, WebCodec assumes ogg+opus
 	} else {
 		gf_filter_pid_get_rfc_6381_codec_string(pid, ctx->szCodec, GF_FALSE, GF_FALSE, NULL, NULL);
@@ -258,7 +258,7 @@ EM_JS(int, wcdec_push_frame, (int wc_ctx, int buf, int buf_size, int key, u64 ts
 	const chunk = new EncodedVideoChunk({
 		timestamp: Number(ts),
 		type: key ? "key" : "delta",
-		data: new Uint8Array(Module.HEAPU8.buffer, buf, buf_size)
+		data: new Uint8Array(HEAPU8.buffer, buf, buf_size)
   });
   c.dec.decode(chunk);
 })
@@ -269,7 +269,7 @@ EM_JS(int, wcdec_push_audio, (int wc_ctx, int buf, int buf_size, int key, u64 ts
 	const chunk = new EncodedAudioChunk({
 		timestamp: Number(ts),
 		type: key ? "key" : "delta",
-		data: new Uint8Array(Module.HEAPU8.buffer, buf, buf_size)
+		data: new Uint8Array(HEAPU8.buffer, buf, buf_size)
   });
   c.dec.decode(chunk);
 })
@@ -279,7 +279,7 @@ EM_JS(int, wcdec_copy_frame, (int wc_ctx, int dst_pck, int buf, int buf_size), {
 	if (!c || !c._frame || !dst_pck) return;
 
 	//setup dst
-	let ab = new Uint8Array(Module.HEAPU8.buffer, buf, buf_size);
+	let ab = new Uint8Array(HEAPU8.buffer, buf, buf_size);
 	let frame = c._frame;
 	c._frame = null;
 	frame.copyTo(ab).then( layout => {
@@ -383,7 +383,7 @@ EM_JS(int, wcdec_copy_audio, (int wc_ctx, int buf, int buf_size, int plane_index
 	if (!c || !c._frame) return;
 
 	//setup dst
-	let ab = new Uint8Array(Module.HEAPU8.buffer, buf, buf_size);
+	let ab = new Uint8Array(HEAPU8.buffer, buf, buf_size);
 	c._frame.copyTo(ab, { planeIndex: plane_index });
 })
 

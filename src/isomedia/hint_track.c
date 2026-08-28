@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -45,7 +45,7 @@ u32 GetHintFormat(GF_TrackBox *trak)
 	GF_HintMediaHeaderBox *hmhd = (GF_HintMediaHeaderBox *)trak->Media->information->InfoHeader;
 	if (hmhd && (hmhd->type != GF_ISOM_BOX_TYPE_HMHD))
 		return 0;
-		
+
 	if (!hmhd || !hmhd->subType) {
 		GF_Box *a = (GF_Box *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->child_boxes, 0);
 		if (!hmhd) return a ? a->type : 0;
@@ -105,10 +105,10 @@ GF_Err gf_isom_setup_hint_track(GF_ISOFile *movie, u32 trackNumber, GF_ISOHintFo
 	default:
 		return GF_NOT_SUPPORTED;
 	}
-	e = CanAccessMovie(movie, GF_ISOM_OPEN_WRITE);
+	e = gf_isom_can_access_movie(movie, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
 
-	trak = gf_isom_get_track_from_file(movie, trackNumber);
+	trak = gf_isom_get_track_box(movie, trackNumber);
 	if (!trak) return gf_isom_last_error(movie);
 
 	//check we have a hint ...
@@ -176,10 +176,10 @@ GF_Err gf_isom_new_hint_description(GF_ISOFile *the_file, u32 trackNumber, s32 H
 	GF_SampleDescriptionBox *stsd;
 	GF_RelyHintBox *relyA;
 
-	e = CanAccessMovie(the_file, GF_ISOM_OPEN_WRITE);
+	e = gf_isom_can_access_movie(the_file, GF_ISOM_OPEN_WRITE);
 	if (e) return e;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	*HintDescriptionIndex = 0;
 	if (!trak || !IsHintTrack(trak)) return GF_BAD_PARAM;
 
@@ -230,7 +230,7 @@ GF_Err gf_isom_rtp_set_timescale(GF_ISOFile *the_file, u32 trackNumber, u32 Hint
 	u32 i, count;
 	GF_TSHintEntryBox *ent;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return GF_BAD_PARAM;
 
 	//OK, create a new HintSampleDesc
@@ -263,7 +263,7 @@ GF_Err gf_isom_rtp_set_time_offset(GF_ISOFile *the_file, u32 trackNumber, u32 Hi
 	u32 i, count;
 	GF_TimeOffHintEntryBox *ent;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return GF_BAD_PARAM;
 
 	//OK, create a new HintSampleDesc
@@ -296,7 +296,7 @@ GF_Err gf_isom_rtp_set_time_sequence_offset(GF_ISOFile *the_file, u32 trackNumbe
 	u32 i, count;
 	GF_SeqOffHintEntryBox *ent;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return GF_BAD_PARAM;
 
 	//OK, create a new HintSampleDesc
@@ -329,7 +329,7 @@ GF_Err gf_isom_begin_hint_sample(GF_ISOFile *the_file, u32 trackNumber, u32 Hint
 	GF_HintSampleEntryBox *entry;
 	GF_Err e;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !IsHintTrack(trak)) return GF_BAD_PARAM;
 
 	//assert we're increasing the timing...
@@ -371,7 +371,7 @@ GF_Err gf_isom_end_hint_sample(GF_ISOFile *the_file, u32 trackNumber, u8 IsRando
 	GF_BitStream *bs;
 	GF_ISOSample *samp;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !IsHintTrack(trak)) return GF_BAD_PARAM;
 
 	e = Media_GetSampleDesc(trak->Media, trak->Media->information->sampleTable->currentEntryIndex, (GF_SampleEntryBox **) &entry, &dataRefIndex);
@@ -420,7 +420,7 @@ GF_Err gf_isom_hint_blank_data(GF_ISOFile *the_file, u32 trackNumber, u8 AtBegin
 	GF_EmptyDTE *dte;
 	GF_Err e;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !IsHintTrack(trak)) return GF_BAD_PARAM;
 
 	e = Media_GetSampleDesc(trak->Media, trak->Media->information->sampleTable->currentEntryIndex, (GF_SampleEntryBox **) &entry, &count);
@@ -449,7 +449,7 @@ GF_Err gf_isom_hint_direct_data(GF_ISOFile *the_file, u32 trackNumber, u8 *data,
 	u32 offset = 0;
 
 	if (!dataLength) return GF_OK;
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !IsHintTrack(trak) || (dataLength > 14)) return GF_BAD_PARAM;
 
 	e = Media_GetSampleDesc(trak->Media, trak->Media->information->sampleTable->currentEntryIndex, (GF_SampleEntryBox **) &entry, &count);
@@ -477,7 +477,7 @@ GF_Err gf_isom_hint_sample_data(GF_ISOFile *the_file, u32 trackNumber, GF_ISOTra
 	GF_Err e;
 	GF_TrackReferenceTypeBox *hint;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !IsHintTrack(trak)) return GF_BAD_PARAM;
 
 
@@ -547,7 +547,7 @@ GF_Err gf_isom_hint_sample_description_data(GF_ISOFile *the_file, u32 trackNumbe
 	GF_Err e;
 	GF_TrackReferenceTypeBox *hint;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !IsHintTrack(trak)) return GF_BAD_PARAM;
 
 	e = Media_GetSampleDesc(trak->Media, trak->Media->information->sampleTable->currentEntryIndex, (GF_SampleEntryBox **) &entry, &count);
@@ -589,7 +589,7 @@ GF_Err gf_isom_rtp_packet_set_flags(GF_ISOFile *the_file, u32 trackNumber,
 	u32 dataRefIndex, ind;
 	GF_Err e;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return GF_BAD_PARAM;
 
 	e = Media_GetSampleDesc(trak->Media, trak->Media->information->sampleTable->currentEntryIndex, (GF_SampleEntryBox **) &entry, &dataRefIndex);
@@ -625,7 +625,7 @@ GF_Err gf_isom_rtp_packet_begin(GF_ISOFile *the_file, u32 trackNumber,
 	u32 dataRefIndex;
 	GF_Err e;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return GF_BAD_PARAM;
 
 	e = Media_GetSampleDesc(trak->Media, trak->Media->information->sampleTable->currentEntryIndex, (GF_SampleEntryBox **) &entry, &dataRefIndex);
@@ -659,7 +659,7 @@ GF_Err gf_isom_rtp_packet_set_offset(GF_ISOFile *the_file, u32 trackNumber, s32 
 	u32 dataRefIndex, i;
 	GF_Err e;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return GF_BAD_PARAM;
 
 	e = Media_GetSampleDesc(trak->Media, trak->Media->information->sampleTable->currentEntryIndex, (GF_SampleEntryBox **) &entry, &dataRefIndex);
@@ -708,6 +708,7 @@ static void AddSDPLine(GF_List *list, char *sdp_text, Bool is_movie_sdp)
 static void ReorderSDP(char *sdp_text, Bool is_movie_sdp)
 {
 	char *cur;
+	u32 inlen = (u32) strlen(sdp_text) + 1;
 	GF_List *lines = gf_list_new();
 	cur = sdp_text;
 	while (cur) {
@@ -725,11 +726,11 @@ static void ReorderSDP(char *sdp_text, Bool is_movie_sdp)
 		st[0] = b;
 		cur = st;
 	}
-	strcpy(sdp_text, "");
+	gf_strlcpy(sdp_text, "", inlen);
 	while (gf_list_count(lines)) {
 		cur = (char *)gf_list_get(lines, 0);
 		gf_list_rem(lines, 0);
-		strcat(sdp_text, cur);
+		gf_strlcat(sdp_text, cur, inlen);
 		gf_free(cur);
 	}
 	gf_list_del(lines);
@@ -746,7 +747,7 @@ GF_Err gf_isom_sdp_add_track_line(GF_ISOFile *the_file, u32 trackNumber, const c
 	GF_Err e;
 	char *buf;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak) return GF_BAD_PARAM;
 
 	//currently, only RTP hinting supports SDP
@@ -766,19 +767,13 @@ GF_Err gf_isom_sdp_add_track_line(GF_ISOFile *the_file, u32 trackNumber, const c
 	sdp = (GF_SDPBox *) hnti->SDP;
 
 	if (!sdp->sdpText) {
-		sdp->sdpText = (char *)gf_malloc(sizeof(char) * (strlen(text) + 3));
-		if (!sdp->sdpText) return GF_OUT_OF_MEM;
-
-		strcpy(sdp->sdpText, text);
-		strcat(sdp->sdpText, "\r\n");
+		sdp->sdpText = gf_strdup(text);
+		gf_dynstrcat(&sdp->sdpText, "\r\n", NULL);
 		return GF_OK;
 	}
-	buf = (char *)gf_malloc(sizeof(char) * (strlen(sdp->sdpText) + strlen(text) + 3));
-	if (!buf) return GF_OUT_OF_MEM;
-
-	strcpy(buf, sdp->sdpText);
-	strcat(buf, text);
-	strcat(buf, "\r\n");
+	buf = gf_strdup(sdp->sdpText);
+	gf_dynstrcat(&buf, text, NULL);
+	gf_dynstrcat(&buf, "\r\n", NULL);
 	gf_free(sdp->sdpText);
 	ReorderSDP(buf, GF_FALSE);
 	sdp->sdpText = buf;
@@ -793,7 +788,7 @@ GF_Err gf_isom_sdp_clean_track(GF_ISOFile *the_file, u32 trackNumber)
 	GF_UserDataMap *map;
 	GF_HintTrackInfoBox *hnti;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak) return GF_BAD_PARAM;
 
 	//currently, only RTP hinting supports SDP
@@ -859,19 +854,13 @@ GF_Err gf_isom_sdp_add_line(GF_ISOFile *movie, const char *text)
 	rtp = (GF_RTPBox *) hnti->SDP;
 
 	if (!rtp->sdpText) {
-		rtp->sdpText = (char*)gf_malloc(sizeof(char) * (strlen(text) + 3));
-		if (!rtp->sdpText) return GF_OUT_OF_MEM;
-
-		strcpy(rtp->sdpText, text);
-		strcat(rtp->sdpText, "\r\n");
+		rtp->sdpText = gf_strdup(text);
+		gf_dynstrcat(&rtp->sdpText, "\r\n", NULL);
 		return GF_OK;
 	}
-	buf = (char*)gf_malloc(sizeof(char) * (strlen(rtp->sdpText) + strlen(text) + 3));
-	if (!buf) return GF_OUT_OF_MEM;
-	
-	strcpy(buf, rtp->sdpText);
-	strcat(buf, text);
-	strcat(buf, "\r\n");
+	buf = gf_strdup(rtp->sdpText);
+	gf_dynstrcat(&buf, text, NULL);
+	gf_dynstrcat(&buf, "\r\n", NULL);
 	gf_free(rtp->sdpText);
 	ReorderSDP(buf, GF_TRUE);
 	rtp->sdpText = buf;
@@ -887,7 +876,7 @@ GF_Err gf_isom_sdp_clean(GF_ISOFile *movie)
 	GF_HintTrackInfoBox *hnti;
 
 	//check if we have a udta ...
-	if (!movie->moov || !movie->moov->udta) return GF_OK;
+	if (!movie || !movie->moov || !movie->moov->udta) return GF_OK;
 
 	//find a hnti in the udta
 	map = udta_getEntry(movie->moov->udta, GF_ISOM_BOX_TYPE_HNTI, NULL);
@@ -944,7 +933,7 @@ GF_Err gf_isom_sdp_track_get(GF_ISOFile *the_file, u32 trackNumber, const char *
 	*sdp = NULL;
 	*length = 0;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak) return GF_BAD_PARAM;
 	if (!trak->udta) return GF_OK;
 
@@ -973,7 +962,7 @@ u32 gf_isom_get_payt_count(GF_ISOFile *the_file, u32 trackNumber)
 	GF_HintInfoBox *hinf;
 	GF_PAYTBox *payt;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak) return 0;
 
 	if (!CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return 0;
@@ -999,7 +988,7 @@ const char *gf_isom_get_payt_info(GF_ISOFile *the_file, u32 trackNumber, u32 ind
 	GF_HintInfoBox *hinf;
 	GF_PAYTBox *payt;
 
-	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	trak = gf_isom_get_track_box(the_file, trackNumber);
 	if (!trak || !index) return NULL;
 
 	if (!CheckHintFormat(trak, GF_ISOM_HINT_RTP)) return NULL;
@@ -1023,4 +1012,3 @@ const char *gf_isom_get_payt_info(GF_ISOFile *the_file, u32 trackNumber, u32 ind
 }
 
 #endif /*!defined(GPAC_DISABLE_ISOM) && !defined(GPAC_DISABLE_ISOM_HINTING)*/
-

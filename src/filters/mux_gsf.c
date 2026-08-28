@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2025
+ *			Copyright (c) Telecom ParisTech 2018-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / GPAC stream serializer filter
@@ -225,6 +225,8 @@ static void gsfmx_send_packets(GSFMxCtx *ctx, GSFStream *gst, GF_GSFPacketType p
 			hdr_size = gsfmx_get_header_size(ctx, gst, use_seq_num, first_frag, no_frag, ctx->mpck - hdr_size, frame_size, block_offset);
 			to_write = ctx->mpck - hdr_size;
 		}
+		if (to_write >= GF_UINT_MAX-hdr_size)
+			break;
 		osize = hdr_size + to_write;
 
 		dst_pck = gf_filter_pck_new_alloc(ctx->opid, osize, &output);
@@ -265,6 +267,7 @@ static void gsfmx_send_packets(GSFMxCtx *ctx, GSFStream *gst, GF_GSFPacketType p
 		bytes_remain -= to_write;
 		pck_offset += to_write;
 		block_offset += to_write;
+
 		if (frame_hdr_size) {
 			if (frame_hdr_size > block_offset) {
 				frame_hdr_size -= block_offset;
@@ -328,7 +331,10 @@ static Bool gsfmx_can_serialize_prop(const GF_PropertyValue *p, u32 prop_4cc)
 			&& !gf_props_type_is_enum(prop_type)
 			&& (gf_props_get_base_type(prop_type) != gf_props_get_base_type(p->type))
 		) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFMux] Mismatch between property advertised type (%s) and built-in type (%s) for %s, not serializing !\n\tPlease contact GPAC team or the developers of third-party filters used if any (run with -graph)\n", gf_props_get_type_name(p->type), gf_props_get_type_name(prop_type), gf_props_4cc_get_name(prop_4cc)));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[GSFMux] Mismatch between property advertised type (%s) and built-in "
+				"type (%s) for %s, not serializing !\n\tPlease contact the GPAC team or the developers of third-party filters "
+				"used if any (run with -graph)\n",
+				gf_props_get_type_name(p->type), gf_props_get_type_name(prop_type), gf_props_4cc_get_name(prop_4cc)));
 			return GF_FALSE;
 		}
 	}
@@ -464,14 +470,6 @@ static GFINLINE Bool gsfmx_is_prop_skip(GSFMxCtx *ctx, u32 prop_4cc, const char 
 {
 	if (prop_name && !strcmp(prop_name, "reframer_rem_edits"))
 		return GF_TRUE;
-
-	if (gf_sys_is_test_mode()) {
-		switch (prop_4cc) {
-		case GF_PROP_PID_SEI_LOADED:
-		case GF_PROP_PCK_SEI_LOADED:
-			return GF_TRUE;
-		}
-	}
 
 	if (ctx->minp) {
 		u8 flags;
@@ -1202,7 +1200,7 @@ static GF_Err gsfmx_initialize(GF_Filter *filter)
 			for (i=0; i<16; i++) {
 				char szC[3];
 				sprintf(szC, "%02X", ctx->crypt_IV[i]);
-				strcat(szIV, szC);
+				gf_strcat(szIV, szC);
 			}
 			GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[GSFMux] Generated IV value Ox%s\n", szIV));
 		}
@@ -1363,4 +1361,3 @@ const GF_FilterRegister *gsfmx_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif
-

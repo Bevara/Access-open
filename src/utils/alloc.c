@@ -85,7 +85,7 @@ CDECL void   scalable_free(void* ptr);
 #define CALLOC	scalable_calloc
 #define REALLOC	scalable_realloc
 #define FREE	scalable_free
-#define STRDUP(_a) if (_a) { unsigned int len = strlen(_a)+1; char *ptr = (char *) scalable_malloc(len); strcpy(ptr, _a); return ptr; } else { return NULL; }
+#define STRDUP(_a) if (_a) { unsigned int len = strlen(_a)+1; char *ptr = (char *) scalable_malloc(len); gf_strcpy(ptr, _a); return ptr; } else { return NULL; }
 
 #endif
 
@@ -110,7 +110,7 @@ CDECL void   dlfree(void* ptr);
 #define CALLOC	dlcalloc
 #define REALLOC	dlrealloc
 #define FREE	dlfree
-#define STRDUP(_a) if (_a) { unsigned int len = strlen(_a)+1; char *ptr = (char *) dlmalloc(len); strcpy(ptr, _a); return ptr; } else { return NULL; }
+#define STRDUP(_a) if (_a) { unsigned int len = strlen(_a)+1; char *ptr = (char *) dlmalloc(len); gf_strcpy(ptr, _a); return ptr; } else { return NULL; }
 
 #endif
 
@@ -411,8 +411,9 @@ char *gf_mem_strdup_tracker(const char *str, const char *filename, int line)
 {
 	char *ptr;
 	if (!str) return NULL;
-	ptr = (char*)gf_mem_malloc_tracker(strlen(str)+1, filename, line);
-	strcpy(ptr, str);
+	u32 alen = (u32) strlen(str);
+	ptr = (char*)gf_mem_malloc_tracker(alen+1, filename, line);
+	memcpy(ptr, str, alen+1);
 	return ptr;
 }
 
@@ -496,14 +497,14 @@ size_t gf_mem_get_stats(unsigned int *nb_allocs, unsigned int *nb_callocs, unsig
 
 typedef struct s_memory_element
 {
-    void *ptr;
-    unsigned int size;
-    struct s_memory_element *next;
+	void *ptr;
+	unsigned int size;
+	struct s_memory_element *next;
 #ifndef GPAC_MEMORY_TRACKING_DISABLE_STACKTRACE
-    char *backtrace_stack;
+	char *backtrace_stack;
 #endif
-    int line;
-    char *filename;
+	int line;
+	char *filename;
 } memory_element;
 
 /*pointer to the first element of the list*/
@@ -539,22 +540,23 @@ static void gf_memory_add_stack(memory_element **p, void *ptr, unsigned int size
 	element->line = line;
 
 #ifndef GPAC_MEMORY_TRACKING_DISABLE_STACKTRACE
-    if (gf_mem_backtrace_enabled) {
-        element->backtrace_stack = MALLOC(sizeof(char) * STACK_PRINT_SIZE * SYMBOL_MAX_SIZE);
+	if (gf_mem_backtrace_enabled) {
+		element->backtrace_stack = MALLOC(sizeof(char) * STACK_PRINT_SIZE * SYMBOL_MAX_SIZE);
 		if (!element->backtrace_stack) {
 			gf_memory_log(GF_MEMORY_WARNING, ("[Mem] Fail to register backtrace of allocation\n"));
 			element->backtrace_stack = NULL;
 		} else {
 			store_backtrace(element->backtrace_stack);
 		}
-    } else {
-        element->backtrace_stack = NULL;
-    }
+	} else {
+		element->backtrace_stack = NULL;
+	}
 #endif
 
-	element->filename = MALLOC(strlen(filename) + 1);
+	u32 alen = (u32) strlen(filename);
+	element->filename = MALLOC(alen + 1);
 	if (element->filename)
-		strcpy(element->filename, filename);
+		memcpy(element->filename, filename, alen + 1);
 
 	element->next = *p;
 	*p = element;
@@ -586,11 +588,11 @@ static unsigned int gf_memory_del_item_stack(memory_element **p, void *ptr)
 			else *p = curr_element->next;
 			size = curr_element->size;
 #ifndef GPAC_MEMORY_TRACKING_DISABLE_STACKTRACE
-            if (curr_element->backtrace_stack) {
-                FREE(curr_element->backtrace_stack);
-            }
+			if (curr_element->backtrace_stack) {
+				FREE(curr_element->backtrace_stack);
+			}
 #endif
-            FREE(curr_element);
+			FREE(curr_element);
 			return size;
 		}
 		prev_element = curr_element;
@@ -698,13 +700,13 @@ static void register_address(void *ptr, size_t size, const char *filename, int l
 void log_backtrace(unsigned int log_level, memory_element *element)
 {
 #ifndef GPAC_MEMORY_TRACKING_DISABLE_STACKTRACE
-    if (gf_mem_backtrace_enabled) {
-        gf_memory_log(log_level, "file %s at line %d\n%s\n", element->filename, element->line, element->backtrace_stack);
-    } else
+	if (gf_mem_backtrace_enabled) {
+		gf_memory_log(log_level, "file %s at line %d\n%s\n", element->filename, element->line, element->backtrace_stack);
+	} else
 #endif
-    {
-        gf_memory_log(log_level, "file %s at line %d\n", element->filename, element->line);
-    }
+	{
+		gf_memory_log(log_level, "file %s at line %d\n", element->filename, element->line);
+	}
 }
 
 
@@ -729,7 +731,7 @@ Bool gf_mem_check_address(void *ptr)
 		gf_assert(element);
 		gf_memory_log(GF_MEMORY_ERROR, "[MemTracker] the block %p was already freed in:\n", ptr);
 		res = GF_FALSE;
-        log_backtrace(GF_MEMORY_ERROR, element);
+		log_backtrace(GF_MEMORY_ERROR, element);
 	}
 	/*unlock*/
 	gf_mx_v(gpac_allocations_lock);
@@ -966,43 +968,3 @@ int gf_asprintf(char **strp, const char *fmt, ...)
 }
 
 #endif //unused
-
-/*
- * FROM: https://github.com/freebsd/freebsd-src/blob/master/sys/libkern/strlcpy.c
- *
- * Copyright (c) 1998, 2015 Todd C. Miller <Todd.Miller@courtesan.com>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- */
-/*
- * Copy string src to buffer dst of size dsize.  At most dsize-1
- * chars will be copied.  Always NUL terminates (unless dsize == 0).
- * Returns strlen(src); if retval >= dsize, truncation occurred.
- */
-GF_EXPORT
-size_t gf_strlcpy(char * dst, const char * src, size_t dsize)
-{
-	const char *osrc = src;
-	size_t nleft = dsize;
-
-	/* Copy as many bytes as will fit. */
-	if (nleft != 0) {
-		while (--nleft != 0) {
-			if ((*dst++ = *src++) == '\0')
-				break;
-		}
-	}
-
-	/* Not enough room in dst, add NUL and traverse rest of src. */
-	if (nleft == 0) {
-		if (dsize != 0)
-			*dst = '\0';		/* NUL-terminate dst */
-		while (*src++)
-			;
-	}
-
-	return(src - osrc - 1);	/* count does not include NUL */
-}

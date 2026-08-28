@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2024
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / Scene Management sub-project
@@ -238,18 +238,23 @@ next_line:
 				return;
 			}
 		} else {
-			if ((gf_gzgets(parser->gz_in, parser->line_buffer, BT_LINE_SIZE) == NULL)
-			        || (!strlen(parser->line_buffer) && gf_gzeof(parser->gz_in))) {
+			if (gf_gzgets(parser->gz_in, parser->line_buffer, BT_LINE_SIZE) == NULL) {
+				parser->done = 1;
+				return;
+
+			}
+			u32 line_len = (u32)strlen(parser->line_buffer);
+			if (!line_len && gf_gzeof(parser->gz_in)) {
 				parser->done = 1;
 				return;
 			}
 			/*watchout for long lines*/
-			if (1 + strlen(parser->line_buffer) == BT_LINE_SIZE) {
+			if (1 + line_len == BT_LINE_SIZE) {
 				u32 rew, pos, go;
 				rew = 0;
 				go = 1;
-				while (go) {
-					switch (parser->line_buffer[strlen(parser->line_buffer)-1]) {
+				while (line_len && go) {
+					switch (parser->line_buffer[line_len-1]) {
 					case ' ':
 					case ',':
 					case '[':
@@ -257,12 +262,18 @@ next_line:
 						go = 0;
 						break;
 					default:
-						parser->line_buffer[strlen(parser->line_buffer)-1] = 0;
+						parser->line_buffer[line_len-1] = 0;
+						line_len--;
 						rew++;
 						break;
 					}
 				}
 				pos = (u32) gf_gztell(parser->gz_in);
+				if (pos == rew) {
+					parser->done = 1;
+					parser->last_error = GF_NON_COMPLIANT_BITSTREAM;
+					return;
+				}
 				gf_gzseek(parser->gz_in, pos-rew, SEEK_SET);
 			}
 		}
@@ -329,9 +340,13 @@ next_line:
 					def->name = gf_strdup(buf);
 					sep[0] = ' ';
 					buf = sep+1;
-					while (strchr(" \t", buf[0])) buf++;
+					while (buf && *buf && strchr(" \t", buf[0])) buf++;
 					def->value = gf_strdup(buf);
-					gf_list_add(parser->def_symbols, def);
+					if (def->name && def->value) {
+						gf_list_add(parser->def_symbols, def);
+					} else {
+						gf_free(def);
+					}
 				}
 			}
 			else if (!strnicmp(parser->line_buffer+parser->line_pos, "#if ", 4)) {
@@ -378,7 +393,7 @@ next_line:
 				char *buf;
 				parser->line_pos+=6;
 				buf = parser->line_buffer+parser->line_pos;
-				while (strchr(" \t", buf[0]))
+				while (buf && *buf && strchr(" \t", buf[0]))
 					buf++;
 				sscanf(buf, "%dx%d", &parser->def_w, &parser->def_h);
 			}
@@ -518,7 +533,7 @@ char *gf_bt_get_string(GF_BTParser *parser, u8 string_delim)
 	if (!string_delim) string_delim = '"';
 
 	i=0;
-	while (1) {
+	while (parser->line_pos < parser->line_size) {
 		if (parser->line_buffer[parser->line_pos] == string_delim)
 			if ( !parser->line_pos || (parser->line_buffer[parser->line_pos-1] != '\\') ) break;
 
@@ -548,6 +563,7 @@ char *gf_bt_get_string(GF_BTParser *parser, u8 string_delim)
 					parser->line_pos++;
 					i++;
 					BT_STR_CHECK_ALLOC
+					if (parser->line_pos >= parser->line_size) { gf_bt_check_line(parser); break; }
 				}
 				/*UTF8 3 bytes char*/
 				else if ( (c & 0xf0) == 0xe0) {
@@ -555,10 +571,12 @@ char *gf_bt_get_string(GF_BTParser *parser, u8 string_delim)
 					parser->line_pos++;
 					i++;
 					BT_STR_CHECK_ALLOC
+					if (parser->line_pos >= parser->line_size) { gf_bt_check_line(parser); break; }
 					res[i] = parser->line_buffer[parser->line_pos];
 					parser->line_pos++;
 					i++;
 					BT_STR_CHECK_ALLOC
+					if (parser->line_pos >= parser->line_size) { gf_bt_check_line(parser); break; }
 				}
 				/*UTF8 4 bytes char*/
 				else if ( (c & 0xf8) == 0xf0) {
@@ -566,14 +584,17 @@ char *gf_bt_get_string(GF_BTParser *parser, u8 string_delim)
 					parser->line_pos++;
 					i++;
 					BT_STR_CHECK_ALLOC
+					if (parser->line_pos >= parser->line_size) { gf_bt_check_line(parser); break; }
 					res[i] = parser->line_buffer[parser->line_pos];
 					parser->line_pos++;
 					i++;
 					BT_STR_CHECK_ALLOC
+					if (parser->line_pos >= parser->line_size) { gf_bt_check_line(parser); break; }
 					res[i] = parser->line_buffer[parser->line_pos];
 					parser->line_pos++;
 					i++;
 					BT_STR_CHECK_ALLOC
+					if (parser->line_pos >= parser->line_size) { gf_bt_check_line(parser); break; }
 				}
 			}
 
@@ -652,7 +673,7 @@ GF_Err gf_bt_parse_float(GF_BTParser *parser, const char *name, Fixed *val)
 	s32 var;
 	Float f;
 	char *str = gf_bt_get_next(parser, 0);
-	if (!str) return parser->last_error = GF_IO_ERR;
+	if (!str || !val) return parser->last_error = GF_IO_ERR;
 	if (gf_bt_check_externproto_field(parser, str)) return GF_OK;
 
 	if (check_keyword(parser, str, &var)) {
@@ -668,7 +689,7 @@ GF_Err gf_bt_parse_float(GF_BTParser *parser, const char *name, Fixed *val)
 GF_Err gf_bt_parse_double(GF_BTParser *parser, const char *name, SFDouble *val)
 {
 	char *str = gf_bt_get_next(parser, 0);
-	if (!str) return parser->last_error = GF_IO_ERR;
+	if (!str || !val) return parser->last_error = GF_IO_ERR;
 	if (gf_bt_check_externproto_field(parser, str)) return GF_OK;
 	if (sscanf(str, "%lf", val) != 1) {
 		return gf_bt_report(parser, GF_BAD_PARAM, "%s: Number expected", name);
@@ -1327,6 +1348,7 @@ GF_Node *gf_bt_sf_node(GF_BTParser *parser, char *node_name, GF_Node *parent, ch
 			gf_list_add(parser->undef_nodes, node);
 		}
 		gf_node_register(node, parent);
+		if (name) gf_free(name);
 		return node;
 	}
 	proto = NULL;
@@ -1342,6 +1364,7 @@ GF_Node *gf_bt_sf_node(GF_BTParser *parser, char *node_name, GF_Node *parent, ch
 		if (!proto) {
 			/*locate proto*/
 			gf_bt_report(parser, GF_BAD_PARAM, "%s: not a valid/supported node", str);
+			if (name) gf_free(name);
 			return NULL;
 		}
 		tag = TAG_ProtoNode;
@@ -1367,6 +1390,7 @@ GF_Node *gf_bt_sf_node(GF_BTParser *parser, char *node_name, GF_Node *parent, ch
 
 	if (!node) {
 		parser->last_error = GF_SG_UNKNOWN_NODE;
+		if (name) gf_free(name);
 		return NULL;
 	}
 	if (register_def) gf_list_add(parser->def_nodes, node);
@@ -1589,6 +1613,7 @@ GF_Node *gf_bt_sf_node(GF_BTParser *parser, char *node_name, GF_Node *parent, ch
 	return node;
 
 err:
+	gf_list_del_item(parser->def_nodes, node);
 	gf_node_unregister(node, parent);
 	if (name) gf_free(name);
 	return NULL;
@@ -1619,7 +1644,7 @@ GF_Node *gf_bt_peek_node(GF_BTParser *parser, char *defID)
 	pos = parser->line_start_pos;
 	line_pos = parser->line_pos;
 	line = parser->line;
-	strcpy(nName, defID);
+	gf_strcpy(nName, defID);
 
 	n = NULL;
 	while (!parser->done && !the_node) {
@@ -1906,13 +1931,14 @@ next_field:
 
 	isDEF = 0;
 	while (!gf_bt_check_code(parser, '}')) {
+		if (parser->done) break;
 		str = gf_bt_get_next(parser, 0);
 		if (!strcmp(str, "PROTO") || !strcmp(str, "EXTERNPROTO")) {
 			gf_bt_parse_proto(parser, str, NULL);
 		} else if (!strcmp(str, "DEF")) {
 			isDEF = 1;
 			str = gf_bt_get_next(parser, 0);
-			strcpy(szDefName, str);
+			gf_strcpy(szDefName, str);
 		} else if (!strcmp(str, "ROUTE")) {
 			GF_Route *r = gf_bt_parse_route(parser, 1, 0, NULL);
 			if (isDEF) {
@@ -1957,10 +1983,10 @@ GF_Route *gf_bt_parse_route(GF_BTParser *parser, Bool skip_def, Bool is_insert, 
 	GF_Err e;
 
 	rID = 0;
-	strcpy(nstr, gf_bt_get_next(parser, 1));
+	gf_strcpy(nstr, gf_bt_get_next(parser, 1));
 	if (!skip_def && !strcmp(nstr, "DEF")) {
 		str = gf_bt_get_next(parser, 0);
-		strcpy(rName, str);
+		gf_strcpy(rName, str);
 		rID = gf_bt_get_route(parser, rName);
 		if (!rID && (str[0]=='R') ) {
 			rID = atoi(&str[1]);
@@ -1970,7 +1996,7 @@ GF_Route *gf_bt_parse_route(GF_BTParser *parser, Bool skip_def, Bool is_insert, 
 			}
 		}
 		if (!rID) rID = gf_bt_get_next_route_id(parser);
-		strcpy(nstr, gf_bt_get_next(parser, 1));
+		gf_strcpy(nstr, gf_bt_get_next(parser, 1));
 	}
 	orig = gf_bt_peek_node(parser, nstr);
 	if (!orig) {
@@ -2003,7 +2029,7 @@ GF_Route *gf_bt_parse_route(GF_BTParser *parser, Bool skip_def, Bool is_insert, 
 		return NULL;
 	}
 
-	strcpy(nstr, gf_bt_get_next(parser, 1));
+	gf_strcpy(nstr, gf_bt_get_next(parser, 1));
 	dest = gf_bt_peek_node(parser, nstr);
 	if (!dest) {
 		gf_bt_report(parser, GF_BAD_PARAM, "cannot find node %s", nstr);
@@ -2079,7 +2105,7 @@ void gf_bt_resolve_routes(GF_BTParser *parser, Bool clean)
 
 static void bd_set_com_node(GF_Command *com, GF_Node *node)
 {
-	com->node = node;
+	gf_sg_command_set_node(com, node);
 	gf_node_register(com->node, NULL);
 }
 
@@ -2105,7 +2131,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 		if (!strcmp(str, "ROUTE")) {
 			str = gf_bt_get_next(parser, 0);
 			r = gf_sg_route_find_by_name(parser->load->scene_graph, str);
-			if (!r) strcpy(field, str);
+			if (!r) gf_strcpy(field, str);
 			str = gf_bt_get_next(parser, 0);
 			if (strcmp(str, "BY")) {
 				return gf_bt_report(parser, GF_BAD_PARAM, "BY expected got %s", str);
@@ -2153,12 +2179,12 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 		else if (!strcmp(str, "BEGIN")) pos = 0;
 
 		gf_bt_check_code(parser, '.');
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		n = gf_bt_peek_node(parser, str);
 		if (!n) return gf_bt_report(parser, GF_BAD_PARAM, "%s: unknown node", field);
 
 		str = gf_bt_get_next(parser, 0);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		if (gf_bt_check_code(parser, '[')) {
 			if ( (parser->last_error = gf_bt_parse_int(parser, "index", &pos)) ) return parser->last_error;
 			if (!gf_bt_check_code(parser, ']'))
@@ -2264,13 +2290,13 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 		u32 j;
 		Bool force_sf=0;
 		char csep;
-		GF_Node *targetNode, *idxNode, *childNode, *fromNode;
+		GF_Node *targetNode, *idxNode, *childNode=NULL, *fromNode;
 		GF_FieldInfo targetField, idxField, childField, fromField;
 
 		idxNode = childNode = fromNode = NULL;
 		str = gf_bt_get_next(parser, 1);
 		/*get source node*/
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		targetNode = gf_bt_peek_node(parser, str);
 		if (!targetNode) return gf_bt_report(parser, GF_BAD_PARAM, "%s: unknown node", field);
 		if (!gf_bt_check_code(parser, '.')) {
@@ -2278,7 +2304,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 		}
 		/*get source field*/
 		str = gf_bt_get_next(parser, 0);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		parser->last_error = gf_node_get_field_by_name(targetNode, field, &targetField);
 		if (parser->last_error)
 			return gf_bt_report(parser, parser->last_error, "%s: Unknown node field", field);
@@ -2292,7 +2318,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 				if (!strcmp(str, "LAST")) pos = -1;
 				else if (!strcmp(str, "first")) pos = 0;
 				else {
-					strcpy(field, str);
+					gf_strcpy(field, str);
 					/*get idx node*/
 					idxNode = gf_bt_peek_node(parser, str);
 					if (!idxNode) return gf_bt_report(parser, GF_BAD_PARAM, "%s: unknown node", field);
@@ -2301,7 +2327,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 
 					/*get idx field*/
 					str = gf_bt_get_next(parser, 0);
-					strcpy(field, str);
+					gf_strcpy(field, str);
 					parser->last_error = gf_node_get_field_by_name(idxNode, field, &idxField);
 					if (parser->last_error)
 						return gf_bt_report(parser, parser->last_error, "%s: Unknown node field", field);
@@ -2330,12 +2356,13 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 						break;
 					}
 				}
-				childNode = gf_node_list_get_child(*(GF_ChildNodeItem **)targetField.far_ptr, apos);
+				if (!strcmp(targetField.name, "children"))
+					childNode = gf_node_list_get_child(*(GF_ChildNodeItem **)targetField.far_ptr, apos);
 				if (!childNode)
 					return gf_bt_report(parser, GF_BAD_PARAM, "Cannot find child node at specified index");
 
 				str = gf_bt_get_next(parser, 0);
-				strcpy(field, str);
+				gf_strcpy(field, str);
 				parser->last_error = gf_node_get_field_by_name(childNode, field, &childField);
 				if (parser->last_error)
 					return gf_bt_report(parser, parser->last_error, "%s: Unknown node field", field);
@@ -2348,13 +2375,13 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 
 		/*peek the next word*/
 		j = 0;
-		while (strchr(" \n\t\0", parser->line_buffer[parser->line_pos + j])) j++;
+		while (parser->line_buffer[parser->line_pos + j] && strchr(" \n\t\0", parser->line_buffer[parser->line_pos + j])) j++;
 		str = parser->line_buffer + parser->line_pos + j;
 		j = 0;
 		while (!strchr(" .\0", str[j])) j++;
 		csep = str[j];
 		str[j]=0;
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		str[j] = csep;
 		fromNode = gf_bt_peek_node(parser, field);
 		if (fromNode) {
@@ -2365,7 +2392,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 			}
 			/*get source field*/
 			str = gf_bt_get_next(parser, 0);
-			strcpy(field, str);
+			gf_strcpy(field, str);
 			parser->last_error = gf_node_get_field_by_name(fromNode, field, &fromField);
 			if (parser->last_error)
 				return gf_bt_report(parser, parser->last_error, "%s: Unknown node field", field);
@@ -2473,7 +2500,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 			return gf_bt_report(parser, GF_BAD_PARAM, (char*) (is_append ? "TO expected got %s" : "AT expected got %s"), str);
 		}
 		str = gf_bt_get_next(parser, 1);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		n = gf_bt_peek_node(parser, str);
 		if (!n) {
 			return gf_bt_report(parser, GF_BAD_PARAM, "%s: Unknown node", field);
@@ -2482,7 +2509,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 			return gf_bt_report(parser, GF_BAD_PARAM, ". expected");
 		}
 		str = gf_bt_get_next(parser, 1);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		if (!is_append) {
 			if (!gf_bt_check_code(parser, '[')) {
 				return gf_bt_report(parser, GF_BAD_PARAM, "[ expected");
@@ -2557,7 +2584,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 			com->def_name = gf_strdup(str);
 			return gf_list_add(cmdList, com);
 		}
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		n = gf_bt_peek_node(parser, str);
 		if (!n) {
 			return gf_bt_report(parser, GF_BAD_PARAM, "DELETE %s: Unknown Node", field);
@@ -2620,7 +2647,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 	/*MultipleReplace commands*/
 	if (!strcmp(str, "MULTIPLEREPLACE")) {
 		str = gf_bt_get_next(parser, 0);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		n = gf_bt_peek_node(parser, str);
 		if (!n) {
 			return gf_bt_report(parser, GF_BAD_PARAM, "%s: Unknown node", field);
@@ -2684,7 +2711,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 	/*MultipleIndexReplace commands*/
 	if (!strcmp(str, "MULTIPLEINDREPLACE")) {
 		str = gf_bt_get_next(parser, 1);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		n = gf_bt_peek_node(parser, str);
 		if (!n) {
 			return gf_bt_report(parser, GF_BAD_PARAM, "%s: Unknown node", field);
@@ -2738,7 +2765,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 
 	if (!strcmp(str, "XDELETE")) {
 		str = gf_bt_get_next(parser, 1);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		n = gf_bt_peek_node(parser, str);
 		if (!n) {
 			return gf_bt_report(parser, GF_BAD_PARAM, "%s: Unknown Node", field);
@@ -2786,7 +2813,7 @@ GF_Err gf_bt_parse_bifs_command(GF_BTParser *parser, char *name, GF_List *cmdLis
 		gf_list_add(cmdList, com);
 		return GF_OK;
 	}
-	return gf_bt_report(parser, GF_BAD_PARAM, "%s: Unknown command syntax, str");
+	return gf_bt_report(parser, GF_BAD_PARAM, "%s: Unknown command syntax", str);
 
 err:
 	if (com) gf_sg_command_del(com);
@@ -2823,7 +2850,7 @@ GF_IPMPX_Data *gf_bt_parse_ipmpx(GF_BTParser *parser, char *name)
 		/*done*/
 		if (gf_bt_check_code(parser, '}')) break;
 		str = gf_bt_get_next(parser, 0);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 		type = gf_ipmpx_get_field_type(desc, str);
 		switch (type) {
 		/*single descriptor*/
@@ -2973,13 +3000,13 @@ GF_Descriptor *gf_bt_parse_descriptor(GF_BTParser *parser, char *name)
 		/*done*/
 		if (gf_bt_check_code(parser, '}')) break;
 		str = gf_bt_get_next(parser, 0);
-		strcpy(field, str);
+		gf_strcpy(field, str);
 
 		if ((tag==GF_ODF_BIFS_CFG_TAG) && !strcmp(field, "animationMask")) {
 			gf_bt_get_next(parser, 0);
 			if (gf_bt_check_code(parser, '{')) is_anim_mask = 1;
 			str = gf_bt_get_next(parser, 0);
-			strcpy(field, str);
+			gf_strcpy(field, str);
 		}
 
 		type = gf_odf_get_field_type(desc, str);
@@ -3331,6 +3358,7 @@ GF_Err gf_bt_loader_run_intern(GF_BTParser *parser, GF_Command *init_com, Bool i
 
 		/*IOD*/
 		else if (!strcmp(str, "InitialObjectDescriptor") || !strcmp(str, "ObjectDescriptor")) {
+			gf_odf_desc_del((GF_Descriptor *)parser->load->ctx->root_od);
 			parser->load->ctx->root_od = (GF_ObjectDescriptor *) gf_bt_parse_descriptor(parser, str);
 		}
 		/*explicit command*/
@@ -3391,7 +3419,7 @@ GF_Err gf_bt_loader_run_intern(GF_BTParser *parser, GF_Command *init_com, Bool i
 		}
 		else if (!strcmp(str, "DEF")) {
 			str = gf_bt_get_next(parser, 0);
-			strcpy(szDEFName, str);
+			gf_strcpy(szDEFName, str);
 			has_id = 1;
 		}
 		else if (!strcmp(str, "ROUTE")) {
@@ -3490,7 +3518,11 @@ GF_Err gf_bt_loader_run_intern(GF_BTParser *parser, GF_Command *init_com, Bool i
 			if (parser->top_nodes) {
 				gf_list_add(parser->top_nodes, node);
 			} else if (!vrml_root_node) {
-				if (init_com) init_com->node = node;
+				if (init_com) {
+					gf_node_unregister(init_com->node, NULL);
+					gf_list_del_item(parser->def_nodes, init_com->node);
+					init_com->node = node;
+				}
 				else if (parser->load->flags & GF_SM_LOAD_CONTEXT_READY) {
 					GF_Command *com = gf_sg_command_new(parser->load->scene_graph, GF_SG_SCENE_REPLACE);
 					gf_assert(!parser->bifs_au);
@@ -3498,6 +3530,9 @@ GF_Err gf_bt_loader_run_intern(GF_BTParser *parser, GF_Command *init_com, Bool i
 					parser->bifs_au = gf_sm_stream_au_new(parser->bifs_es, 0, 0, 1);
 					gf_list_add(parser->bifs_au->commands, com);
 					com->node = node;
+				}
+				else {
+					gf_node_unregister(node, vrml_root_node);
 				}
 			} else {
 				gf_node_insert_child(vrml_root_node, node, -1);
@@ -3568,7 +3603,7 @@ static GF_Err gf_sm_load_bt_initialize(GF_SceneLoader *load, const char *str, Bo
 			parser->initialized = 0;
 			return GF_OK;
 		}
-		strncpy((char *) BOM, str, 5);
+		gf_strcpy(BOM, str);
 	}
 
 	/*0: no unicode, 1: UTF-16BE, 2: UTF-16LE*/

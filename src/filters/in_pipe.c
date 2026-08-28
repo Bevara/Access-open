@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2018-2024
+ *			Copyright (c) Telecom ParisTech 2018-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / pipe input filter
@@ -109,6 +109,7 @@ static GF_Err pipein_initialize(GF_Filter *filter)
 	if (!strcmp(ctx->src, "-") || !strcmp(ctx->src, "stdin")) {
 		ctx->is_stdin = GF_TRUE;
 		ctx->mkp = GF_FALSE;
+		if (!ctx->timeout) ctx->timeout = 10000;
 #ifdef WIN32
 		_setmode(_fileno(stdin), _O_BINARY);
 #endif
@@ -142,11 +143,11 @@ static GF_Err pipein_initialize(GF_Filter *filter)
 #ifdef WIN32
 	char szNamedPipe[GF_MAX_PATH];
 	if (!strncmp(src, "\\\\", 2)) {
-		strcpy(szNamedPipe, src);
+		gf_strcpy(szNamedPipe, src);
 	}
 	else {
-		strcpy(szNamedPipe, "\\\\.\\pipe\\gpac\\");
-		strcat(szNamedPipe, src);
+		gf_strcpy(szNamedPipe, "\\\\.\\pipe\\gpac\\");
+		gf_strcat(szNamedPipe, src);
 	}
 	if (strchr(szNamedPipe, '/')) {
 		u32 i, len = (u32)strlen(szNamedPipe);
@@ -370,7 +371,11 @@ static GF_Err pipein_process(GF_Filter *filter)
 			ctx->last_active_ms = now;
 		} else if (now - ctx->last_active_ms > ctx->timeout) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_MMIO, ("[PipeIn] Timeout detected after %d ms, aborting\n", now - ctx->last_active_ms ));
-			gf_filter_pid_set_eos(ctx->pid);
+			if (ctx->pid) {
+				gf_filter_pid_set_eos(ctx->pid);
+			} else {
+				gf_filter_setup_failure(filter, GF_SERVICE_ERROR);
+			}
 			ctx->is_end = GF_TRUE;
 			return GF_EOS;
 		}
@@ -383,7 +388,11 @@ refill:
 		nb_read = 0;
 		if (feof(stdin)) {
 			if (!ctx->ka) {
-				gf_filter_pid_set_eos(ctx->pid);
+				if (ctx->pid)
+					gf_filter_pid_set_eos(ctx->pid);
+				else
+					gf_filter_setup_failure(filter, GF_URL_ERROR);
+				ctx->is_end = GF_TRUE;
 				return GF_EOS;
 			} else if (ctx->sigflush) {
 				gf_filter_pid_send_flush(ctx->pid);
@@ -515,6 +524,13 @@ refill:
 
 					//signal flush
 					if (ctx->sigflush && ctx->pid) {
+						//sigflush is ignored if not a packet reassembly is in process, we force closing the packet
+						u8 *output;
+						GF_FilterPacket *pck = gf_filter_pck_new_alloc(ctx->pid, 0, &output);
+						if (pck) {
+							gf_filter_pck_set_framing(pck, GF_FALSE, GF_TRUE);
+							gf_filter_pck_send(pck);
+						}
 						gf_filter_pid_send_flush(ctx->pid);
 					}
 					//reset for longer reschedule time
@@ -664,6 +680,7 @@ static const GF_FilterArgs PipeInArgs[] =
 static const GF_FilterCapability PipeInCaps[] =
 {
 	CAP_UINT(GF_CAPS_OUTPUT,  GF_PROP_PID_STREAM_TYPE, GF_STREAM_FILE),
+	{0}
 };
 
 GF_FilterRegister PipeInRegister = {
@@ -679,6 +696,7 @@ GF_FilterRegister PipeInRegister = {
 		"EX gpac -i - vout\n"
 		"EX gpac -i stdin vout\n"
 		"\n"
+		"When reading from stdin, the default [timeout]() is 10 seconds.\n"
 		"# Named pipes\n"
 		"The filter can handle reading from named pipes. The associated protocol scheme is `pipe://` when loaded as a generic input (e.g. `-i pipe://URL` where URL is a relative or absolute pipe name).\n"
 		"On Windows hosts, the default pipe prefix is `\\\\.\\pipe\\gpac\\` if no prefix is set.\n"
@@ -737,4 +755,3 @@ const GF_FilterRegister *pin_register(GF_FilterSession *session)
 	return NULL;
 }
 #endif // GPAC_DISABLE_PIN
-

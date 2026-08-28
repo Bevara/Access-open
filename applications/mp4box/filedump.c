@@ -2,7 +2,7 @@
  *			GPAC - Multimedia Framework C SDK
  *
  *			Authors: Jean Le Feuvre
- *			Copyright (c) Telecom ParisTech 2000-2025
+ *			Copyright (c) Telecom ParisTech 2000-2026
  *					All rights reserved
  *
  *  This file is part of GPAC / mp4box application
@@ -115,17 +115,20 @@ GF_Err dump_isom_cover_art(GF_ISOFile *file, char *inName, Bool is_final_name)
 	}
 
 	if (inName) {
-		char szName[1024];
-		if (is_final_name) {
-			strcpy(szName, inName);
-		} else {
-			sprintf(szName, "%s.%s", inName, (tag_len>>31) ? "png" : "jpg");
+		char *szName=NULL;
+		gf_dynstrcat(&szName, inName, NULL);
+		if (!is_final_name) {
+			gf_dynstrcat(&szName, (tag_len>>31) ? ".png" : ".jpg", NULL);
 		}
+		if (!szName) return GF_OUT_OF_MEM;
+
 		t = gf_fopen(szName, "wb");
 		if (!t) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s for dumping\n", szName));
+			gf_free(szName);
 			return GF_IO_ERR;
 		}
+		gf_free(szName);
 	} else {
 		t = stdout;
 	}
@@ -199,11 +202,12 @@ GF_Err dump_isom_scene(char *file, char *inName, Bool is_final_name, GF_SceneDum
 
 	if (do_log) {
 		char szLog[GF_MAX_PATH];
-		sprintf(szLog, "%s_dec.logs", inName);
+		snprintf(szLog,  GF_ARRAY_LENGTH(szLog), "%s_dec.logs", inName);
 		logs = gf_fopen(szLog, "wt");
-
-		gf_log_set_tool_level(GF_LOG_CODING, GF_LOG_DEBUG);
-		prev_logs = gf_log_set_callback(logs, scene_coding_log);
+		if (logs) {
+			gf_log_set_tool_level(GF_LOG_CODING, GF_LOG_DEBUG);
+			prev_logs = gf_log_set_callback(logs, scene_coding_log);
+		}
 	}
 	e = gf_sm_load_init(&load);
 	if (!e) e = gf_sm_load_run(&load);
@@ -371,6 +375,7 @@ void dump_isom_scene_stats(char *file, char *inName, Bool is_final_name, u32 sta
 	dump = NULL;
 	sm = NULL;
 	sample_list = NULL;
+	e = GF_OK;
 
 	close = 0;
 
@@ -396,12 +401,12 @@ void dump_isom_scene_stats(char *file, char *inName, Bool is_final_name, u32 sta
 	if (e<0) goto exit;
 
 	if (inName) {
-		strcpy(szBuf, inName);
-		if (!is_final_name) strcat(szBuf, "_stat.xml");
+		gf_strcpy(szBuf, inName);
+		if (!is_final_name) gf_strcat(szBuf, "_stat.xml");
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s for dumping\n", szBuf));
-			return;
+			goto exit;
 		}
 		close = 1;
 	} else {
@@ -871,8 +876,8 @@ void dump_isom_rtp(GF_ISOFile *file, char *inName, Bool is_final_name)
 
 	if (inName) {
 		char szBuf[1024];
-		strcpy(szBuf, inName);
-		if (!is_final_name) strcat(szBuf, "_rtp.xml");
+		gf_strcpy(szBuf, inName);
+		if (!is_final_name) gf_strcat(szBuf, "_rtp.xml");
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s\n", szBuf));
@@ -891,7 +896,8 @@ void dump_isom_rtp(GF_ISOFile *file, char *inName, Bool is_final_name)
 
 		fprintf(dump, "<RTPHintTrack trackID=\"%d\">\n", gf_isom_get_track_id(file, i+1));
 		gf_isom_sdp_track_get(file, i+1, &sdp, &size);
-		fprintf(dump, "<SDPInfo>%s</SDPInfo>", sdp);
+		if (sdp && size)
+			fprintf(dump, "<SDPInfo>%s</SDPInfo>", sdp);
 
 #ifndef GPAC_DISABLE_ISOM_HINTING
 		for (j=0; j<gf_isom_get_sample_count(file, i+1); j++) {
@@ -923,8 +929,8 @@ void dump_isom_timestamps(GF_ISOFile *file, char *inName, Bool is_final_name, u3
 
 	if (inName) {
 		char szBuf[1024];
-		strcpy(szBuf, inName);
-		if (!is_final_name) strcat(szBuf, "_ts.txt");
+		gf_strcpy(szBuf, inName);
+		if (!is_final_name) gf_strcat(szBuf, "_ts.txt");
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s\n", szBuf));
@@ -1049,7 +1055,7 @@ static u32 read_nal_size_hdr(u8 *ptr, u32 nalh_size)
 }
 
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_INSPECT)
-void gf_inspect_dump_nalu(FILE *dump, u8 *ptr, u32 ptr_size, Bool is_svc, HEVCState *hevc, AVCState *avc, VVCState *vvc, u32 nalh_size, Bool dump_crc, Bool is_encrypted);
+void gf_inspect_dump_nalu(FILE *dump, u8 *ptr, u32 ptr_size, Bool is_svc, HEVCState *hevc, AVCState *avc, VVCState *vvc, u32 nalh_size, Bool dump_crc, Bool is_encrypted, u8 *sai_buffer, u32 sai_buffer_size, u32 offset_in_sample);
 #endif
 
 
@@ -1097,7 +1103,7 @@ static GF_Err dump_isom_nal_ex(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *du
 		for (i=0; i<gf_list_count(arr); i++) {\
 			slc = gf_list_get(arr, i);\
 			fprintf(dump, "   <NALU size=\"%d\" ", slc->size);\
-			gf_inspect_dump_nalu(dump, (u8 *) slc->data, slc->size, _is_svc, is_hevc ? hevc_state : NULL, avc_state, is_vvc ? vvc_state : NULL, nalh_size, (dump_flags&1) ? GF_TRUE : GF_FALSE, GF_FALSE);\
+			gf_inspect_dump_nalu(dump, (u8 *) slc->data, slc->size, _is_svc, is_hevc ? hevc_state : NULL, avc_state, is_vvc ? vvc_state : NULL, nalh_size, (dump_flags&1) ? GF_TRUE : GF_FALSE, GF_FALSE, NULL, 0, 0);\
 		}\
 		fprintf(dump, "  </%sArray>\n", name);\
 	}\
@@ -1266,6 +1272,9 @@ static GF_Err dump_isom_nal_ex(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *du
 		fprintf(dump, " </SCALReferences>\n");
 	}
 
+	u32 sai_buffer_size=0, sai_buffer_alloc=0;
+	u8 *sai_buffer = NULL;
+
 	fprintf(dump, " <NALUSamples>\n");
 	gf_isom_set_nalu_extract_mode(file, track, GF_ISOM_NALU_EXTRACT_INSPECT);
 	for (i=0; i<count; i++) {
@@ -1313,6 +1322,22 @@ static GF_Err dump_isom_nal_ex(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *du
 				size--;
 			}
 		}
+#if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_INSPECT)
+		u32 sample_offset=0;
+		Bool is_encrypted = 0;
+		if (is_cenc_protected) {
+			e = gf_isom_get_sample_cenc_info(file, track, i + 1, &is_encrypted, NULL, NULL, NULL, NULL);
+			if (e != GF_OK) {
+				fprintf(dump, "dump_msg=\"Error %s while fetching encryption info for sample, assuming sample is encrypted\" ", gf_error_to_string(e) );
+				is_encrypted = GF_TRUE;
+			}
+			sai_buffer_size = sai_buffer_alloc;
+			e = gf_isom_cenc_get_sample_aux_info(file, track, i+1, di, NULL, &sai_buffer, &sai_buffer_size);
+			if (sai_buffer_size > sai_buffer_alloc)
+				sai_buffer_alloc = sai_buffer_size;
+		}
+#endif
+
 		while (size) {
 			if (size<nalh_size) {
 				fprintf(dump, "   <!-- NALU number %d is corrupted: length field is %d but only %d remains -->\n", idx, nalh_size, size);
@@ -1327,15 +1352,9 @@ static GF_Err dump_isom_nal_ex(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *du
 			} else {
 				fprintf(dump, "   <NALU size=\"%d\" ", nal_size);
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_INSPECT)
-				Bool is_encrypted = 0;
-				if (is_cenc_protected) {
-					e = gf_isom_get_sample_cenc_info(file, track, i + 1, &is_encrypted, NULL, NULL, NULL, NULL);
-					if (e != GF_OK) {
-						fprintf(dump, "dump_msg=\"Error %s while fetching encryption info for sample, assuming sample is encrypted\" ", gf_error_to_string(e) );
-						is_encrypted = GF_TRUE;
-					}
-				}
-				gf_inspect_dump_nalu(dump, ptr, nal_size, has_svcc ? 1 : 0, hevc_state, avc_state, vvc_state, nalh_size, dump_flags, is_encrypted);
+				gf_inspect_dump_nalu(dump, ptr, nal_size, has_svcc ? 1 : 0, hevc_state, avc_state, vvc_state, nalh_size, dump_flags, is_encrypted, sai_buffer, sai_buffer_size, sample_offset);
+
+				sample_offset += nal_size + nalh_size;
 #else
 				fprintf(dump, "/>\n");
 #endif
@@ -1352,6 +1371,7 @@ static GF_Err dump_isom_nal_ex(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *du
 	}
 	fprintf(dump, " </NALUSamples>\n");
 	fprintf(dump, "</NALUTrack>\n");
+	if (sai_buffer) gf_free(sai_buffer);
 
 	gf_isom_set_nalu_extract_mode(file, track, cur_extract_mode);
 
@@ -1406,9 +1426,9 @@ GF_Err dump_isom_nal(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName, Bool
 	FILE *dump;
 	if (inName) {
 		if (is_final_name) {
-			strcpy(szFileName, inName);
+			gf_strcpy(szFileName, inName);
 		} else {
-			sprintf(szFileName, "%s_%d_%s.xml", inName, trackID, is_av1 ? "obu" : "nalu");
+			snprintf(szFileName, sizeof(szFileName), "%s_%d_%s.xml", inName, trackID, is_av1 ? "obu" : "nalu");
 		}
 		dump = gf_fopen(szFileName, "wt");
 		if (!dump) {
@@ -1515,7 +1535,7 @@ static GF_Err dump_isom_opus(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump
 }
 
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_INSPECT)
-void gf_inspect_dump_obu(FILE *dump, AV1State *av1, u8 *obu, u64 obu_length, ObuType obu_type, u64 obu_size, u32 hdr_size, Bool dump_crc);
+void gf_inspect_dump_obu(FILE *dump, AV1State *av1, u8 *obu, u64 obu_length, ObuType obu_type, u64 obu_size, u32 hdr_size, Bool dump_crc, u8 *sai_buffer, u32 sai_buffer_size, u32 offset_in_sample);
 #endif
 
 static GF_Err dump_isom_obu(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump, Bool dump_crc)
@@ -1559,19 +1579,21 @@ static GF_Err dump_isom_obu(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump,
 			gf_free(av1_state);
 			return e;
 		}
-		gf_inspect_dump_obu(dump, av1_state, obu->obu, obu->obu_length, obu_type, obu_size, hdr_size, dump_crc);
+		gf_inspect_dump_obu(dump, av1_state, obu->obu, obu->obu_length, obu_type, obu_size, hdr_size, dump_crc, NULL, 0, 0);
 		gf_bs_del(bs);
 	}
 	fprintf(dump, " </OBUConfig>\n");
 
 	fprintf(dump, " <OBUSamples>\n");
 
+	u8 *sai_buffer = NULL;
+	u32 sai_buffer_size=0, sai_buffer_alloc=0;
 	e = GF_OK;
 	for (i=0; i<count; i++) {
 		u64 dts, cts;
-		u32 size;
+		u32 size, di;
 		u8 *ptr;
-		GF_ISOSample *samp = gf_isom_get_sample(file, track, i+1, NULL);
+		GF_ISOSample *samp = gf_isom_get_sample(file, track, i+1, &di);
 		if (!samp) {
 			e = gf_isom_last_error(file);
 			break;
@@ -1581,6 +1603,21 @@ static GF_Err dump_isom_obu(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump,
 
 		fprintf(dump, "  <Sample number=\"%d\" DTS=\""LLD"\" CTS=\""LLD"\" size=\"%d\" RAP=\"%d\" >\n", i+1, dts, cts, samp->dataLength, samp->IsRAP);
 		if (cts<dts) fprintf(dump, "<!-- NEGATIVE CTS OFFSET! -->\n");
+
+
+		u32 sample_offset=0;
+		Bool is_encrypted = 0;
+		if (gf_isom_is_cenc_media(file, track, di)) {
+			e = gf_isom_get_sample_cenc_info(file, track, i + 1, &is_encrypted, NULL, NULL, NULL, NULL);
+			if (e != GF_OK) {
+				fprintf(dump, "dump_msg=\"Error %s while fetching encryption info for sample, assuming sample is encrypted\" ", gf_error_to_string(e) );
+				is_encrypted = GF_TRUE;
+			}
+			sai_buffer_size = sai_buffer_alloc;
+			e = gf_isom_cenc_get_sample_aux_info(file, track, i+1, di, NULL, &sai_buffer, &sai_buffer_size);
+			if (sai_buffer_size > sai_buffer_alloc)
+				sai_buffer_alloc = sai_buffer_size;
+		}
 
 		idx = 1;
 		ptr = samp->data;
@@ -1595,10 +1632,11 @@ static GF_Err dump_isom_obu(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump,
 				fprintf(dump, "   <!-- OBU number %d is corrupted: size is %d but only %d remains -->\n", idx, (u32) obu_size, size);
 				break;
 			}
-			gf_inspect_dump_obu(dump, av1_state, ptr, obu_size, obu_type, obu_size, hdr_size, dump_crc);
+			gf_inspect_dump_obu(dump, av1_state, ptr, obu_size, obu_type, obu_size, hdr_size, dump_crc, sai_buffer, sai_buffer_size, sample_offset);
 			ptr += obu_size;
 			size -= (u32)obu_size;
 			idx++;
+			sample_offset+=obu_size;
 		}
 		gf_bs_del(bs);
 		fprintf(dump, "  </Sample>\n");
@@ -1611,6 +1649,7 @@ static GF_Err dump_isom_obu(GF_ISOFile *file, GF_ISOTrackID trackID, FILE *dump,
 	}
 	fprintf(dump, " </OBUSamples>\n");
 	fprintf(dump, "</OBUTrack>\n");
+	if (sai_buffer) gf_free(sai_buffer);
 
 	if (av1_state->config) gf_odf_av1_cfg_del(av1_state->config);
 	gf_av1_reset_state(av1_state, GF_TRUE);
@@ -1669,9 +1708,9 @@ void dump_isom_saps(GF_ISOFile *file, GF_ISOTrackID trackID, u32 dump_saps_mode,
 	u32 track = gf_isom_get_track_by_id(file, trackID);
 	if (inName) {
 		char szBuf[GF_MAX_PATH];
-		strcpy(szBuf, inName);
+		gf_strcpy(szBuf, inName);
 
-		if (!is_final_name) sprintf(szBuf, "%s_%d_cues.xml", inName, trackID);
+		if (!is_final_name) snprintf(szBuf, sizeof(szBuf), "%s_%d_cues.xml", inName, trackID);
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s for dumping\n", szBuf));
@@ -1699,6 +1738,8 @@ void dump_isom_saps(GF_ISOFile *file, GF_ISOTrackID trackID, u32 dump_saps_mode,
 		u64 doffset;
 
 		GF_ISOSample *samp = gf_isom_get_sample_info(file, track, i+1, &di, &doffset);
+		if (!samp)
+			continue;
 
 #ifndef GPAC_DISABLE_ISOM_FRAGMENTS
 		traf_start = gf_isom_sample_is_fragment_start(file, track, i+1, NULL);
@@ -1778,8 +1819,8 @@ void dump_isom_chunks(GF_ISOFile *file, char *inName, Bool is_final_name)
 
 	if (inName) {
 		char szBuf[1024];
-		strcpy(szBuf, inName);
-		if (!is_final_name) strcat(szBuf, "_chunks.txt");
+		gf_strcpy(szBuf, inName);
+		if (!is_final_name) gf_strcat(szBuf, "_chunks.txt");
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s for dumping\n", szBuf));
@@ -1924,8 +1965,8 @@ void dump_isom_ismacryp(GF_ISOFile *file, char *inName, Bool is_final_name)
 
 	if (inName) {
 		char szBuf[1024];
-		strcpy(szBuf, inName);
-		if (!is_final_name) strcat(szBuf, "_ismacryp.xml");
+		gf_strcpy(szBuf, inName);
+		if (!is_final_name) gf_strcat(szBuf, "_ismacryp.xml");
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
 			M4_LOG(GF_LOG_ERROR, ("Failed to open %s for dumping\n", szBuf));
@@ -1982,11 +2023,11 @@ void dump_isom_timed_text(GF_ISOFile *file, GF_ISOTrackID trackID, char *inName,
 		char *ext;
 		ext = ((dump_type==GF_TEXTDUMPTYPE_SVG) ? "svg" : ((dump_type==GF_TEXTDUMPTYPE_SRT) ? "srt" : "ttxt"));
 		if (is_final_name) {
-			strcpy(szBuf, inName) ;
+			gf_strcpy(szBuf, inName) ;
 		} else if (is_convert)
-			sprintf(szBuf, "%s.%s", inName, ext) ;
+			snprintf(szBuf, sizeof(szBuf), "%s.%s", inName, ext) ;
 		else
-			sprintf(szBuf, "%s_%d_text.%s", inName, trackID, ext);
+			snprintf(szBuf, sizeof(szBuf), "%s_%d_text.%s", inName, trackID, ext);
 
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
@@ -2018,11 +2059,11 @@ void dump_isom_sdp(GF_ISOFile *file, char *inName, Bool is_final_name)
 
 	if (inName) {
 		char szBuf[1024];
-		strcpy(szBuf, inName);
+		gf_strcpy(szBuf, inName);
 		if (!is_final_name) {
 			char *ext = strchr(szBuf, '.');
 			if (ext) ext[0] = 0;
-			strcat(szBuf, "_sdp.txt");
+			gf_strcat(szBuf, "_sdp.txt");
 		}
 		dump = gf_fopen(szBuf, "wt");
 		if (!dump) {
@@ -2065,9 +2106,9 @@ GF_Err dump_isom_xml(GF_ISOFile *file, char *inName, Bool is_final_name, Bool do
 	if (!file) return GF_ISOM_INVALID_FILE;
 
 	if (inName) {
-		strcpy(szFileName, inName);
+		gf_strcpy(szFileName, inName);
 		if (!is_final_name) {
-			strcat(szFileName, do_track_dump ? "_dump.xml" : "_info.xml");
+			gf_strcat(szFileName, do_track_dump ? "_dump.xml" : "_info.xml");
 		}
 		dump = gf_fopen(szFileName, "wt");
 		if (!dump) {
@@ -2109,6 +2150,9 @@ GF_Err dump_isom_xml(GF_ISOFile *file, char *inName, Bool is_final_name, Bool do
 			dumper.file = the_file;
 			dumper.trackID = trackID;
 			dumper.dump_file = dump;
+
+			if (msubtype == GF_ISOM_SUBTYPE_MPEG4_CRYP)
+				gf_isom_get_original_format_type(the_file, i+1, 1, &msubtype);
 
 			e = GF_OK;
 			if (mtype == GF_ISOM_MEDIA_HINT) {
@@ -2199,20 +2243,20 @@ GF_Err dump_isom_xml(GF_ISOFile *file, char *inName, Bool is_final_name, Bool do
 #endif
 
 
-static const char *format_duration(u64 dur, u32 timescale, char *szDur)
+static const char *format_duration(u64 dur, u32 timescale, char szDur[100])
 {
 	if ((dur==(u64) -1) || (dur==(u32) -1))  {
-		strcpy(szDur, "Unknown");
+		gf_strlcpy(szDur, "Unknown", 100);
 		return szDur;
 	}
 	return gf_format_duration(dur, timescale, szDur);
 }
 
-static char *format_date(u64 time, char *szTime)
+static char *format_date(u64 time, char szTime[100])
 {
 	time_t now;
 	if (!time) {
-		strcpy(szTime, "UNKNOWN DATE");
+		gf_strlcpy(szTime, "UNKNOWN DATE", 100);
 	} else {
 		time -= 2082844800;
 		now = (u32) time;
@@ -2314,7 +2358,7 @@ GF_Err dump_isom_udta(GF_ISOFile *file, char *inName, Bool is_final_name, u32 du
 	if (inName) {
 		char szName[1024];
 		if (is_final_name)
-			strcpy(szName, inName);
+			gf_strcpy(szName, inName);
 		else
 			sprintf(szName, "%s_%s.udta", inName, gf_4cc_to_str(dump_udta_type) );
 
@@ -2370,14 +2414,14 @@ GF_Err dump_isom_chapters(GF_ISOFile *file, char *inName, Bool is_final_name, u3
 	}
 	if (inName) {
 		char szName[1024];
-		strcpy(szName, inName);
+		gf_strcpy(szName, inName);
 		if (!is_final_name) {
 			if (dump_mode==GF_TEXTDUMPTYPE_OGG_CHAP) {
-				strcat(szName, ".txt");
+				gf_strcat(szName, ".txt");
 			} else if (dump_mode==GF_TEXTDUMPTYPE_ZOOM_CHAP) {
-				strcat(szName, ".txt");
+				gf_strcat(szName, ".txt");
 			} else {
-				strcat(szName, ".ttxt");
+				gf_strcat(szName, ".ttxt");
 			}
 		}
 		t = gf_fopen(szName, "wt");
@@ -3300,6 +3344,17 @@ static void DumpStsdInfo(GF_ISOFile *file, u32 trackNum, Bool full_dump, Bool du
 			fprintf(stderr, " - ATMOS complexity index type %d", complexity_index_type);
 		}
 		fprintf(stderr, "\n");
+	} else if (msub_type == GF_ISOM_SUBTYPE_AC4) {
+		u32 sr = 0;
+#ifndef GPAC_DISABLE_AV_PARSERS
+		GF_AC4Config *ac4 = gf_isom_ac4_config_get(file, trackNum, stsd_idx);
+		if (ac4) {
+			nb_ch = ac4->channel_count;
+			sr = ac4->sample_rate;
+			gf_odf_ac4_cfg_del(ac4);
+		}
+#endif
+		fprintf(stderr, "\tAC-4 stream - Sample Rate %d - %d channel(s)\n", sr, nb_ch);
 	} else if (msub_type == GF_ISOM_SUBTYPE_3GP_SMV) {
 		fprintf(stderr, "\t3GPP SMV stream - Sample Rate %d - %d channel(s) %d bits per samples\n", sr, nb_ch, (u32) bps);
 	} else if (msub_type == GF_ISOM_SUBTYPE_3GP_DIMS) {
@@ -3663,7 +3718,7 @@ static void DumpStsdInfo(GF_ISOFile *file, u32 trackNum, Bool full_dump, Bool du
 		fprintf(stderr, "\n");
 	}
 
-	if ( gf_media_get_rfc_6381_codec_name(file, trackNum, stsd_idx, szCodec, GF_FALSE, GF_FALSE) == GF_OK) {
+	if (gf_media_get_rfc_6381_codec_name(file, trackNum, stsd_idx, szCodec, GF_FALSE, GF_FALSE) == GF_OK) {
 		fprintf(stderr, "\tRFC6381 Codec Parameters: %s\n", szCodec);
 	}
 }
@@ -3981,7 +4036,7 @@ void DumpTrackInfo(GF_ISOFile *file, GF_ISOTrackID trackID, Bool full_dump, Bool
 	{
 		u32 dmin, dmax, davg, smin, smax, savg;
 		gf_isom_get_chunks_infos(file, trackNum, &dmin, &davg, &dmax, &smin, &savg, &smax);
-		fprintf(stderr, "\tChunk durations: min %d ms - max %d ms - average %d ms\n", (1000*dmin)/ts, (1000*dmax)/ts, (1000*davg)/ts);
+		fprintf(stderr, "\tChunk durations: min %d ms - max %d ms - average %d ms\n", ts ? (1000*dmin)/ts : 0, ts ? (1000*dmax)/ts : 0, ts ? (1000*davg)/ts : 0);
 		fprintf(stderr, "\tChunk sizes (bytes): min %d - max %d - average %d\n", smin, smax, savg);
 	}
 	fprintf(stderr, "\n");
@@ -4136,7 +4191,7 @@ void DumpMovieInfo(GF_ISOFile *file, Bool full_dump)
 				GF_BitStream *bs = gf_bs_new(s->data, s->dataLength, GF_BITSTREAM_READ);
 				GF_TextSample *txt = gf_isom_parse_text_sample(bs);
 				if (txt) {
-					fprintf(stderr, "\t#%d - %s - \"%s\"\n", i+1, format_duration(s->DTS, 1000, szDur), txt->text);
+					fprintf(stderr, "\t#%d - %s - \"%s\"\n", i+1, format_duration(s->DTS, 1000, szDur), txt->text ? txt->text  : "");
 					gf_isom_delete_text_sample(txt);
 				}
 				gf_bs_del(bs);
@@ -4227,7 +4282,9 @@ void DumpMovieInfo(GF_ISOFile *file, Bool full_dump)
 		case GF_QT_KEY_JPEG: fprintf(stderr, "JPG Image (%d bytes)", key.value.data.data_len); break;
 		case GF_QT_KEY_BMP: fprintf(stderr, "BMP Image (%d bytes)", key.value.data.data_len); break;
 		case GF_QT_KEY_UTF8:
-		case GF_QT_KEY_UTF8_SORT: fprintf(stderr, "%s", key.value.string); break;
+		case GF_QT_KEY_UTF8_SORT:
+			fprintf(stderr, "%s", key.value.string ? key.value.string : "");
+			break;
 
 		case GF_QT_KEY_FLOAT:
 		case GF_QT_KEY_DOUBLE:
@@ -4518,7 +4575,7 @@ static void on_m2ts_dump_event(GF_M2TS_Demuxer *ts, u32 evt_type, void *par)
 					fprintf(dumper->pes_out_nhml, "baseMediaFile=\"%s\" ", dumper->dump);
 					fprintf(dumper->pes_out_nhml, "inRootOD=\"yes\">\n");
 				}
-				gf_sl_depacketize(esd->slConfig, &header, sl_pck->data, sl_pck->data_len, &header_len);
+				gf_odf_sl_depacketize(esd->slConfig, &header, sl_pck->data, sl_pck->data_len, &header_len);
 				gf_fwrite(sl_pck->data+header_len, sl_pck->data_len-header_len, dumper->pes_out);
 				fprintf(dumper->pes_out_nhml, "<NHNTSample DTS=\""LLD"\" dataLength=\"%d\" isRAP=\"%s\"/>\n", header.decodingTimeStamp, sl_pck->data_len-header_len, (header.randomAccessPointFlag?"yes":"no"));
 			}
@@ -4598,7 +4655,7 @@ void dump_mpeg2_ts(char *mpeg2ts_file, char *out_name, Bool prog_num)
 	}
 
 	if (prog_num) {
-		sprintf(dumper.timestamps_info_name, "%s_prog_%d_timestamps.txt", mpeg2ts_file, prog_num/*, mpeg2ts_file*/);
+		snprintf(dumper.timestamps_info_name, sizeof(dumper.timestamps_info_name), "%s_prog_%d_timestamps.txt", mpeg2ts_file, prog_num/*, mpeg2ts_file*/);
 		dumper.timestamps_info_file = gf_fopen(dumper.timestamps_info_name, "wt");
 		if (!dumper.timestamps_info_file) {
 			M4_LOG(GF_LOG_ERROR, ("Cannot open file %s\n", dumper.timestamps_info_name));
@@ -4679,8 +4736,8 @@ static void revert_cache_file(char *item_path)
 	if (!strncmp(item_path, "./", 2) || !strncmp(item_path, ".\\", 2))
 			item_path += 2;
 
- 	strcpy(szPATH, item_path);
-	strcat(szPATH, ".txt");
+ 	gf_strcpy(szPATH, item_path);
+	gf_strcat(szPATH, ".txt");
 
 	cached = gf_cfg_new(NULL, szPATH);
 	url = gf_cfg_get_key(cached, "cache", "url");
@@ -4697,10 +4754,9 @@ static void revert_cache_file(char *item_path)
 		}
 		url+=3;
 		len = (u32) strlen(url);
-		dst_name = gf_malloc(len+dir_len+1);
-		memset(dst_name, 0, len+dir_len+1);
-
-		strncpy(dst_name, item_path, dir_len);
+		GF_SAFE_ALLOC_N(dst_name, len+dir_len+1, char);
+		memcpy(dst_name, item_path, dir_len);
+		dst_name[dir_len]=0;
 		k=dir_len;
 		for (i=0; i<len; i++) {
 			dst_name[k] = url[i];
@@ -4740,7 +4796,7 @@ GF_Err rip_mpd(const char *mpd_src, const char *output_dir)
 
 	if (output_dir) {
 		char *sep;
-		strcpy(szName, output_dir);
+		gf_strcpy(szName, output_dir);
 		sep = gf_file_basename(szName);
 		if (sep) sep[0] = 0;
 		gf_opts_set_key("temp", "cache", szName);
@@ -4765,7 +4821,7 @@ GF_Err rip_mpd(const char *mpd_src, const char *output_dir)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Error downloading MPD file %s: %s\n", mpd_src, gf_error_to_string(e) ));
 		goto err_exit;
 	}
-	strcpy(szName, gf_dm_sess_get_cache_name(sess) );
+	gf_strcpy(szName, gf_dm_sess_get_cache_name(sess) );
 	gf_dm_sess_get_header_sizes_and_times(sess, &req_hdr_size, &rsp_hdr_size, &connect_time, &reply_time, &download_time);
 	gf_dm_sess_del(sess);
 
