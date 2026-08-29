@@ -1400,6 +1400,7 @@ GF_Err writegen_process(GF_Filter *filter)
 			dsi_out[3] = 'C';
 			memcpy(dsi_out+4, ctx->dcfg, ctx->dcfg_size);
 		} else if (ctx->is_iamf) {
+#ifndef GPAC_DISABLE_ISOM
 			GF_IAConfig *iacb = gf_odf_iamf_cfg_read((u8 *)ctx->dcfg, ctx->dcfg_size);
 			if (iacb) {
 				GF_BitStream *bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
@@ -1420,6 +1421,10 @@ GF_Err writegen_process(GF_Filter *filter)
 					gf_free(obus_data);
 				}
 			}
+#endif /* GPAC_DISABLE_ISOM: GF_IAConfig/gf_odf_iamf_cfg_* need mpeg4_odf.h,
+        * which isomedia.h/isomedia_dev.h only pull in when ISOM is enabled.
+        * Without ISOM, fall through to the raw shared-packet passthrough
+        * below instead of repackaging IAMF config into OBUs. */
 			if (!dst_pck) {
 				dst_pck = gf_filter_pck_new_shared(ctx->opid, ctx->dcfg, ctx->dcfg_size, NULL);
 				if (!dst_pck) return GF_OUT_OF_MEM;
