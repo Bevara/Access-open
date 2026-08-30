@@ -110,10 +110,10 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 	}
 	enc_class.isConfigSupported(config).then( supported => {
 		if (supported.supported) {
-			let c = Module._to_webenc(wc_ctx);
+			let c = libgpac._web_encs(wc_ctx);
 			if (!c) {
 				c = {_wc_ctx: wc_ctx, enc: null, _frame: null};
-				Module._web_encs.push(c);
+				libgpac._web_encs.push(c);
 			}
 			if (!c.enc) {
 				let init_info = {
@@ -127,24 +127,24 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 					if (dsize) dsize = dsize.byteLength || 0;
 					if (dsize) {
 						c.decoderConfig = metadata.decoderConfig.description;
-						Module._on_wcenc_config(c._wc_ctx, c.decoderConfig.byteLength);
+						libgpac._on_wcenc_config(c._wc_ctx, c.decoderConfig.byteLength);
 						c.decoderConfig = null;
 					}
 					c.chunk = chunk;
 					let sap = 1;
 					if (typeof chunk.type != 'undefined') sap = (chunk.type=="key") ? 1 : 0;
-					Module._on_wcenc_frame(c._wc_ctx, BigInt(chunk.timestamp), chunk.duration, chunk.byteLength, sap);
+					libgpac._on_wcenc_frame(c._wc_ctx, BigInt(chunk.timestamp), chunk.duration, chunk.byteLength, sap);
 					c.chunk = null;
 				};
 				c.enc = new enc_class(init_info);
 			}
 			c.enc.configure(config);
-			Module._on_wcenc_error(wc_ctx, 0, null);
+			libgpac._on_wcenc_error(wc_ctx, 0, null);
 		} else {
-			Module._on_wcenc_error(wc_ctx, 1, "Not Supported");
+			libgpac._on_wcenc_error(wc_ctx, 1, "Not Supported");
 		}
 	}).catch( (e) => {
-		Module._on_wcenc_error(wc_ctx, 1, ""+e);
+		libgpac._on_wcenc_error(wc_ctx, 1, ""+e);
 	});
 })
 
@@ -370,7 +370,7 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 
 
 EM_JS(int, wcenc_encode_frame, (int wc_ctx, u32 w, u32 h, u32 uv_h, int _format, u64 ts, u32 dur, u32 planes, u32 stride1, u32 stride2, u32 sap, int buf, u32 buf_size), {
-	let c = Module._to_webenc(wc_ctx);
+	let c = libgpac._web_encs(wc_ctx);
 	if (!c || !buf || !_format) return;
 	let format = UTF8ToString(_format);
 
@@ -405,7 +405,7 @@ EM_JS(int, wcenc_encode_frame, (int wc_ctx, u32 w, u32 h, u32 uv_h, int _format,
 })
 
 EM_JS(int, wcenc_encode_audio, (int wc_ctx, u32 sr, u32 ch, u32 frames, int _format, u64 ts, int buf, u32 buf_size), {
-	let c = Module._to_webenc(wc_ctx);
+	let c = libgpac._web_encs(wc_ctx);
 	if (!c || !buf || !_format) return;
 	let format = UTF8ToString(_format);
 
@@ -432,9 +432,9 @@ void wcenc_on_flush(GF_WCEncCtx *ctx)
 }
 
 EM_JS(int, wcenc_flush, (int wc_ctx), {
-	let c = Module._to_webenc(wc_ctx);
+	let c = libgpac._web_encs(wc_ctx);
 	if (!c || !c.enc) return;
-	c.enc.flush().then( () => {Module._on_wcenc_flush(c._wc_ctx); }).catch ( (e) => { Module._on_wcenc_flush(c._wc_ctx); } );
+	c.enc.flush().then( () => {libgpac._on_wcenc_flush(c._wc_ctx); }).catch ( (e) => { libgpac._on_wcenc_flush(c._wc_ctx); } );
 })
 
 
@@ -539,7 +539,7 @@ static GF_Err wcenc_process(GF_Filter *filter)
 }
 
 EM_JS(int, wcenc_get_config, (int wc_ctx, int buf, int buf_size), {
-	let c = Module._to_webenc(wc_ctx);
+	let c = libgpac._web_encs(wc_ctx);
 	if (!c || !c.decoderConfig) {
 		throw 'Bad Param';
 		return;
@@ -565,7 +565,7 @@ void wcenc_on_config(GF_WCEncCtx *ctx, int size)
 }
 
 EM_JS(int, wcenc_get_frame, (int wc_ctx, int buf, int buf_size), {
-	let c = Module._to_webenc(wc_ctx);
+	let c = libgpac._web_encs(wc_ctx);
 	if (!c || !c.chunk) {
 		throw 'Bad Param';
 		return;
@@ -632,11 +632,11 @@ GF_Err wcenc_initialize(GF_Filter *filter)
 }
 
 EM_JS(int, wcenc_del, (int wc_ctx), {
-	if (typeof Module._web_encs != 'array') return;
-	for (let i=0; i<Module._web_encs.length; i++) {
-		if (Module._web_encs[i]._wc_ctx == wc_ctx) {
-			Module._web_encs[i].enc.close();
-			Module._web_encs.splice(i, 1);
+	if (typeof libgpac._web_encs != 'array') return;
+	for (let i=0; i<libgpac._web_encs.length; i++) {
+		if (libgpac._web_encs[i]._wc_ctx == wc_ctx) {
+			libgpac._web_encs[i].enc.close();
+			libgpac._web_encs.splice(i, 1);
 			return;
 		}
 	}
