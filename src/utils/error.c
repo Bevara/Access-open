@@ -170,7 +170,15 @@ static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 
 static gf_on_progress_cbk prog_cbk = NULL;
 static void *user_cbk = NULL;
-#if defined(GPAC_CONFIG_IOS) || defined(GPAC_CONFIG_ANDROID)
+/* No terminal consumes this output under Emscripten/WASM either (see the
+ * default_log_callback comment above) - console-code ANSI escapes
+ * (raw ESC/0x1B bytes) reach the browser console verbatim just like the
+ * GF_LOG path did, and gf_sys_format_help()'s status/help text (e.g.
+ * "Reading the file and constructing a filter pipeline...") goes through
+ * gf_sys_set_console_code() directly, independently of the GF_LOG default
+ * callback fixed above - confirmed as a second source of the same
+ * karma-junit-reporter "Invalid character in string" XML crash. */
+#if defined(GPAC_CONFIG_IOS) || defined(GPAC_CONFIG_ANDROID) || defined(GPAC_CONFIG_EMSCRIPTEN)
 static Bool gpac_no_color_logs = GF_TRUE;
 #else
 static Bool gpac_no_color_logs = GF_FALSE;
