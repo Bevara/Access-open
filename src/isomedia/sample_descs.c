@@ -505,7 +505,6 @@ GF_Err gf_isom_opus_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_OpusCon
 	entry->cfg_opus = (GF_OpusSpecificBox*)gf_isom_box_new_parent(&entry->child_boxes, GF_ISOM_BOX_TYPE_DOPS);
 	if (!entry->cfg_opus) return GF_OUT_OF_MEM;
 	entry->cfg_opus->opcfg = *cfg;
-	entry->cfg_opus->opcfg.version = 0;
 
 	entry->dataReferenceIndex = dataRefIndex;
 	*outDescriptionIndex = gf_list_count(stsd->child_boxes);

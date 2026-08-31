@@ -879,7 +879,23 @@ void default_log_callback_color(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool
 
 
 void *user_log_cbk = NULL;
+/* ANSI color escape codes (raw ESC/0x1B bytes) make sense for a terminal,
+ * never for this build target: Emscripten/WASM builds have no terminal
+ * consuming this output - it only ever reaches JS via console.log/print
+ * (or a worker->main-thread postMessage relay, see solver/loader.js's
+ * "WORKER CONSOLE.ERROR:" wrapping), both of which pass the raw bytes
+ * through untouched. Concretely, this broke `make test`: karma-junit-reporter
+ * (via xmlbuilder) throws "illegal char" trying to CDATA-encode a captured
+ * console message containing a literal ESC byte from GPAC's own colored
+ * warning/error logs. Defaulting to the plain (non-color) callback for this
+ * target avoids emitting those bytes in the first place, rather than trying
+ * to strip them after the fact in every JS-side consumer. */
+#ifdef GPAC_CONFIG_EMSCRIPTEN
+void default_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist);
+gf_log_cbk log_cbk = default_log_callback;
+#else
 gf_log_cbk log_cbk = default_log_callback_color;
+#endif
 static Bool log_exit_on_error = GF_FALSE;
 #ifdef GPAC_CONFIG_EMSCRIPTEN
 Bool gpac_log_console = GF_FALSE;
@@ -901,15 +917,28 @@ void gf_logs_init()
 
 void gf_logs_close()
 {
+	GF_List *tags = logs_thread_tags;
 	if (gpac_log_file) {
 		gf_fclose(gpac_log_file);
 		gpac_log_file = NULL;
 	}
-	while (gf_list_count(logs_thread_tags)) {
-		GF_LogThreadTag *tag = gf_list_pop_back(logs_thread_tags);
+	/* Cleared before freeing (matches the logs_mx = NULL; gf_mx_del(old);
+	 * pattern right below this in gf_sys_close()) - gf_logs_thread_tag(),
+	 * _untag() and _del() all only check "is logs_thread_tags non-NULL"
+	 * before dereferencing it, so leaving the global pointing at freed
+	 * memory after this runs turns any later call (e.g. a second
+	 * gf_fs_del() on the same session - the CLI's own main() already
+	 * tears the session down once via gf_sys_close(), and this filter
+	 * session's JS-exposed destroy() then does it again) into a
+	 * use-after-free that reads garbage as the tag list's item count -
+	 * confirmed as the source of solver_minimal_1's "memory access out
+	 * of bounds" crash on filter teardown for libheif/libpoppler. */
+	logs_thread_tags = NULL;
+	while (gf_list_count(tags)) {
+		GF_LogThreadTag *tag = gf_list_pop_back(tags);
 		gf_free(tag);
 	}
-	gf_list_del(logs_thread_tags);
+	gf_list_del(tags);
 }
 
 static void gf_logs_set_thread_tag_internal(void *tag_val, u32 tag_type, Bool is_tag, Bool is_rem)

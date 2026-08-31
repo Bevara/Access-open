@@ -49,6 +49,19 @@ typedef struct
 	GF_List *src_pcks;
 	GF_Err error, enc_error;
 
+	/* Audio codecs needing an out-of-band decoder config (e.g. AAC's
+	 * AudioSpecificConfig) have no downstream reframer able to rebuild it
+	 * from the bitstream the way video's "rfnalu" does for AVC/HEVC/etc
+	 * (see the UNFRAMED case below) - if ctx->opid is created immediately
+	 * in configure_pid, mp4mx locks in the sample entry using whatever
+	 * DECODER_CONFIG is set at that moment (none yet, since the real one
+	 * only arrives asynchronously from the browser's WebCodecs encoder),
+	 * producing a malformed/empty AAC config that MSE rejects
+	 * (RFC6381 "mp4a.40.0" instead of "mp4a.40.2"). Deferring PID
+	 * creation until the first real decoder config arrives (see
+	 * wcenc_on_config) avoids this race entirely for such codecs. */
+	Bool opid_pending;
+
 	Bool fintra_setup;
 	u64 orig_ts;
 	u32 nb_forced, nb_frames_in;
@@ -110,7 +123,7 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 	}
 	enc_class.isConfigSupported(config).then( supported => {
 		if (supported.supported) {
-			let c = libgpac._web_encs(wc_ctx);
+			let c = libgpac._to_webenc(wc_ctx);
 			if (!c) {
 				c = {_wc_ctx: wc_ctx, enc: null, _frame: null};
 				libgpac._web_encs.push(c);
@@ -130,9 +143,69 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 						libgpac._on_wcenc_config(c._wc_ctx, c.decoderConfig.byteLength);
 						c.decoderConfig = null;
 					}
-					c.chunk = chunk;
 					let sap = 1;
 					if (typeof chunk.type != 'undefined') sap = (chunk.type=="key") ? 1 : 0;
+
+					/* Cross-instance coordination: when multiple wcenc tracks
+					 * are expected together (e.g. video + audio for a
+					 * progressive/fragmented mp4), each one's first output
+					 * can arrive at a different tick since every encoder is
+					 * its own independent async WebCodecs pipeline. If the
+					 * first track's frames reach mp4mx before a second
+					 * expected track has even produced its first sample,
+					 * mp4mx's very first (fragmented) init segment can be
+					 * written missing that second track entirely - which
+					 * MSE then rejects outright.
+					 *
+					 * loader.js sets libgpac.wcencExpectedCount to the number
+					 * of "wcenc:<codec>" targets requested (0/absent when
+					 * not applicable, e.g. non-webcodec or single-track
+					 * cases - which take the "expected<=1" fast path below
+					 * with zero added latency, identical to previous
+					 * behavior). "libgpac" (not "Module") is used because
+					 * that's the shared namespace object this codebase
+					 * already threads between loader.js and this EM_JS code
+					 * (see e.g. libgpac._to_webenc above). Every wcenc
+					 * instance's *first* produced chunk is held
+					 * (per-instance, keyed by its native ctx pointer address
+					 * via a Set, so re-buffering the same instance twice is
+					 * impossible) until every expected instance has likewise
+					 * produced a first chunk, at which point every held
+					 * chunk (across all instances, FIFO by arrival order) is
+					 * released together and coordination is permanently
+					 * switched off for the rest of the session. A
+					 * held-count safety valve forces release regardless of
+					 * the expected count, so a track that never manages to
+					 * connect (e.g. genuinely unsupported codec/config) can
+					 * never hang every other track's output forever. */
+					if (typeof libgpac._wcenc_coord == 'undefined') {
+						let expected = libgpac.wcencExpectedCount || 0;
+						libgpac._wcenc_coord = {
+							expected: expected,
+							readySet: new Set(),
+							held: [],
+							released: (expected <= 1)
+						};
+					}
+					const coord = libgpac._wcenc_coord;
+					const WCENC_COORD_MAX_HELD = 60;
+
+					if (!coord.released) {
+						coord.readySet.add(c._wc_ctx);
+						if ((coord.readySet.size < coord.expected) && (coord.held.length < WCENC_COORD_MAX_HELD)) {
+							coord.held.push({ c: c, chunk: chunk, ts: chunk.timestamp, dur: chunk.duration, len: chunk.byteLength, sap: sap });
+							return;
+						}
+						coord.released = true;
+						for (const h of coord.held) {
+							h.c.chunk = h.chunk;
+							libgpac._on_wcenc_frame(h.c._wc_ctx, BigInt(h.ts), h.dur, h.len, h.sap);
+							h.c.chunk = null;
+						}
+						coord.held = [];
+					}
+
+					c.chunk = chunk;
 					libgpac._on_wcenc_frame(c._wc_ctx, BigInt(chunk.timestamp), chunk.duration, chunk.byteLength, sap);
 					c.chunk = null;
 				};
@@ -147,6 +220,33 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 		libgpac._on_wcenc_error(wc_ctx, 1, ""+e);
 	});
 })
+
+static void wcenc_setup_opid(GF_Filter *filter, GF_WCEncCtx *ctx)
+{
+	if (!ctx->opid) {
+		ctx->opid = gf_filter_pid_new(filter);
+	}
+
+	//copy properties at init or reconfig
+	gf_filter_pid_copy_properties(ctx->opid, ctx->ipid);
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, &PROP_UINT(ctx->codecid) );
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL );
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_ISOM_STSD_TEMPLATE, NULL);
+	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_ISOM_SUBTYPE, NULL);
+
+	switch (ctx->codecid) {
+	//codecs for whoch we will need a reframer (DSI rebuild, DTS recompute and metadata extraction)
+	case GF_CODECID_AVC:
+	case GF_CODECID_HEVC:
+	case GF_CODECID_VVC:
+	case GF_CODECID_AV1:
+	case GF_CODECID_VP8:
+	case GF_CODECID_VP9:
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
+		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED_FULL_AU, &PROP_BOOL(GF_TRUE) );
+		break;
+	}
+}
 
 static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_remove)
 {
@@ -191,30 +291,24 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		return GF_NOT_SUPPORTED;
 	}
 
-	if (!ctx->opid) {
-		ctx->opid = gf_filter_pid_new(filter);
-		gf_filter_pid_set_framing_mode(pid, GF_TRUE);
-	}
+	gf_filter_pid_set_framing_mode(pid, GF_TRUE);
 
-	//copy properties at init or reconfig
-	gf_filter_pid_copy_properties(ctx->opid, pid);
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_CODECID, &PROP_UINT(ctx->codecid) );
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, NULL );
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_ISOM_STSD_TEMPLATE, NULL);
-	gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_ISOM_SUBTYPE, NULL);
-
-	switch (ctx->codecid) {
-	//codecs for whoch we will need a reframer (DSI rebuild, DTS recompute and metadata extraction)
-	case GF_CODECID_AVC:
-	case GF_CODECID_HEVC:
-	case GF_CODECID_VVC:
-	case GF_CODECID_AV1:
-	case GF_CODECID_VP8:
-	case GF_CODECID_VP9:
-		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED, &PROP_BOOL(GF_TRUE) );
-		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_UNFRAMED_FULL_AU, &PROP_BOOL(GF_TRUE) );
-		break;
-	}
+	/* PID creation is no longer deferred for audio (previously was, see
+	 * git history / opid_pending's declaration comment): the real bug
+	 * behind the empty AAC config ("mp4a.40.0") was wcenc_get_config's
+	 * dst.set(c.decoderConfig) silently writing nothing because
+	 * decoderConfig.description is a raw ArrayBuffer, not a TypedArray -
+	 * now fixed at the source, the config content is correct whenever it
+	 * arrives regardless of when the PID was created. Deferring audio's
+	 * PID creation only helped the config *content* problem, and turned
+	 * out to be the wrong lever for the *timing* problem (mp4mx's first
+	 * moov flush apparently keys off PID connection, not first sample -
+	 * confirmed by testing: mp4mx still wrote video-only init segments
+	 * even with sample delivery coordinated via the mechanism below,
+	 * until this immediate PID creation was restored for both tracks).
+	 * Track *sample* delivery is still coordinated below so mp4mx doesn't
+	 * fragment on video-only content before audio has anything queued. */
+	wcenc_setup_opid(filter, ctx);
 
 	p = gf_filter_pid_get_property(pid, GF_PROP_PID_TIMESCALE);
 	ctx->timescale = p ? p->value.uint : 1000;
@@ -330,7 +424,26 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 		} else {
 			switch (ctx->codecid) {
 			case GF_CODECID_AVC:
-				gf_strcpy(szCodec, "avc1.640028");
+				/* Baseline Profile, not High Profile: many WebCodecs
+				 * VideoEncoder implementations (software encode, no hardware
+				 * acceleration available) reject High Profile with
+				 * "Codec/Profile not supported", causing isConfigSupported()
+				 * to return false and the whole encoder to be blacklisted.
+				 *
+				 * Level 5.1 (hex 0x33), not Level 3.0 (0x1E): H.264 levels
+				 * cap the max resolution/framerate a decoder must support
+				 * (Level 3.0 tops out around 720x576 - see the H.264 spec's
+				 * level limits table), so encoding e.g. 1920x1080 with a
+				 * Level-3.0-declared codec string is itself an invalid
+				 * config and isConfigSupported() correctly rejects it with
+				 * the exact same "Codec/Profile not supported" symptom as
+				 * the profile issue above (confirmed via direct testing:
+				 * avc1.42001E fails isConfigSupported at 1920x1080, while
+				 * avc1.420033 succeeds there and at both 720x400 and 4K).
+				 * Levels are a ceiling, not an exact target, so declaring
+				 * a high one doesn't hurt lower-resolution encodes - no
+				 * resolution-dependent level computation is needed here. */
+				gf_strcpy(szCodec, "avc1.420033");
 				break;
 			case GF_CODECID_HEVC:
 				gf_strcpy(szCodec, "hvc1.1.6.L153.0");
@@ -356,7 +469,13 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	//create encoder
 	wcenc_init(EM_CAST_PTR ctx,
 		EM_CAST_PTR szCodec,
-		ctx->b ? ctx->b : (ctx->width ? 2000000 : 124000),
+		/* Default audio bitrate was 124000: Chrome's AudioEncoder for
+		 * mp4a.40.2 (AAC-LC) only accepts a discrete set of standard
+		 * bitrates, not an arbitrary continuous range - 124000 and 64000
+		 * both report isConfigSupported()==false while 96000 and 128000
+		 * work, confirmed via direct testing. 128000 (128kbps, the
+		 * conventional default AAC bitrate) is used here instead. */
+		ctx->b ? ctx->b : (ctx->width ? 2000000 : 128000),
 		ctx->width,
 		ctx->height,
 		fps,
@@ -370,7 +489,7 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 
 
 EM_JS(int, wcenc_encode_frame, (int wc_ctx, u32 w, u32 h, u32 uv_h, int _format, u64 ts, u32 dur, u32 planes, u32 stride1, u32 stride2, u32 sap, int buf, u32 buf_size), {
-	let c = libgpac._web_encs(wc_ctx);
+	let c = libgpac._to_webenc(wc_ctx);
 	if (!c || !buf || !_format) return;
 	let format = UTF8ToString(_format);
 
@@ -405,7 +524,7 @@ EM_JS(int, wcenc_encode_frame, (int wc_ctx, u32 w, u32 h, u32 uv_h, int _format,
 })
 
 EM_JS(int, wcenc_encode_audio, (int wc_ctx, u32 sr, u32 ch, u32 frames, int _format, u64 ts, int buf, u32 buf_size), {
-	let c = libgpac._web_encs(wc_ctx);
+	let c = libgpac._to_webenc(wc_ctx);
 	if (!c || !buf || !_format) return;
 	let format = UTF8ToString(_format);
 
@@ -428,11 +547,15 @@ GF_EXPORT
 void wcenc_on_flush(GF_WCEncCtx *ctx)
 {
 	ctx->in_flush = 2;
-	gf_filter_pid_set_eos(ctx->opid);
+	/* opid may still be NULL here if this audio track's decoder config
+	 * never arrived (e.g. genuinely unsupported codec/config) - see
+	 * opid_pending */
+	if (ctx->opid)
+		gf_filter_pid_set_eos(ctx->opid);
 }
 
 EM_JS(int, wcenc_flush, (int wc_ctx), {
-	let c = libgpac._web_encs(wc_ctx);
+	let c = libgpac._to_webenc(wc_ctx);
 	if (!c || !c.enc) return;
 	c.enc.flush().then( () => {libgpac._on_wcenc_flush(c._wc_ctx); }).catch ( (e) => { libgpac._on_wcenc_flush(c._wc_ctx); } );
 })
@@ -539,14 +662,26 @@ static GF_Err wcenc_process(GF_Filter *filter)
 }
 
 EM_JS(int, wcenc_get_config, (int wc_ctx, int buf, int buf_size), {
-	let c = libgpac._web_encs(wc_ctx);
+	let c = libgpac._to_webenc(wc_ctx);
 	if (!c || !c.decoderConfig) {
 		throw 'Bad Param';
 		return;
 	}
 	//setup dst
 	let dst = new Uint8Array(HEAPU8.buffer, buf, buf_size);
-	dst.set(c.decoderConfig);
+	/* c.decoderConfig (WebCodecs' decoderConfig.description) is a raw
+	 * ArrayBuffer, not a TypedArray - TypedArray.prototype.set() silently
+	 * writes nothing (no error thrown) when given a plain ArrayBuffer
+	 * instead of an array-like/iterable view, so this always produced an
+	 * all-zero decoder config without wrapping it first. Confirmed via
+	 * direct testing: dst.set(rawArrayBuffer) -> [0,0], dst.set(new
+	 * Uint8Array(rawArrayBuffer)) -> the real bytes. This was silently
+	 * corrupting every codec's out-of-band decoder config (not just
+	 * audio's AAC AudioSpecificConfig) - video's SPS/PPS happened to look
+	 * correct anyway because the downstream "rfnalu" reframer rebuilds
+	 * avcC from the NAL bitstream itself, never actually reading this
+	 * field. */
+	dst.set(new Uint8Array(c.decoderConfig));
 })
 
 GF_EXPORT
@@ -555,6 +690,15 @@ void wcenc_on_config(GF_WCEncCtx *ctx, int size)
 	u8 *buf = gf_malloc(size);
 	memset(buf, 0, size);
 	wcenc_get_config(EM_CAST_PTR ctx, EM_CAST_PTR buf, size);
+
+	/* first real decoder config for a deferred audio PID: create it now,
+	 * so mp4mx never sees this track before a valid config is available
+	 * (see opid_pending) */
+	if (ctx->opid_pending) {
+		wcenc_setup_opid(ctx->filter, ctx);
+		ctx->opid_pending = GF_FALSE;
+	}
+
 	u32 dsi_crc = gf_crc_32(buf, size);
 	if (dsi_crc != ctx->dsi_crc) {
 		gf_filter_pid_set_property(ctx->opid, GF_PROP_PID_DECODER_CONFIG, &PROP_DATA_NO_COPY(buf, size));
@@ -565,7 +709,7 @@ void wcenc_on_config(GF_WCEncCtx *ctx, int size)
 }
 
 EM_JS(int, wcenc_get_frame, (int wc_ctx, int buf, int buf_size), {
-	let c = libgpac._web_encs(wc_ctx);
+	let c = libgpac._to_webenc(wc_ctx);
 	if (!c || !c.chunk) {
 		throw 'Bad Param';
 		return;
@@ -581,6 +725,14 @@ void wcenc_on_frame(GF_WCEncCtx *ctx, u64 timestamp, u32 duration, u32 size, int
 	u8 *output;
 	u32 i, count;
 	GF_FilterPacket *src_pck=NULL;
+
+	/* Safety net: per the WebCodecs spec the decoder config accompanies
+	 * (or precedes) the first output chunk, and the JS output callback
+	 * always calls wcenc_on_config before wcenc_on_frame for that same
+	 * chunk (see wcenc_init's EM_JS block) - so ctx->opid should already
+	 * exist by the time this runs for a deferred audio PID. Drop the
+	 * frame instead of crashing if that assumption is ever violated. */
+	if (!ctx->opid) return;
 
 	GF_FilterPacket *dst = gf_filter_pck_new_alloc(ctx->opid, size, &output);
 	if (!dst) return;
@@ -632,7 +784,10 @@ GF_Err wcenc_initialize(GF_Filter *filter)
 }
 
 EM_JS(int, wcenc_del, (int wc_ctx), {
-	if (typeof libgpac._web_encs != 'array') return;
+	/* was "typeof libgpac._web_encs != 'array'" - typeof an array is always
+	 * "object" in JS, never "array", so that check was always true and this
+	 * function always returned immediately without ever cleaning up */
+	if (!Array.isArray(libgpac._web_encs)) return;
 	for (let i=0; i<libgpac._web_encs.length; i++) {
 		if (libgpac._web_encs[i]._wc_ctx == wc_ctx) {
 			libgpac._web_encs[i].enc.close();
