@@ -453,7 +453,7 @@ GF_FilterRegister ReframeImgRegister = {
 	.hint_class_type = GF_FS_CLASS_FRAMING
 };
 
-const GF_FilterRegister *dynCall_img_reframe_register(GF_FilterSession *session)
+const GF_FilterRegister *rfimg_register(GF_FilterSession *session)
 {
 	return &ReframeImgRegister;
 }

@@ -669,7 +669,7 @@ const GF_FilterRegister RestampRegister = {
 	.hint_class_type = GF_FS_CLASS_STREAM
 };
 
-const GF_FilterRegister *dynCall_restamp_register(GF_FilterSession *session)
+const GF_FilterRegister *restamp_register(GF_FilterSession *session)
 {
 	return &RestampRegister;
 }

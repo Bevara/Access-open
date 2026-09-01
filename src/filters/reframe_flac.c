@@ -868,7 +868,7 @@ GF_FilterRegister FLACDmxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_flac_dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *rfflac_register(GF_FilterSession *session)
 {
 
 #ifdef GPAC_ENABLE_COVERAGE

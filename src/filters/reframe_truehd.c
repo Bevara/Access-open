@@ -825,12 +825,12 @@ GF_FilterRegister TrueHDDmxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_rftruehd_register(GF_FilterSession *session)
+const GF_FilterRegister *rftruehd_register(GF_FilterSession *session)
 {
 	return &TrueHDDmxRegister;
 }
 #else
-const GF_FilterRegister *dynCall_rftruehd_register(GF_FilterSession *session)
+const GF_FilterRegister *rftruehd_register(GF_FilterSession *session)
 {
 	return NULL;
 }

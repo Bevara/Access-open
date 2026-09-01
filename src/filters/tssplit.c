@@ -753,7 +753,7 @@ GF_FilterRegister M2TSSplitRegister = {
 	.hint_class_type = GF_FS_CLASS_STREAM
 };
 
-const GF_FilterRegister *dynCall_m2tssplit_register(GF_FilterSession *session)
+const GF_FilterRegister *tssplit_register(GF_FilterSession *session)
 {
 	return &M2TSSplitRegister;
 }
@@ -809,7 +809,7 @@ const GF_FilterRegister *tsgendts_register(GF_FilterSession *session)
 }
 
 #else
-const GF_FilterRegister *dynCall_m2tssplit_register(GF_FilterSession *session)
+const GF_FilterRegister *tssplit_register(GF_FilterSession *session)
 {
 	return NULL;
 }

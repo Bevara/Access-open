@@ -626,7 +626,7 @@ GF_FilterRegister TTXTMxRegister = {
 	.hint_class_type = GF_FS_CLASS_FRAMING
 };
 
-const GF_FilterRegister *dynCall_ttxtuf_register(GF_FilterSession *session)
+const GF_FilterRegister *ufttxt_register(GF_FilterSession *session)
 {
 	return &TTXTMxRegister;
 }
@@ -665,7 +665,7 @@ GF_FilterRegister TX3G2SRTRegister = {
 	.hint_class_type = GF_FS_CLASS_SUBTITLE
 };
 
-const GF_FilterRegister *dynCall_tx3g2srt_register(GF_FilterSession *session)
+const GF_FilterRegister *tx3g2srt_register(GF_FilterSession *session)
 {
 	return &TX3G2SRTRegister;
 }
@@ -705,7 +705,7 @@ GF_FilterRegister TTX2VTTRegister = {
 	.hint_class_type = GF_FS_CLASS_SUBTITLE
 };
 
-const GF_FilterRegister *dynCall_tx3g2vtt_register(GF_FilterSession *session)
+const GF_FilterRegister *tx3g2vtt_register(GF_FilterSession *session)
 {
 	return &TTX2VTTRegister;
 }
@@ -747,25 +747,25 @@ GF_FilterRegister TX3G2TTMLRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_tx3g2ttml_register(GF_FilterSession *session)
+const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session)
 {
 	return &TX3G2TTMLRegister;
 }
 
 #else
-const GF_FilterRegister *dynCall_ttxtuf_register(GF_FilterSession *session)
+const GF_FilterRegister *ufttxt_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-const GF_FilterRegister *dynCall_tx3g2srt_register(GF_FilterSession *session)
+const GF_FilterRegister *tx3g2srt_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-const GF_FilterRegister *dynCall_tx3g2vtt_register(GF_FilterSession *session)
+const GF_FilterRegister *tx3g2vtt_register(GF_FilterSession *session)
 {
 	return NULL;
 }
-const GF_FilterRegister *dynCall_tx3g2ttml_register(GF_FilterSession *session)
+const GF_FilterRegister *tx3g2ttml_register(GF_FilterSession *session)
 {
 	return NULL;
 }

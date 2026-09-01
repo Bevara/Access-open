@@ -8988,12 +8988,12 @@ GF_FilterRegister MP4MuxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_mp4_mux_register(GF_FilterSession *session)
+const GF_FilterRegister *mp4mx_register(GF_FilterSession *session)
 {
 	return &MP4MuxRegister;
 }
 #else
-const GF_FilterRegister *dynCall_mp4_mux_register(GF_FilterSession *session)
+const GF_FilterRegister *mp4mx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

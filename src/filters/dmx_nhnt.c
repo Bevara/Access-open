@@ -531,7 +531,7 @@ GF_FilterRegister NHNTDmxRegister = {
 	.hint_class_type = GF_FS_CLASS_TOOL
 };
 
-const GF_FilterRegister *dynCall_nhntdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *nhntr_register(GF_FilterSession *session)
 {
 	return &NHNTDmxRegister;
 }

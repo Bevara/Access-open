@@ -3588,7 +3588,7 @@ GF_FilterRegister ROUTEOutRegister = {
 	.hint_class_type = GF_FS_CLASS_NETWORK_IO
 };
 
-const GF_FilterRegister *dynCall_routeout_register(GF_FilterSession *session)
+const GF_FilterRegister *routeout_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 		gf_opts_set_key("temp_out_proto", ROUTEOutRegister.name, "atsc,route,mabr");
@@ -3596,7 +3596,7 @@ const GF_FilterRegister *dynCall_routeout_register(GF_FilterSession *session)
 	return &ROUTEOutRegister;
 }
 #else
-const GF_FilterRegister *dynCall_routeout_register(GF_FilterSession *session)
+const GF_FilterRegister *routeout_register(GF_FilterSession *session)
 {
 	return NULL;
 }

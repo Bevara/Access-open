@@ -1429,7 +1429,7 @@ GF_FilterRegister BSRWRegister = {
 	.hint_class_type = GF_FS_CLASS_STREAM
 };
 
-const GF_FilterRegister *dynCall_bsrw_register(GF_FilterSession *session)
+const GF_FilterRegister *bsrw_register(GF_FilterSession *session)
 {
 	//assign runtime caps on first load
 	if (gf_opts_get_bool("temp", "helponly")) {

@@ -1997,12 +1997,12 @@ GF_FilterRegister ISOFFInRegister = {
 	.hint_class_type = GF_FS_CLASS_DEMULTIPLEXER
 };
 
-const GF_FilterRegister *dynCall_mp4dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *mp4dmx_register(GF_FilterSession *session)
 {
 	return &ISOFFInRegister;
 }
 #else
-const GF_FilterRegister *dynCall_mp4dmx_register(GF_FilterSession *session)
+const GF_FilterRegister *mp4dmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

@@ -129,7 +129,7 @@ const GF_FilterRegister UnframerRegister = {
 	.hint_class_type = GF_FS_CLASS_TOOL
 };
 
-const GF_FilterRegister *dynCall_unframer_register(GF_FilterSession *session)
+const GF_FilterRegister *unframer_register(GF_FilterSession *session)
 {
 	return &UnframerRegister;
 }

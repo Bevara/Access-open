@@ -1332,7 +1332,7 @@ GF_FilterRegister RTPOutRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_rtpout_register(GF_FilterSession *session)
+const GF_FilterRegister *rtpout_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 		gf_opts_set_key("temp_out_proto", RTPOutRegister.name, "rtp");
@@ -1342,7 +1342,7 @@ const GF_FilterRegister *dynCall_rtpout_register(GF_FilterSession *session)
 
 #else
 
-const GF_FilterRegister *dynCall_rtpout_register(GF_FilterSession *session)
+const GF_FilterRegister *rtpout_register(GF_FilterSession *session)
 {
 	return NULL;
 }

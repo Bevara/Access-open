@@ -1694,12 +1694,12 @@ GF_FilterRegister HEVCMergeRegister = {
 	.hint_class_type = GF_FS_CLASS_STREAM
 };
 
-const GF_FilterRegister *dynCall_hevcmerge_register(GF_FilterSession *session)
+const GF_FilterRegister *hevcmerge_register(GF_FilterSession *session)
 {
 	return &HEVCMergeRegister;
 }
 #else
-const GF_FilterRegister *dynCall_hevcmerge_register(GF_FilterSession *session)
+const GF_FilterRegister *hevcmerge_register(GF_FilterSession *session)
 {
 	return NULL;
 }

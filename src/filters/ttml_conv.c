@@ -328,7 +328,7 @@ GF_FilterRegister TTMLConvRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_ttmlconv_register(GF_FilterSession *session)
+const GF_FilterRegister *ttml2vtt_register(GF_FilterSession *session)
 {
 	return &TTMLConvRegister;
 }
@@ -369,19 +369,19 @@ GF_FilterRegister TTMLConv2Register = {
 };
 
 
-const GF_FilterRegister *dynCall_ttmlconv2_register(GF_FilterSession *session)
+const GF_FilterRegister *ttml2srt_register(GF_FilterSession *session)
 {
 	return &TTMLConv2Register;
 }
 
 #else
 
-const GF_FilterRegister *dynCall_ttmlconv_register(GF_FilterSession *session)
+const GF_FilterRegister *ttml2vtt_register(GF_FilterSession *session)
 {
 	return NULL;
 }
 
-const GF_FilterRegister *dynCall_ttmlconv2_register(GF_FilterSession *session)
+const GF_FilterRegister *ttml2srt_register(GF_FilterSession *session)
 {
 	return NULL;
 }

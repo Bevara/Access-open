@@ -176,7 +176,7 @@ GF_FilterRegister ImgDecRegister = {
 	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
-const GF_FilterRegister *dynCall_imgdec_register(GF_FilterSession *session)
+const GF_FilterRegister *imgdec_register(GF_FilterSession *session)
 {
 	return &ImgDecRegister;
 }

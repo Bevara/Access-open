@@ -1100,7 +1100,7 @@ GF_FilterRegister NHMLDumpRegister = {
 	.hint_class_type = GF_FS_CLASS_TOOL
 };
 
-const GF_FilterRegister *dynCall_nhmldump_register(GF_FilterSession *session)
+const GF_FilterRegister *nhmlw_register(GF_FilterSession *session)
 {
 	return &NHMLDumpRegister;
 }

@@ -266,7 +266,7 @@ GF_FilterRegister LSRDecRegister = {
 
 #endif //!defined(GPAC_DISABLE_LASER) && !defined(GPAC_DISABLE_COMPOSITOR)
 
-const GF_FilterRegister *dynCall_lsrdec_register(GF_FilterSession *session)
+const GF_FilterRegister *lsrdec_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_DISABLE_LASER) && !defined(GPAC_DISABLE_COMPOSITOR)
 	return &LSRDecRegister;

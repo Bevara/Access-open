@@ -997,12 +997,12 @@ GF_FilterRegister HEVCSplitRegister = {
 	.hint_class_type = GF_FS_CLASS_STREAM
 };
 
-const GF_FilterRegister* dynCall_hevcsplit_register(GF_FilterSession *session)
+const GF_FilterRegister* hevcsplit_register(GF_FilterSession *session)
 {
 	return &HEVCSplitRegister;
 }
 #else
-const GF_FilterRegister* dynCall_hevcsplit_register(GF_FilterSession *session)
+const GF_FilterRegister* hevcsplit_register(GF_FilterSession *session)
 {
 	return NULL;
 }

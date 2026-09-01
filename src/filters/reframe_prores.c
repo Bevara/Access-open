@@ -698,12 +698,12 @@ GF_FilterRegister ProResDmxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_proresdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *rfprores_register(GF_FilterSession *session)
 {
 	return &ProResDmxRegister;
 }
 #else
-const GF_FilterRegister *dynCall_proresdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *rfprores_register(GF_FilterSession *session)
 {
 	return NULL;
 }

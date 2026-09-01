@@ -1483,7 +1483,7 @@ GF_FilterRegister BSSplitRegister = {
 
 #endif
 
-const GF_FilterRegister *dynCall_bs_split_register(GF_FilterSession *session)
+const GF_FilterRegister *bssplit_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_BSSPLIT)
 	return (const GF_FilterRegister *) &BSSplitRegister;

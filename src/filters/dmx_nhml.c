@@ -1905,7 +1905,7 @@ GF_FilterRegister NHMLDmxRegister = {
 	.hint_class_type = GF_FS_CLASS_TOOL
 };
 
-const GF_FilterRegister *dynCall_nhmldmx_register(GF_FilterSession *session)
+const GF_FilterRegister *nhmlr_register(GF_FilterSession *session)
 {
 	return &NHMLDmxRegister;
 }

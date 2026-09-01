@@ -2882,7 +2882,7 @@ GF_FilterRegister CENCEncRegister = {
 
 #endif /*GPAC_DISABLE_CRYPTO*/
 
-const GF_FilterRegister *dynCall_cenc_encrypt_register(GF_FilterSession *session)
+const GF_FilterRegister *cecrypt_register(GF_FilterSession *session)
 {
 #if !defined(GPAC_DISABLE_CRYPTO) && !defined(GPAC_DISABLE_CECRYPT)
 

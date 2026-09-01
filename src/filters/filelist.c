@@ -3346,7 +3346,7 @@ GF_FilterRegister FileListRegister = {
 	.hint_class_type = GF_FS_CLASS_STREAM
 };
 
-const GF_FilterRegister *dynCall_filelist_register(GF_FilterSession *session)
+const GF_FilterRegister *flist_register(GF_FilterSession *session)
 {
 	return &FileListRegister;
 }

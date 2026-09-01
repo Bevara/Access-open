@@ -985,7 +985,7 @@ GF_FilterRegister BSAggRegister = {
 	.hint_class_type = GF_FS_CLASS_STREAM
 };
 
-const GF_FilterRegister *dynCall_bs_agg_register(GF_FilterSession *session)
+const GF_FilterRegister *bsagg_register(GF_FilterSession *session)
 {
 	return (const GF_FilterRegister *) &BSAggRegister;
 }

@@ -214,7 +214,7 @@ GF_FilterRegister M4VMxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_m4vmx_register(GF_FilterSession *session)
+const GF_FilterRegister *ufm4v_register(GF_FilterSession *session)
 {
 	return &M4VMxRegister;
 }
@@ -253,7 +253,7 @@ GF_FilterRegister VC1VMxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_vc1mx_register(GF_FilterSession *session)
+const GF_FilterRegister *ufvc1_register(GF_FilterSession *session)
 {
 #ifdef GPAC_ENABLE_COVERAGE
 	//we currently miss vc1 test sequence

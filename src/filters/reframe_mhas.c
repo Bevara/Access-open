@@ -929,12 +929,12 @@ GF_FilterRegister MHASDmxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_rfmhas_register(GF_FilterSession *session)
+const GF_FilterRegister *rfmhas_register(GF_FilterSession *session)
 {
 	return &MHASDmxRegister;
 }
 #else
-const GF_FilterRegister *dynCall_rfmhas_register(GF_FilterSession *session)
+const GF_FilterRegister *rfmhas_register(GF_FilterSession *session)
 {
 	return NULL;
 }

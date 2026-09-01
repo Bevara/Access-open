@@ -2427,14 +2427,14 @@ GF_FilterRegister TSMuxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_tsmux_register(GF_FilterSession *session)
+const GF_FilterRegister *m2tsmx_register(GF_FilterSession *session)
 {
 	return &TSMuxRegister;
 }
 
 #else
 
-const GF_FilterRegister *dynCall_tsmux_register(GF_FilterSession *session)
+const GF_FilterRegister *m2tsmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }

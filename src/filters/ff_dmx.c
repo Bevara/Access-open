@@ -1979,7 +1979,7 @@ static const GF_FilterArgs FFDemuxArgs[] =
 const int FFDMX_STATIC_ARGS = (sizeof (FFDemuxArgs) / sizeof (GF_FilterArgs)) - 1;
 
 
-const GF_FilterRegister *dynCall_ffdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *ffdmx_register(GF_FilterSession *session)
 {
 	return ffmpeg_build_register(session, &FFDemuxRegister, FFDemuxArgs, FFDMX_STATIC_ARGS, FF_REG_TYPE_DEMUX);
 }
@@ -2488,7 +2488,7 @@ static void ffavin_log_none(void *avcl, int level, const char *fmt, va_list vl)
 }
 #endif
 
-const GF_FilterRegister *dynCall_ffavin_register(GF_FilterSession *session)
+const GF_FilterRegister *ffavin_register(GF_FilterSession *session)
 {
 	GF_FilterRegister *res_reg = ffmpeg_build_register(session, &FFAVInRegister, FFAVInArgs, FFAVIN_STATIC_ARGS, FF_REG_TYPE_DEV_IN);
 
@@ -2559,7 +2559,7 @@ const GF_FilterRegister *ffavin_register(GF_FilterSession *session)
 
 #include <gpac/filters.h>
 
-const GF_FilterRegister *dynCall_ffdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *ffdmx_register(GF_FilterSession *session)
 {
 	return NULL;
 }
@@ -2568,7 +2568,7 @@ const GF_FilterRegister *ffdmxpid_register(GF_FilterSession *session)
 	return NULL;
 }
 
-const GF_FilterRegister *dynCall_ffavin_register(GF_FilterSession *session)
+const GF_FilterRegister *ffavin_register(GF_FilterSession *session)
 {
 	return NULL;
 }

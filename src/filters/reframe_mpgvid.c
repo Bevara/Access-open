@@ -1415,12 +1415,12 @@ GF_FilterRegister MPGVidDmxRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_mpgviddmx_register(GF_FilterSession *session)
+const GF_FilterRegister *rfmpgvid_register(GF_FilterSession *session)
 {
 	return &MPGVidDmxRegister;
 }
 #else
-const GF_FilterRegister *dynCall_mpgviddmx_register(GF_FilterSession *session)
+const GF_FilterRegister *rfmpgvid_register(GF_FilterSession *session)
 {
 	return NULL;
 }

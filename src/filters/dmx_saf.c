@@ -472,7 +472,7 @@ GF_FilterRegister SAFDmxRegister = {
 	.hint_class_type = GF_FS_CLASS_DEMULTIPLEXER
 };
 
-const GF_FilterRegister *dynCall_safdmx_register(GF_FilterSession *session)
+const GF_FilterRegister *safdmx_register(GF_FilterSession *session)
 {
 	return &SAFDmxRegister;
 }

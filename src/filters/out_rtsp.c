@@ -1962,7 +1962,7 @@ GF_FilterRegister RTSPOutRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_rtspout_register(GF_FilterSession *session)
+const GF_FilterRegister *rtspout_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 		gf_opts_set_key("temp_out_proto", RTSPOutRegister.name, "rtsp,rtsph,rtsps");
@@ -1972,7 +1972,7 @@ const GF_FilterRegister *dynCall_rtspout_register(GF_FilterSession *session)
 
 #else
 
-const GF_FilterRegister *dynCall_rtspout_register(GF_FilterSession *session)
+const GF_FilterRegister *rtspout_register(GF_FilterSession *session)
 {
 	return NULL;
 }

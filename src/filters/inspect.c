@@ -5989,12 +5989,12 @@ const GF_FilterRegister ProbeRegister = {
 	.hint_class_type = GF_FS_CLASS_TOOL,
 };
 
-const GF_FilterRegister *dynCall_inspect_register(GF_FilterSession *session)
+const GF_FilterRegister *inspect_register(GF_FilterSession *session)
 {
 	return &InspectRegister;
 }
 
-const GF_FilterRegister *dynCall_probe_register(GF_FilterSession *session)
+const GF_FilterRegister *probe_register(GF_FilterSession *session)
 {
 	return &ProbeRegister;
 }

@@ -589,12 +589,12 @@ GF_FilterRegister TileSplitRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_tilesplit_register(GF_FilterSession *session)
+const GF_FilterRegister *tilesplit_register(GF_FilterSession *session)
 {
 	return &TileSplitRegister;
 }
 #else
-const GF_FilterRegister *dynCall_tilesplit_register(GF_FilterSession *session)
+const GF_FilterRegister *tilesplit_register(GF_FilterSession *session)
 {
 	return NULL;
 }

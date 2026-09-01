@@ -574,7 +574,7 @@ GF_FilterRegister PipeOutRegister = {
 };
 
 
-const GF_FilterRegister *dynCall_pipeout_register(GF_FilterSession *session)
+const GF_FilterRegister *pout_register(GF_FilterSession *session)
 {
 	if (gf_opts_get_bool("temp", "get_proto_schemes")) {
 		gf_opts_set_key("temp_out_proto", PipeOutRegister.name, "pipe");

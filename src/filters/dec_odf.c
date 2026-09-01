@@ -514,12 +514,12 @@ GF_FilterRegister ODFDecRegister = {
 	.hint_class_type = GF_FS_CLASS_DECODER
 };
 
-const GF_FilterRegister *dynCall_odf_dec_register(GF_FilterSession *session)
+const GF_FilterRegister *odfdec_register(GF_FilterSession *session)
 {
 	return &ODFDecRegister;
 }
 #else
-const GF_FilterRegister *dynCall_odf_dec_register(GF_FilterSession *session)
+const GF_FilterRegister *odfdec_register(GF_FilterSession *session)
 {
 	return NULL;
 }
