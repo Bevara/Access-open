@@ -24,11 +24,27 @@
  */
 
 #include <gpac/tools.h>
-#if defined(GPAC_CONFIG_EMSCRIPTEN)
+#if !defined(GPAC_DISABLE_NETWORK) && defined(GPAC_CONFIG_EMSCRIPTEN)
 #include <gpac/download.h>
 #include <gpac/list.h>
 #include <gpac/thread.h>
 #include <gpac/filters.h>
+/*GF_Socket / GF_SockGroup, for the server-side entry points implemented at the
+bottom of this file*/
+#include <gpac/network.h>
+
+/*Mirrors GF_HTTPSessionType from src/utils/downloader.h. That header cannot be
+included here: it declares its own __gf_download_manager and
+__gf_download_session, which this file replaces with its own definitions. Keep
+the values in sync - they are an ABI contract with in_http.c and friends.*/
+#ifndef _DOWNLOADER_H_
+typedef enum
+{
+	GF_SESS_TYPE_HTTP=0,
+	GF_SESS_TYPE_HTTP2,
+	GF_SESS_TYPE_HTTP3,
+} GF_HTTPSessionType;
+#endif
 
 struct __gf_download_manager
 {
@@ -61,6 +77,27 @@ u32 gf_dm_get_global_rate(GF_DownloadManager *dm)
 }
 void gf_dm_set_data_rate(GF_DownloadManager *dm, u32 rate_in_bits_per_sec)
 {
+}
+
+/*Bevara: src/Makefile substitutes this file for downloader.c under
+emscripten, but downloader.c was the only definition of
+gf_dm_can_handle_url(). in_http.c declares the prototype locally (not
+through a header) and calls it from httpin_probe_url() whenever the URL
+is not one of the schemes handled earlier in that function, so the
+symbol stayed declared-but-undefined - masked only by
+-sERROR_ON_UNDEFINED_SYMBOLS=0, and reachable at runtime for schemes
+such as rtmp:// or ftp://, where it would surface as emscripten's silent
+import stub ("TypeError: resolved is not a function").
+
+Only http and https are reported here: the browser fetch backing this
+downloader handles both natively, and none of the transports the native
+version additionally probes through libcurl are available.*/
+Bool gf_dm_can_handle_url(const char *url)
+{
+	if (!url) return GF_FALSE;
+	if (!strnicmp(url, "http://", 7)) return GF_TRUE;
+	if (!strnicmp(url, "https://", 8)) return GF_TRUE;
+	return GF_FALSE;
 }
 
 typedef struct __cache_blob
@@ -922,5 +959,144 @@ u32 gf_dm_sess_get_resource_size(GF_DownloadSession * sess)
 	return sess ? sess->total_size : 0;
 }
 
+
+
+/*Bevara: src/Makefile substitutes this file for downloader.c under emscripten,
+so every gf_dm_* entry point declared in downloader.h must exist here as well.
+The set below was missing entirely - the symbols stayed undefined, which
+-sERROR_ON_UNDEFINED_SYMBOLS=0 turns into emscripten's silent import stubs:
+they link, then throw "TypeError: resolved is not a function" on first call.
+
+Two groups. Those with a real browser equivalent are implemented against the
+fetch-backed session above. Those with none - HTTP server sessions, HTTP/2 and
+HTTP/3 multiplexing, raw sockets, blocking downloads - return an explicit
+GF_NOT_SUPPORTED (or NULL/0) so that a caller reaching them gets a clean error
+instead of a JS exception.*/
+
+/*req_hdrs is a flat [name, value, name, value, ...] array, consumed as such by
+the fetch call in this file - keep that layout.*/
+void gf_dm_sess_set_header_ex(GF_DownloadSession *sess, const char *name, const char *value, Bool allow_overwrite)
+{
+	u32 i;
+	if (!sess || !name) return;
+	for (i=0; i+1<sess->nb_req_hdrs; i+=2) {
+		if (!sess->req_hdrs[i] || stricmp(sess->req_hdrs[i], name)) continue;
+		if (!allow_overwrite) return;
+		if (sess->req_hdrs[i+1]) gf_free(sess->req_hdrs[i+1]);
+		sess->req_hdrs[i+1] = value ? gf_strdup(value) : gf_strdup("");
+		return;
+	}
+	if (!value) return;
+	sess->req_hdrs = gf_realloc(sess->req_hdrs, sizeof(char*) * (sess->nb_req_hdrs+2));
+	if (!sess->req_hdrs) {
+		sess->nb_req_hdrs = 0;
+		return;
+	}
+	sess->req_hdrs[sess->nb_req_hdrs] = gf_strdup(name);
+	sess->req_hdrs[sess->nb_req_hdrs+1] = gf_strdup(value);
+	sess->nb_req_hdrs += 2;
+}
+
+void gf_dm_sess_set_header(GF_DownloadSession *sess, const char *name, const char *value)
+{
+	gf_dm_sess_set_header_ex(sess, name, value, GF_TRUE);
+}
+
+void gf_dm_sess_clear_headers(GF_DownloadSession *sess)
+{
+	if (sess) clear_headers(&sess->req_hdrs, &sess->nb_req_hdrs);
+}
+
+/*a fetch is in flight while its task is armed - see the ftask handling above*/
+u32 gf_dm_sess_async_pending(GF_DownloadSession *sess)
+{
+	return (sess && sess->ftask) ? 1 : 0;
+}
+
+/*nothing to flush: the fetch backend delivers through its own callbacks rather
+than through a socket this function could drain*/
+GF_Err gf_dm_sess_flush_async(GF_DownloadSession *sess, Bool no_select)
+{
+	return GF_OK;
+}
+
+GF_Err gf_dm_sess_flush_close(GF_DownloadSession *sess)
+{
+	return GF_OK;
+}
+
+/*accepted and ignored: fetch() exposes no per-request timeout in this backend.
+Callers use it as a hint, so failing here would be worse than doing nothing.*/
+void gf_dm_sess_set_timeout(GF_DownloadSession *sess, u32 timeout)
+{
+}
+
+/*no interactive credential prompt in this backend - the browser handles
+authentication itself*/
+void gf_dm_set_auth_callback(GF_DownloadManager *dm, gf_dm_get_usr_pass get_user_password, void *usr_cbk)
+{
+}
+
+/*--- no browser equivalent below this point ---*/
+
+/*blocking by contract in downloader.c; the fetch backend is callback-driven and
+cannot be awaited from the calling thread*/
+GF_Err gf_dm_wget(const char *url, const char *filename, u64 start_range, u64 end_range, char **redirected_url)
+{
+	return GF_NOT_SUPPORTED;
+}
+
+GF_DownloadSession *gf_dm_sess_new_server(GF_DownloadManager *dm, GF_Socket *server, void *ssl_ctx,
+	gf_dm_user_io user_io, void *usr_cbk, Bool async, GF_Err *e)
+{
+	if (e) *e = GF_NOT_SUPPORTED;
+	return NULL;
+}
+
+GF_DownloadSession *gf_dm_sess_new_subsession(GF_DownloadSession *sess, s64 stream_id, void *usr_cbk, GF_Err *e)
+{
+	if (e) *e = GF_NOT_SUPPORTED;
+	return NULL;
+}
+
+u32 gf_dm_sess_subsession_count(GF_DownloadSession *sess)
+{
+	return 0;
+}
+
+GF_Err gf_dm_sess_send(GF_DownloadSession *sess, u8 *data, u32 size)
+{
+	return GF_NOT_SUPPORTED;
+}
+
+GF_Err gf_dm_sess_send_reply(GF_DownloadSession *sess, u32 reply_code, const char *response_body, u32 body_len, Bool no_body)
+{
+	return GF_NOT_SUPPORTED;
+}
+
+void gf_dm_sess_server_reset(GF_DownloadSession *sess)
+{
+}
+
+/*fetch() gives no access to the underlying protocol version, and no caller can
+act on it here anyway*/
+GF_HTTPSessionType gf_dm_sess_is_hmux(GF_DownloadSession *sess)
+{
+	return GF_SESS_TYPE_HTTP;
+}
+
+void gf_dm_sess_close_hmux(GF_DownloadSession *sess)
+{
+}
+
+/*no raw socket behind a fetch*/
+GF_Socket *gf_dm_sess_get_socket(GF_DownloadSession *sess)
+{
+	return NULL;
+}
+
+void gf_dm_sess_set_sock_group(GF_DownloadSession *sess, GF_SockGroup *sg)
+{
+}
 
 #endif // GPAC_CONFIG_EMSCRIPTEN
