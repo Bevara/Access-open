@@ -349,13 +349,10 @@ static void gf_filter_pid_update_caps(GF_FilterPid *pid)
 			//composition buffer
 			if (pid->filter->pid_buffer_max_units) {
 				pid->max_buffer_unit = pid->filter->pid_buffer_max_units;
-				pid->max_buffer_time = 0;
 			} else if (mtype==GF_STREAM_VISUAL) {
 				pid->max_buffer_unit = 3;
-				pid->max_buffer_time = 0;
 			} else if (mtype==GF_STREAM_AUDIO) {
 				pid->max_buffer_unit = 5;
-				pid->max_buffer_time = 0;
 			}
 
 			if (!pidi->is_decoder_input) {
