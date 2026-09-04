@@ -113,8 +113,18 @@ static GF_Err httpin_initialize(GF_Filter *filter)
 	flags = GF_NETIO_SESSION_NOT_THREADED | GF_NETIO_SESSION_PERSISTENT;
 	if (ctx->cache==GF_HTTPIN_STORE_MEM)
 		flags |= GF_NETIO_SESSION_MEMORY_CACHE;
-	else if (ctx->cache==GF_HTTPIN_STORE_NONE)
+	else if (ctx->cache==GF_HTTPIN_STORE_NONE) {
 		flags |= GF_NETIO_SESSION_NOT_CACHED;
+#ifdef GPAC_CONFIG_EMSCRIPTEN
+		//the emscripten download manager ignores NOT_CACHED and only ever creates
+		//a cache for MEMORY_CACHE sessions. Without one, gf_dm_sess_get_cache_name
+		//stays NULL and this filter never publishes GF_PROP_PID_FILEPATH, so no
+		//demuxer requiring the whole file (avidmx, m2psdmx, webmdmx...) can connect.
+		//Add a non-persistent memory cache to keep the native "none" semantics:
+		//a cache exists for the session and is discarded with it.
+		flags |= GF_NETIO_SESSION_MEMORY_CACHE;
+#endif
+	}
 	else if (ctx->cache==GF_HTTPIN_STORE_DISK_KEEP)
 		flags |= GF_NETIO_SESSION_KEEP_CACHE;
 	else if (ctx->cache==GF_HTTPIN_STORE_AUTO)
@@ -236,6 +246,9 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	switch (evt->base.type) {
 	//we only check PLAY for full_file_only hint
 	case GF_FEVT_PLAY:
+	//demuxers needing the whole file (avidmx, m2psdmx, webmdmx...) announce it
+	//with PLAY_HINT, not PLAY - cf. in_file.c which handles both
+	case GF_FEVT_PLAY_HINT:
 		ctx->full_file_only = evt->play.full_file_only;
 		if (ctx->pid) {
 			gf_filter_pid_set_info_str(ctx->pid, "aborted", NULL);
@@ -367,7 +380,12 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 				if (evt->seek.is_init_segment)
 					flags |= GF_NETIO_SESSION_KEEP_FIRST_CACHE;
 			}
-			else if (ctx->cache==GF_HTTPIN_STORE_NONE) flags |= GF_NETIO_SESSION_NOT_CACHED;
+			else if (ctx->cache==GF_HTTPIN_STORE_NONE) {
+				flags |= GF_NETIO_SESSION_NOT_CACHED;
+#ifdef GPAC_CONFIG_EMSCRIPTEN
+				flags |= GF_NETIO_SESSION_MEMORY_CACHE;
+#endif
+			}
 
 			ctx->sess = gf_dm_sess_new(ctx->dm, ctx->src, flags, NULL, NULL, &e);
 			if (ctx->sess) gf_dm_sess_set_netcap_id(ctx->sess, gf_filter_get_netcap_id(filter));
