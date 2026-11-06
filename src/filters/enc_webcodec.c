@@ -314,6 +314,19 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	ctx->timescale = p ? p->value.uint : 1000;
 	Double fps=0;
 	if (streamtype==GF_STREAM_VISUAL) {
+		/* A decoder that has not parsed a sequence header yet has no
+		 * dimensions to declare - mpeg2vdec only sets WIDTH and HEIGHT at
+		 * STATE_SEQUENCE, from inside process() - and this refusal is what
+		 * loses the graph for such sources ("Failed to connect filter
+		 * mpeg2vdec PID to filter wcenc: Bad Parameter").
+		 *
+		 * Simply accepting the PID here is NOT enough, and was tried: with
+		 * codec_init still false, wcenc_process returns without consuming,
+		 * a filter is only handed a reconfiguration as it consumes, and the
+		 * session deadlocks instead of failing - measured, it never ends.
+		 * Re-running configure_pid from process() does not break it either.
+		 * Fixing this needs the encoder to be initialised lazily on the
+		 * first frame, which is a larger change than a tolerant check. */
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_WIDTH);
 		if (!p) return GF_BAD_PARAM;
 		if (ctx->width != p->value.uint) {
@@ -810,10 +823,40 @@ void wcenc_finalize(GF_Filter *filter)
 	gf_list_del(ctx->src_pcks);
 }
 
+/* The pixel formats wcenc_configure_pid knows how to name for WebCodecs -
+ * the same list as the switch there, and nothing else.
+ *
+ * Declaring them matters for link resolution, not just for documentation.
+ * Without them this filter claims every raw visual PID, so the session wires
+ * a decoder straight into it and only discovers the mismatch in
+ * configure_pid, where negotiate_property comes too late to have a converter
+ * inserted - the session then dies with "Filter not found for the desired
+ * type". Stated up front, the resolver inserts rgb2yuv by itself, exactly as
+ * it already does for encx264 (which declares GF_PIXEL_YUV). Measured on a
+ * Motion JPEG file, whose decoder emits GF_PIXEL_RGB: jpegdec -> rgb2yuv ->
+ * encx264 resolved and encoded, jpegdec -> wcenc did not.
+ *
+ * RECONFIG lets the session load an adaptation filter to reach one of these
+ * rather than refusing the link outright. */
+/* Field order follows GF_FilterCapability and CAP_UINT in filters.h -
+ * { code, val, name, flags } - with the flags LAST. */
+#define WCENC_CAP_PIXFMT(_fmt) \
+	{ GF_PROP_PID_PIXFMT, { GF_PROP_UINT, { .uint = (_fmt) } }, NULL, \
+	  GF_CAPFLAG_IN_BUNDLE | GF_CAPFLAG_INPUT | GF_CAPFLAG_RECONFIG }
+
 static GF_FilterCapability WCEncCapsV[] =
 {
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_CODECID, GF_CODECID_RAW),
+	WCENC_CAP_PIXFMT(GF_PIXEL_YUV),
+	WCENC_CAP_PIXFMT(GF_PIXEL_YUVA),
+	WCENC_CAP_PIXFMT(GF_PIXEL_YUV422),
+	WCENC_CAP_PIXFMT(GF_PIXEL_YUV444),
+	WCENC_CAP_PIXFMT(GF_PIXEL_NV12),
+	WCENC_CAP_PIXFMT(GF_PIXEL_RGBA),
+	WCENC_CAP_PIXFMT(GF_PIXEL_RGBX),
+	WCENC_CAP_PIXFMT(GF_PIXEL_BGRA),
+	WCENC_CAP_PIXFMT(GF_PIXEL_BGRX),
 	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
 	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_RAW),
 	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_TILE_BASE, GF_TRUE),
