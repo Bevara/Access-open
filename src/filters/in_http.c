@@ -78,6 +78,11 @@ typedef struct
 
 	Bool do_reconfigure;
 	Bool full_file_only;
+	//set when the session was switched to a memory cache for a full-file
+	//consumer: the PID must be re-declared once the download completes, so
+	//that GF_PROP_PID_FILEPATH points at a finished blob and never at one
+	//still flagged GF_BLOB_IN_TRANSFER
+	Bool full_file_reconfig;
 	GF_Err last_state;
 	Bool is_source_switch;
 	Bool prev_was_init_segment;
@@ -250,6 +255,35 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 	//with PLAY_HINT, not PLAY - cf. in_file.c which handles both
 	case GF_FEVT_PLAY_HINT:
 		ctx->full_file_only = evt->play.full_file_only;
+#ifdef GPAC_CONFIG_EMSCRIPTEN
+		//A downstream filter needs the whole file as a local path. The emscripten
+		//download manager only exposes a cache name - hence GF_PROP_PID_FILEPATH -
+		//for memory-cached sessions, and the default cache mode is none. Switch
+		//this session (and only this one) to a memory cache and restart the fetch;
+		//sources nobody asked the full file for keep streaming as before.
+		if (ctx->full_file_only && ctx->sess && ctx->src
+			&& (ctx->cache != GF_HTTPIN_STORE_MEM)
+			&& !gf_dm_sess_get_cache_name(ctx->sess)
+		) {
+			GF_Err mem_e;
+			gf_dm_sess_force_memory_mode(ctx->sess, 0);
+			gf_dm_sess_abort(ctx->sess);
+			mem_e = gf_dm_sess_setup_from_url(ctx->sess, ctx->src, GF_FALSE);
+			if (mem_e) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_HTTP, ("[HTTPIn] Failed to restart %s with memory cache: %s\n", ctx->src, gf_error_to_string(mem_e) ));
+			} else {
+				ctx->cache = GF_HTTPIN_STORE_MEM;
+				if (ctx->cached) gf_fclose(ctx->cached);
+				ctx->cached = NULL;
+				ctx->blob_size = 0;
+				ctx->nb_read = ctx->file_size = 0;
+				ctx->full_file_reconfig = GF_TRUE;
+				ctx->is_end = GF_FALSE;
+				ctx->last_state = GF_OK;
+				gf_filter_post_process_task(filter);
+			}
+		}
+#endif
 		if (ctx->pid) {
 			gf_filter_pid_set_info_str(ctx->pid, "aborted", NULL);
 		}
@@ -573,6 +607,13 @@ static GF_Err httpin_process(GF_Filter *filter)
 			return GF_EOS;
 		}
 
+		//the full file is now complete: re-declare the PID so that its
+		//GF_PROP_PID_FILEPATH points at the finished blob
+		if (ctx->full_file_reconfig && ctx->pid && (e==GF_EOS)) {
+			ctx->full_file_reconfig = GF_FALSE;
+			ctx->do_reconfigure = GF_TRUE;
+		}
+
 		if (!ctx->pid || ctx->do_reconfigure) {
 			u32 idx;
 			GF_Err cfg_e;
@@ -613,7 +654,11 @@ static GF_Err httpin_process(GF_Filter *filter)
 				}
 			}
 			ctx->block[nb_read] = 0;
-			cfg_e = gf_filter_pid_raw_new(filter, ctx->src, cached, ctx->mime ? ctx->mime : gf_dm_sess_mime_type(ctx->sess), ctx->ext, ctx->block, nb_read, ctx->mime ? GF_TRUE : GF_FALSE, &ctx->pid);
+			//never hand out a cache name before the transfer is over: the blob is
+			//still flagged GF_BLOB_IN_TRANSFER and a demuxer opening it fails with
+			//"GFIO object on blob corrupted or in transfer". This mirrors the
+			//blob branch below, which is itself guarded by e==GF_EOS.
+			cfg_e = gf_filter_pid_raw_new(filter, ctx->src, (ctx->full_file_only && (e!=GF_EOS)) ? NULL : cached, ctx->mime ? ctx->mime : gf_dm_sess_mime_type(ctx->sess), ctx->ext, ctx->block, nb_read, ctx->mime ? GF_TRUE : GF_FALSE, &ctx->pid);
 			if (cfg_e) return cfg_e;
 
 			gf_filter_pid_set_property(ctx->pid, GF_PROP_PID_FILE_CACHED, &PROP_BOOL(ctx->cached ? GF_TRUE : GF_FALSE) );
