@@ -27,6 +27,8 @@
 #include <gpac/base_coding.h>
 #include <gpac/download.h>
 #include <gpac/internal/m3u8.h>
+#include <gpac/internal/dash_segment_events.h>
+#include <gpac/internal/scte35.h>
 #include <gpac/network.h>
 #include <gpac/maths.h>
 
@@ -222,10 +224,15 @@ static u64 gf_mpd_parse_duration(const char * const duration)
 		char *sep_dec = strchr(sep2, '.');
 		*sep1 = 0;
 		if (sep_dec) {
+			u32 k, scale = 100;
 			sep_dec[0] = 0;
 			s = atoi(sep2);
-			ms = atoi(sep_dec+1);
 			sep_dec[0] = '.';
+			//decimal fraction of a second, kept to the millisecond: ".5" is 500 ms
+			for (k=1; (k<=3) && (sep_dec[k]>='0') && (sep_dec[k]<='9'); k++) {
+				ms += (sep_dec[k] - '0') * scale;
+				scale /= 10;
+			}
 		} else {
 			s = atoi(sep2);
 		}
@@ -813,6 +820,8 @@ static void gf_mpd_init_common_attributes(GF_MPD_CommonAttributes *com)
 	com->supplemental_properties = gf_list_new();
 	com->frame_packing = gf_list_new();
 	com->max_playout_rate = 1.0;
+	com->group_labels = gf_list_new();
+	com->labels = gf_list_new();
 }
 
 GF_MPD_Representation *gf_mpd_representation_new()
@@ -825,6 +834,42 @@ GF_MPD_Representation *gf_mpd_representation_new()
 	rep->sub_representations = gf_list_new();
 	rep->hls_max_seg_dur.den = 1;
 	return rep;
+}
+
+GF_MPD_Preselection* gf_mpd_preselection_new(u32 id)
+{
+	GF_MPD_Preselection *p;
+	GF_SAFEALLOC(p, GF_MPD_Preselection);
+	if (!p) return NULL;
+	p->id = id;
+	p->x_children = gf_list_new();
+	p->x_attributes = gf_list_new();
+	p->accessibility = gf_list_new();
+	p->role = gf_list_new();
+	gf_mpd_init_common_attributes((GF_MPD_CommonAttributes *)p);
+	return p;
+}
+
+GF_MPD_GroupLabel* gf_mpd_grouplabel_new(u32 id, const char *lang, const char *content)
+{
+	GF_MPD_GroupLabel *l = NULL;
+	GF_SAFEALLOC(l, GF_MPD_GroupLabel);
+	if (!l) return NULL;
+	l->id = id;
+	if (lang) l->lang = gf_strdup(lang);
+	if (content) l->content = gf_strdup(content);
+	return l;
+}
+
+GF_MPD_Label* gf_mpd_label_new(u32 id, const char *lang, const char *content)
+{
+	GF_MPD_Label *l = NULL;
+	GF_SAFEALLOC(l, GF_MPD_Label);
+	if (!l) return NULL;
+	l->id = id;
+	if (lang) l->lang = gf_strdup(lang);
+	if (content) l->content = gf_strdup(content);
+	return l;
 }
 
 static GF_DASH_SegmenterContext *gf_mpd_parse_dasher_context(GF_MPD *mpd, GF_XMLNode *root)
@@ -903,7 +948,30 @@ static GF_List *gf_mpd_parse_segments_context(GF_MPD *mpd, GF_XMLNode *root)
 			else if (!strcmp(att->name, "idx_size")) sctx->index_size = gf_mpd_parse_int(att->value);
 			else if (!strcmp(att->name, "idx_offset")) sctx->index_offset = gf_mpd_parse_long_int(att->value);
 			else if (!strcmp(att->name, "seg_num")) sctx->seg_num = gf_mpd_parse_int(att->value);
+			else if (!strcmp(att->name, "events_explicit") && gf_mpd_parse_int(att->value)) {
+				if (!sctx->event_associations) sctx->event_associations = gf_list_new();
+			}
 
+		}
+		/* The GPAC state format is private; ignore unknown child elements
+		 * while retaining generic event-to-boundary references. */
+		j = 0;
+		GF_XMLNode *event_node;
+		while ((event_node = gf_list_enum(child->content, &j))) {
+			char *scheme = NULL;
+			s64 presentation_time = 0;
+			u32 id = 0, boundary = 0;
+			u32 k = 0;
+			GF_XMLAttribute *event_att;
+			if (!gf_mpd_valid_child(mpd, event_node) || strcmp(event_node->name, "eventAssociation")) continue;
+			while ((event_att = gf_list_enum(event_node->attributes, &k))) {
+				if (!strcmp(event_att->name, "schemeIdUri")) scheme = event_att->value;
+				else if (!strcmp(event_att->name, "presentationTime")) sscanf(event_att->value, LLD, &presentation_time);
+				else if (!strcmp(event_att->name, "id")) id = gf_mpd_parse_int(event_att->value);
+				else if (!strcmp(event_att->name, "boundary")) boundary = gf_mpd_parse_int(event_att->value);
+			}
+			if (scheme && boundary)
+				gf_dash_segment_event_association_add(sctx, scheme, presentation_time, id, boundary);
 		}
 	}
 	return res;
@@ -1097,6 +1165,7 @@ GF_MPD_Period *gf_mpd_period_new() {
 	period->event_streams = gf_list_new();
 	period->base_URLs = gf_list_new();
 	period->subsets = gf_list_new();
+	period->preselections = gf_list_new();
 	return period;
 }
 
@@ -1356,6 +1425,8 @@ void gf_mpd_common_attributes_free(GF_MPD_CommonAttributes *ptr)
 	gf_mpd_del_list(ptr->essential_properties, gf_mpd_descriptor_free, 0);
 	gf_mpd_del_list(ptr->supplemental_properties, gf_mpd_descriptor_free, 0);
 	gf_mpd_del_list(ptr->producer_reference_time, gf_mpd_producer_reftime_free, 0);
+	gf_mpd_del_list(ptr->group_labels, gf_mpd_grouplabel_free, 0);
+	gf_mpd_del_list(ptr->labels, gf_mpd_label_free, 0);
 }
 
 void gf_mpd_representation_free(void *_item)
@@ -1418,6 +1489,7 @@ void gf_mpd_representation_free(void *_item)
 			if (s->llhas_template) gf_free(s->llhas_template);
 			if (s->frags) gf_free(s->frags);
 			if (s->hls_key_uri) gf_free(s->hls_key_uri);
+			gf_dash_segment_event_associations_del(s);
 			gf_free(s);
 		}
 		gf_list_del(ptr->state_seg_list);
@@ -1453,6 +1525,43 @@ void gf_mpd_adaptation_set_free(void *_item)
 	gf_free(ptr);
 }
 
+void gf_mpd_preselection_free(void *_item)
+{
+	GF_MPD_Preselection *ptr = (GF_MPD_Preselection *)_item;
+	gf_mpd_common_attributes_free((GF_MPD_CommonAttributes *)ptr);
+	if (ptr->lang) gf_free(ptr->lang);
+	if (ptr->tag) gf_free(ptr->tag);
+	if (ptr->preselection_components) {
+		for (u32 i = 0; i < gf_list_count(ptr->preselection_components); i++) {
+			u32 *d = (u32 *)gf_list_get(ptr->preselection_components, i);
+			gf_free(d);
+		}
+		gf_list_del(ptr->preselection_components);
+	}
+	gf_mpd_del_list(ptr->accessibility, gf_mpd_descriptor_free, 0);
+	gf_mpd_del_list(ptr->role, gf_mpd_descriptor_free, 0);
+	gf_mpd_del_list(ptr->rating, gf_mpd_descriptor_free, 0);
+	gf_mpd_del_list(ptr->viewpoint, gf_mpd_descriptor_free, 0);
+	MPD_FREE_EXTENSION_NODE(ptr);
+	gf_free(ptr);
+}
+
+void gf_mpd_grouplabel_free(void *_item)
+{
+	GF_MPD_GroupLabel *ptr = (GF_MPD_GroupLabel *)_item;
+	if (ptr->lang) gf_free(ptr->lang);
+	if (ptr->content) gf_free(ptr->content);
+	gf_free(ptr);
+}
+
+void gf_mpd_label_free(void *_item)
+{
+	GF_MPD_Label *ptr = (GF_MPD_Label *)_item;
+	if (ptr->lang) gf_free(ptr->lang);
+	if (ptr->content) gf_free(ptr->content);
+	gf_free(ptr);
+}
+
 static void gf_mpd_event_stream_entry_free(void *_item)
 {
 	GF_MPD_EventStreamEntry *ptr = (GF_MPD_EventStreamEntry *)_item;
@@ -1485,6 +1594,13 @@ void gf_mpd_period_free(void *_item)
 	gf_mpd_del_list(ptr->event_streams, gf_mpd_event_stream_free, 0);
 	MPD_FREE_EXTENSION_NODE(ptr);
 	gf_mpd_del_list(ptr->subsets, NULL/*TODO*/, 0);
+	if (ptr->preselections) {
+		while (gf_list_count(ptr->preselections)) {
+			GF_MPD_Preselection *p = gf_list_pop_back(ptr->preselections);
+			gf_mpd_preselection_free(p);
+		}
+		gf_list_del(ptr->preselections);
+	}
 	gf_free(ptr);
 }
 
@@ -2648,8 +2764,10 @@ GF_Err gf_m3u8_solve_representation_xlink(GF_MPD_Representation *rep, const char
 			return GF_NOT_READY;
 		}
 		rep->in_progress = GF_FALSE;
-		if (e<0)
+		if (e<0) {
+			gf_free(full_url);
 			return e;
+		}
 
 		loc_file = getter->get_cache_name(getter);
 		if (!loc_file) {
@@ -3344,8 +3462,32 @@ static void gf_mpd_print_common_attributes(FILE *out, GF_MPD_CommonAttributes *c
 	if (ca->scan_type != GF_MPD_SCANTYPE_UNKNOWN) gf_fprintf(out, " scanType=\"%s\"", ca->scan_type == GF_MPD_SCANTYPE_PROGRESSIVE ? "progressive" : "interlaced");
 
 	if (ca->selection_priority) gf_fprintf(out, " selectionPriority=\"%d\"", ca->selection_priority);
-	if (ca->tag) gf_fprintf(out, " selectionPriority=\"%s\"", ca->tag);
+	if (ca->tag) gf_fprintf(out, " tag=\"%s\"", ca->tag);
 
+}
+
+static void gf_mpd_print_label(FILE *out, GF_List *list, s32 indent)
+{
+	u32 i=0;
+	GF_MPD_Label *l;
+	while ((l = gf_list_enum(list, &i))) {
+		gf_mpd_nl(out, indent);
+		gf_fprintf(out, "<Label");
+		if (l->id) gf_fprintf(out, " id=\"%d\"", l->id);
+		gf_fprintf(out, " lang=\"%s\">%s</Label>", l->lang, l->content);
+		gf_mpd_lf(out, indent);
+	}
+}
+
+static void gf_mpd_print_group_label(FILE *out, GF_List *list, s32 indent)
+{
+	u32 i=0;
+	GF_MPD_GroupLabel *l;
+	while ((l = gf_list_enum(list, &i))) {
+		gf_mpd_nl(out, indent);
+		gf_fprintf(out, "<GroupLabel id=\"%d\" lang=\"%s\">%s</GroupLabel>", l->id, l->lang, l->content);
+		gf_mpd_lf(out, indent);
+	}
 }
 
 static u32 gf_mpd_print_common_children(FILE *out, GF_MPD_CommonAttributes *ca, s32 indent, u32 *child_idx)
@@ -3355,6 +3497,8 @@ static u32 gf_mpd_print_common_children(FILE *out, GF_MPD_CommonAttributes *ca, 
 	gf_mpd_print_descriptors(out, ca->content_protection, "ContentProtection", indent, ca->x_children, child_idx);
 	gf_mpd_print_descriptors(out, ca->essential_properties, "EssentialProperty", indent, ca->x_children, child_idx);
 	gf_mpd_print_descriptors(out, ca->supplemental_properties, "SupplementalProperty", indent, ca->x_children, child_idx);
+	gf_mpd_print_group_label(out, ca->group_labels, indent);
+	gf_mpd_print_label(out, ca->labels, indent);
 
 	if (ca->producer_reference_time) {
 		u32 i, count = gf_list_count(ca->producer_reference_time);
@@ -3486,6 +3630,10 @@ static void gf_mpd_print_dasher_segments(FILE *out, GF_List *segments, s32 inden
 		gf_fprintf(out, "time=\""LLU"\" ", sctx->time);
 		gf_fprintf(out, "dur=\""LLU"\" ", sctx->dur);
 		gf_fprintf(out, "seg_num=\"%d\" ", sctx->seg_num);
+		/* Persist the choice of explicit boundary placement even for segments
+		 * which contain no event transition. */
+		if (sctx->event_associations)
+			gf_fprintf(out, "events_explicit=\"1\" ");
 		if (sctx->filename) gf_fprintf(out, "file=\"%s\" ", sctx->filename);
 		if (sctx->filepath) gf_fprintf(out, "path=\"%s\" ", sctx->filepath);
 		if (sctx->file_size) {
@@ -3498,8 +3646,25 @@ static void gf_mpd_print_dasher_segments(FILE *out, GF_List *segments, s32 inden
 		}
 		//we don't store frag context because we can only serialize the dash state at segment boundaries, and we don't keep frag states for already published
 		//segments
-		gf_fprintf(out, "/>");
-		gf_mpd_lf(out, indent);
+		if (!sctx->event_associations || !gf_list_count(sctx->event_associations)) {
+			gf_fprintf(out, "/>");
+			gf_mpd_lf(out, indent);
+		} else {
+			u32 j = 0;
+			GF_DASH_SegmentEventAssociation *assoc;
+			gf_fprintf(out, ">");
+			gf_mpd_lf(out, indent);
+			while ((assoc = gf_list_enum(sctx->event_associations, &j))) {
+				gf_mpd_nl(out, indent+2);
+				gf_xml_dump_string(out, "<eventAssociation schemeIdUri=\"", assoc->scheme_id_uri, "\"");
+				gf_fprintf(out, " presentationTime=\"" LLD "\" id=\"%u\" boundary=\"%u\"/>",
+					assoc->presentation_time, assoc->id, assoc->boundary_type);
+				gf_mpd_lf(out, indent);
+			}
+			gf_mpd_nl(out, indent+1);
+			gf_fprintf(out, "</segmentInfo>");
+			gf_mpd_lf(out, indent);
+		}
 	}
 
 	gf_mpd_nl(out, indent);
@@ -3757,6 +3922,42 @@ static void gf_mpd_print_adaptation_set(GF_MPD_AdaptationSet *as, FILE *out, Boo
 	}
 }
 
+static void gf_mpd_print_preselection(GF_MPD_Preselection *pre, FILE *out, Bool write_context, s32 indent, u32 alt_mha_profile)
+{
+	u32 i, child_idx=0;
+
+	gf_mpd_nl(out, indent);
+	gf_fprintf(out, "<Preselection");
+
+	if (pre->id>=0) gf_fprintf(out, " id=\"%d\"", pre->id);
+	if (pre->preselection_components) {
+		gf_fprintf(out, " preselectionComponents=\"");
+		for (i = 0; i < gf_list_count(pre->preselection_components); i++) {
+			u32 *comp = gf_list_get(pre->preselection_components, i);
+			gf_fprintf(out, "%d", *comp);
+			if (i < gf_list_count(pre->preselection_components) - 1)
+				gf_fprintf(out, " ");
+		}
+		gf_fprintf(out, "\"");
+	}
+	if (pre->lang) mpd_print_lang(out, pre->lang, NULL);
+	gf_mpd_extensible_print_attr(out, pre->x_attributes);
+	gf_mpd_print_common_attributes(out, (GF_MPD_CommonAttributes*)pre);
+	gf_fprintf(out, ">");
+	gf_mpd_lf(out, indent);
+
+	gf_mpd_print_common_children(out, (GF_MPD_CommonAttributes*)pre, indent+1, &child_idx);
+	gf_mpd_print_descriptors(out, pre->accessibility, "Accessibility", indent+1, pre->x_children, &child_idx);
+	gf_mpd_print_descriptors(out, pre->role, "Role", indent+1, pre->x_children, &child_idx);
+	gf_mpd_print_descriptors(out, pre->rating, "Rating", indent+1, pre->x_children, &child_idx);
+	gf_mpd_print_descriptors(out, pre->viewpoint, "Viewpoint", indent+1, pre->x_children, &child_idx);
+
+	gf_mpd_extensible_print_nodes(out, pre->x_children, indent, &child_idx, GF_TRUE);
+	gf_mpd_nl(out, indent);
+	gf_fprintf(out, "</Preselection>");
+	gf_mpd_lf(out, indent);
+}
+
 static void gf_mpd_print_period(GF_MPD_Period const * const period, Bool is_dynamic, FILE *out, Bool write_context, s32 indent)
 {
 	GF_MPD_AdaptationSet *as;
@@ -3804,6 +4005,11 @@ static void gf_mpd_print_period(GF_MPD_Period const * const period, Bool is_dyna
 	while ( (as = (GF_MPD_AdaptationSet *) gf_list_enum(period->adaptation_sets, &i))) {
 		gf_mpd_extensible_print_nodes(out, period->x_children, indent, &child_idx, GF_FALSE);
 		gf_mpd_print_adaptation_set(as, out, write_context, indent+1, 0);
+	}
+	i=0;
+	GF_MPD_Preselection *p = NULL;
+	while ((p = (GF_MPD_Preselection *) gf_list_enum(period->preselections, &i))) {
+		gf_mpd_print_preselection(p, out, write_context, indent+1, 0);
 	}
 	gf_mpd_extensible_print_nodes(out, period->x_children, indent, &child_idx, GF_TRUE);
 	gf_mpd_nl(out, indent);
@@ -4173,17 +4379,168 @@ static void hls_insert_crypt_info(FILE *out, GF_MPD_Representation *rep, GF_DASH
 	}
 }
 
-static void hls_insert_scte35_info(FILE *out, u64 ast, const GF_MPD_Period *period, GF_DASH_SegmentContext *sctx)
+/* Explicit event associations are an alternative to reconstructing a splice
+ * boundary from a shared EventStream PTS and a representation's segment CTS.
+ * A non-NULL list, including an empty one, opts a segment into this scheme.
+ * This matters before the first splice as well as after state restoration. */
+static Bool hls_has_explicit_segment_events(const GF_MPD_Representation *rep)
 {
+	u32 i, count = gf_list_count(rep->state_seg_list);
+	for (i=0; i<count; i++) {
+		GF_DASH_SegmentContext *sctx = gf_list_get(rep->state_seg_list, i);
+		if (sctx->event_associations) return GF_TRUE;
+	}
+	return GF_FALSE;
+}
+
+/* A cue pair on the same physical boundary offers no replaceable media.
+ * The original SCTE DATERANGE metadata is still retained on that segment. */
+static s32 hls_scte35_association_segment_index(const GF_MPD_Representation *rep,
+	const GF_DASH_SegmentEventAssociation *needle, u32 boundary_type)
+{
+	u32 i, j;
+	for (i=0; i<gf_list_count(rep->state_seg_list); i++) {
+		GF_DASH_SegmentContext *seg = gf_list_get(rep->state_seg_list, i);
+		GF_DASH_SegmentEventAssociation *a;
+		if (!seg || !seg->event_associations) continue;
+		for (j=0; (a = gf_list_enum(seg->event_associations, &j)); ) {
+			if ((a->boundary_type == boundary_type) && (a->id == needle->id)
+				&& (a->presentation_time == needle->presentation_time)
+				&& a->scheme_id_uri && needle->scheme_id_uri
+				&& !strcmp(a->scheme_id_uri, needle->scheme_id_uri))
+				return (s32)i;
+		}
+	}
+	return -1;
+}
+
+/* An SCTE DATERANGE describes the signaled event, independently of whether
+ * its splice admits a media-replacement boundary in this representation. */
+static void hls_insert_scte35_event_metadata(FILE *out, u64 ast, const GF_MPD_Period *period,
+	const GF_MPD_AdaptationSet *as, const GF_MPD_Representation *rep,
+	const GF_DASH_SegmentContext *sctx)
+{
+	u64 segment_duration = 0, pto = 0;
+	u32 seg_ts = 1, i = 0;
+	GF_MPD_EventStream *es;
+	GF_DASH_SegmentContext *first = gf_list_get(rep->state_seg_list, rep->tsb_first_entry);
+	if (!rep->timescale || !rep->timescale_mpd) return;
+	/* The MPD utility only reads its arguments, despite its non-const API. */
+	gf_mpd_resolve_segment_duration((GF_MPD_Representation *)rep, (GF_MPD_AdaptationSet *)as,
+		(GF_MPD_Period *)period, &segment_duration, &seg_ts, &pto, NULL);
+	if (!seg_ts) seg_ts = 1;
+
+	while ((es = gf_list_enum(period->event_streams, &i))) {
+		GF_MPD_EventStreamEntry *ese;
+		u32 j = 0;
+		u64 pto_event;
+		if (!es->scheme_id_uri || strcmp(es->scheme_id_uri, GF_SCTE35_SCHEME_URI_OUTBAND)
+			|| !es->timescale) continue;
+		pto_event = gf_timestamp_rescale(pto, seg_ts, es->timescale);
+		while ((ese = gf_list_enum(es->entries, &j))) {
+			u64 time, time_mpd, duration_mpd, segdur_mpd;
+			Bool in_segment, active_first;
+			if (ese->presentation_time < 0) continue;
+			time = (u64)ese->presentation_time;
+			if (time >= pto_event) time -= pto_event;
+			else time = 0;
+			time_mpd = gf_timestamp_rescale(time, es->timescale, rep->timescale_mpd);
+			duration_mpd = gf_timestamp_rescale(ese->duration, es->timescale, rep->timescale_mpd);
+			segdur_mpd = gf_timestamp_rescale(sctx->dur, rep->timescale, rep->timescale_mpd);
+			in_segment = (sctx->time <= time_mpd && time_mpd - sctx->time < segdur_mpd);
+			active_first = (sctx == first && time_mpd < sctx->time
+				&& ((!ese->duration || ese->duration == (u32)-1)
+					|| time_mpd + duration_mpd > sctx->time));
+			if (!in_segment && !active_first) continue;
+			gf_fprintf(out, "#EXT-X-DATERANGE:ID=\"%d-%04d\",", ese->id, 0);
+			gf_mpd_print_date(out, "START-DATE", ast + gf_timestamp_rescale(time, es->timescale, 1000));
+			gf_fprintf(out, ",PLANNED-DURATION=%g", ese->duration/(Double)es->timescale);
+			if (ese->message) {
+				gf_fprintf(out, ",SCTE35-OUT=0x");
+				for (u32 b=0; b<ese->message_size; ++b)
+					gf_fprintf(out, "%02X", ese->message[b]);
+			}
+			gf_fprintf(out, "\n");
+		}
+	}
+}
+
+/* An event association places the ad-replacement cue on a physical segment
+ * boundary; it does not redefine the original SCTE event's presentation time. */
+static void hls_insert_scte35_associations(FILE *out, const GF_MPD_Period *period,
+	const GF_MPD_Representation *rep, const GF_DASH_SegmentContext *sctx, Bool final_playlist)
+{
+	u32 i, j, k;
+	GF_DASH_SegmentEventAssociation *assoc;
+	if (!sctx->event_associations) return;
+
+	for (i=0; (assoc = gf_list_enum(sctx->event_associations, &i)); ) {
+		GF_MPD_EventStream *es;
+		GF_MPD_EventStreamEntry *ese = NULL;
+		if (assoc->boundary_type != GF_DASH_SEGMENT_EVENT_START
+			&& assoc->boundary_type != GF_DASH_SEGMENT_EVENT_END)
+			continue;
+		for (j=0; (es = gf_list_enum(period->event_streams, &j)); ) {
+			GF_MPD_EventStreamEntry *candidate;
+			if (!es->scheme_id_uri || strcmp(assoc->scheme_id_uri, es->scheme_id_uri)) continue;
+			for (k=0; (candidate = gf_list_enum(es->entries, &k)); ) {
+				if (candidate->id == assoc->id && candidate->presentation_time == assoc->presentation_time) {
+					ese = candidate;
+					break;
+				}
+			}
+			if (!ese) continue;
+			if (assoc->boundary_type == GF_DASH_SEGMENT_EVENT_START) {
+				s32 start_idx = gf_list_find(rep->state_seg_list, (void *)sctx);
+				s32 end_idx = hls_scte35_association_segment_index(rep, assoc, GF_DASH_SEGMENT_EVENT_END);
+				/* Never advertise an empty replacement interval or a finalized VOD
+				 * break without a later return boundary. Live can await the return. */
+				if ((end_idx != start_idx) && (!final_playlist || end_idx > start_idx))
+					gf_fprintf(out, "#EXT-X-CUE-OUT:%g\n", es->timescale ? ese->duration/(Double)es->timescale : 0);
+			} else {
+				s32 end_idx = gf_list_find(rep->state_seg_list, (void *)sctx);
+				s32 start_idx = hls_scte35_association_segment_index(rep, assoc, GF_DASH_SEGMENT_EVENT_START);
+				/* Permit CUE-IN with a purged OUT in a sliding live playlist. */
+				if ((start_idx != end_idx) && (!final_playlist || (start_idx >= 0 && start_idx < end_idx)))
+					gf_fprintf(out, "#EXT-X-CUE-IN\n");
+			}
+			break;
+		}
+	}
+}
+
+static void hls_insert_scte35_info(FILE *out, u64 ast, const GF_MPD_Period *period, const GF_MPD_AdaptationSet *adaptation_set, const GF_MPD_Representation *representation, GF_DASH_SegmentContext *sctx)
+{
+	u64 segment_duration = 0;
+	u64 presentation_time_offset = 0;
+	u32 segment_timescale = 1;
 	GF_MPD_EventStream *es = NULL;
+
+	/* Segment contexts are presentation-relative, while SCTE-35 splice_time is
+	 * carried on the source timeline. Resolve the inherited PTO once so both
+	 * values are compared in the same clock domain. */
+	gf_mpd_resolve_segment_duration(representation, adaptation_set, period,
+		&segment_duration, &segment_timescale, &presentation_time_offset, NULL);
+	if (!segment_timescale) segment_timescale = 1;
 	u32 i = 0;
 	while ( (es = gf_list_enum(period->event_streams, &i)) ) {
 		GF_MPD_EventStreamEntry *ese = NULL;
 		u32 j = 0;
 		while ( (ese = gf_list_enum(es->entries, &j)) ) {
-			if (ese->state == 0 && sctx->time <= ese->presentation_time && ese->presentation_time < sctx->time+sctx->dur) {
+			u64 event_time = ese->presentation_time;
+			u64 event_time_in_representation_timescale;
+			u64 event_duration_in_representation_timescale;
+			u64 presentation_time_offset_in_event_timescale = gf_timestamp_rescale(presentation_time_offset, segment_timescale, es->timescale);
+
+			if (event_time >= presentation_time_offset_in_event_timescale)
+				event_time -= presentation_time_offset_in_event_timescale;
+
+			event_time_in_representation_timescale = gf_timestamp_rescale(event_time, es->timescale, representation->timescale);
+			event_duration_in_representation_timescale = gf_timestamp_rescale(ese->duration, es->timescale, representation->timescale);
+
+			if (ese->state == 0 && sctx->time <= event_time_in_representation_timescale && event_time_in_representation_timescale < sctx->time+sctx->dur) {
 				gf_fprintf(out, "#EXT-X-DATERANGE:ID=\"%d-%04d\",", ese->id, ese->state);
-				gf_mpd_print_date(out, "START-DATE", ast + (ese->presentation_time * 1000) / es->timescale);
+				gf_mpd_print_date(out, "START-DATE", ast + (event_time * 1000) / es->timescale);
 				gf_fprintf(out, ",PLANNED-DURATION=%g", ese->duration/(Double)es->timescale);
 				if (ese->message) {
 					gf_fprintf(out, ",SCTE35-OUT=0x");
@@ -4196,7 +4553,7 @@ static void hls_insert_scte35_info(FILE *out, u64 ast, const GF_MPD_Period *peri
 				ese->state = 1;
 			}
 
-			if (ese->state == 1 && ese->presentation_time+ese->duration <= sctx->time+sctx->dur) {
+			if (ese->state == 1 && event_time_in_representation_timescale+event_duration_in_representation_timescale <= sctx->time+sctx->dur) {
 				gf_fprintf(out, "#EXT-X-CUE-IN\n");
 				ese->state = 0;
 			}
@@ -4207,7 +4564,20 @@ static void hls_insert_scte35_info(FILE *out, u64 ast, const GF_MPD_Period *peri
 static GF_Err gf_mpd_write_m3u8_playlist(const GF_MPD *mpd, const GF_MPD_Period *period, const GF_MPD_AdaptationSet *as, GF_MPD_Representation *rep, char *m3u8_name, u32 hls_version, Double max_part_dur_session, const char *force_base_url, Bool delta_update, Bool is_last, FILE* out_file)
 {
 	u32 i, count;
+	u32 event_stream_index = 0;
+	GF_MPD_EventStream *event_stream;
+
+	/* Event entry state is scratch state used while serializing one HLS playlist.
+	 * Dynamic playlists are regenerated from the retained segment window, so a
+	 * previous serialization must not suppress SCTE-35 tags on a later rewrite. */
+	while (period->event_streams && (event_stream = gf_list_enum(period->event_streams, &event_stream_index))) {
+		u32 event_index = 0;
+		GF_MPD_EventStreamEntry *event_entry;
+		while ((event_entry = gf_list_enum(event_stream->entries, &event_index)))
+			event_entry->state = 0;
+	}
 	GF_DASH_SegmentContext *sctx;
+	Bool explicit_segment_events = hls_has_explicit_segment_events(rep);
 	FILE *out = out_file;
 	char *force_url=NULL;
 	const char *last_kms = NULL;
@@ -4423,7 +4793,15 @@ static GF_Err gf_mpd_write_m3u8_playlist(const GF_MPD *mpd, const GF_MPD_Period 
 			// 0-duration may be encountered in non-LL modes when the duration is not known yet, but players may not like (cf issue 3462)
 			if (!sctx->dur) continue;
 
-			hls_insert_scte35_info(out, mpd->availabilityStartTime, period, sctx);
+			if (explicit_segment_events) {
+				hls_insert_scte35_event_metadata(out, mpd->availabilityStartTime, period, as, rep, sctx);
+				hls_insert_scte35_associations(out, period, rep, sctx,
+					(mpd->type != GF_MPD_TYPE_DYNAMIC) && is_last);
+			} else {
+				/* Keep existing no-association behavior unchanged in #11.01.
+				 * #04 retains ownership of corrected fallback semantics. */
+				hls_insert_scte35_info(out, mpd->availabilityStartTime, period, as, rep, sctx);
+			}
 
 			//signal discontinuity if needed
 			if (sctx && sctx->is_discontinuity)
@@ -4495,7 +4873,7 @@ static GF_Err gf_mpd_write_m3u8_playlist(const GF_MPD *mpd, const GF_MPD_Period 
 
 			dur = (Double) sctx->dur;
 			dur /= rep->timescale;
-			gf_fprintf(out,"#EXTINF:%g\n", dur);
+			gf_fprintf(out,"#EXTINF:%g,\n", dur);
 			gf_fprintf(out,"#EXT-X-BYTERANGE:%d@"LLU"\n", sctx->file_size, sctx->file_offset);
 			if (force_base_url)
 				force_url = gf_url_concatenate(force_base_url, b_url);
@@ -5718,7 +6096,7 @@ Double gf_mpd_get_duration(GF_MPD *mpd)
 }
 
 GF_EXPORT
-void gf_mpd_resolve_segment_duration(GF_MPD_Representation *rep, GF_MPD_AdaptationSet *set, GF_MPD_Period *period, u64 *out_duration, u32 *out_timescale, u64 *out_pts_offset, GF_MPD_SegmentTimeline **out_segment_timeline)
+void gf_mpd_resolve_segment_duration(const GF_MPD_Representation *rep, const GF_MPD_AdaptationSet *set, const GF_MPD_Period *period, u64 *out_duration, u32 *out_timescale, u64 *out_pts_offset, GF_MPD_SegmentTimeline **out_segment_timeline)
 {
 	u32 timescale = 0;
 	u64 pts_offset = 0;

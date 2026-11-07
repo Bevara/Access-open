@@ -84,6 +84,7 @@ static Bool in_sig_handler = GF_FALSE;
 static Bool custom_event_proc=GF_FALSE;
 static u64 run_start_time = 0;
 static Bool return_gferr = GF_FALSE;
+static Bool session_was_run = GF_FALSE;
 
 //Bevara
 GF_Filter *dst;
@@ -359,6 +360,7 @@ static void em_main_loop(void*arg)
 {
 	u32 run = run_steps;
 	window_swap = GF_FALSE;
+	session_was_run = GF_TRUE;
 	while (session && run) {
 		GF_Err e = gf_fs_run(session);
 
@@ -496,6 +498,7 @@ static void run_sess(void)
 	} else {
 		gf_fs_run(session);
 	}
+	session_was_run = GF_TRUE;
 }
 #endif
 
@@ -1238,6 +1241,7 @@ restart:
 	}
 
 	//all good to go, load filters
+	session_was_run = GF_FALSE;
 	has_xopt = GF_FALSE;
 	links_directive = gf_list_new();
 	loaded_filters = gf_list_new();
@@ -1589,6 +1593,7 @@ restart:
 		e = gf_fs_run(session);
 		if (e>0) e = GF_OK;
 	}
+	session_was_run = GF_TRUE;
 #endif
 
 
@@ -1647,7 +1652,7 @@ exit:
 		gf_log_set_callback(session, NULL);
 	}
 
-	if (e && nb_filters) {
+	if (e && nb_filters && !session_was_run) {
 		gf_fs_run(session);
 	}
 	if (dump_stats)
