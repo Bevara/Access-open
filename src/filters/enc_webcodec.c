@@ -68,6 +68,38 @@ typedef struct
 	char *pname;
 } GF_WCEncCtx;
 
+/* The pixel formats wcenc_configure_pid knows how to name for WebCodecs -
+ * the same list as the switch there, and nothing else.
+ *
+ * Declaring them matters for link resolution, not just for documentation.
+ * Without them this filter claims every raw visual PID, so the session wires
+ * a decoder straight into it and only discovers the mismatch in
+ * configure_pid, where negotiate_property comes too late to have a converter
+ * inserted - the session then dies with "Filter not found for the desired
+ * type". Stated up front, the resolver inserts rgb2yuv by itself, exactly as
+ * it already does for encx264 (which declares GF_PIXEL_YUV). Measured on a
+ * Motion JPEG file, whose decoder emits GF_PIXEL_RGB: jpegdec -> rgb2yuv ->
+ * encx264 resolved and encoded, jpegdec -> wcenc did not.
+ *
+ * RECONFIG lets the session load an adaptation filter to reach one of these
+ * rather than refusing the link outright.
+ *
+ * These entries must come LAST in their capability bundle. The encoder lookup
+ * behind a "c=CODEC" argument (gf_fs_check_filter_register_cap_ex) scans the
+ * register's caps and stops dead at the first RECONFIG one:
+ *     if (cap->flags & GF_CAPFLAG_RECONFIG) break;
+ * Listed before the output CODECID cap, they hid it from that scan, and the
+ * session answered "Cannot find any filter providing encoding for c=avc" -
+ * wcenc was no longer an encoder candidate at all. Placed after it, the scan
+ * has already seen the raw input and the non-raw output by the time it
+ * breaks, and link resolution - which walks whole bundles and does not care
+ * about the order - still sees the pixel formats. */
+/* Field order follows GF_FilterCapability and CAP_UINT in filters.h -
+ * { code, val, name, flags } - with the flags LAST. */
+#define WCENC_CAP_PIXFMT(_fmt) \
+	{ GF_PROP_PID_PIXFMT, { GF_PROP_UINT, { .uint = (_fmt) } }, NULL, \
+	  GF_CAPFLAG_IN_BUNDLE | GF_CAPFLAG_INPUT | GF_CAPFLAG_RECONFIG }
+
 #if defined(GPAC_CONFIG_EMSCRIPTEN)
 
 GF_EXPORT
@@ -92,7 +124,15 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 	if (width) {
 		config.width = width;
 		config.height = height;
-		config.framerate = FPS;
+		/* framerate is optional in WebCodecs, and a zero one is not "unknown"
+		 * but an invalid config: isConfigSupported() answers false and the
+		 * session blacklists wcenc entirely ("Codec/Profile not supported for
+		 * filter wcenc - blacklisting as output from vpxdec"). Several
+		 * demuxers legitimately expose no frame rate - webmdmx does not, so
+		 * every VP9 and AV1 source failed to encode with
+		 * {codec:"avc1.420033", width:640, height:360, framerate:0}. Leave
+		 * the key out and let the encoder work it out from the timestamps. */
+		if (FPS > 0) config.framerate = FPS;
 		config.latency = realtime ?  "realtime" : "quality";
 		enc_class = VideoEncoder;
 		if (codec_str.startsWith("avc")) {
@@ -173,26 +213,51 @@ EM_JS(int, wcenc_init, (int wc_ctx, int _codec_str, int bitrate, int width, int 
 					 * produced a first chunk, at which point every held
 					 * chunk (across all instances, FIFO by arrival order) is
 					 * released together and coordination is permanently
-					 * switched off for the rest of the session. A
-					 * held-count safety valve forces release regardless of
-					 * the expected count, so a track that never manages to
-					 * connect (e.g. genuinely unsupported codec/config) can
-					 * never hang every other track's output forever. */
+					 * switched off for the rest of the session.
+					 *
+					 * Two guards keep that wait from becoming a deadlock.
+					 *
+					 * First, the expected count is clamped to the number of
+					 * encoder instances that actually exist (libgpac._web_encs).
+					 * wcencExpectedCount is only a prediction - it counts the
+					 * "c=CODEC" arguments - and a source need not carry every
+					 * stream asked for: "c=avc c=aac" on a video with no audio
+					 * track creates a second wcenc that never receives a PID, so
+					 * no second instance is ever registered and the predicted
+					 * count can never be reached. GPAC resolves and configures
+					 * every link before any packet flows, so by the time a first
+					 * chunk arrives _web_encs already holds every instance the
+					 * session will ever have.
+					 *
+					 * Second, a held-count valve releases regardless. It has to
+					 * sit *below* what one instance can produce on its own:
+					 * wcenc_process stops handing frames to the encoder once
+					 * src_pcks exceeds the "queued" option (10 by default), and
+					 * that list is drained only by _on_wcenc_frame - that is, by
+					 * releasing. A valve above that depth is unreachable: the
+					 * earlier value of 60 could never trigger, and a video with
+					 * no audio track span forever on "wcenc real-time reschedule
+					 * in 500 us" instead of finishing. */
 					if (typeof libgpac._wcenc_coord == 'undefined') {
-						let expected = libgpac.wcencExpectedCount || 0;
 						libgpac._wcenc_coord = {
-							expected: expected,
 							readySet: new Set(),
 							held: [],
-							released: (expected <= 1)
+							released: ((libgpac.wcencExpectedCount || 0) <= 1)
 						};
 					}
 					const coord = libgpac._wcenc_coord;
-					const WCENC_COORD_MAX_HELD = 60;
+					/* Below the default "queued" option (10), so a single
+					 * instance can always reach it - see the note above. */
+					const WCENC_COORD_MAX_HELD = 8;
 
 					if (!coord.released) {
 						coord.readySet.add(c._wc_ctx);
-						if ((coord.readySet.size < coord.expected) && (coord.held.length < WCENC_COORD_MAX_HELD)) {
+						/* Recomputed on every chunk rather than frozen at the
+						 * first one: only instances that really exist can ever
+						 * report in. */
+						const live = Array.isArray(libgpac._web_encs) ? libgpac._web_encs.length : 0;
+						const expected = Math.min(libgpac.wcencExpectedCount || 0, live || 1);
+						if ((coord.readySet.size < expected) && (coord.held.length < WCENC_COORD_MAX_HELD)) {
 							coord.held.push({ c: c, chunk: chunk, ts: chunk.timestamp, dur: chunk.duration, len: chunk.byteLength, sap: sap });
 							return;
 						}
@@ -365,10 +430,25 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 			case GF_PIXEL_BGRA: ctx->pname = "BGRA"; break;
 			case GF_PIXEL_BGRX: ctx->pname = "BGRX"; break;
 			default:
+				/* A format WebCodecs cannot name: ask the session to insert a
+				 * converter. What to ask for is dictated by the converters
+				 * that exist, not by what this encoder could accept - asking
+				 * for an unreachable format fails the link outright.
+				 *
+				 * Packed RGB variants (GF_PIXEL_RGB and GF_PIXEL_BGR, what
+				 * every still-image decoder in this build emits) used to
+				 * negotiate GF_PIXEL_RGBX. Nothing here produces RGBX: the
+				 * only raw-video converter shipped is rgb2yuv, whose single
+				 * output is GF_PIXEL_YUV. The session answered "Filter
+				 * jpegdec cannot reconfigure output pids, loading filter
+				 * chain for renegotiation", found nothing, and dropped the
+				 * PID - Motion JPEG never reached the encoder. YUV is also
+				 * what encx264 asks for, and H.264 has no use for the alpha
+				 * channel that the RGBA branch was preserving. */
 				if (gf_pixel_fmt_is_yuv(ifmt)) {
 					ctx->pfmt = gf_pixel_fmt_is_transparent(ifmt) ? GF_PIXEL_YUVA : GF_PIXEL_YUV;
 				} else {
-					ctx->pfmt = gf_pixel_fmt_is_transparent(ifmt) ? GF_PIXEL_RGBA : GF_PIXEL_RGBX;
+					ctx->pfmt = GF_PIXEL_YUV;
 				}
 				break;
 			}
@@ -570,7 +650,13 @@ void wcenc_on_flush(GF_WCEncCtx *ctx)
 EM_JS(int, wcenc_flush, (int wc_ctx), {
 	let c = libgpac._to_webenc(wc_ctx);
 	if (!c || !c.enc) return;
-	c.enc.flush().then( () => {libgpac._on_wcenc_flush(c._wc_ctx); }).catch ( (e) => { libgpac._on_wcenc_flush(c._wc_ctx); } );
+	/* The host loop ends the session when GPAC has one task left and no
+	 * fetch in flight. While this promise is pending that single task is
+	 * wcenc reposting itself, so the session would stop in the middle of the
+	 * flush and the output would be truncated. The flag lets the loop see
+	 * that the encoder still owes frames (see em_webcodec_in_flight). */
+	c._flushing = 1;
+	c.enc.flush().then( () => {c._flushing = 0; libgpac._on_wcenc_flush(c._wc_ctx); }).catch ( (e) => {c._flushing = 0; libgpac._on_wcenc_flush(c._wc_ctx); } );
 })
 
 
@@ -823,31 +909,13 @@ void wcenc_finalize(GF_Filter *filter)
 	gf_list_del(ctx->src_pcks);
 }
 
-/* The pixel formats wcenc_configure_pid knows how to name for WebCodecs -
- * the same list as the switch there, and nothing else.
- *
- * Declaring them matters for link resolution, not just for documentation.
- * Without them this filter claims every raw visual PID, so the session wires
- * a decoder straight into it and only discovers the mismatch in
- * configure_pid, where negotiate_property comes too late to have a converter
- * inserted - the session then dies with "Filter not found for the desired
- * type". Stated up front, the resolver inserts rgb2yuv by itself, exactly as
- * it already does for encx264 (which declares GF_PIXEL_YUV). Measured on a
- * Motion JPEG file, whose decoder emits GF_PIXEL_RGB: jpegdec -> rgb2yuv ->
- * encx264 resolved and encoded, jpegdec -> wcenc did not.
- *
- * RECONFIG lets the session load an adaptation filter to reach one of these
- * rather than refusing the link outright. */
-/* Field order follows GF_FilterCapability and CAP_UINT in filters.h -
- * { code, val, name, flags } - with the flags LAST. */
-#define WCENC_CAP_PIXFMT(_fmt) \
-	{ GF_PROP_PID_PIXFMT, { GF_PROP_UINT, { .uint = (_fmt) } }, NULL, \
-	  GF_CAPFLAG_IN_BUNDLE | GF_CAPFLAG_INPUT | GF_CAPFLAG_RECONFIG }
-
 static GF_FilterCapability WCEncCapsV[] =
 {
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),
 	CAP_UINT(GF_CAPS_INPUT, GF_PROP_PID_CODECID, GF_CODECID_RAW),
+	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
+	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_RAW),
+	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_TILE_BASE, GF_TRUE),
 	WCENC_CAP_PIXFMT(GF_PIXEL_YUV),
 	WCENC_CAP_PIXFMT(GF_PIXEL_YUVA),
 	WCENC_CAP_PIXFMT(GF_PIXEL_YUV422),
@@ -857,9 +925,6 @@ static GF_FilterCapability WCEncCapsV[] =
 	WCENC_CAP_PIXFMT(GF_PIXEL_RGBX),
 	WCENC_CAP_PIXFMT(GF_PIXEL_BGRA),
 	WCENC_CAP_PIXFMT(GF_PIXEL_BGRX),
-	CAP_BOOL(GF_CAPS_INPUT_EXCLUDED, GF_PROP_PID_UNFRAMED, GF_TRUE),
-	CAP_UINT(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_CODECID, GF_CODECID_RAW),
-	CAP_BOOL(GF_CAPS_OUTPUT_EXCLUDED, GF_PROP_PID_TILE_BASE, GF_TRUE),
 };
 
 static GF_FilterCapability WCEncCapsA[] =
@@ -881,6 +946,23 @@ static GF_Err wcenc_process(GF_Filter *filter)
 }
 #endif
 
+/* The caps actually used whenever the browser has both encoders, which is the
+ * normal case - WCEncCapsV and WCEncCapsA above only replace it when one of
+ * the two is missing.
+ *
+ * No WCENC_CAP_PIXFMT entries here, deliberately. A RECONFIG capability ends
+ * every capability scan in the session for the *whole array*, not just for the
+ * bundle it sits in (`if (cap->flags & GF_CAPFLAG_RECONFIG) break;` appears a
+ * dozen times across filter_pid.c, filter.c and filter_session.c). Placed
+ * before the output CODECID cap they hid wcenc from the "c=CODEC" encoder
+ * lookup; placed at the end of the video bundle they hid the audio bundle that
+ * follows, so Dijkstra found no vorbisdec -> wcenc edge and the audio PID went
+ * to the muxer unencoded. GPAC's capability model simply cannot express
+ * RECONFIG caps in a multi-bundle register, so the pixel formats are declared
+ * only in the single-bundle WCEncCapsV. The cost is that on a browser with
+ * both encoders a decoder emitting RGB (Motion JPEG) still links straight to
+ * wcenc instead of through rgb2yuv - that case needs
+ * gf_filter_pid_negotiate_property in wcenc_configure_pid, not caps. */
 static GF_FilterCapability WCEncCapsAV[] =
 {
 	CAP_UINT(GF_CAPS_INPUT_OUTPUT, GF_PROP_PID_STREAM_TYPE, GF_STREAM_VISUAL),

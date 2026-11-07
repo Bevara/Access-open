@@ -5454,6 +5454,40 @@ single_retry:
 				}
 			}
 		}
+		/* An explicit encoder instance - one loaded from a "c=CODEC" argument -
+		 only ever encodes the stream type its codec belongs to. The caps match
+		 just below already rejects a PID of the wrong type (see the
+		 encoder_codec_id test in gf_filter_pid_caps_match), but a failed caps
+		 match does not disqualify the destination: can_try_link_resolution is
+		 set unconditionally a few lines down, and link resolution runs Dijkstra
+		 over filter *registers*, not instances. With two instances of one
+		 register - "c=avc c=aac" both resolving to wcenc, or to ffenc in a
+		 native build - the audio PID therefore solved the chain
+		 oggdmx -> vorbisdec -> wcenc and pinned it to the c=avc instance; once
+		 vorbisdec emitted raw audio, its only permitted destination was that
+		 video-only encoder and the audio track was dropped ("No filter chain
+		 found for PID A2 ... Will try to remove"). Declaring the encoders the
+		 other way round happened to work, which made the failure look like an
+		 ordering quirk.
+		 Skipping a mismatched encoder instance outright lets the next one be
+		 tested, which is the behaviour the "c=avc c=aac" example in
+		 `gpac -h doc` describes. Stream types that say nothing about the media
+		 - a source's GF_STREAM_FILE PID, or an unknown one - must still be
+		 allowed to resolve towards the encoder, since that is how the demuxer
+		 ahead of it gets loaded. */
+		if (filter_dst->encoder_codec_id) {
+			u32 enc_st = gf_codecid_type(filter_dst->encoder_codec_id);
+			const GF_PropertyValue *pid_st = gf_filter_pid_get_property_first(pid, GF_PROP_PID_STREAM_TYPE);
+			if (pid_st && enc_st && (enc_st != GF_STREAM_UNKNOWN)
+				&& (pid_st->value.uint != enc_st)
+				&& (pid_st->value.uint != GF_STREAM_FILE)
+				&& (pid_st->value.uint != GF_STREAM_UNKNOWN)
+			) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_FILTER, ("PID %s (stream type %s) does not match encoder filter %s (%s)\n", pid->name, gf_stream_type_name(pid_st->value.uint), filter_dst->name, gf_codecid_name(filter_dst->encoder_codec_id) ));
+				continue;
+			}
+		}
+
 		//we have a match, check if caps are OK
 		cap_matched = gf_filter_pid_caps_match(pid, filter_dst->freg, filter_dst, NULL, NULL, pid->filter->dst_filter, -1);
 
