@@ -1556,7 +1556,13 @@ static GF_FileIO *gf_fileio_from_blob(const char *file_name)
 	gf_blob_release(file_name);
 
 	if (flags) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Attempt at creating a GFIO object on blob corrupted or in transfer, not supported !"));
+		//say which flag and how much data the blob holds: "corrupted" (the
+		//download died and gf_dm_sess_abort poisoned the blob) and "in transfer"
+		//(it is simply not finished yet) have different causes and different
+		//fixes, and the caller only ever saw one message for both
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Attempt at creating a GFIO object on blob %s (flags 0x%x, %u bytes) %s, not supported !\n",
+			file_name ? file_name : "(null)", flags, blob_size,
+			(flags & GF_BLOB_CORRUPTED) ? "corrupted" : ((flags & GF_BLOB_IN_TRANSFER) ? "still in transfer" : "in an unexpected state")));
 		return NULL;
 	}
 

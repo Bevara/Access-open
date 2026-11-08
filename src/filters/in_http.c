@@ -84,6 +84,18 @@ typedef struct
 	u32 start_time;
 } GF_HTTPInCtx;
 
+/* Every abort of an in-flight session permanently marks its memory blob
+ * GF_BLOB_CORRUPTED (cf. gf_dm_sess_abort), after which any filter still
+ * holding GF_PROP_PID_FILEPATH fails to open it and reports an invalid URL
+ * instead of the real cause. The abort is often legitimate (a consumer that
+ * stopped, a seek, a source switch), so say which one it was. */
+static void httpin_abort_session(GF_HTTPInCtx *ctx, const char *reason)
+{
+	if (!ctx->sess) return;
+	GF_LOG(GF_LOG_WARNING, GF_LOG_HTTP, ("[HTTPIn] Aborting session %s: %s\n", ctx->src ? ctx->src : "(null)", reason));
+	gf_dm_sess_abort(ctx->sess);
+}
+
 static void httpin_notify_error(GF_Filter *filter, GF_HTTPInCtx *ctx, GF_Err e)
 {
 	if (filter && (ctx->last_state == GF_OK)) {
@@ -261,7 +273,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			//abort session
 			if (ctx->sess) {
 				GF_LOG(GF_LOG_INFO, GF_LOG_HTTP, ("[HTTPIn] Stop requested, aborting download %s (pck out %d) this %p\n", ctx->src, ctx->pck_out, ctx) );
-				gf_dm_sess_abort(ctx->sess);
+				httpin_abort_session(ctx, "stop requested by a consumer");
 				gf_dm_sess_del(ctx->sess);
 				ctx->sess = NULL;
 
@@ -285,7 +297,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 			if (ctx->cached) {
 				gf_fseek(ctx->cached, ctx->nb_read, SEEK_SET);
 			} else if (ctx->sess) {
-				gf_dm_sess_abort(ctx->sess);
+				httpin_abort_session(ctx, "seek in a non-cached source");
 				gf_dm_sess_set_range(ctx->sess, ctx->nb_read, 0, GF_TRUE);
 			}
 			ctx->range.den = 0;
@@ -318,7 +330,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 				gf_filter_pid_set_eos(ctx->pid);
 				ctx->is_end = GF_TRUE;
 				if (ctx->sess) {
-					gf_dm_sess_abort(ctx->sess);
+					httpin_abort_session(ctx, "source switch with no new URL");
 					gf_dm_sess_del(ctx->sess);
 					ctx->sess = NULL;
 				}
@@ -356,8 +368,7 @@ static Bool httpin_process_event(GF_Filter *filter, const GF_FilterEvent *evt)
 		//abort type
 		if (evt->seek.start_offset == (u64) -1) {
 			if (!ctx->is_end) {
-				if (ctx->sess)
-					gf_dm_sess_abort(ctx->sess);
+				httpin_abort_session(ctx, "abort-type source seek");
 				ctx->is_end = GF_TRUE;
 				httpin_set_eos(ctx);
 			}
@@ -542,7 +553,18 @@ static GF_Err httpin_process(GF_Filter *filter)
 				gf_filter_ask_rt_reschedule(filter, gf_dm_sess_is_regulated(ctx->sess) ? 100000 : 1000);
 				return GF_OK;
 			}
-			if (! ctx->nb_read)
+			//A download that dies after the first byte is a failure too, and used
+			//to be swallowed: only the !nb_read case was notified, so the session
+			//saw a clean EOS. But gf_dm_sess_abort() below permanently flags the
+			//memory blob GF_BLOB_CORRUPTED, so a full-file demuxer (avidmx,
+			//webmdmx...) that was handed GF_PROP_PID_FILEPATH then fails on open
+			//and reports "Requested URL is not valid" - the network error that
+			//really happened never surfaced. Report it, except on a DASH source
+			//switch, which is handled just below.
+			GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[HTTPIn] Download of %s interrupted after "LLU"/"LLU" bytes: %s\n",
+				ctx->src ? ctx->src : "(null)", ctx->nb_read, ctx->file_size, gf_error_to_string(e)));
+
+			if (!ctx->nb_read || !ctx->is_source_switch)
 				httpin_notify_error(filter, ctx, e);
 
 			ctx->is_end = GF_TRUE;
@@ -559,7 +581,7 @@ static GF_Err httpin_process(GF_Filter *filter)
 				gf_filter_pid_set_eos(ctx->pid);
 			}
 
-			gf_dm_sess_abort(ctx->sess);
+			httpin_abort_session(ctx, "download error");
 			ctx->is_source_switch = GF_FALSE;
 			return e;
 		}

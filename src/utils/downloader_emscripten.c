@@ -408,6 +408,13 @@ void gf_dm_sess_abort(GF_DownloadSession * sess)
 		sess->last_error = GF_IP_CONNECTION_CLOSED;
 		if (sess->active_cache && !sess->reuse_cache && (sess->active_cache->blob.flags & GF_BLOB_IN_TRANSFER)) {
 			sess->active_cache->blob.flags = GF_BLOB_CORRUPTED;
+			//this is a one-way door: every later gf_fopen on that blob URL fails,
+			//including from a filter that was handed the URL before the abort. Say
+			//so, with how far the download had got, so the log shows whether the
+			//transfer died on its own or was aborted from above (seek, stop, stall
+			//detection) while still in flight.
+			GF_LOG(GF_LOG_WARNING, GF_LOG_HTTP, ("[Downloader] Aborting in-flight session %s after "LLU"/"LLU" bytes, cache blob marked corrupted\n",
+				sess->req_url ? sess->req_url : "(null)", sess->bytes_done, sess->total_size));
 		}
 	}
 	clear_headers(&sess->rsp_hdrs, &sess->nb_rsp_hdrs);
