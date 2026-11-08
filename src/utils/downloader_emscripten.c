@@ -718,6 +718,19 @@ GF_Err gf_dm_sess_fetch_data(GF_DownloadSession *sess, char *buffer, u32 buffer_
 		sess->netio_status = GF_NETIO_STATE_ERROR;
 		if (sess->active_cache)
 			sess->active_cache->blob.flags = GF_BLOB_CORRUPTED;
+		/* This is the only line that leaves a blob at exactly GF_BLOB_CORRUPTED
+		 * (the realloc failure above ORs the flag in, so it would read 0x3),
+		 * and on the Jenkins agent three demuxers hit it with the whole file
+		 * already in the blob. End of stream is only ever concluded from
+		 * total_size == bytes_done a few lines up, so a download the fetcher
+		 * finished without a usable total_size lands here and the complete
+		 * blob is declared corrupted. Print all four numbers: which of them
+		 * disagrees says whether the size was never known, overshot, or the
+		 * fetcher simply reported completion as an error. */
+		GF_LOG(GF_LOG_ERROR, GF_LOG_HTTP, ("[Downloader] Fetch of %s failed with %s after "LLU"/"LLU" bytes (blob holds %u), cache blob marked corrupted\n",
+			sess->req_url ? sess->req_url : "(null)", gf_error_to_string(fetch_err),
+			sess->bytes_done, sess->total_size,
+			sess->active_cache ? sess->active_cache->blob.size : 0));
 	}
 
 	if (fetch_err==GF_EOS) {
