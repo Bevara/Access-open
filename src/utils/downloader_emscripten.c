@@ -712,7 +712,16 @@ GF_Err gf_dm_sess_fetch_data(GF_DownloadSession *sess, char *buffer, u32 buffer_
 
 	} else if (!fetch_err) {
 		return GF_IP_NETWORK_EMPTY;
-	} else if (fetch_err!=GF_IP_NETWORK_EMPTY) {
+	} else if (fetch_err!=GF_IP_NETWORK_EMPTY && fetch_err!=GF_EOS) {
+		/* GF_EOS is excluded on purpose. When the response carries no usable
+		 * Content-Length, total_size stays 0, the data path above never
+		 * concludes the stream, and the fetcher's own "done" arrives here as
+		 * an EOS with zero bytes - a completed download, not a failure. On the
+		 * Jenkins agent every source came through this way (the instrument
+		 * below printed "failed with End Of Stream / File after N/0 bytes"),
+		 * and the blob holding the whole file was flagged corrupted, which is
+		 * what made avidmx and webmdmx refuse their input. Let it fall
+		 * through to the EOS block instead. */
 		sess->state=2;
 		sess->last_error = fetch_err;
 		sess->netio_status = GF_NETIO_STATE_ERROR;
