@@ -468,6 +468,29 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 	} else {
 		p = gf_filter_pid_get_property(pid, GF_PROP_PID_SAMPLE_RATE);
 		if (!p) return GF_BAD_PARAM;
+		/* Chrome's AudioEncoder takes AAC at 44100 and 48000 Hz only, for
+		 * any channel count (isConfigSupported measured from 8000 to 96000
+		 * Hz, 1, 2 and 6 channels). Any other rate was a refusal, and the
+		 * refusal is final: the session blacklists wcenc and answers
+		 * "Cannot find any filter providing encoding for c=aac".
+		 *
+		 * That hit real sources twice over: MP3 and MP2 at 32 kHz or
+		 * 22.05 kHz, and every MPEG program stream - m2psdmx announces a
+		 * provisional 12000 Hz that rfmp3 only corrects on the first
+		 * packet, by which time wcenc had already been refused.
+		 *
+		 * Asking for a supported rate instead lets the session insert the
+		 * resampler, as it inserts rgb2yuv for pixel formats; a later
+		 * correction to 48000 just passes through it. 44100 for the
+		 * 11025 family, 48000 for everything else. */
+		if ((ctx->codecid == GF_CODECID_AAC_MPEG4) || (ctx->codecid == GF_CODECID_AAC_MPEG2_MP)
+			|| (ctx->codecid == GF_CODECID_AAC_MPEG2_LCP) || (ctx->codecid == GF_CODECID_AAC_MPEG2_SSRP)) {
+			u32 sr = p->value.uint;
+			if ((sr != 44100) && (sr != 48000)) {
+				gf_filter_pid_negotiate_property(pid, GF_PROP_PID_SAMPLE_RATE, &PROP_UINT( (sr % 11025) ? 48000 : 44100) );
+				return GF_OK;
+			}
+		}
 		if (ctx->sample_rate != p->value.uint) {
 			ctx->sample_rate = p->value.uint;
 			ctx->codec_init = GF_FALSE;
@@ -497,7 +520,7 @@ static GF_Err wcenc_configure_pid(GF_Filter *filter, GF_FilterPid *pid, Bool is_
 				break;
 			}
 			if (ctx->afmt != ifmt) {
-				gf_filter_pid_negotiate_property(ctx->ipid, GF_PROP_PID_PIXFMT, &PROP_UINT(ctx->afmt) );
+				gf_filter_pid_negotiate_property(ctx->ipid, GF_PROP_PID_AUDIO_FORMAT, &PROP_UINT(ctx->afmt) );
 				return GF_OK;
 			}
 			ctx->bytes_per_sample = gf_audio_fmt_bit_depth(ctx->afmt) * ctx->num_channels / 8;
@@ -671,7 +694,21 @@ static GF_Err wcenc_process(GF_Filter *filter)
 
 	if (ctx->error)
 		return ctx->error;
-	if (!ctx->codec_init) return GF_OK;
+	/* Still waiting for isConfigSupported(), which answers through a
+	 * promise - that is, only once the scheduler hands control back to the
+	 * browser. Returning bare GF_OK here never let it: with input pending
+	 * the filter was rescheduled at once, the scheduler never slept, the
+	 * promise never resolved, and after 100000 such calls - under a second -
+	 * the session declared wcenc "not responding properly" and cut the
+	 * stream. Theora and VP9 sources got away with it because their answer
+	 * happened to land while another filter was waiting; MPEG-1 program
+	 * streams demux fast enough to lose every time. A timed reschedule
+	 * makes the scheduler sleep, which is when the answer arrives - the same
+	 * lever as the "queued" wait below. */
+	if (!ctx->codec_init) {
+		gf_filter_ask_rt_reschedule(filter, 1000);
+		return GF_OK;
+	}
 
 
 	while (!ctx->enc_error) {
