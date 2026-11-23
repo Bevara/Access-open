@@ -33,6 +33,7 @@ typedef struct
 {
 	char *c;
 	GF_Fraction fintra;
+	GF_Fraction gopdur;
 	Bool all_intra;
 	u32 b;
 	u32 queued;
@@ -759,8 +760,14 @@ static GF_Err wcenc_process(GF_Filter *filter)
 				sap = 1;
 			}
 
-			//check if we need to force a closed gop
-			if (pck && ctx->fintra.den && (ctx->fintra.num>0)) {
+			/* check if we need to force a closed gop. Bevara: gopdur is the
+			 * name encx264 (libx264_1) gives the same setting, so one
+			 * constraint such as c=avc:gopdur=1 reaches whichever AVC encoder
+			 * the graph resolves to; fintra wins when both are set. */
+			GF_Fraction period = ctx->fintra;
+			if (!period.den || (period.num<=0))
+				period = ctx->gopdur;
+			if (pck && period.den && (period.num>0)) {
 				if (!ctx->fintra_setup) {
 					ctx->fintra_setup = GF_TRUE;
 					ctx->orig_ts = cts;
@@ -773,7 +780,7 @@ static GF_Err wcenc_process(GF_Filter *filter)
 					ctx->nb_forced=1;
 				} else {
 					u64 ts_diff = cts - ctx->orig_ts;
-					if (ts_diff * ctx->fintra.den >= ctx->nb_forced * ctx->fintra.num * 1000000) {
+					if (ts_diff * period.den >= ctx->nb_forced * period.num * 1000000) {
 						sap = 1;
 						ctx->nb_forced++;
 						GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[WebEnc] Forcing IDR at frame %d (CTS %d / 1000000)\n", ctx->nb_frames_in, cts));
@@ -1021,6 +1028,7 @@ static const GF_FilterArgs WCEncArgs[] =
 	{ OFFS(c), "codec identifier. Can be any supported GPAC codec name or ffmpeg codec name - updated to ffmpeg codec name after initialization", GF_PROP_STRING, NULL, NULL, 0},
 	{ OFFS(fintra), "force intra / IDR frames at the given period in sec, e.g. `fintra=2` will force an intra every 2 seconds and `fintra=1001/1000` will force an intra every 30 frames on 30000/1001=29.97 fps video; ignored for audio", GF_PROP_FRACTION, "-1/1", NULL, 0},
 
+	{ OFFS(gopdur), "same as fintra, under the name encx264 uses, so that one constraint addresses both encoders - 0 keeps the browser's default; ignored when fintra is set", GF_PROP_FRACTION, "0/1", NULL, GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(all_intra), "only produce intra frames", GF_PROP_BOOL, "false", NULL, GF_FS_ARG_UPDATE|GF_FS_ARG_HINT_ADVANCED},
 	{ OFFS(b), "bitrate in bits per seconds, defaults to 2M for video and 124K for audio", GF_PROP_UINT, "0", NULL, 0},
 	{ OFFS(queued), "maximum number of packets to queue in webcodec instance", GF_PROP_UINT, "10", NULL, 0},
